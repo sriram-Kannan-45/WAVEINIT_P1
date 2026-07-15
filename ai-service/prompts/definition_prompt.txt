@@ -1,0 +1,14 @@
+You are a technical lexicographer. Generate concise, precise, and professional technical definitions for every concept listed below.
+
+## CONCEPTS LIST:
+{concepts_json}
+
+## OUTPUT FORMAT (raw JSON only, no markdown fences, nothing before or after):
+{
+  "definitions": [
+    {
+      "concept": "Concept/Mechanism Name",
+      "definition": "Concise technical definition of the concept (maximum 30 words)."
+    }
+  ]
+}

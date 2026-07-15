@@ -1,0 +1,200 @@
+{
+  "id": "019f21e0-9d15-72bf-b0ce-626c1514e9a0",
+  "name": "Coding Assessment IDE & Workflow",
+  "description": "Bring the coding assessment participant experience in line with the quiz assessment: enforce the same consent/fullscreen/screen-share proctoring workflow, and restyle the coding IDE to resemble a light VS Code environment with a clean, functional terminal/output panel.",
+  "status": "running",
+  "worktree": {
+    "path": "/mnt/d/feedWeb (2)/feedWeb",
+    "branch": "feat/architecture-skeleton",
+    "commit": "f049eaf728a0621bf6f02639212c284a59ed4c71"
+  },
+  "scoping": {
+    "goal": {
+      "answer": "Bring the coding assessment participant experience in line with the quiz assessment: enforce the same consent/fullscreen/screen-share proctoring workflow, and restyle the coding IDE to resemble a light VS Code environment with a clean, functional terminal/output panel.",
+      "confirmedAt": "2026-07-02T08:49:35.135Z"
+    },
+    "criteria": {
+      "answer": "Coding assessment uses the same 3-step consent gate as quiz (consent → screen share → fullscreen).\nFullscreen exit enforces the same 3-strike warning/auto-submit behavior used in QuizTaking.\nScreen share stop pauses the exam and auto-submits if not resumed within 30 seconds, matching QuizTaking.\nCodeEditor is locked to a light/white VS Code-style theme and wrapper; no dark mode toggle.\nThe run/output panel shows stdout, stderr, compile output, execution status, time/memory, and test results in a clean, IDE-like layout.",
+      "confirmedAt": "2026-07-02T08:49:35.135Z"
+    },
+    "constraints": {
+      "answer": "Use only existing dependencies; do not install new packages., Preserve all existing backend API contracts for coding run/submit/save., Keep existing QuizTaking component and quiz flow untouched., CodeEditor must remain light/white only (no dark theme toggle).",
+      "confirmedAt": "2026-07-02T08:49:35.135Z"
+    },
+    "phases": {
+      "answer": "Extract shared proctoring shell, Refactor coding attempt page, Light VS Code IDE theme, IDE-style output panel",
+      "confirmedAt": "2026-07-02T08:49:35.135Z"
+    },
+    "assumptions": {
+      "answer": "The user wants the light/white theme as the only theme for the coding IDE.; The same proctoring session APIs used by quiz (proctorApi.startSession/activate/violation) apply to coding assessments with assessmentType='coding'.; A reusable proctoring shell can be created without modifying QuizTaking.",
+      "confirmedAt": "2026-07-02T08:49:35.135Z"
+    }
+  },
+  "phases": [
+    {
+      "id": "phase-1",
+      "index": 1,
+      "name": "Extract shared proctoring shell",
+      "goal": "Create a reusable exam proctoring wrapper that enforces fullscreen, screen-share reconnect, and 3-strike termination so coding assessment can use it.",
+      "description": "Build a small wrapper component that implements the fullscreen 3-strike rule and screen-share lifecycle (attach track ended, pause overlay, reconnect countdown, auto-submit). It will accept children, onSubmit callback, and screenStream prop.",
+      "parallel": false,
+      "status": "completed",
+      "steps": [
+        {
+          "id": "step-1",
+          "index": 1,
+          "description": "Create src/proctoring/components/ExamProctorShell.jsx with fullscreen 3-strike logic and screen-share pause/resume overlay extracted from QuizTaking.",
+          "status": "verified",
+          "verification": {
+            "command": "grep -n 'MAX_WARNINGS' /mnt/d/feedWeb\\ \\(2\\)/feedWeb/frontend/src/proctoring/components/ExamProctorShell.jsx | head -5",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-07-02T08:50:37.710Z",
+          "completedAt": "2026-07-02T09:19:32.931Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-07-02T09:19:32.931Z"
+          }
+        }
+      ],
+      "startedAt": "2026-07-02T08:49:51.954Z",
+      "completedAt": "2026-07-02T09:20:41.091Z",
+      "summary": "Created a reusable ExamProctorShell component that replicates QuizTaking's fullscreen 3-strike rule and screen-share pause/resume/auto-submit behavior. The file compiles with the production build.",
+      "grade": {
+        "grade": "A",
+        "rationale": "All gates pass; project checks validate.",
+        "gradedAt": "2026-07-02T09:20:41.056Z"
+      }
+    },
+    {
+      "id": "phase-2",
+      "index": 2,
+      "name": "Refactor coding attempt page",
+      "goal": "Wire the coding assessment through the same consent gate and proctoring shell as the quiz.",
+      "description": "Update ParticipantCodingAttemptPage to use the extracted proctoring shell after consent, removing its manual fullscreen toggle and ad-hoc screen-share restart. Keep its code editor and output panel intact.",
+      "parallel": false,
+      "status": "completed",
+      "steps": [
+        {
+          "id": "step-1",
+          "index": 1,
+          "description": "Replace inline fullscreen/screen-share UI in ParticipantCodingAttemptPage with ExamProctorShell, passing the existing submit handler.",
+          "status": "verified",
+          "verification": {
+            "command": "grep -n 'ExamProctorShell' /mnt/d/feedWeb\\ \\(2\\)/feedWeb/frontend/src/pages/ParticipantCodingAttemptPage.jsx | head -5",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-07-02T09:35:52.367Z",
+          "completedAt": "2026-07-02T09:38:08.012Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-07-02T09:38:08.012Z"
+          }
+        }
+      ],
+      "startedAt": "2026-07-02T09:23:01.793Z",
+      "completedAt": "2026-07-02T09:38:49.361Z",
+      "summary": "ParticipantCodingAttemptPage now routes through AssessmentConsentGate and is wrapped by ExamProctorShell, mirroring the quiz flow. Manual fullscreen toggle and screen-share restart UI were removed.",
+      "grade": {
+        "grade": "A",
+        "rationale": "All gates pass; project checks validate.",
+        "gradedAt": "2026-07-02T09:38:49.320Z"
+      }
+    },
+    {
+      "id": "phase-3",
+      "index": 3,
+      "name": "Light VS Code IDE theme",
+      "goal": "Make the coding editor look like a light VS Code instance.",
+      "description": "Update CodeEditor to use a light Monaco theme and style the toolbar/wrapper with a light color palette. Remove the theme toggle so only light theme is available.",
+      "parallel": false,
+      "status": "completed",
+      "steps": [
+        {
+          "id": "step-1",
+          "index": 1,
+          "description": "Set CodeEditor theme to 'light' and update wrapper/toolbar colors to a VS Code light palette; remove theme toggle button.",
+          "status": "verified",
+          "verification": {
+            "command": "grep -n \"theme\" /mnt/d/feedWeb\\ \\(2\\)/feedWeb/frontend/src/components/CodeEditor.jsx | head -10",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-07-02T10:02:28.526Z",
+          "completedAt": "2026-07-02T10:06:46.471Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-07-02T10:06:46.471Z"
+          }
+        }
+      ],
+      "startedAt": "2026-07-02T10:01:42.833Z",
+      "completedAt": "2026-07-02T10:07:21.136Z",
+      "summary": "CodeEditor is locked to a light/white VS Code-style theme and wrapper with no dark-mode toggle. Production build passes.",
+      "grade": {
+        "grade": "A",
+        "rationale": "All gates pass; project checks validate.",
+        "gradedAt": "2026-07-02T10:07:21.098Z"
+      }
+    },
+    {
+      "id": "phase-4",
+      "index": 4,
+      "name": "IDE-style output panel",
+      "goal": "Restyle the output/terminal area to look and behave like a real IDE panel.",
+      "description": "Update the output panel in ParticipantCodingAttemptPage to use light theme tabs, clear section labels, and readable status colors while preserving stdout/stderr/compile/test results display.",
+      "parallel": false,
+      "status": "active",
+      "steps": [
+        {
+          "id": "step-1",
+          "index": 1,
+          "description": "Restyle output panel with light theme tabs and status badges for stdout/stderr/compile/test results.",
+          "status": "running",
+          "verification": {
+            "command": "grep -n 'Program Output' /mnt/d/feedWeb\\ \\(2\\)/feedWeb/frontend/src/pages/ParticipantCodingAttemptPage.jsx | head -3",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-07-02T10:14:13.812Z"
+        }
+      ],
+      "startedAt": "2026-07-02T10:12:29.295Z"
+    }
+  ],
+  "decisions": [],
+  "memories": [],
+  "createdAt": "2026-07-02T08:09:56.245Z",
+  "updatedAt": "2026-07-02T10:14:13.812Z",
+  "goal": "Bring the coding assessment participant experience in line with the quiz assessment: enforce the same consent/fullscreen/screen-share proctoring workflow, and restyle the coding IDE to resemble a light VS Code environment with a clean, functional terminal/output panel.",
+  "successCriteria": [
+    "Coding assessment uses the same 3-step consent gate as quiz (consent → screen share → fullscreen).",
+    "Fullscreen exit enforces the same 3-strike warning/auto-submit behavior used in QuizTaking.",
+    "Screen share stop pauses the exam and auto-submits if not resumed within 30 seconds, matching QuizTaking.",
+    "CodeEditor is locked to a light/white VS Code-style theme and wrapper; no dark mode toggle.",
+    "The run/output panel shows stdout, stderr, compile output, execution status, time/memory, and test results in a clean, IDE-like layout."
+  ],
+  "constraints": [
+    "Use only existing dependencies; do not install new packages.",
+    "Preserve all existing backend API contracts for coding run/submit/save.",
+    "Keep existing QuizTaking component and quiz flow untouched.",
+    "CodeEditor must remain light/white only (no dark theme toggle)."
+  ],
+  "lastActiveAt": "2026-07-02T10:12:29.295Z",
+  "activePhaseId": "phase-4"
+}

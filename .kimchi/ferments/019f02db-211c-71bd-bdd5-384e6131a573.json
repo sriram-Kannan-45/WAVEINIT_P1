@@ -1,0 +1,244 @@
+{
+  "id": "019f02db-211c-71bd-bdd5-384e6131a573",
+  "name": "Trainer Screen Monitoring",
+  "description": "Enable trainers to view participant screen shares in real time through WebRTC, with automatic streaming, lifecycle cleanup, reconnect resilience, and a dedicated monitoring dashboard that integrates into the existing LMS proctoring system without breaking current functionality.",
+  "status": "complete",
+  "worktree": {
+    "path": "/mnt/d/feedWeb (2)/feedWeb",
+    "branch": "feat/architecture-skeleton",
+    "commit": "e72a3c6f7a6cdc8817c65120cd530f2a843e13df"
+  },
+  "scoping": {
+    "goal": {
+      "answer": "Extend the existing LMS proctoring system so that a participant's screen share is automatically streamed to authorized trainers via WebRTC, with clean lifecycle management on stop/disconnect and a focused Phase 1-2 delivery for backend signaling and participant auto-streaming.",
+      "confirmedAt": "2026-06-26T10:21:48.964Z"
+    },
+    "criteria": {
+      "answer": "Participant screen share automatically emits a WebRTC offer to trainers when the exam session becomes ACTIVE and screen sharing is enabled\nBackend securely relays WebRTC offers, answers, and ICE candidates only between the session owner and authorized TRAINER/ADMIN viewers\nWhen screen sharing stops or the participant disconnects, the backend broadcasts stream-ended/disconnected and cleans up session state\nExisting proctoring quiz flow, anti-cheat violations, and termination logic remain unchanged\nCode passes backend syntax check and frontend build without errors",
+      "confirmedAt": "2026-06-26T10:21:48.964Z"
+    },
+    "constraints": {
+      "answer": "Extend existing backend/src/socket/events/proctorEvents.js and frontend/src/proctoring/ProctorContext.jsx rather than creating a parallel module, Reuse existing JWT Socket.IO auth middleware, role checks, and exam_sessions model, No new runtime dependencies, Browser support limited to Chromium/Firefox/Safari getDisplayMedia + RTCPeerConnection",
+      "confirmedAt": "2026-06-26T10:21:48.964Z"
+    },
+    "phases": {
+      "answer": "Participant auto-streaming lifecycle, Backend signaling hardening",
+      "confirmedAt": "2026-06-26T10:21:48.964Z"
+    },
+    "assumptions": {
+      "answer": "Current screen capture already works on the participant side; Trainer authorization is already enforced via socket.userRole and existing quiz/trainer relationships; TURN/STUN configuration is available via existing constants",
+      "confirmedAt": "2026-06-26T10:21:48.964Z"
+    }
+  },
+  "phases": [
+    {
+      "id": "phase-1",
+      "index": 1,
+      "name": "Participant auto-streaming lifecycle",
+      "goal": "Make the participant client automatically publish its screen share to authorized trainers and stop cleanly",
+      "description": "",
+      "parallel": false,
+      "status": "completed",
+      "steps": [
+        {
+          "id": "step-1",
+          "index": 1,
+          "description": "Create frontend/src/components/Participant/ScreenShare.jsx start/stop/status component with toast feedback",
+          "status": "verified",
+          "verification": {
+            "command": "test -f frontend/src/components/Participant/ScreenShare.jsx",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-26T10:49:22.663Z",
+          "completedAt": "2026-06-26T10:53:10.282Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-26T10:53:10.282Z"
+          }
+        },
+        {
+          "id": "step-2",
+          "index": 2,
+          "description": "Extend ProctorContext to emit stream-available and create peer connections for all trainers in the quiz room when screen sharing starts",
+          "status": "verified",
+          "verification": {
+            "command": "grep -q 'stream-available' frontend/src/proctoring/ProctorContext.jsx && grep -q 'RTCPeerConnection' frontend/src/proctoring/ProctorContext.jsx",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-26T10:54:46.939Z",
+          "completedAt": "2026-06-26T10:55:42.959Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-26T10:55:42.959Z"
+          }
+        },
+        {
+          "id": "step-3",
+          "index": 3,
+          "description": "Stop tracks, close peer connections, and emit stream-ended when the user stops sharing, unloads, or loses connection",
+          "status": "verified",
+          "verification": {
+            "command": "grep -q 'stream-ended\\|beforeunload\\|getTracks.*stop' frontend/src/proctoring/ProctorContext.jsx",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-26T10:56:39.912Z",
+          "completedAt": "2026-06-26T10:56:50.142Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-26T10:56:50.142Z"
+          }
+        },
+        {
+          "id": "step-4",
+          "index": 4,
+          "description": "Run syntax and build checks",
+          "status": "verified",
+          "verification": {
+            "command": "cd backend && node -c src/app.js && cd ../frontend && npm run build",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-26T10:58:46.239Z",
+          "completedAt": "2026-06-26T10:59:48.275Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-26T10:59:48.275Z"
+          }
+        }
+      ],
+      "startedAt": "2026-06-26T10:47:52.999Z",
+      "completedAt": "2026-06-26T11:00:41.121Z",
+      "summary": "Completed the frontend participant auto-streaming lifecycle phase. Delivered ScreenShare.jsx UI, extended ProctorContext with automatic stream-available emission and WebRTC offer creation for trainers, added centralized cleanup for stop/unload/disconnect, and verified backend syntax and frontend production build pass.",
+      "grade": {
+        "grade": "A",
+        "rationale": "All gates pass; project checks validate.",
+        "gradedAt": "2026-06-26T11:00:41.085Z"
+      }
+    },
+    {
+      "id": "phase-2",
+      "index": 2,
+      "name": "Backend signaling hardening",
+      "goal": "Strengthen Socket.IO signaling so the backend can receive and broadcast auto-stream events, enforce role checks, and clean up on disconnect",
+      "description": "",
+      "parallel": false,
+      "status": "completed",
+      "steps": [
+        {
+          "id": "step-1",
+          "index": 1,
+          "description": "Add participant-side auto-stream notification events (proctor:stream-available, proctor:stream-ended) with session ownership checks",
+          "status": "verified",
+          "verification": {
+            "command": "grep -q 'proctor:stream-available' backend/src/socket/events/proctorEvents.js && grep -q 'proctor:stream-ended' backend/src/socket/events/proctorEvents.js",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-26T11:09:04.341Z",
+          "completedAt": "2026-06-26T11:09:37.249Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-26T11:09:37.249Z"
+          }
+        },
+        {
+          "id": "step-2",
+          "index": 2,
+          "description": "Add trainer-assignment/role guard helper and apply it to observe, answer, and ICE relay events",
+          "status": "verified",
+          "verification": {
+            "command": "grep -q 'canViewSession\\|isAssignedTrainer\\|TRAINER.*ADMIN' backend/src/socket/events/proctorEvents.js",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-26T11:11:03.346Z",
+          "completedAt": "2026-06-26T11:13:02.861Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-26T11:13:02.861Z"
+          }
+        },
+        {
+          "id": "step-3",
+          "index": 3,
+          "description": "Ensure disconnect handler emits stream-ended when an active screen-sharing session drops",
+          "status": "verified",
+          "verification": {
+            "command": "grep -q 'stream-ended\\|disconnected' backend/src/socket/events/proctorEvents.js",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-26T11:15:03.176Z",
+          "completedAt": "2026-06-26T11:15:27.803Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-26T11:15:27.803Z"
+          }
+        }
+      ],
+      "startedAt": "2026-06-26T11:08:47.063Z",
+      "completedAt": "2026-06-26T11:17:02.434Z",
+      "summary": "Completed the backend signaling hardening phase. Enhanced stream-available/stream-ended handlers to persist isScreenSharing state and broadcast state updates. Added a canViewSession helper and applied role/session-ownership guards to observe, unobserve, webrtc-offer, webrtc-answer, and ice-candidate handlers. Updated the disconnect handler to clear isScreenSharing and emit stream-ended when an active screen-sharing participant drops, while preserving grace-period and disconnected-update behavior.",
+      "grade": {
+        "grade": "A",
+        "rationale": "All gates pass; project checks validate.",
+        "gradedAt": "2026-06-26T11:17:02.397Z"
+      }
+    }
+  ],
+  "decisions": [],
+  "memories": [],
+  "createdAt": "2026-06-26T07:35:43.132Z",
+  "updatedAt": "2026-06-26T11:24:00.383Z",
+  "goal": "Extend the existing LMS proctoring system so that a participant's screen share is automatically streamed to authorized trainers via WebRTC, with clean lifecycle management on stop/disconnect and a focused Phase 1-2 delivery for backend signaling and participant auto-streaming.",
+  "successCriteria": [
+    "Participant screen share automatically emits a WebRTC offer to trainers when the exam session becomes ACTIVE and screen sharing is enabled",
+    "Backend securely relays WebRTC offers, answers, and ICE candidates only between the session owner and authorized TRAINER/ADMIN viewers",
+    "When screen sharing stops or the participant disconnects, the backend broadcasts stream-ended/disconnected and cleans up session state",
+    "Existing proctoring quiz flow, anti-cheat violations, and termination logic remain unchanged",
+    "Code passes backend syntax check and frontend build without errors"
+  ],
+  "constraints": [
+    "Extend existing backend/src/socket/events/proctorEvents.js and frontend/src/proctoring/ProctorContext.jsx rather than creating a parallel module",
+    "Reuse existing JWT Socket.IO auth middleware, role checks, and exam_sessions model",
+    "No new runtime dependencies",
+    "Browser support limited to Chromium/Firefox/Safari getDisplayMedia + RTCPeerConnection"
+  ],
+  "lastActiveAt": "2026-06-26T11:08:47.063Z",
+  "grade": {
+    "grade": "B",
+    "rationale": "Both phases completed without retries and the summary claims all five success criteria are covered (ScreenShare.jsx lifecycle, ProctorContext auto-stream emission, canViewSession role guards, disconnect cleanup). However, verification was weak: F1 in Phase 1 leans on 'grep behavior checks' and 'file existence' rather than runtime/execution evidence, and the no-diff situation means I cannot independently corroborate the claimed changes (e.g., that canViewSession actually checks role/session-ownership, or that stream-ended is broadcast on the right socket events). C3's evidence (node -c + npm run build) only confirms syntactic validity, not signaling correctness, so the gate rationales remain thin.",
+    "gradedAt": "2026-06-26T11:24:00.328Z"
+  }
+}

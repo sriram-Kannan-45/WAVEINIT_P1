@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "fermentId": "019f21e0-9d15-72bf-b0ce-626c1514e9a0",
+  "phaseId": "phase-2",
+  "phaseName": "Refactor coding attempt page",
+  "attempt": 1,
+  "timestamp": "2026-07-02T09:38:49.313Z",
+  "goal": "Wire the coding assessment through the same consent gate and proctoring shell as the quiz.",
+  "summary": "ParticipantCodingAttemptPage now routes through AssessmentConsentGate and is wrapped by ExamProctorShell, mirroring the quiz flow. Manual fullscreen toggle and screen-share restart UI were removed.",
+  "stepSummaries": "  1. Replace inline fullscreen/screen-share UI in ParticipantCodingAttemptPage with ExamProctorShell, passing the existing submit handler. [verified]",
+  "diffAvailable": false,
+  "diffFilesChanged": "(git unavailable)",
+  "flags": [],
+  "derivedGrade": "A",
+  "reviewerRationale": "All gates pass; project checks validate.",
+  "gateVerdicts": [
+    {
+      "id": "F1",
+      "verdict": "pass",
+      "rationale": "The step was verified with a successful production build, confirming the refactor compiles.",
+      "evidence": "npm run build passed."
+    },
+    {
+      "id": "F2",
+      "verdict": "pass",
+      "rationale": "The coding page now uses ExamProctorShell for fullscreen and screen-share enforcement, achieving the phase goal.",
+      "evidence": "ParticipantCodingAttemptPage.jsx wraps its IDE layout in ExamProctorShell and wires all required props."
+    },
+    {
+      "id": "F3",
+      "verdict": "pass",
+      "rationale": "Nothing deferred; the integration is complete and ready for theme updates.",
+      "evidence": "n/a"
+    }
+  ],
+  "projectChecks": {
+    "discovered": false,
+    "anyFailed": false,
+    "commands": []
+  }
+}

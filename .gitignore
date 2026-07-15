@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+Frontend/node_modules/
+backend/node_modules/
+venv/
+.venv/
+ENV/
+env/
+
+# Build outputs
+frontend/dist/
+backend/target/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# DB backups / dumps (contain user data)
+*.sql
+*.sql.gz
+backup-*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Misc
+*.class
+target/
+build/
+out/
+
+# Vector store
+ai-service/vector_store/
+
+# Uploaded documents
+backend/uploads/ai-docs/
+
+# Recordings & screenshots (binary, generated at runtime)
+backend/storage/recordings/
+backend/uploads/screenshots/

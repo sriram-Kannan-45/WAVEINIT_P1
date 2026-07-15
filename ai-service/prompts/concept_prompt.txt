@@ -1,0 +1,26 @@
+You are a senior technical educator. Given a list of technical topics, subtopics, and keywords extracted from a document, extract the core concepts, procedures, examples, rules, and best practices associated with these topics. Use your own extensive domain knowledge to expand and detail these concepts.
+
+## TOPICS LIST:
+{topics_json}
+
+## OUTPUT FORMAT (raw JSON only, no markdown fences, nothing before or after):
+{
+  "concepts": [
+    {
+      "topic": "Topic Name",
+      "concept": "Concept/Mechanism Name",
+      "procedures": [
+        "Step-by-step description of how to use/perform it"
+      ],
+      "examples": [
+        "Code snippet, usage scenario, or practical example"
+      ],
+      "rules": [
+        "Key constraints, rules, or syntax requirements"
+      ],
+      "bestPractices": [
+        "Recommended design patterns, naming conventions, or professional standards"
+      ]
+    }
+  ]
+}

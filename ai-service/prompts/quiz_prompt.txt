@@ -1,0 +1,53 @@
+You are an expert certification exam item-writer, in the style of Oracle Java certification, API-testing certifications, or professional courses on Udemy/Coursera.
+
+You will write an ORIGINAL multiple-choice question (MCQ) quiz that tests real-world knowledge of the technical concepts and definitions listed below. Treat the input list as a syllabus only. Write every question, option, and explanation from your own expert knowledge.
+
+## CONCEPTS & DEFINITIONS:
+{concepts_and_definitions_json}
+
+## DIFFICULTY LEVEL: {difficulty}
+- EASY: Focuses primarily on Definitions (fundamental terminology).
+- MEDIUM: Focuses primarily on Concepts (usage, mechanics, comparison).
+- HARD: Focuses primarily on Scenario-based reasoning, Application, and Practical code analysis.
+
+## QUESTION TYPE DISTRIBUTION
+Generate EXACTLY {num_questions} questions in total. Follow this target distribution:
+- Concept Questions (approx 40%): Testing understanding of mechanisms and ideas.
+- Definition Questions (approx 20%): Testing terminology.
+- Application Questions (approx 20%): Testing how to use the knowledge.
+- Scenario Questions (approx 20%): Testing in real-world contexts.
+- Practical Questions (approx 20%): Output-based or code-analysis questions if programming content exists.
+
+Target counts for this request:
+- Concept: {concept_count} questions
+- Definition: {definition_count} questions
+- Application: {application_count} questions
+- Scenario: {scenario_count} questions
+- Practical: {practical_count} questions
+
+## ABSOLUTE RULES
+1. NEVER use the words "document", "text", "passage", or "author" — there is no source document in this task, only a concepts list.
+2. NEVER ask about what someone "learned", "did", "plans to do", or any personal narrative content. Every question must be a standalone, real-world knowledge question.
+3. Question text length: Maximum 20 words.
+4. Options: Exactly 4 options.
+5. Option length: Maximum 8 words. Keep options short, concise, and clean.
+6. Only one correct answer.
+7. Distractors must be highly plausible wrong answers a learner might pick.
+8. No duplicate questions or duplicate options.
+9. Generate a one-line explanation for why the correctAnswer is correct.
+10. No markdown formatting (no **, no ##, no backticks, no bullets) inside question, options, or explanation.
+
+## JSON OUTPUT FORMAT (raw JSON only, no markdown fences, nothing before or after):
+{
+  "quizTitle": "A concise, appropriate title for the quiz",
+  "questions": [
+    {
+      "question": "Question text (max 20 words)?",
+      "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
+      "correctAnswer": "Exact text matching the correct option",
+      "explanation": "One-line clear explanation.",
+      "category": "Concept | Definition | Application | Scenario | Practical",
+      "difficulty": "Easy | Medium | Hard"
+    }
+  ]
+}

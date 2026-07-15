@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "fermentId": "019f21e0-9d15-72bf-b0ce-626c1514e9a0",
+  "phaseId": "phase-1",
+  "phaseName": "Extract shared proctoring shell",
+  "attempt": 1,
+  "timestamp": "2026-07-02T09:20:41.051Z",
+  "goal": "Create a reusable exam proctoring wrapper that enforces fullscreen, screen-share reconnect, and 3-strike termination so coding assessment can use it.",
+  "summary": "Created a reusable ExamProctorShell component that replicates QuizTaking's fullscreen 3-strike rule and screen-share pause/resume/auto-submit behavior. The file compiles with the production build.",
+  "stepSummaries": "  1. Create src/proctoring/components/ExamProctorShell.jsx with fullscreen 3-strike logic and screen-share pause/resume overlay extracted from QuizTaking. [verified]",
+  "diffAvailable": false,
+  "diffFilesChanged": "(git unavailable)",
+  "flags": [],
+  "derivedGrade": "A",
+  "reviewerRationale": "All gates pass; project checks validate.",
+  "gateVerdicts": [
+    {
+      "id": "F1",
+      "verdict": "pass",
+      "rationale": "The step verification included a successful production build and grep check, so the artifact is real and exercised.",
+      "evidence": "npm run build succeeded; grep MAX_WARNINGS in ExamProctorShell.jsx."
+    },
+    {
+      "id": "F2",
+      "verdict": "pass",
+      "rationale": "The phase goal was to create a reusable proctoring shell; the file exists with the required props and behaviors.",
+      "evidence": "src/proctoring/components/ExamProctorShell.jsx exports a component with fullscreen enforcement, screen-share monitoring, and overlays."
+    },
+    {
+      "id": "F3",
+      "verdict": "pass",
+      "rationale": "Nothing deferred; the shell is ready for integration into the coding page.",
+      "evidence": "n/a"
+    }
+  ],
+  "projectChecks": {
+    "discovered": false,
+    "anyFailed": false,
+    "commands": []
+  }
+}

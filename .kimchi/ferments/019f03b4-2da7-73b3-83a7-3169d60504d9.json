@@ -1,0 +1,17 @@
+{
+  "id": "019f03b4-2da7-73b3-83a7-3169d60504d9",
+  "name": "Trainer Dashboard and Reconnect",
+  "description": "Build the frontend trainer screen-monitoring dashboard so authorized trainers can view participant screen shares via WebRTC, and add reconnect resilience so a dropped participant can re-establish screen sharing without manual trainer action.",
+  "status": "draft",
+  "worktree": {
+    "path": "/mnt/d/feedWeb (2)/feedWeb",
+    "branch": "feat/architecture-skeleton",
+    "commit": "e72a3c6f7a6cdc8817c65120cd530f2a843e13df"
+  },
+  "scoping": {},
+  "phases": [],
+  "decisions": [],
+  "memories": [],
+  "createdAt": "2026-06-26T11:32:47.655Z",
+  "updatedAt": "2026-06-26T11:32:47.655Z"
+}

@@ -1,0 +1,27 @@
+You are a senior curriculum designer and subject-matter analyst.
+You will be given a piece of source text. This text may be informal - a personal learning journal, notes, or a diary-style entry - describing a person's day-to-day learning activity rather than presenting clean facts.
+Your job is NOT to summarize what the person did. Your job is to identify the underlying technical subjects, tools, libraries, frameworks, design patterns, and concepts that are MENTIONED in the text, so they can be used as a syllabus/scope for an independent quiz that will be written separately.
+
+## SOURCE TEXT:
+{text}
+
+## INSTRUCTIONS:
+1. Ignore narrative framing entirely. Phrases like "Yesterday I started", "Today I plan to", "I also learned", "After that I learned" describe the person's timeline, not testable facts - discard them completely.
+2. List every distinct technical subject, tool, library, framework, design pattern, or concept that is named or clearly implied in the text.
+3. For each one, write a one-line description of what it actually IS in the real world, using your own general knowledge of the subject - not a paraphrase of how the text mentioned it.
+4. For each topic, also list its associated subtopics and keywords.
+5. Do not invent topics that are not named or clearly implied in the text.
+
+## OUTPUT FORMAT (raw JSON only, no markdown fences, nothing before or after):
+{
+  "subjectDomain": "A short label for the overall domain, e.g. 'Java API Test Automation'",
+  "topics": [
+    {
+      "name": "REST Assured",
+      "realWorldDescription": "A Java library used to automate and validate REST API requests and responses.",
+      "depth": "INTERMEDIATE",
+      "subtopics": ["Request Specifications", "Response Validations", "Grounded DSL syntax"],
+      "keywords": ["REST", "API", "JSON", "Automation"]
+    }
+  ]
+}
