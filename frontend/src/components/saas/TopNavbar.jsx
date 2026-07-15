@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Search, Bell, Plus, ChevronRight, ChevronDown } from 'lucide-react'
+import { Search, Bell, ChevronRight, ChevronDown } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
 
 const initials = (name) =>
@@ -47,19 +47,6 @@ export default function TopNavbar({ user, currentPageLabel, onOpenCreate, onProf
           <Bell size={18} />
           <span className="wl-topbar-notification-dot" />
         </button>
-
-        {/* Create button (Trainer only) */}
-        {user.role === 'TRAINER' && (
-          <motion.button
-            onClick={onOpenCreate}
-            className="wl-topbar-create-btn"
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-          >
-            <Plus size={15} />
-            <span>Create</span>
-          </motion.button>
-        )}
 
         {/* User */}
         <div className="wl-topbar-user" ref={menuRef} onClick={() => setShowUserMenu(!showUserMenu)}>
