@@ -215,7 +215,7 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
   }
 
   return (
-    <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '32px', minHeight: '100vh', fontFamily: 'var(--font-primary)' }}>
+    <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '24px 32px', minHeight: '100vh', fontFamily: 'var(--font-primary)' }}>
       {tab === 'overview' && (
         <motion.div key="overview" {...fadeVariant} transition={{ duration: 0.25 }}>
           <OverviewSection

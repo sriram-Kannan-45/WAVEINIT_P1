@@ -275,7 +275,7 @@ h1, h2, h3, h4, h5, h6 {
   backdrop-filter: blur(4px);
 }
 
-.page-content { flex: 1; padding: var(--space-4); background: var(--bg-base); }
+.page-content { flex: 1; padding: 0 32px 32px; background: #f8fafc; }
 
 /* TOP HEADER BAR */
 .top-header {

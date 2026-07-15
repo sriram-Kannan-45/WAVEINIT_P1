@@ -5,6 +5,7 @@ import {
   Calendar, Users, Star, FileText, CheckCircle, Clock, MessageSquare,
   TrendingUp, BookOpen, Award, ArrowRight, Activity, Video, Plus, Code, Layers, Sparkles, Coffee
 } from 'lucide-react'
+import { LineAreaChart } from '../components/ui/ChartWrappers'
 import NotesSection from '../components/trainer/notes/NotesSection'
 import ParticipantProfileView from '../components/shared/ParticipantProfileView'
 import TrainerCourses from './TrainerCourses'
@@ -76,7 +77,7 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
       setStats(p => ({ ...p, totalTrainings: list.length, publishedCourses: published, totalLearners }))
       const activities = list.slice(0, 8).map((t, i) => ({
         id: i, type: 'course', icon: BookOpen,
-        color: t.status === 'PUBLISHED' ? '#10B981' : '#F59E0B',
+        color: t.status === 'PUBLISHED' ? '#16a34a' : '#d97706',
         message: `"${t.title}" is ${t.status === 'PUBLISHED' ? 'published' : 'in draft'}`,
         time: t.updatedAt || t.createdAt,
       }))
@@ -121,7 +122,7 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
   const Stars = ({ v }) => (
     <span style={{ display: 'flex', gap: '2px' }}>
       {[1,2,3,4,5].map(s => (
-        <Star key={s} size={13} style={{ color: s <= v ? '#F59E0B' : '#E5E7EB', fill: s <= v ? '#F59E0B' : 'none' }} />
+        <Star key={s} size={13} style={{ color: s <= v ? '#f59e0b' : '#e5e7eb', fill: s <= v ? '#f59e0b' : 'none' }} />
       ))}
     </span>
   )
@@ -132,146 +133,151 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
   )
   const totalFeedbackPages = Math.ceil(feedbacks.length / feedbackItemsPerPage)
 
+  const chartData = [
+    { name: 'Week 1', enrollments: 8 },
+    { name: 'Week 2', enrollments: 12 },
+    { name: 'Week 3', enrollments: 10 },
+    { name: 'Week 4', enrollments: 18 },
+    { name: 'Week 5', enrollments: 15 },
+    { name: 'Week 6', enrollments: 22 },
+    { name: 'Week 7', enrollments: 20 },
+  ]
+
+  const overviewStatCards = [
+    { label: 'Total Courses', value: stats.totalTrainings, icon: BookOpen, bg: '#f0f9ff', color: '#0284c7' },
+    { label: 'Active Learners', value: stats.totalLearners, icon: Users, bg: '#f0fdf4', color: '#16a34a' },
+    { label: 'Average Rating', value: stats.avgTrainerRating ? Number(stats.avgTrainerRating).toFixed(1) : '—', icon: Star, bg: '#fffbeb', color: '#d97706' },
+    { label: 'Feedback Received', value: stats.totalFeedbacks, icon: MessageSquare, bg: '#faf5ff', color: '#9333ea' },
+  ]
+
   return (
-    <motion.div variants={container} initial="hidden" animate="show" style={{ maxWidth: '1440px', margin: '0 auto', padding: '32px', minHeight: '100vh', fontFamily: 'var(--font-primary)' }}>
+    <motion.div variants={container} initial="hidden" animate="show" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       {/* ── Welcome Banner (only on overview tab) ── */}
       {tab === 'overview' && (
         <>
-          <motion.div
-            variants={item}
-            style={{
-              borderRadius: 'var(--radius-2xl)',
-              padding: '32px',
-              background: 'linear-gradient(135deg, #0D9488 0%, #10B981 100%)',
-              color: '#fff',
-              marginBottom: '24px',
-              position: 'relative',
-              overflow: 'hidden'
-            }}
-          >
-            <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 80% 20%, rgba(255,255,255,0.15) 0%, transparent 50%)', pointerEvents: 'none' }} />
-            <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
-                <h1 style={{ fontSize: '24px', fontWeight: 800, margin: 0, fontFamily: 'var(--font-display)', letterSpacing: '-0.02em' }}>
-                  Welcome back, {user.name?.split(' ')[0] || 'Trainer'} 👋
-                </h1>
-                <p style={{ fontSize: '14px', color: 'rgba(255,255,255,0.8)', margin: '6px 0 0' }}>
-                  Here's what's happening with your trainings today.
-                </p>
-              </div>
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <button
-                  onClick={() => onTabChange('reports')}
-                  style={{
-                    padding: '10px 20px',
-                    borderRadius: 'var(--radius-lg)',
-                    border: '1px solid rgba(255,255,255,0.3)',
-                    background: 'rgba(255,255,255,0.15)',
-                    color: '#fff',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    backdropFilter: 'blur(4px)',
-                    transition: 'background 150ms ease'
-                  }}
-                >
-                  View Reports
-                </button>
-                <button
-                  onClick={() => onTabChange('profile')}
-                  style={{
-                    padding: '10px 20px',
-                    borderRadius: 'var(--radius-lg)',
-                    border: '1px solid rgba(255,255,255,0.3)',
-                    background: '#fff',
-                    color: '#0D9488',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    transition: 'background 150ms ease'
-                  }}
-                >
-                  My Profile
-                </button>
-              </div>
+          <motion.div variants={item} className="wl-welcome">
+            <div>
+              <h1 className="wl-welcome-title">
+                Welcome back, {user.name?.split(' ')[0] || 'Trainer'} 👋
+              </h1>
+              <p className="wl-welcome-sub">
+                Here's what's happening with your trainings today.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => onTabChange('reports')}
+                style={{
+                  padding: '10px 20px', borderRadius: 10,
+                  border: '1px solid #e5e7eb', background: '#fff',
+                  color: '#374151', fontSize: 13, fontWeight: 600,
+                  cursor: 'pointer', fontFamily: 'var(--font-primary)',
+                  transition: 'all 150ms ease',
+                }}
+              >
+                View Reports
+              </motion.button>
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => onTabChange('profile')}
+                style={{
+                  padding: '10px 20px', borderRadius: 10,
+                  border: 'none', background: '#16a34a',
+                  color: '#fff', fontSize: 13, fontWeight: 600,
+                  cursor: 'pointer', fontFamily: 'var(--font-primary)',
+                  transition: 'all 150ms ease',
+                }}
+              >
+                My Profile
+              </motion.button>
             </div>
           </motion.div>
 
           {/* KPI Cards */}
-          <motion.div variants={item} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '24px', marginBottom: '32px' }}>
-            <StatCard icon={BookOpen} label="Total Courses" value={stats.totalTrainings} variant="blue" />
-            <StatCard icon={Users} label="Active Learners" value={stats.totalLearners} variant="emerald" />
-            <StatCard icon={Star} label="Average Rating" value={stats.avgTrainerRating ? Number(stats.avgTrainerRating).toFixed(1) : '—'} variant="amber" />
-            <StatCard icon={MessageSquare} label="Feedback Received" value={stats.totalFeedbacks} variant="violet" />
+          <motion.div variants={item} className="wl-stat-grid">
+            {overviewStatCards.map((s, i) => (
+              <motion.div key={s.label} className="wl-stat-card" whileHover={{ y: -2 }} transition={{ delay: i * 0.05 }}>
+                <div className="wl-stat-card-icon" style={{ background: s.bg, color: s.color }}>
+                  <s.icon size={20} />
+                </div>
+                <div>
+                  <div className="wl-stat-card-value">{s.value}</div>
+                  <div className="wl-stat-card-label">{s.label}</div>
+                </div>
+              </motion.div>
+            ))}
           </motion.div>
         </>
       )}
 
       {/* Overview Grid Layout */}
       {tab === 'overview' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: '32px', alignItems: 'start' }}>
-          
+        <div className="wl-content-grid">
           {/* Left Column */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             
-            {/* My Trainings Section */}
-            <motion.div variants={item} className="enterprise-card">
-              <div className="enterprise-card__header">
+            {/* Course Analytics Chart */}
+            <motion.div variants={item} className="wl-dash-card">
+              <div className="wl-dash-card-header">
                 <div>
-                  <h3 className="enterprise-card__title">My Courses</h3>
-                  <p style={{ fontSize: '13px', color: 'var(--neutral-500)', marginTop: '4px' }}>Quick access to your active courses</p>
+                  <h3 className="wl-dash-card-title">Course Analytics</h3>
+                  <p style={{ fontSize: 12, color: '#9ca3af', marginTop: 2 }}>Performance insights across all active tracks</p>
                 </div>
-                <button onClick={() => onTabChange('courses')} style={{ fontSize: '13px', fontWeight: 600, color: 'var(--brand-trainer)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <select style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, background: '#fff', color: '#374151', cursor: 'pointer', outline: 'none' }}>
+                  <option>This Month</option>
+                  <option>This Week</option>
+                  <option>Last Quarter</option>
+                </select>
+              </div>
+              <div className="wl-chart-container">
+                <LineAreaChart
+                  data={chartData}
+                  xKey="name"
+                  yKey="enrollments"
+                  height={200}
+                  strokeColor="#0d9488"
+                  fillColorStart="#99f6e4"
+                  fillColorEnd="#f0fdfa"
+                />
+              </div>
+            </motion.div>
+
+            {/* My Courses */}
+            <motion.div variants={item} className="wl-dash-card">
+              <div className="wl-dash-card-header">
+                <h3 className="wl-dash-card-title">My Courses</h3>
+                <button className="wl-dash-card-link" onClick={() => onTabChange('courses')}>
                   View all <ArrowRight size={12} />
                 </button>
               </div>
-              <div className="enterprise-card__body">
+              <div className="wl-dash-card-body" style={{ padding: '12px 16px 16px' }}>
                 {trainings.length === 0 ? (
                   <EmptyState icon={BookOpen} title="No courses assigned yet" description="Your assigned courses will appear here." />
                 ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
-                    {trainings.slice(0, 2).map((c) => (
-                      <div
-                        key={c.id}
-                        style={{
-                          border: '1px solid var(--neutral-150)',
-                          borderRadius: 'var(--radius-xl)',
-                          padding: '20px',
-                          background: 'var(--neutral-0)',
-                          cursor: 'pointer',
-                          transition: 'border-color 150ms ease, box-shadow 150ms ease'
-                        }}
-                        onClick={() => onTabChange('courses')}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                          <div style={{
-                            width: '40px', height: '40px', borderRadius: 'var(--radius-lg)',
-                            background: c.status === 'PUBLISHED' ? 'rgba(37, 99, 235, 0.08)' : 'rgba(245, 158, 11, 0.08)',
-                            color: c.status === 'PUBLISHED' ? '#0D9488' : '#F59E0B',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
-                          }}>
-                            <BookOpen size={18} />
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <h4 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--neutral-800)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {c.title}
-                            </h4>
-                            <span style={{ fontSize: '12px', color: 'var(--neutral-400)' }}>
-                              {(c.enrolledCount || c.participantCount || 0)} learners
-                            </span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {trainings.slice(0, 3).map((c) => (
+                      <div key={c.id} className="wl-course-card" onClick={() => onTabChange('courses')}>
+                        <div className="wl-course-card-icon" style={{
+                          background: c.status === 'PUBLISHED' ? '#f0fdf4' : '#fffbeb',
+                          color: c.status === 'PUBLISHED' ? '#16a34a' : '#d97706',
+                        }}>
+                          <BookOpen size={18} />
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="wl-course-card-title">{c.title}</div>
+                          <div className="wl-course-card-meta">
+                            {(c.enrolledCount || c.participantCount || 0)} learners
                           </div>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <span style={{
-                            fontSize: '11px', fontWeight: 600,
-                            padding: '3px 10px', borderRadius: 'var(--radius-full)',
-                            background: c.status === 'PUBLISHED' ? 'rgba(16, 185, 129, 0.08)' : 'rgba(245, 158, 11, 0.08)',
-                            color: c.status === 'PUBLISHED' ? '#10B981' : '#F59E0B'
-                          }}>
-                            {c.status || 'Draft'}
-                          </span>
-                          <ArrowRight size={14} style={{ color: 'var(--neutral-300)' }} />
-                        </div>
+                        <span className="wl-course-card-badge" style={{
+                          background: c.status === 'PUBLISHED' ? '#f0fdf4' : '#fffbeb',
+                          color: c.status === 'PUBLISHED' ? '#16a34a' : '#d97706',
+                        }}>
+                          {c.status || 'Draft'}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -279,34 +285,27 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
               </div>
             </motion.div>
 
-            {/* Learning Analytics Overview */}
-            <motion.div variants={item} className="enterprise-card">
-              <div className="enterprise-card__header">
-                <div>
-                  <h3 className="enterprise-card__title">Learning Analytics</h3>
-                  <p style={{ fontSize: '13px', color: 'var(--neutral-500)', marginTop: '4px' }}>Performance insights across all active tracks</p>
-                </div>
-                <select style={{ padding: '6px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--neutral-200)', fontSize: '12px', fontWeight: 600, background: 'white', color: 'var(--neutral-700)', cursor: 'pointer', outline: 'none' }}>
-                  <option>This Month</option>
-                  <option>This Week</option>
-                  <option>Last Quarter</option>
-                </select>
+            {/* Student Activity */}
+            <motion.div variants={item} className="wl-dash-card">
+              <div className="wl-dash-card-header">
+                <h3 className="wl-dash-card-title">Student Activity</h3>
               </div>
-              <div className="enterprise-card__body">
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '16px' }}>
-                  {[
-                    { label: 'Enrollments', value: '12', trend: '+12%', color: '#0D9488' },
-                    { label: 'Completions', value: '7', trend: '+8%', color: '#10B981' },
-                    { label: 'Avg. Quiz Score', value: '78%', trend: '+15%', color: '#F59E0B' },
-                    { label: 'Attendance Rate', value: '85%', trend: '+10%', color: '#059669' }
-                  ].map((m, idx) => (
-                    <div key={idx} style={{ border: '1px solid var(--neutral-150)', borderRadius: 'var(--radius-lg)', padding: '16px', background: 'var(--neutral-50)', transition: 'background 150ms ease' }}>
-                      <span style={{ fontSize: '12px', color: 'var(--neutral-500)', fontWeight: 500, display: 'block' }}>{m.label}</span>
-                      <span style={{ fontSize: '24px', color: 'var(--neutral-900)', fontWeight: 800, fontFamily: 'var(--font-display)', display: 'block', margin: '4px 0', letterSpacing: '-0.03em' }}>{m.value}</span>
-                      <span style={{ fontSize: '11px', color: 'var(--status-success-dark)', fontWeight: 600 }}>{m.trend}</span>
-                    </div>
-                  ))}
-                </div>
+              <div className="wl-dash-card-body">
+                {recentActivity.length === 0 ? (
+                  <EmptyState icon={Activity} title="No activity yet" description="Activity will appear here." />
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                    {recentActivity.slice(0, 5).map((act) => (
+                      <div key={act.id} className="wl-activity-item">
+                        <div className="wl-activity-dot" style={{ background: act.color }} />
+                        <div style={{ flex: 1 }}>
+                          <div className="wl-activity-text">{act.message}</div>
+                          <div className="wl-activity-time">{fmtTimeAgo(act.time)}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </motion.div>
           </div>
@@ -314,96 +313,77 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
           {/* Right Column */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             
-            {/* Upcoming Sessions Card */}
-            <motion.div variants={item} className="enterprise-card">
-              <div className="enterprise-card__header">
-                <h3 className="enterprise-card__title">Upcoming Sessions</h3>
-                <button onClick={() => onTabChange('courses')} style={{ fontSize: '12px', fontWeight: 600, color: 'var(--brand-trainer)', background: 'none', border: 'none', cursor: 'pointer' }}>View All</button>
+            {/* Upcoming Sessions */}
+            <motion.div variants={item} className="wl-dash-card">
+              <div className="wl-dash-card-header">
+                <h3 className="wl-dash-card-title">Upcoming Sessions</h3>
+                <button className="wl-dash-card-link" onClick={() => onTabChange('courses')}>View All</button>
               </div>
-              <div className="enterprise-card__body">
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {[
-                    { date: '16', month: 'JUL', title: 'React Advanced Concepts', time: '10:00 AM - 12:00 PM' },
-                    { date: '18', month: 'JUL', title: 'Node.js Best Practices', time: '02:00 PM - 04:00 PM' },
-                    { date: '20', month: 'JUL', title: 'Java Collections Framework', time: '11:00 AM - 01:00 PM' }
-                  ].map((s, idx) => (
-                    <div key={idx} style={{ display: 'flex', gap: '12px', alignItems: 'center', padding: '12px', borderRadius: 'var(--radius-lg)', transition: 'background 150ms ease', cursor: 'pointer' }}>
-                      <div style={{ width: '48px', height: '48px', borderRadius: 'var(--radius-lg)', background: 'var(--brand-trainer-bg)', color: 'var(--brand-trainer)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0 }}>
-                        <span style={{ fontSize: '10px', textTransform: 'uppercase', lineHeight: 1 }}>{s.month}</span>
-                        <span style={{ fontSize: '16px', lineHeight: 1 }}>{s.date}</span>
+              <div className="wl-dash-card-body" style={{ padding: '8px 16px 16px' }}>
+                {[
+                  { date: '16', month: 'JUL', title: 'React Advanced Concepts', time: '10:00 AM - 12:00 PM' },
+                  { date: '18', month: 'JUL', title: 'Node.js Best Practices', time: '02:00 PM - 04:00 PM' },
+                  { date: '20', month: 'JUL', title: 'Java Collections Framework', time: '11:00 AM - 01:00 PM' }
+                ].map((s, idx) => (
+                  <div key={idx} className="wl-session-card">
+                    <div className="wl-session-date">
+                      <span className="wl-session-date-month">{s.month}</span>
+                      <span className="wl-session-date-day">{s.date}</span>
+                    </div>
+                    <div className="wl-session-info">
+                      <div className="wl-session-title">{s.title}</div>
+                      <div className="wl-session-time">{s.time}</div>
+                    </div>
+                    <span className="wl-session-badge">+ Live</span>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+
+            {/* Recent Enrollments */}
+            <motion.div variants={item} className="wl-dash-card">
+              <div className="wl-dash-card-header">
+                <h3 className="wl-dash-card-title">Recent Enrollments</h3>
+              </div>
+              <div className="wl-dash-card-body">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                  {recentActivity.slice(0, 4).map((act) => (
+                    <div key={act.id} className="wl-activity-item">
+                      <div className="wl-activity-dot" style={{ background: act.color }} />
+                      <div style={{ flex: 1 }}>
+                        <div className="wl-activity-text">{act.message}</div>
+                        <div className="wl-activity-time">{fmtTimeAgo(act.time)}</div>
                       </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--neutral-800)', marginBottom: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title}</h4>
-                        <span style={{ fontSize: '11px', color: 'var(--neutral-400)', fontWeight: 500 }}>{s.time}</span>
-                      </div>
-                      <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--brand-trainer)', background: 'var(--brand-trainer-bg)', borderRadius: 'var(--radius-full)', padding: '2px 8px', textTransform: 'uppercase', flexShrink: 0 }}>
-                        + Live
-                      </span>
                     </div>
                   ))}
                 </div>
               </div>
             </motion.div>
 
-            {/* Recent Activity Card */}
-            <motion.div variants={item} className="enterprise-card">
-              <div className="enterprise-card__header">
-                <h3 className="enterprise-card__title">Recent Activity</h3>
-                <button onClick={() => onTabChange('courses')} style={{ fontSize: '12px', fontWeight: 600, color: 'var(--brand-trainer)', background: 'none', border: 'none', cursor: 'pointer' }}>View All</button>
+            {/* Quick Actions */}
+            <motion.div variants={item} className="wl-dash-card">
+              <div className="wl-dash-card-header">
+                <h3 className="wl-dash-card-title">Quick Actions</h3>
               </div>
-              <div className="enterprise-card__body">
-                {recentActivity.length === 0 ? (
-                  <EmptyState icon={Activity} title="No activity yet" description="Activity will appear here." />
-                ) : (
-                  <div style={{ position: 'relative', paddingLeft: '24px' }}>
-                    <div style={{ position: 'absolute', left: '8px', top: '8px', bottom: '8px', width: '2px', background: 'var(--neutral-150)', pointerEvents: 'none' }} />
-                    {recentActivity.slice(0, 4).map((act) => (
-                      <div key={act.id} style={{ position: 'relative', marginBottom: '20px' }}>
-                        <div style={{ position: 'absolute', left: '-20px', top: '6px', width: '10px', height: '10px', borderRadius: '50%', background: act.color, border: '2px solid white', boxShadow: '0 0 0 4px var(--neutral-50)' }} />
-                        <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--neutral-700)', lineHeight: 1.4, margin: 0 }}>{act.message}</p>
-                        <span style={{ fontSize: '11px', color: 'var(--neutral-400)', fontWeight: 500 }}>{fmtTimeAgo(act.time)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </motion.div>
-
-            {/* Quick Actions Card */}
-            <motion.div variants={item} className="enterprise-card">
-              <div className="enterprise-card__header">
-                <h3 className="enterprise-card__title">Quick Actions</h3>
-              </div>
-              <div className="enterprise-card__body">
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div className="wl-dash-card-body">
+                <div className="wl-action-grid">
                   {[
-                    { label: 'Create Course', icon: Plus, bg: 'rgba(5, 150, 105, 0.08)', color: '#0D9488', action: () => { onTabChange('courses'); setTimeout(() => { window.dispatchEvent(new CustomEvent('open-create-course')) }, 100); } },
-                    { label: 'Live Session', icon: Video, bg: 'rgba(16, 185, 129, 0.08)', color: '#10B981', action: () => { window.location.href = '/trainer/monitoring'; } },
-                    { label: 'Create Quiz', icon: Sparkles, bg: 'rgba(245, 158, 11, 0.08)', color: '#F59E0B', action: () => { success('Launch AI Quiz generator from any Course structure!'); } },
-                    { label: 'New Assignment', icon: FileText, bg: 'rgba(16, 185, 129, 0.08)', color: '#059669', action: () => { success('Open Assignments editor from Course Details page'); } }
+                    { label: 'Create Course', icon: Plus, bg: '#f0fdf4', color: '#16a34a', action: () => { onTabChange('courses'); setTimeout(() => { window.dispatchEvent(new CustomEvent('open-create-course')) }, 100); } },
+                    { label: 'Live Session', icon: Video, bg: '#f0f9ff', color: '#0284c7', action: () => { window.location.href = '/trainer/monitoring'; } },
+                    { label: 'Create Quiz', icon: Sparkles, bg: '#fffbeb', color: '#d97706', action: () => { success('Launch AI Quiz generator from any Course structure!'); } },
+                    { label: 'New Assignment', icon: FileText, bg: '#faf5ff', color: '#9333ea', action: () => { success('Open Assignments editor from Course Details page'); } }
                   ].map((act, idx) => (
                     <motion.button
                       key={idx}
                       onClick={act.action}
+                      className="wl-action-btn"
                       whileHover={{ y: -2 }}
                       whileTap={{ scale: 0.98 }}
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        padding: '16px',
-                        borderRadius: 'var(--radius-lg)',
-                        border: '1px solid var(--neutral-150)',
-                        background: 'var(--neutral-50)',
-                        cursor: 'pointer',
-                        transition: 'all 150ms ease',
-                      }}
                     >
-                      <div style={{ width: '40px', height: '40px', borderRadius: 'var(--radius-lg)', background: act.bg, color: act.color, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '8px' }}>
+                      <div className="wl-action-icon" style={{ background: act.bg, color: act.color }}>
                         <act.icon size={18} />
                       </div>
-                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--neutral-700)' }}>{act.label}</span>
+                      <span className="wl-action-label">{act.label}</span>
                     </motion.button>
                   ))}
                 </div>
@@ -429,8 +409,8 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
               <p style={{ fontSize: '13px', color: 'var(--neutral-500)', marginTop: '4px' }}>Ratings and comments from participants</p>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: 'rgba(245, 158, 11, 0.08)', borderRadius: 'var(--radius-md)' }}>
-              <Star size={14} style={{ color: '#F59E0B', fill: '#F59E0B' }} />
-              <span style={{ fontSize: '13px', fontWeight: 600, color: '#B45309' }}>{stats.avgTrainerRating ? Number(stats.avgTrainerRating).toFixed(1) : '—'}</span>
+              <Star size={14} style={{ color: '#f59e0b', fill: '#f59e0b' }} />
+              <span style={{ fontSize: '13px', fontWeight: 600, color: '#92400e' }}>{stats.avgTrainerRating ? Number(stats.avgTrainerRating).toFixed(1) : '—'}</span>
             </div>
           </div>
           <div className="enterprise-card__body">

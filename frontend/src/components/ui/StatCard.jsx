@@ -1,12 +1,12 @@
 import { motion } from 'framer-motion'
 
 const colorMap = {
-  primary: { bg: 'rgba(5, 150, 105, 0.08)', color: '#059669', border: 'rgba(5, 150, 105, 0.15)' },
-  emerald: { bg: 'rgba(16, 185, 129, 0.08)', color: '#10B981', border: 'rgba(16, 185, 129, 0.15)' },
-  amber: { bg: 'rgba(245, 158, 11, 0.08)', color: '#F59E0B', border: 'rgba(245, 158, 11, 0.15)' },
-  blue: { bg: 'rgba(13, 148, 136, 0.08)', color: '#0D9488', border: 'rgba(13, 148, 136, 0.15)' },
-  violet: { bg: 'rgba(16, 185, 129, 0.06)', color: '#059669', border: 'rgba(16, 185, 129, 0.12)' },
-  rose: { bg: 'rgba(244, 63, 94, 0.08)', color: '#F43F5E', border: 'rgba(244, 63, 94, 0.15)' },
+  primary: { bg: 'rgba(22, 163, 74, 0.06)', color: '#16a34a', border: 'rgba(22, 163, 74, 0.1)' },
+  emerald: { bg: 'rgba(16, 185, 129, 0.06)', color: '#10B981', border: 'rgba(16, 185, 129, 0.1)' },
+  amber: { bg: 'rgba(245, 158, 11, 0.06)', color: '#F59E0B', border: 'rgba(245, 158, 11, 0.1)' },
+  blue: { bg: 'rgba(13, 148, 136, 0.06)', color: '#0D9488', border: 'rgba(13, 148, 136, 0.1)' },
+  violet: { bg: 'rgba(147, 51, 234, 0.06)', color: '#9333ea', border: 'rgba(147, 51, 234, 0.1)' },
+  rose: { bg: 'rgba(244, 63, 94, 0.06)', color: '#F43F5E', border: 'rgba(244, 63, 94, 0.1)' },
 }
 
 export default function StatCard({
@@ -21,65 +21,43 @@ export default function StatCard({
   const colors = colorMap[variant] || colorMap.primary
 
   return (
-    <motion.div 
-      className={`stat-card ${className}`}
+    <motion.div
+      className={`wl-stat-card ${className}`}
       whileHover={{ y: -2 }}
       transition={{ duration: 0.2 }}
     >
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <div>
-          <span style={{ 
-            fontSize: '12px', 
-            fontWeight: 600, 
-            color: 'var(--neutral-500)',
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-            display: 'block',
-            marginBottom: '8px'
+      <div className="wl-stat-card-icon" style={{
+        background: colors.bg,
+        color: colors.color,
+      }}>
+        {Icon && <Icon size={20} />}
+      </div>
+      <div>
+        <span style={{
+          display: 'block',
+          fontSize: '12px',
+          fontWeight: 500,
+          color: '#6b7280',
+          marginBottom: '2px',
+        }}>
+          {label}
+        </span>
+        <span className="wl-stat-card-value">
+          {value}
+        </span>
+        {trend && (
+          <span style={{
+            display: 'inline-block',
+            marginTop: '6px',
+            fontSize: '11px',
+            fontWeight: 600,
+            padding: '2px 8px',
+            borderRadius: '9999px',
+            background: trendColor === 'success' ? '#f0fdf4' : trendColor === 'danger' ? '#fef2f2' : '#fffbeb',
+            color: trendColor === 'success' ? '#16a34a' : trendColor === 'danger' ? '#ef4444' : '#d97706',
           }}>
-            {label}
+            {trend}
           </span>
-          <span style={{ 
-            fontSize: '28px', 
-            fontWeight: 800, 
-            color: 'var(--neutral-900)',
-            fontFamily: 'var(--font-display)',
-            letterSpacing: '-0.03em',
-            lineHeight: 1,
-            display: 'block'
-          }}>
-            {value}
-          </span>
-          {trend && (
-            <span style={{ 
-              fontSize: '12px', 
-              fontWeight: 600,
-              marginTop: '8px',
-              display: 'inline-block',
-              padding: '2px 8px',
-              borderRadius: 'var(--radius-full)',
-              background: trendColor === 'success' ? 'var(--status-success-bg)' : trendColor === 'danger' ? 'var(--status-error-bg)' : 'var(--status-warning-bg)',
-              color: trendColor === 'success' ? 'var(--status-success-dark)' : trendColor === 'danger' ? 'var(--status-error-dark)' : 'var(--status-warning-dark)',
-            }}>
-              {trend}
-            </span>
-          )}
-        </div>
-        {Icon && (
-          <div style={{
-            width: '44px',
-            height: '44px',
-            borderRadius: 'var(--radius-lg)',
-            background: colors.bg,
-            border: `1px solid ${colors.border}`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: colors.color,
-            flexShrink: 0,
-          }}>
-            <Icon size={20} />
-          </div>
         )}
       </div>
     </motion.div>
