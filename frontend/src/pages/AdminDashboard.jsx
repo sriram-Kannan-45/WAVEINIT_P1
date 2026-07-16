@@ -11,6 +11,7 @@ import { API, API_BASE } from '../api/api'
 import { Loader2, TrendingUp, MessageSquare, Star, User, Users, ClipboardList, ChevronDown, X } from 'lucide-react'
 import AdminOverviewTab from '../components/admin/tabs/AdminOverviewTab'
 import BulkImportParticipants from '../components/admin/BulkImportParticipants'
+import RegistrationApplications from '../components/admin/RegistrationApplications'
 import { Button, Badge, Table, PageHeader, EmptyState, StatCard } from '../components/ui'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'
@@ -499,6 +500,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const TABS = [
     { key: 'overview', label: 'Overview' },
+    { key: 'applications', label: 'Applications' },
     { key: 'pending', label: 'Pending Approval' },
     { key: 'trainings', label: 'Trainings' },
     { key: 'trainers', label: 'Trainers' },
@@ -543,6 +545,13 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
           initialLoading={initialLoading}
           loading={loading}
         />
+      )}
+
+      {/* ── APPLICATIONS ── */}
+      {tab === 'applications' && (
+        <motion.div variants={itemVariants}>
+          <RegistrationApplications user={user} />
+        </motion.div>
       )}
 
       {/* ── PENDING APPROVAL ── */}

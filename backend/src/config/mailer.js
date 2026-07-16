@@ -177,6 +177,70 @@ async function sendOtpEmail(email, otp, { expiresInMinutes = 5 } = {}) {
   return info;
 }
 
+function credentialsEmailHtml({ participantName, trainingName, participantId, temporaryPassword, loginUrl, brand = APP_NAME }) {
+  const year = new Date().getFullYear();
+  return `
+<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 16px">
+    <tr><td align="center">
+      <table role="presentation" width="520" cellpadding="0" cellspacing="0" style="max-width:520px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(15,23,42,0.06);overflow:hidden">
+        <tr><td style="background:linear-gradient(135deg,#0D9488,#0f766e);padding:28px 32px;color:#fff">
+          <div style="font-size:13px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;opacity:0.85">${brand}</div>
+          <h1 style="margin:6px 0 0;font-size:22px;font-weight:800;letter-spacing:-0.02em">Welcome to ${brand}!</h1>
+        </td></tr>
+        <tr><td style="padding:28px 32px 8px;color:#334155;font-size:14.5px;line-height:1.6">
+          <p style="margin:0 0 12px">Hello <strong>${participantName}</strong>,</p>
+          <p style="margin:0 0 12px">Your registration has been approved! Below are your login credentials.</p>
+        </td></tr>
+        <tr><td style="padding:8px 32px">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
+            <tr><td style="padding:14px 20px;border-bottom:1px solid #e2e8f0">
+              <span style="font-size:12px;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">Training Program</span>
+              <div style="font-size:15px;font-weight:600;color:#0f172a;margin-top:4px">${trainingName}</div>
+            </td></tr>
+            <tr><td style="padding:14px 20px;border-bottom:1px solid #e2e8f0">
+              <span style="font-size:12px;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">Participant ID</span>
+              <div style="font-size:18px;font-weight:800;color:#0D9488;margin-top:4px;font-family:'SF Mono',Menlo,Consolas,monospace">${participantId}</div>
+            </td></tr>
+            <tr><td style="padding:14px 20px">
+              <span style="font-size:12px;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">Temporary Password</span>
+              <div style="font-size:18px;font-weight:800;color:#0D9488;margin-top:4px;font-family:'SF Mono',Menlo,Consolas,monospace">${temporaryPassword}</div>
+            </td></tr>
+          </table>
+        </td></tr>
+        <tr><td style="padding:20px 32px 8px" align="center">
+          <a href="${loginUrl}" style="display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#0D9488,#0f766e);color:#fff;font-size:14px;font-weight:700;border-radius:10px;text-decoration:none;box-shadow:0 2px 8px rgba(13,148,136,0.3)">Login to ${brand}</a>
+        </td></tr>
+        <tr><td style="padding:16px 32px 8px;color:#334155;font-size:13px;line-height:1.6">
+          <p style="margin:0 0 8px;color:#dc2626;font-weight:600">Important: Please change your password after your first login for security.</p>
+          <p style="margin:0;color:#64748b;font-size:12px">Do not share these credentials with anyone.</p>
+        </td></tr>
+        <tr><td style="padding:14px 32px 24px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:12px;line-height:1.55">
+          This is an automated message — please do not reply.<br>
+          &copy; ${year} ${brand}. All rights reserved.
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+async function sendCredentialsEmail({ to, participantName, trainingName, participantId, temporaryPassword, loginUrl }) {
+  if (!transporter) throw new Error('Mailer not configured');
+  const info = await transporter.sendMail({
+    from: `"${APP_NAME} Support" <${GMAIL_USER}>`,
+    to,
+    subject: `Welcome to ${APP_NAME} — Your Login Credentials`,
+    text: `Hello ${participantName},\n\nYour registration has been approved!\n\nTraining: ${trainingName}\nParticipant ID: ${participantId}\nTemporary Password: ${temporaryPassword}\n\nLogin: ${loginUrl}\n\nPlease change your password after your first login.\n\nRegards,\n${APP_NAME} LMS`,
+    html: credentialsEmailHtml({ participantName, trainingName, participantId, temporaryPassword, loginUrl }),
+  });
+  console.log(`[MAIL SUCCESS] Credentials email sent to ${to} | MessageID: ${info.messageId}`);
+  return info;
+}
+
 async function sendTestEmail(to) {
   if (!transporter) throw new Error('Mailer not configured (set GMAIL_USER + GMAIL_APP_PASS in backend/.env)');
   const info = await transporter.sendMail({
@@ -193,6 +257,7 @@ async function sendTestEmail(to) {
 module.exports = {
   transporter,
   sendOtpEmail,
+  sendCredentialsEmail,
   sendTestEmail,
   isEmailConfigured,
   getMailerStatus,

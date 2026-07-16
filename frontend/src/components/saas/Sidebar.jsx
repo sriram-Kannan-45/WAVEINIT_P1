@@ -109,6 +109,7 @@ export const navGroups = {
     {
       title: 'MANAGEMENT',
       items: [
+        { key: 'applications', label: 'Applications', icon: 'Participants' },
         { key: 'pending', label: 'Pending Approval', icon: 'Overview' },
         { key: 'trainings', label: 'Trainings', icon: 'Trainings' },
         { key: 'trainers', label: 'Trainers', icon: 'Trainers' },
@@ -128,7 +129,7 @@ export const navGroups = {
   ],
   TRAINER: [
     { title: 'OVERVIEW', items: [{ key: 'overview', label: 'Dashboard', icon: 'Dashboard' }, { key: 'courses', label: 'My Courses', icon: 'Courses' }] },
-    { title: 'CONTENT', items: [{ key: 'notes', label: 'Notes', icon: 'Notes' }, { key: 'assignments', label: 'Assignments', icon: 'ClipboardList' }] },
+    { title: 'CONTENT', items: [{ key: 'credentials', label: 'Participant Credentials', icon: 'Notes' }, { key: 'notes', label: 'Notes', icon: 'Notes' }, { key: 'assignments', label: 'Assignments', icon: 'ClipboardList' }] },
     { title: 'INSIGHTS', items: [{ key: 'reports', label: 'Reports', icon: 'Trainer Reports' }, { key: 'feedback', label: 'Feedback', icon: 'Feedback' }] },
     { title: 'ACCOUNT', items: [{ key: 'profile', label: 'My Profile', icon: 'My Profile' }] },
   ],
@@ -142,6 +143,7 @@ export const navGroups = {
 
 const pageDescriptions = {
   overview: 'Monitor your platform activity and key metrics',
+  applications: 'Review and manage registration applications',
   pending: 'Review and approve pending registrations',
   trainings: 'Manage all training programs',
   trainers: 'Manage trainer accounts and assignments',
@@ -152,6 +154,7 @@ const pageDescriptions = {
   feedback: 'View and respond to feedback',
   surveys: 'Create and manage surveys',
   courses: 'Manage your training courses',
+  credentials: 'Send login credentials to participants',
   reports: 'View detailed analytics and reports',
   profile: 'Manage your account settings',
   myEnrollments: 'Your enrolled training programs',

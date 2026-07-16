@@ -9,16 +9,16 @@ export default {
     extend: {
       colors: {
         primary: {
-          50: 'var(--primary-50, #F0FDFA)',
-          100: 'var(--primary-100, #CCFBF1)',
-          200: 'var(--primary-200, #99F6E4)',
-          300: 'var(--primary-300, #5EEAD4)',
-          400: 'var(--primary-400, #2DD4BF)',
-          500: 'var(--primary-500, #14B8A6)',
-          600: 'var(--primary-600, #0D9488)',
-          700: 'var(--primary-700, #0F766E)',
-          800: 'var(--primary-800, #115E59)',
-          900: 'var(--primary-900, #134E4A)',
+          50: 'var(--primary-50, #F0FDF4)',
+          100: 'var(--primary-100, #DCFCE7)',
+          200: 'var(--primary-200, #BBF7D0)',
+          300: 'var(--primary-300, #86EFAC)',
+          400: 'var(--primary-400, #4ADE80)',
+          500: 'var(--primary-500, #22C55E)',
+          600: 'var(--primary-600, #16A34A)',
+          700: 'var(--primary-700, #15803D)',
+          800: 'var(--primary-800, #166534)',
+          900: 'var(--primary-900, #14532D)',
         },
         accent: {
           50: '#FFFBEB',
@@ -62,8 +62,8 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
-        display: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        sans: ['Poppins', 'Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        display: ['Poppins', 'Inter', 'system-ui', '-apple-system', 'sans-serif'],
         mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
       },
       fontSize: {
@@ -118,13 +118,13 @@ export default {
         shimmer: { '0%': { backgroundPosition: '-200% 0' }, '100%': { backgroundPosition: '200% 0' } },
       },
       backgroundImage: {
-        'gradient-primary': 'var(--gradient-primary, linear-gradient(135deg, #0D9488 0%, #14B8A6 100%))',
+        'gradient-primary': 'var(--gradient-primary, linear-gradient(135deg, #16A34A 0%, #22C55E 100%))',
         'gradient-secondary': 'linear-gradient(135deg, #2563EB 0%, #3B82F6 100%)',
         'gradient-success': 'linear-gradient(135deg, #16A34A 0%, #22C55E 100%)',
         'gradient-warning': 'linear-gradient(135deg, #D97706 0%, #F59E0B 100%)',
         'gradient-danger': 'linear-gradient(135deg, #DC2626 0%, #EF4444 100%)',
         'gradient-sidebar': 'linear-gradient(180deg, #0F172A 0%, #16213E 100%)',
-        'gradient-hero': 'var(--gradient-hero, linear-gradient(135deg, #0D9488 0%, #0891B2 50%, #2563EB 100%))',
+        'gradient-hero': 'var(--gradient-hero, linear-gradient(135deg, #15803D 0%, #16A34A 50%, #22C55E 100%))',
       },
       transitionDuration: {
         'fast': '150ms',

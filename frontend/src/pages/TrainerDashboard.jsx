@@ -9,6 +9,7 @@ import { LineAreaChart } from '../components/ui/ChartWrappers'
 import NotesSection from '../components/trainer/notes/NotesSection'
 import ParticipantProfileView from '../components/shared/ParticipantProfileView'
 import TrainerCourses from './TrainerCourses'
+import ParticipantCredentials from '../components/trainer/ParticipantCredentials'
 import { useToast } from '../components/Toast'
 import Pagination from '../components/Pagination'
 import { Button, Badge, EmptyState, StatCard, ProgressBar } from '../components/ui'
@@ -397,6 +398,13 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
       {tab === 'courses' && (
         <motion.div variants={item}>
           <TrainerCourses user={user} />
+        </motion.div>
+      )}
+
+      {/* Credentials Tab */}
+      {tab === 'credentials' && (
+        <motion.div variants={item}>
+          <ParticipantCredentials user={user} />
         </motion.div>
       )}
 

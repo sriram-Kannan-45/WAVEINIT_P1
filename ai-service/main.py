@@ -2281,6 +2281,144 @@ async def normalize_data(request: dict):
         }
 
 
+@app.post("/validate-application")
+async def validate_application(request: dict):
+    """
+    Validate a participant registration application using AI.
+    Normalizes names, validates email/phone, scores the application,
+    detects duplicates, suggests batch, and generates recommendations.
+    """
+    try:
+        first_name = request.get("firstName", "")
+        last_name = request.get("lastName", "")
+        email = request.get("email", "")
+        phone = request.get("phone", "")
+        qualification = request.get("qualification", "")
+        experience = request.get("experience", "")
+        training_program = request.get("trainingProgram", "")
+        gender = request.get("gender", "")
+        city = request.get("city", "")
+        state = request.get("state", "")
+
+        prompt_parts = [
+            "You are an AI registration validator for an enterprise Learning Management System (Wave Init LMS).",
+            "Analyze the following participant application and provide comprehensive validation.",
+            "",
+            "APPLICATION DATA:",
+            f'  Name: {first_name} {last_name}',
+            f'  Email: {email}',
+            f'  Phone: {phone}',
+            f'  Gender: {gender}',
+            f'  Qualification: {qualification}',
+            f'  Experience: {experience}',
+            f'  Training Program: {training_program}',
+            f'  City: {city}',
+            f'  State: {state}',
+            "",
+            "ANALYSIS REQUIRED:",
+            "1. Normalize first and last names (fix capitalization, spelling)",
+            "2. Validate email format and domain quality",
+            "3. Validate phone number format",
+            "4. Score the application 0-100 based on completeness and quality",
+            "5. Detect potential duplicate applications (suspicious patterns)",
+            "6. Suggest the best training batch for this applicant",
+            "7. Predict dropout risk (Low/Medium/High)",
+            "8. List prerequisite courses if applicable",
+            "9. Generate an onboarding checklist",
+            "10. Generate a brief welcome message",
+            "11. Recommend a trainer type if applicable",
+            "",
+            "Return ONLY valid JSON:",
+            "{",
+            '  "normalizedNames": {"firstName": "...", "lastName": "..."},',
+            '  "emailValid": true/false,',
+            '  "phoneValid": true/false,',
+            '  "applicationScore": 85,',
+            '  "scoreLabel": "Ready for Approval",',
+            '  "duplicateWarning": null or "string warning message",',
+            '  "recommendedBatch": "Batch Name",',
+            '  "dropoutRisk": "Low",',
+            '  "prerequisites": ["course1", "course2"],',
+            '  "onboardingChecklist": ["step1", "step2", "step3"],',
+            '  "welcomeMessage": "Welcome message text",',
+            '  "recommendations": {',
+            '    "suggestedTrainerType": "senior",',
+            '    "notes": "additional notes"',
+            "  }",
+            "}",
+        ]
+
+        raw_json = gemini_client.generate_content(
+            "\n".join(prompt_parts),
+            temperature=0.2,
+            response_json=True,
+            doc_name="validate-application",
+        )
+
+        try:
+            result = json.loads(raw_json)
+        except json.JSONDecodeError:
+            json_match = re.search(r'\{.*\}', raw_json, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+            else:
+                result = {}
+
+        return {
+            "success": True,
+            "normalizedNames": result.get("normalizedNames", {
+                "firstName": first_name.strip().title(),
+                "lastName": last_name.strip().title(),
+            }),
+            "emailValid": result.get("emailValid", bool(re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]+$', email))),
+            "phoneValid": result.get("phoneValid", True),
+            "applicationScore": result.get("applicationScore", 50),
+            "scoreLabel": result.get("scoreLabel", "Pending Review"),
+            "duplicateWarning": result.get("duplicateWarning"),
+            "recommendedBatch": result.get("recommendedBatch"),
+            "dropoutRisk": result.get("dropoutRisk", "Low"),
+            "prerequisites": result.get("prerequisites", []),
+            "onboardingChecklist": result.get("onboardingChecklist", []),
+            "welcomeMessage": result.get("welcomeMessage", "Welcome to Wave Init LMS!"),
+            "recommendations": result.get("recommendations", {}),
+        }
+
+    except GeminiTemporaryError as e:
+        log.error("Gemini temporary error during application validation: %s", e)
+        return {
+            "success": True,
+            "normalizedNames": {"firstName": first_name.strip().title(), "lastName": last_name.strip().title()},
+            "emailValid": bool(re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]+$', email)) if email else False,
+            "phoneValid": True,
+            "applicationScore": 50,
+            "scoreLabel": "Pending Review (AI Unavailable)",
+            "duplicateWarning": None,
+            "recommendedBatch": None,
+            "dropoutRisk": "Unknown",
+            "prerequisites": [],
+            "onboardingChecklist": ["Verify identity", "Send welcome email"],
+            "welcomeMessage": "Welcome to Wave Init LMS!",
+            "recommendations": {},
+        }
+    except Exception as e:
+        log.error("Application validation failed: %s", e, exc_info=True)
+        return {
+            "success": True,
+            "normalizedNames": {"firstName": first_name.strip().title(), "lastName": last_name.strip().title()},
+            "emailValid": True,
+            "phoneValid": True,
+            "applicationScore": 50,
+            "scoreLabel": "Pending Review",
+            "duplicateWarning": None,
+            "recommendedBatch": None,
+            "dropoutRisk": "Unknown",
+            "prerequisites": [],
+            "onboardingChecklist": [],
+            "welcomeMessage": "",
+            "recommendations": {},
+        }
+
+
 @app.post("/evaluate", response_model=EvaluateResponse)
 async def evaluate_answer(request: EvaluateRequest):
     """Evaluate a short answer using AI."""

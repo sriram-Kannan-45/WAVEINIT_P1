@@ -112,6 +112,10 @@ app.use('/api/live', liveRoutes);
 app.use('/api/ai-quiz', aiQuizRoutes);
 app.use('/api/quizzes', quizzesRoutes);
 
+// Registration workflow routes
+const registrationRoutes = require('./routes/registrationRoutes');
+app.use('/api/registration', registrationRoutes);
+
 // Endpoint GET /api/attempts/:attemptId
 app.get('/api/attempts/:attemptId', authenticateToken, async (req, res) => {
   try {
@@ -315,6 +319,15 @@ const startServer = async () => {
       logger.info('discussion_posts table ready');
     } catch (e) {
       logger.error('Could not sync discussion_posts', { error: e.message });
+    }
+
+    // Sync RegistrationApplication table
+    try {
+      const { RegistrationApplication } = require('./models');
+      await RegistrationApplication.sync({ alter: true });
+      logger.info('registration_applications table ready');
+    } catch (e) {
+      logger.error('Could not sync registration_applications', { error: e.message });
     }
 
     // Sync Certificate table

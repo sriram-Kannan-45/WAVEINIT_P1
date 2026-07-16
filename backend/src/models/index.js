@@ -72,6 +72,9 @@ const CodingAttempt = require('./codingAttempt');
 const CodingSubmission = require('./codingSubmission');
 const CodingResult = require('./codingResult');
 
+// Registration Application module
+const RegistrationApplication = require('./registrationApplication');
+
 // --- Core LMS Associations ---
 
 // User <-> TrainerProfile
@@ -326,6 +329,12 @@ CodingResult.belongsTo(User, { foreignKey: 'participantId', as: 'participant' })
 User.hasMany(CodingAssessment, { foreignKey: 'trainerId', as: 'codingAssessments' });
 Training.hasMany(CodingAssessment, { foreignKey: 'trainingId', as: 'codingAssessments' });
 
+// RegistrationApplication associations
+RegistrationApplication.belongsTo(Training, { foreignKey: 'trainingId', as: 'training' });
+RegistrationApplication.belongsTo(User, { foreignKey: 'reviewerId', as: 'reviewer' });
+RegistrationApplication.belongsTo(User, { foreignKey: 'trainerId', as: 'trainer' });
+RegistrationApplication.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+
 module.exports = {
   sequelize,
   User,
@@ -390,4 +399,5 @@ module.exports = {
   CodingAttempt,
   CodingSubmission,
   CodingResult,
+  RegistrationApplication,
 };

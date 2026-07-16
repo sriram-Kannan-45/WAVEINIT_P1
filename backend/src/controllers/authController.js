@@ -74,6 +74,9 @@ const login = async (req, res) => {
       return res.status(403).json({ error: 'Incorrect role selected. Please choose the correct role.' });
     }
 
+    // Force password change on first login (passwordVersion === 1 means temp password)
+    const forcePasswordChange = user.passwordVersion < 2;
+
     const tokenPayload = {
       id: user.id,
       participantId: user.role === 'PARTICIPANT' ? user.id : undefined,
@@ -108,6 +111,7 @@ const login = async (req, res) => {
       username: user.username,
       role: user.role,
       status: user.status,
+      forcePasswordChange,
       token
     });
   } catch (error) {

@@ -58,6 +58,18 @@ export const API = {
     BULK_IMPORT:     `${API_BASE}/admin/participants/bulk-import`,
   },
 
+  REGISTRATION: {
+    APPLY:                `${API_BASE}/registration/apply`,
+    APPLICATIONS:         `${API_BASE}/registration/applications`,
+    STATS:                `${API_BASE}/registration/applications/stats`,
+    EXPORT:               `${API_BASE}/registration/applications/export`,
+    TRAINERS:             `${API_BASE}/registration/trainers`,
+    APPROVE:       (id)  => `${API_BASE}/registration/applications/${id}/approve`,
+    REJECT:        (id)  => `${API_BASE}/registration/applications/${id}/reject`,
+    ASSIGN_TRAINER:(id)  => `${API_BASE}/registration/applications/${id}/assign-trainer`,
+    SEND_CREDENTIALS:(id) => `${API_BASE}/registration/applications/${id}/send-credentials`,
+  },
+
   PARTICIPANT: {
     TRAININGS:     `${API_BASE}/trainings`,
     ENROLL:        `${API_BASE}/participant/enroll`,
@@ -74,6 +86,11 @@ export const API = {
 
   TRAININGS: {
     LIST: `${API_BASE}/trainer/trainings`
+  },
+
+  TRAINER_CREDENTIALS: {
+    LIST:   `${API_BASE}/registration/credentials`,
+    SEND: (id) => `${API_BASE}/registration/credentials/${id}/send`,
   },
 
   /** Backend health-check proxy for the AI microservice */
