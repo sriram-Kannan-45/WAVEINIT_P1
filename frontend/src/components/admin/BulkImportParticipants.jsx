@@ -229,7 +229,7 @@ export default function BulkImportParticipants({ user }) {
                     {validRows.slice(0, 100).map((r, i) => (
                       <tr key={i}>
                         <td>{r.row}</td>
-                        <td>{r.name} {r.normalizedName && <span className="bulk-import-tag">AI normalized</span>}</td>
+                        <td>{r.name} {r.normalizedName && <span className="bulk-import-tag">Normalized</span>}</td>
                         <td>{r.email}</td>
                         <td>{r.phone}</td>
                         <td>{r.department || '—'}</td>

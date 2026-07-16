@@ -2,7 +2,7 @@
  * adminBulkImportController.js
  * ────────────────────────────
  * Handles bulk participant import from Excel files.
- * Validates rows, normalizes data via AI, generates accounts with
+ * Validates rows, normalizes data locally, generates accounts with
  * unique IDs and secure passwords, and produces downloadable credential sheets.
  */
 const ExcelJS = require('exceljs');
@@ -11,10 +11,8 @@ const crypto = require('crypto');
 const path = require('path');
 const { User } = require('../models');
 const { Op } = require('sequelize');
-const axios = require('axios');
 
 const BCRYPT_COST = 12;
-const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
 const MAX_ROWS = 10000;
 
 const REQUIRED_COLUMNS = ['Full Name', 'Email', 'Phone Number'];
@@ -65,20 +63,6 @@ function validatePhone(phone) {
 
 function normalizePhone(phone) {
   return String(phone || '').replace(/\D/g, '');
-}
-
-async function callAINormalize(names, departments) {
-  try {
-    const response = await axios.post(`${AI_SERVICE_URL}/normalize-data`, {
-      names,
-      departments,
-    }, { timeout: 30000, headers: { 'Content-Type': 'application/json' } });
-    if (response.data?.success) return response.data;
-    return null;
-  } catch (e) {
-    console.warn('[BulkImport] AI normalization unavailable, using local fallback:', e.message);
-    return null;
-  }
 }
 
 function localNormalizeName(name) {
@@ -265,37 +249,13 @@ async function validateAndPreview(req, res) {
       }
     }
 
-    // Call AI normalization for valid rows
-    const validRows = rows.filter(r => r.valid);
-    const names = [...new Set(validRows.map(r => r.name))];
-    const departments = [...new Set(validRows.filter(r => r.department).map(r => r.department))];
-
-    let aiResult = null;
-    if (names.length > 0) {
-      aiResult = await callAINormalize(names, departments);
-    }
-
-    // Apply normalization
-    const nameMap = {};
-    const deptMap = {};
-    if (aiResult?.normalized_names) {
-      for (const item of aiResult.normalized_names) {
-        nameMap[item.original] = item.normalized;
-      }
-    }
-    if (aiResult?.normalized_departments) {
-      for (const item of aiResult.normalized_departments) {
-        deptMap[item.original] = item.normalized;
-      }
-    }
-
-    // Apply normalization to rows
+    // Normalize names and departments locally (no external AI dependency)
     for (const row of rows) {
       if (!row.valid) continue;
       const origName = row.name;
-      row.name = nameMap[row.name] || localNormalizeName(row.name);
+      row.name = localNormalizeName(row.name);
       if (row.department) {
-        row.department = deptMap[row.department] || localNormalizeDept(row.department);
+        row.department = localNormalizeDept(row.department);
       }
       row.normalizedName = row.name !== origName;
     }
