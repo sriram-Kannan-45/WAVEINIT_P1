@@ -701,60 +701,77 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
       {/* ── PARTICIPANTS ── */}
       {tab === 'participants' && (
-        <motion.div variants={itemVariants}>
-          <PageHeader
-            title="Participants"
-            subtitle="Track enrolled learners, progress, and registration status."
-            action={
-              <Button variant="primary" onClick={() => setAddParticipantModal(true)}>
-                + Add Participant
-              </Button>
-            }
-          />
-          {initialLoading ? (
-            <div className="enterprise-card"><div className="enterprise-card__body"><SkeletonTable rows={5} /></div></div>
-          ) : participants.length === 0 ? (
-            <div className="enterprise-card">
-              <EmptyState
-                icon={Users}
-                title="No Participants Yet"
-                description="Enrolled students and participants will appear here. Add your first participant to get started."
-                actionLabel="+ Add First Participant"
-                onAction={() => setAddParticipantModal(true)}
-              />
-            </div>
-          ) : (
-            <div className="enterprise-card">
-              <div className="enterprise-card__body">
-                <ParticipantList 
-                  participants={participants}
-                  loading={false}
-                  onDelete={handleDeleteParticipant}
-                  onRefresh={() => fetchParticipants()}
-                  onView={(p) => setViewingParticipant(p)}
-                  onApprove={async (id) => {
-                    const r = await fetch(`${API_BASE}/admin/approve-participant/${id}`, { method: 'POST', headers: auth() })
-                    if (r.ok) {
-                      success('Participant approved successfully')
-                      fetchParticipants()
-                    } else {
-                      const d = await r.json()
-                      showError(d.error || 'Failed to approve participant')
-                    }
-                  }}
-                  onReject={async (id) => {
-                    const r = await fetch(`${API_BASE}/admin/reject-participant/${id}`, { method: 'POST', headers: auth() })
-                    if (r.ok) {
-                      success('Participant rejected successfully')
-                      fetchParticipants()
-                    } else {
-                      const d = await r.json()
-                      showError(d.error || 'Failed to reject participant')
-                    }
-                  }}
-                />
+        <motion.div variants={itemVariants} style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+          {/* KPI Cards */}
+          <div className="wl-participants-kpi">
+            <div className="wl-participants-kpi-card">
+              <div className="wl-participants-kpi-icon" style={{ background: 'rgba(22,163,74,0.08)', color: '#16a34a' }}>
+                <Users size={28} />
+              </div>
+              <div className="wl-participants-kpi-data">
+                <div className="wl-participants-kpi-number">{participants.length}</div>
+                <div className="wl-participants-kpi-label">Total Participants</div>
               </div>
             </div>
+
+            <div className="wl-participants-kpi-card">
+              <div className="wl-participants-kpi-icon" style={{ background: 'rgba(16,185,129,0.08)', color: '#10b981' }}>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              </div>
+              <div className="wl-participants-kpi-data">
+                <div className="wl-participants-kpi-number">{participants.filter(p => (p.status || '').toUpperCase() === 'APPROVED').length}</div>
+                <div className="wl-participants-kpi-label">Approved</div>
+                <div className="wl-participants-kpi-trend wl-participants-kpi-trend--up">
+                  {participants.length > 0 ? Math.round((participants.filter(p => (p.status || '').toUpperCase() === 'APPROVED').length / participants.length) * 100) : 0}% of total
+                </div>
+              </div>
+            </div>
+
+            <div className="wl-participants-kpi-card">
+              <div className="wl-participants-kpi-icon" style={{ background: 'rgba(245,158,11,0.08)', color: '#f59e0b' }}>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              </div>
+              <div className="wl-participants-kpi-data">
+                <div className="wl-participants-kpi-number">{participants.filter(p => (p.status || '').toUpperCase() === 'PENDING').length}</div>
+                <div className="wl-participants-kpi-label">Pending Approval</div>
+                <div className="wl-participants-kpi-trend wl-participants-kpi-trend--neutral">
+                  Awaiting review
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Participant List */}
+          {initialLoading ? (
+            <div className="enterprise-card"><div className="enterprise-card__body"><SkeletonTable rows={5} /></div></div>
+          ) : (
+            <ParticipantList
+              participants={participants}
+              loading={false}
+              onDelete={handleDeleteParticipant}
+              onRefresh={() => fetchParticipants()}
+              onView={(p) => setViewingParticipant(p)}
+              onApprove={async (id) => {
+                const r = await fetch(`${API_BASE}/admin/approve-participant/${id}`, { method: 'POST', headers: auth() })
+                if (r.ok) {
+                  success('Participant approved successfully')
+                  fetchParticipants()
+                } else {
+                  const d = await r.json()
+                  showError(d.error || 'Failed to approve participant')
+                }
+              }}
+              onReject={async (id) => {
+                const r = await fetch(`${API_BASE}/admin/reject-participant/${id}`, { method: 'POST', headers: auth() })
+                if (r.ok) {
+                  success('Participant rejected successfully')
+                  fetchParticipants()
+                } else {
+                  const d = await r.json()
+                  showError(d.error || 'Failed to reject participant')
+                }
+              }}
+            />
           )}
         </motion.div>
       )}

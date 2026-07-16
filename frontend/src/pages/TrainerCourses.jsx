@@ -3,11 +3,11 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   ArrowLeft, Search, Plus, Pencil, Trash2,
   BookOpen, FileText, Users, BarChart3, Layers, Sparkles,
-  CheckCircle2, AlertCircle, Folder, MessageSquare, Code,
-  ChevronDown, ChevronRight, ChevronLeft, User, Calendar, Video, ArrowRight, Play, Eye, Star, Coffee, MoreVertical, Clock
+  CheckCircle2, Folder, MessageSquare, Code,
+  ChevronRight, ArrowRight, MoreVertical, GripVertical
 } from 'lucide-react'
-import { API, assetUrl, API_BASE } from '../api/api'
-import { Button, Badge, Table, PageHeader, EmptyState, StatCard } from '../components/ui'
+import { API } from '../api/api'
+import { StatCard } from '../components/ui'
 import { LineAreaChart } from '../components/ui/ChartWrappers'
 import { getCourseThumbnail, getThumbnailSVG } from '../config/courseThumbnailMap'
 import emptyCourseImg from '../assets/illustrations/empty-course.png'
@@ -19,10 +19,6 @@ import CourseParticipantsTab from '../components/trainer/CourseParticipantsTab'
 import CourseAnalyticsTab from '../components/trainer/CourseAnalyticsTab'
 import DiscussionBoard from '../components/shared/DiscussionBoard'
 import CourseCodingTab from '../components/trainer/CourseCodingTab'
-import {
-  colors, btnPrimary, btnSecondary, iconBtn, STATUS_BADGE,
-  lblStyle, inputStyle, th, td, typography, cardStyle, skeletonStyle
-} from '../theme/tokens'
 
 function getCourseArtwork(title, category) {
   return getCourseThumbnail(title, category)
@@ -240,8 +236,8 @@ function CoursesList({ user, onOpenCourse }) {
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search courses..."
             style={{
-              height: 42, width: '100%', borderRadius: 12, paddingLeft: 42, paddingRight: 14,
-              fontSize: 14, background: '#f9fafb', border: '1px solid #f3f4f6',
+              height: 48, width: '100%', borderRadius: 12, paddingLeft: 42, paddingRight: 14,
+              fontSize: 15, background: '#f9fafb', border: '1px solid #f3f4f6',
               outline: 'none', fontFamily: 'var(--font-primary)', boxSizing: 'border-box',
               transition: 'border-color 150ms ease, box-shadow 150ms ease',
             }}
@@ -258,7 +254,7 @@ function CoursesList({ user, onOpenCourse }) {
                 key={opt}
                 onClick={() => setStatusFilter(opt)}
                 style={{
-                  height: 36, padding: '0 16px', borderRadius: 9999, fontSize: 13, fontWeight: 600,
+                  height: 40, padding: '0 18px', borderRadius: 9999, fontSize: 13, fontWeight: 600,
                   cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   background: isActive ? '#16a34a' : '#ffffff',
                   color: isActive ? '#ffffff' : '#6b7280',
@@ -449,14 +445,7 @@ function CourseDetail({ user, courseId, onBack }) {
     { icon: Code, label: 'Coding', value: course.codingCount || 0, bg: '#eff6ff', color: '#2563eb' },
   ]
 
-  const overviewRows = [
-    { label: 'Status', value: course.status, icon: <CheckCircle2 size={11} /> },
-    { label: 'Category', value: course.programTitle || 'General', icon: <Folder size={11} /> },
-    { label: 'Level', value: course.level || 'Intermediate', icon: <BarChart3 size={11} /> },
-    { label: 'Duration', value: course.duration || 'Self-paced', icon: <Clock size={11} /> },
-    { label: 'Created', value: course.createdAt ? new Date(course.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—', icon: <Calendar size={11} /> },
-    { label: 'Updated', value: course.updatedAt ? new Date(course.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—', icon: <Calendar size={11} /> },
-  ]
+  /* overviewRows removed — Overview card removed per design spec */
 
   return (
     <div className="wl-detail-page">
@@ -513,12 +502,12 @@ function CourseDetail({ user, courseId, onBack }) {
             <div className="wl-detail-hero-text">
               <h1 className="wl-detail-hero-title">{course.title}</h1>
               <div className="wl-detail-hero-category">
-                <Folder size={11} />
+                <Folder size={12} />
                 {course.programTitle || artwork.label || 'General Training'}
               </div>
             </div>
-            <button className="wl-detail-hero-more-btn">
-              <MoreVertical size={14} />
+            <button className="wl-detail-hero-more-btn" aria-label="More options">
+              <MoreVertical size={16} />
             </button>
           </div>
 
@@ -531,7 +520,7 @@ function CourseDetail({ user, courseId, onBack }) {
             {heroStats.map((stat) => (
               <div key={stat.label} className="wl-detail-hero-stat">
                 <div className="wl-detail-hero-stat-icon" style={{ background: stat.bg, color: stat.color }}>
-                  <stat.icon size={14} />
+                  <stat.icon size={16} />
                 </div>
                 <div className="wl-detail-hero-stat-text">
                   <span className="wl-detail-hero-stat-value">{stat.value}</span>
@@ -543,7 +532,7 @@ function CourseDetail({ user, courseId, onBack }) {
         </div>
       </motion.div>
 
-      {/* ── Tab Navigation ── */}
+      {/* ── Tab Navigation — Segmented Control ── */}
       <motion.div
         className="wl-detail-tabs"
         initial={{ opacity: 0, y: 6 }}
@@ -556,6 +545,8 @@ function CourseDetail({ user, courseId, onBack }) {
               key={t.key}
               onClick={() => setTab(t.key)}
               className={`wl-detail-tab ${tab === t.key ? 'wl-detail-tab--active' : ''}`}
+              aria-selected={tab === t.key}
+              role="tab"
             >
               {t.icon}
               <span>{t.label}</span>
@@ -575,8 +566,7 @@ function CourseDetail({ user, courseId, onBack }) {
           transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
         >
           {tab === 'structure' && (
-            <div className="wl-detail-content">
-              {/* Left: Structure */}
+            <div className="wl-detail-content wl-detail-content--full">
               <div className="wl-detail-structure-card">
                 <div className="wl-detail-structure-header">
                   <div className="wl-detail-structure-header-left">
@@ -589,14 +579,14 @@ function CourseDetail({ user, courseId, onBack }) {
                   <div className="wl-detail-structure-header-right">
                     <div className="wl-detail-toggle">
                       <button className="wl-detail-toggle-btn wl-detail-toggle-btn--active" title="Grid view">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /></svg>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /></svg>
                       </button>
                       <button className="wl-detail-toggle-btn" title="List view">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" /></svg>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" /></svg>
                       </button>
                     </div>
-                    <button className="wl-training-card-btn-primary" style={{ fontSize: 11, padding: '5px 10px', minHeight: 'auto' }}>
-                      <Plus size={12} /> Add Module
+                    <button className="wl-btn-primary">
+                      <Plus size={16} /> Add Module
                     </button>
                   </div>
                 </div>
@@ -611,61 +601,14 @@ function CourseDetail({ user, courseId, onBack }) {
                     className="wl-detail-structure-empty-illustration"
                     loading="lazy"
                   />
-                  <h3 className="wl-detail-structure-empty-title">No modules added yet</h3>
+                  <h3 className="wl-detail-structure-empty-title">No learning content yet</h3>
                   <p className="wl-detail-structure-empty-desc">
-                    Start building your course by creating your first learning module.
+                    Create your first module to start building this course.
                   </p>
                   <button className="wl-detail-structure-empty-btn">
-                    <Plus size={13} /> Add Your First Module
+                    <Plus size={16} /> Add Your First Module
                   </button>
                 </div>
-              </div>
-
-              {/* Right: Sidebar */}
-              <div className="wl-detail-sidebar">
-                {/* Overview Card */}
-                <div className="wl-detail-card">
-                  <div className="wl-detail-card-header">
-                    <h2 className="wl-detail-card-title">Course Overview</h2>
-                  </div>
-                  <div className="wl-detail-card-body">
-                    {overviewRows.map((row) => (
-                      <div key={row.label} className="wl-detail-overview-row">
-                        <span className="wl-detail-overview-label">
-                          <span style={{ color: '#9ca3af' }}>{row.icon}</span>
-                          {row.label}
-                        </span>
-                        <span className="wl-detail-overview-value">{row.value || '—'}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Activity Card */}
-                {recentActivity.length > 0 && (
-                  <div className="wl-detail-card">
-                    <div className="wl-detail-card-header">
-                      <h2 className="wl-detail-card-title">Recent Activity</h2>
-                    </div>
-                    <div className="wl-detail-card-body">
-                      <div className="wl-detail-activity-list">
-                        {recentActivity.map((a, i) => (
-                          <div key={i} className="wl-detail-activity-item">
-                            <div className="wl-detail-activity-dot" style={{ background: a.color, color: a.iconColor }}>
-                              {a.icon}
-                            </div>
-                            <div>
-                              <div className="wl-detail-activity-text">{a.text}</div>
-                              <div className="wl-detail-activity-time">
-                                {a.time ? new Date(a.time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
           )}
@@ -684,32 +627,27 @@ function CourseDetail({ user, courseId, onBack }) {
 
 function StructureTab({ course }) {
   return (
-    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 16, padding: 24, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <div>
-          <h2 style={{ fontSize: 18, fontWeight: 800, color: '#0f172a', margin: '0 0 6px' }}>Course Structure</h2>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <span style={{
-              display: 'inline-flex', alignItems: 'center', gap: 5,
-              padding: '2px 8px', borderRadius: 9999, fontSize: 11, fontWeight: 600,
-              background: '#f0fdfa', color: '#0D9488'
-            }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#0D9488' }} />
+    <div className="wl-lessons-surface">
+      <div className="wl-lessons-header">
+        <div className="wl-lessons-header-left">
+          <h2 className="wl-lessons-title">Course Structure</h2>
+          <div className="wl-lessons-pills">
+            <span className="wl-lessons-pill" style={{ background: '#f0fdfa', color: '#0D9488' }}>
+              <span className="wl-lessons-pill-dot" style={{ background: '#0D9488' }} />
               Module
             </span>
           </div>
         </div>
       </div>
-
-      <div style={{
-        padding: '60px 24px', textAlign: 'center',
-        background: '#fff', border: '1px dashed #cbd5e1', borderRadius: 12,
-      }}>
-        <BookOpen size={40} color="#cbd5e1" style={{ margin: '0 auto 12px' }} />
-        <h3 style={{ margin: '0 0 6px', color: '#1e293b', fontWeight: 700, fontSize: 16 }}>No structure yet</h3>
-        <p style={{ margin: 0, color: '#64748b', fontSize: 13 }}>
-          Course content will appear here once the admin adds it.
-        </p>
+      <div className="wl-lessons-empty">
+        <div className="wl-lessons-empty-icon">
+          <BookOpen size={36} />
+        </div>
+        <h3>No learning content yet</h3>
+        <p>Create your first module to start building this course.</p>
+        <button className="wl-btn-primary">
+          <Plus size={16} /> Add Module
+        </button>
       </div>
     </div>
   )
@@ -717,13 +655,14 @@ function StructureTab({ course }) {
 
 function PlaceholderTab({ title, subtitle, icon }) {
   return (
-    <div style={{
-      padding: '60px 24px', textAlign: 'center', background: colors.surface.primary,
-      border: `1px dashed ${colors.slate[300]}`, borderRadius: 12,
-    }}>
-      <div style={{ color: colors.slate[300], marginBottom: 16, display: 'flex', justifyContent: 'center' }}>{icon}</div>
-      <h3 style={{ fontSize: 18, fontWeight: 600, margin: '0 0 6px', color: colors.slate[600] }}>{title}</h3>
-      <p style={{ margin: 0, color: colors.slate[400], fontSize: 14 }}>{subtitle}</p>
+    <div className="wl-lessons-surface">
+      <div className="wl-lessons-empty">
+        <div className="wl-lessons-empty-icon">
+          {icon}
+        </div>
+        <h3>{title}</h3>
+        <p>{subtitle}</p>
+      </div>
     </div>
   )
 }
@@ -816,202 +755,138 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
     } catch (e) { showError(e.message) }
   }
 
+  const taxonomyPills = [
+    { label: 'Module', bg: '#f0fdfa', fg: '#0D9488' },
+    { label: 'Sub Module', bg: '#f0fdfa', fg: '#0D9488' },
+    { label: 'Topic', bg: '#f0fdf4', fg: '#16a34a' },
+    { label: 'Sub Topic', bg: '#fffbeb', fg: '#d97706' },
+  ]
+
   return (
-    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 16, padding: 24, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
-        <div>
-          <h2 style={{ fontSize: 18, fontWeight: 800, color: '#0f172a', margin: '0 0 6px' }}>Learning Content</h2>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {[
-              { label: 'Module', bg: '#f0fdfa', fg: '#0D9488' },
-              { label: 'Sub Module', bg: '#f0fdfa', fg: '#0D9488' },
-              { label: 'Topic', bg: '#f0fdf4', fg: '#16a34a' },
-              { label: 'Sub Topic', bg: '#fffbeb', fg: '#d97706' },
-            ].map(pill => (
-              <span key={pill.label} style={{
-                display: 'inline-flex', alignItems: 'center', gap: 5,
-                padding: '2px 8px', borderRadius: 9999, fontSize: 11, fontWeight: 600,
-                background: pill.bg, color: pill.fg
-              }}>
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: pill.fg }} />
+    <div className="wl-lessons-surface">
+      {/* Header */}
+      <div className="wl-lessons-header">
+        <div className="wl-lessons-header-left">
+          <h2 className="wl-lessons-title">Learning Content</h2>
+          <p className="wl-lessons-subtitle">Manage your course structure.</p>
+          <div className="wl-lessons-pills">
+            {taxonomyPills.map(pill => (
+              <span key={pill.label} className="wl-lessons-pill" style={{ background: pill.bg, color: pill.fg }}>
+                <span className="wl-lessons-pill-dot" style={{ background: pill.fg }} />
                 {pill.label}
               </span>
             ))}
           </div>
         </div>
-        <button onClick={openCreate} style={{
-          display: 'inline-flex', alignItems: 'center', gap: 6,
-          padding: '8px 16px', background: '#0D9488', color: '#fff',
-          border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600,
-          cursor: 'pointer', boxShadow: '0 2px 8px rgba(13,148,136,0.2)'
-        }}>
-          <Plus size={14} /> Add Module
+        <button onClick={openCreate} className="wl-btn-primary">
+          <Plus size={16} /> Add Module
         </button>
       </div>
 
+      {/* Content */}
       {loading ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {[1,2,3].map(i => (
-            <div key={i} style={{ height: 64, background: '#f8fafc', borderRadius: 10, border: '1px solid #e5e7eb' }} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {[1, 2, 3].map(i => (
+            <div key={i} style={{ height: 68, background: '#f8fafc', borderRadius: 14, border: '1px solid #f1f5f9' }} />
           ))}
         </div>
       ) : lessons.length === 0 ? (
-        <div style={{
-          padding: '40px 24px', textAlign: 'center',
-          background: '#fff', border: '1px dashed #cbd5e1', borderRadius: 12,
-        }}>
-          <Layers size={40} color="#cbd5e1" style={{ margin: '0 auto 8px' }} />
-          <p style={{ margin: '0 0 6px', color: '#475569', fontWeight: 600 }}>No materials added yet.</p>
-          <p style={{ margin: 0, color: '#94a3b8', fontSize: 13 }}>
-            Click <strong>Add Module</strong> to get started.
-          </p>
+        <div className="wl-lessons-empty">
+          <div className="wl-lessons-empty-icon">
+            <Layers size={36} />
+          </div>
+          <h3>No learning content yet</h3>
+          <p>Create your first module to start building this course.</p>
+          <button onClick={openCreate} className="wl-btn-primary">
+            <Plus size={16} /> Add Module
+          </button>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {lessons.map((l, i) => {
+        <div className="wl-module-list">
+          {lessons.map((l) => {
             const tax = getTaxonomyInfo(l.title);
             const isExpanded = !!expandedRows[l.id];
             const matCount = Object.values(l.materialCounts || {}).reduce((a, b) => a + b, 0);
 
             return (
-              <div 
-                key={l.id} 
-                style={{ 
-                  background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, 
-                  boxShadow: '0 1px 2px rgba(0,0,0,0.02)', overflow: 'hidden' 
-                }}
-              >
-                <div style={{ 
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', 
-                  padding: '14px 16px', background: '#f8fafc', borderBottom: isExpanded ? '1px solid #e5e7eb' : 'none' 
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-                    <button 
-                      onClick={() => toggleRow(l.id)} 
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', color: '#64748b' }}
-                    >
-                      {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+              <div key={l.id} className="wl-module-row">
+                {/* Row Header */}
+                <div className="wl-module-row-header" onClick={() => toggleRow(l.id)}>
+                  <span className="wl-module-drag">
+                    <GripVertical size={16} />
+                  </span>
+                  <span className={`wl-module-chevron${isExpanded ? ' wl-module-chevron--open' : ''}`}>
+                    <ChevronRight size={16} />
+                  </span>
+                  <span className="wl-module-taxonomy" style={{ background: tax.bg, color: tax.fg }}>
+                    {tax.label}
+                  </span>
+                  <span className="wl-module-title">{l.title}</span>
+                  <div className="wl-module-actions" onClick={(e) => e.stopPropagation()}>
+                    <button title="Edit" onClick={() => openEdit(l)} className="wl-module-action-btn wl-module-action-btn--edit">
+                      <Pencil size={14} />
                     </button>
-                    <span style={{
-                      display: 'inline-flex', padding: '2px 8px', borderRadius: 9999,
-                      fontSize: 10, fontWeight: 700, background: tax.bg, color: tax.fg,
-                      textTransform: 'uppercase', letterSpacing: 0.5, flexShrink: 0
-                    }}>
-                      {tax.label}
-                    </span>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {l.title}
-                    </span>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <button 
-                      title="Edit" 
-                      onClick={() => openEdit(l)} 
-                      style={{
-                        width: 28, height: 28, border: 'none', cursor: 'pointer', borderRadius: 6,
-                        background: '#f1f5f9', color: '#475569', display: 'flex', alignItems: 'center', justifyContent: 'center'
-                      }}
-                    >
-                      <Pencil size={12} />
+                    <button title="Delete" onClick={() => remove(l)} className="wl-module-action-btn wl-module-action-btn--delete">
+                      <Trash2 size={14} />
                     </button>
-                    <button 
-                      title="Delete" 
-                      onClick={() => remove(l)} 
-                      style={{
-                        width: 28, height: 28, border: 'none', cursor: 'pointer', borderRadius: 6,
-                        background: '#fee2e2', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center'
-                      }}
-                    >
-                      <Trash2 size={12} />
+                    <button title="More" className="wl-module-action-btn wl-module-action-btn--more">
+                      <MoreVertical size={14} />
                     </button>
                   </div>
                 </div>
 
+                {/* Expanded Content */}
                 {isExpanded && (
-                  <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  <div className="wl-module-expanded">
                     {l.description && (
-                      <p style={{ fontSize: 13, color: '#64748b', margin: 0, paddingBottom: 4 }}>
-                        {l.description}
-                      </p>
+                      <p className="wl-module-description">{l.description}</p>
                     )}
 
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, paddingBottom: 12, borderBottom: '1px solid #f1f5f9' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {/* Materials Section */}
+                    <div className="wl-module-section">
+                      <div className="wl-module-section-left">
                         <Folder size={16} style={{ color: '#0D9488' }} />
-                        <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>
-                          Learning Materials ({matCount})
-                        </span>
-                        {matCount === 0 && (
-                          <span style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic', marginLeft: 4 }}>
-                            No materials added yet.
-                          </span>
+                        <span className="wl-module-section-label">Learning Materials</span>
+                        {matCount > 0 ? (
+                          <span className="wl-module-section-count">({matCount})</span>
+                        ) : (
+                          <span className="wl-module-section-empty">No materials added yet</span>
                         )}
                       </div>
-                      <button 
-                        onClick={() => setMaterialsFor({ id: l.id, title: l.title })}
-                        style={{
-                          padding: '6px 12px', background: '#0D9488', color: '#fff', border: 'none',
-                          borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer'
-                        }}
-                      >
-                        + Add/Manage Materials
-                      </button>
+                      <div className="wl-module-section-btns">
+                        <button onClick={() => setMaterialsFor({ id: l.id, title: l.title })} className="wl-btn-primary" style={{ height: 40, padding: '0 18px', fontSize: 13 }}>
+                          <Plus size={14} /> Add/Manage Materials
+                        </button>
+                      </div>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, paddingBottom: 12, borderBottom: '1px solid #f1f5f9' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {/* AI Quiz Section */}
+                    <div className="wl-module-section">
+                      <div className="wl-module-section-left">
                         <Sparkles size={16} style={{ color: '#f59e0b' }} />
-                        <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>
-                          AI Quiz
-                        </span>
+                        <span className="wl-module-section-label">AI Quiz</span>
                       </div>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button 
-                          onClick={() => handleRedirect('quizzes', 'Redirecting to AI Quiz to create quiz...')}
-                          style={{
-                            padding: '5px 10px', background: '#fff', border: '1px solid #0D9488', color: '#0D9488',
-                            borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer'
-                          }}
-                        >
-                          + Create Quiz
+                      <div className="wl-module-section-btns">
+                        <button onClick={() => handleRedirect('quizzes', 'Redirecting to AI Quiz to create quiz...')} className="wl-btn-secondary wl-btn-secondary--teal" style={{ height: 40, padding: '0 18px', fontSize: 13 }}>
+                          <Plus size={14} /> Create Quiz
                         </button>
-                        <button 
-                          onClick={() => handleRedirect('quizzes', 'Redirecting to AI Quiz to link quiz...')}
-                          style={{
-                            padding: '5px 10px', background: '#fff', border: '1px solid #16a34a', color: '#16a34a',
-                            borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer'
-                          }}
-                        >
+                        <button onClick={() => handleRedirect('quizzes', 'Redirecting to AI Quiz to link quiz...')} className="wl-btn-secondary wl-btn-secondary--teal" style={{ height: 40, padding: '0 18px', fontSize: 13 }}>
                           Link Quiz
                         </button>
                       </div>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {/* Coding Section */}
+                    <div className="wl-module-section">
+                      <div className="wl-module-section-left">
                         <Code size={16} style={{ color: '#0D9488' }} />
-                        <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>
-                          Coding Assessment
-                        </span>
+                        <span className="wl-module-section-label">Coding Assessment</span>
                       </div>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button 
-                          onClick={() => handleRedirect('coding', 'Redirecting to Coding tab to create assessment...')}
-                          style={{
-                            padding: '5px 10px', background: '#fff', border: '1px solid #0D9488', color: '#0D9488',
-                            borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer'
-                          }}
-                        >
-                          + Create Coding
+                      <div className="wl-module-section-btns">
+                        <button onClick={() => handleRedirect('coding', 'Redirecting to Coding tab to create assessment...')} className="wl-btn-secondary wl-btn-secondary--teal" style={{ height: 40, padding: '0 18px', fontSize: 13 }}>
+                          <Plus size={14} /> Create Coding
                         </button>
-                        <button 
-                          onClick={() => handleRedirect('coding', 'Redirecting to Coding tab to link assessment...')}
-                          style={{
-                            padding: '5px 10px', background: '#fff', border: '1px solid #16a34a', color: '#16a34a',
-                            borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer'
-                          }}
-                        >
+                        <button onClick={() => handleRedirect('coding', 'Redirecting to Coding tab to link assessment...')} className="wl-btn-secondary wl-btn-secondary--teal" style={{ height: 40, padding: '0 18px', fontSize: 13 }}>
                           Link Coding
                         </button>
                       </div>
@@ -1024,61 +899,56 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
         </div>
       )}
 
+      {/* Create/Edit Modal */}
       <AnimatePresence>
         {showModal && (
           <motion.div
+            className="wl-modal-overlay"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             onClick={() => setShowModal(false)}
-            style={{
-              position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 16,
-            }}
           >
             <motion.form
               onClick={(e) => e.stopPropagation()}
               onSubmit={submit}
+              className="wl-modal-card"
               initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-              style={{
-                background: '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 540,
-                boxShadow: '0 25px 60px -10px rgba(0,0,0,0.25)',
-              }}
             >
-              <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 800, color: '#0f172a' }}>
+              <h2 className="wl-modal-title">
                 {editing ? 'Edit Lesson / Module' : 'Create New Module'}
               </h2>
 
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#475569', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Title <span style={{ color: '#dc2626' }}>*</span></label>
+              <label className="wl-modal-label">Title <span style={{ color: '#dc2626' }}>*</span></label>
               <input
                 value={form.title}
                 onChange={(e) => setForm({ ...form, title: e.target.value })}
                 placeholder="e.g. Module 1: Introduction to Machine Learning"
-                style={{ width: '100%', padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 8, fontSize: 14, outline: 'none', background: '#fff', marginBottom: 14 }}
+                className="wl-modal-input"
                 autoFocus
               />
 
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#475569', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Description</label>
+              <label className="wl-modal-label">Description</label>
               <textarea
                 value={form.description}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
                 placeholder="Brief summary of the module content"
                 rows={2}
-                style={{ width: '100%', padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 8, fontSize: 14, outline: 'none', background: '#fff', resize: 'vertical', marginBottom: 14 }}
+                className="wl-modal-textarea"
               />
 
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#475569', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Summary / Content (optional)</label>
+              <label className="wl-modal-label">Summary / Content (optional)</label>
               <textarea
                 value={form.content}
                 onChange={(e) => setForm({ ...form, content: e.target.value })}
                 placeholder="Optional text details shown when viewing lesson content"
                 rows={3}
-                style={{ width: '100%', padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 8, fontSize: 14, outline: 'none', background: '#fff', resize: 'vertical', marginBottom: 18 }}
+                className="wl-modal-textarea"
               />
 
-              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-                <button type="button" onClick={() => setShowModal(false)} style={{ padding: '10px 18px', background: '#fff', color: '#475569', border: '1px solid #cbd5e1', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+              <div className="wl-modal-actions">
+                <button type="button" onClick={() => setShowModal(false)} className="wl-btn-secondary" style={{ height: 44 }}>
                   Cancel
                 </button>
-                <button type="submit" style={{ padding: '10px 18px', background: '#0D9488', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                <button type="submit" className="wl-btn-primary" style={{ height: 44 }}>
                   {editing ? 'Save Changes' : 'Create Module'}
                 </button>
               </div>

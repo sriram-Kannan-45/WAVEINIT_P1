@@ -131,7 +131,7 @@ body {
 }
 
 /* ─── Page content ─── */
-.page-content { background: transparent !important; position: relative; z-index: 1; }
+.page-content { background: transparent !important; position: relative; z-index: 1; overflow: visible !important; }
 
 /* ─── Top header ─── */
 .top-header {

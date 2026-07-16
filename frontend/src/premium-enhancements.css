@@ -22,6 +22,7 @@
   flex: 1;
   padding: var(--space-4);
   background: transparent;
+  overflow: visible;
   animation: fadeIn var(--duration-slow) var(--ease-out);
 }
 
@@ -32,6 +33,7 @@
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  overflow: visible;
   position: relative;
   z-index: 1;
 }

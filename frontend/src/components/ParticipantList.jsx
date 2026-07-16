@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, memo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Search, Trash2, Eye, Phone, Calendar, Edit2, Check, X, ShieldAlert, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Search, Trash2, Eye, Edit2, Check, X, ChevronLeft, ChevronRight, ChevronDown, Users, UserPlus } from 'lucide-react'
 import StatusBadge from './StatusBadge'
 import SkeletonCard from './SkeletonCard'
 
@@ -12,9 +12,29 @@ const containerVariants = {
   }
 }
 
-const rowVariants = {
-  hidden: { opacity: 0, y: 8 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.16, 1, 0.3, 1] } }
+const cardVariants = {
+  hidden: { opacity: 0, y: 12 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.3, ease: [0.16, 1, 0.3, 1] } }
+}
+
+const avatarGradients = [
+  'linear-gradient(135deg, #16a34a, #15803d)',
+  'linear-gradient(135deg, #0d9488, #0f766e)',
+  'linear-gradient(135deg, #2563eb, #1d4ed8)',
+  'linear-gradient(135deg, #7c3aed, #6d28d9)',
+  'linear-gradient(135deg, #ea580c, #c2410c)',
+  'linear-gradient(135deg, #d946ef, #c026d3)',
+  'linear-gradient(135deg, #0ea5e9, #0284c7)',
+  'linear-gradient(135deg, #f43f5e, #e11d48)',
+]
+
+function getAvatarGradient(name) {
+  if (!name) return avatarGradients[0]
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return avatarGradients[Math.abs(hash) % avatarGradients.length]
 }
 
 class ErrorBoundary extends React.Component {
@@ -35,12 +55,12 @@ class ErrorBoundary extends React.Component {
     if (this.state.hasError) {
       return (
         <div style={{
-          padding: 16, background: 'rgba(239,68,68,0.08)',
-          border: '1px solid rgba(239,68,68,0.2)',
-          borderRadius: 12, color: '#dc2626'
+          padding: 24, background: 'rgba(239,68,68,0.06)',
+          border: '1px solid rgba(239,68,68,0.15)',
+          borderRadius: 20, color: '#dc2626'
         }} role="alert">
-          <h3 style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600, marginBottom: 4, fontSize: 14 }}>Error Loading Participants</h3>
-          <p style={{ fontSize: 13 }}>{this.state.error?.message || 'An unexpected error occurred'}</p>
+          <h3 style={{ fontFamily: "var(--font-display)", fontWeight: 700, marginBottom: 4, fontSize: 16 }}>Error Loading Participants</h3>
+          <p style={{ fontSize: 14, color: '#6b7280' }}>{this.state.error?.message || 'An unexpected error occurred'}</p>
         </div>
       )
     }
@@ -48,17 +68,18 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-function ParticipantList({ 
-  participants = [], 
-  loading = false, 
-  onDelete = null, 
-  onRefresh = null, 
+function ParticipantList({
+  participants = [],
+  loading = false,
+  onDelete = null,
+  onRefresh = null,
   onView = null,
   onApprove = null,
-  onReject = null 
+  onReject = null
 }) {
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [sortBy, setSortBy] = useState('name')
   const [currentPage, setCurrentPage] = useState(1)
   const [editingParticipant, setEditingParticipant] = useState(null)
   const [editStatus, setEditStatus] = useState('')
@@ -81,17 +102,24 @@ function ParticipantList({
   }, [participants])
 
   const filteredItems = useMemo(() => {
-    return participants.filter(p => {
-      const matchesSearch = !searchTerm || 
+    let items = participants.filter(p => {
+      const matchesSearch = !searchTerm ||
         p.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         p.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         p.phone?.includes(searchTerm)
-      
       const matchesStatus = statusFilter === 'all' || p.status === statusFilter
-      
       return matchesSearch && matchesStatus
     })
-  }, [participants, searchTerm, statusFilter])
+
+    items.sort((a, b) => {
+      if (sortBy === 'name') return (a.name || '').localeCompare(b.name || '')
+      if (sortBy === 'date') return new Date(b.created_at || b.joinedAt || 0) - new Date(a.created_at || a.joinedAt || 0)
+      if (sortBy === 'status') return (a.status || '').localeCompare(b.status || '')
+      return 0
+    })
+
+    return items
+  }, [participants, searchTerm, statusFilter, sortBy])
 
   const totalPages = Math.ceil(filteredItems.length / itemsPerPage)
   const startIdx = (currentPage - 1) * itemsPerPage
@@ -111,9 +139,7 @@ function ParticipantList({
   }, [totalPages])
 
   const handleDelete = useCallback((id, name) => {
-    if (onDelete) {
-      onDelete(id, name)
-    }
+    if (onDelete) onDelete(id, name)
   }, [onDelete])
 
   const handleSaveStatus = async () => {
@@ -141,16 +167,22 @@ function ParticipantList({
 
   if (!participants || participants.length === 0) {
     return (
-      <div className="empty-state" role="status" aria-live="polite">
-        <h3 style={{ fontFamily: "'Poppins', sans-serif", fontSize: 16, fontWeight: 700, color: '#111827', marginBottom: 4 }}>No Participants Yet</h3>
-        <p style={{ fontSize: 14, color: '#6B7280', marginBottom: 16 }}>Participants will appear here once they register.</p>
+      <div className="wl-participants-empty" role="status" aria-live="polite">
+        <div className="wl-participants-empty-icon">
+          <Users size={48} />
+        </div>
+        <h3 className="wl-participants-empty-title">No Participants Yet</h3>
+        <p className="wl-participants-empty-desc">
+          Participants will appear here once they register. Invite your first learner to get started.
+        </p>
         {onRefresh && (
-          <button 
+          <button
             onClick={onRefresh}
-            className="btn btn-primary btn-sm"
+            className="wl-participants-btn-primary"
             aria-label="Refresh participant list"
           >
-            Refresh List
+            <UserPlus size={18} />
+            Invite Participant
           </button>
         )}
       </div>
@@ -164,216 +196,152 @@ function ParticipantList({
       variants={containerVariants}
       initial="hidden"
       animate="visible"
-      style={{ display: 'flex', flexDirection: 'column', gap: 16 }}
+      style={{ display: 'flex', flexDirection: 'column', gap: 20 }}
     >
-      {/* Toolbar: Search box & Segmented Filter Pills */}
-      <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-        {/* Search */}
-        <div style={{ position: 'relative', flex: 1, maxWidth: 400 }}>
-          <Search size={16} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
+      {/* Toolbar */}
+      <div className="wl-participants-toolbar">
+        <div className="wl-participants-search">
+          <Search size={18} className="wl-participants-search-icon" />
           <input
             type="text"
-            placeholder="Search by name, email, or phone..."
+            placeholder="Search participants..."
             value={searchTerm}
             onChange={handleSearchChange}
-            style={{
-              width: '100%', padding: '9px 14px 9px 40px', fontSize: 13.5, height: 40,
-              fontFamily: "'Poppins', sans-serif", background: '#FFFFFF',
-              border: '1.5px solid #ECECEC', borderRadius: 10,
-              color: '#111827', outline: 'none',
-              transition: 'border-color 200ms ease, box-shadow 200ms ease'
-            }}
-            onFocus={e => { e.target.style.borderColor = '#0D9488'; e.target.style.boxShadow = '0 0 0 3px rgba(13,148,136,0.12)' }}
-            onBlur={e => { e.target.style.borderColor = '#ECECEC'; e.target.style.boxShadow = 'none' }}
           />
         </div>
 
-        {/* Segmented Filter Pills */}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 4,
-          background: '#F1F3F6', borderRadius: 10, padding: 4
-        }}>
-          {[
-            { key: 'all', label: 'All', count: counts.all },
-            { key: 'APPROVED', label: 'Approved', count: counts.APPROVED },
-            { key: 'PENDING', label: 'Pending', count: counts.PENDING },
-            { key: 'REJECTED', label: 'Rejected', count: counts.REJECTED }
-          ].map(chip => (
-            <button
-              key={chip.key}
-              type="button"
-              onClick={() => { setStatusFilter(chip.key); setCurrentPage(1) }}
-              style={{
-                padding: '6px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600,
-                cursor: 'pointer', fontFamily: "'Poppins', sans-serif", border: 'none',
-                transition: 'all 180ms ease',
-                background: statusFilter === chip.key ? '#FFFFFF' : 'transparent',
-                color: statusFilter === chip.key ? '#111827' : '#6B7280',
-                boxShadow: statusFilter === chip.key ? '0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)' : 'none'
-              }}
-            >
-              {chip.label} ({chip.count})
-            </button>
-          ))}
+        <div className="wl-participants-filter-group">
+          <select
+            className="wl-participants-filter-select"
+            value={statusFilter}
+            onChange={(e) => { setStatusFilter(e.target.value); setCurrentPage(1) }}
+          >
+            <option value="all">All Status ({counts.all})</option>
+            <option value="APPROVED">Approved ({counts.APPROVED})</option>
+            <option value="PENDING">Pending ({counts.PENDING})</option>
+            <option value="REJECTED">Rejected ({counts.REJECTED})</option>
+          </select>
+
+          <select
+            className="wl-participants-filter-select"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+          >
+            <option value="name">Sort by Name</option>
+            <option value="date">Sort by Date</option>
+            <option value="status">Sort by Status</option>
+          </select>
         </div>
+
+        <div style={{ flex: 1 }} />
+
+        <span className="wl-participants-results">{resultsMessage}</span>
       </div>
 
-      <div style={{ fontSize: 12.5, color: '#9CA3AF', fontWeight: 500, fontFamily: "'Poppins', sans-serif" }} role="status" aria-live="polite" aria-atomic="true">
-        {resultsMessage}
-      </div>
+      {/* Participant Cards */}
+      <div className="wl-participants-list">
+        {paginatedItems.map((p) => (
+          <motion.div
+            key={p.id}
+            className="wl-participant-card"
+            variants={cardVariants}
+          >
+            {/* Avatar */}
+            <div
+              className="wl-participant-avatar"
+              style={{ background: getAvatarGradient(p.name) }}
+            >
+              {getInitials(p.name)}
+            </div>
 
-      {/* Participant Table */}
-      <div className="table-wrapper">
-        <table className="table">
-          <thead>
-            <tr>
-              <th style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600 }}>Avatar</th>
-              <th style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600 }}>Name</th>
-              <th style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600 }}>Email</th>
-              <th style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600 }}>Phone</th>
-              <th style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600 }}>Registration Date</th>
-              <th style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600 }}>Status</th>
-              <th style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600, textAlign: 'right' }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {paginatedItems.map((p, idx) => (
-              <motion.tr
-                key={p.id}
-                variants={rowVariants}
-                custom={idx}
+            {/* Name & Email */}
+            <div className="wl-participant-info">
+              <div className="wl-participant-name">{p.name || '-'}</div>
+              <div className="wl-participant-email">{p.email}</div>
+            </div>
+
+            {/* Enrollment Date */}
+            <div className="wl-participant-date">
+              {new Date(p.created_at || p.joinedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+            </div>
+
+            {/* Progress */}
+            <div className="wl-participant-progress">
+              <div className="wl-participant-progress-label">
+                <span className="wl-participant-progress-text">Progress</span>
+                <span className="wl-participant-progress-value">{p.progress || 0}%</span>
+              </div>
+              <div className="wl-participant-progress-bar">
+                <div
+                  className="wl-participant-progress-fill"
+                  style={{ width: `${Math.min(100, p.progress || 0)}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Quiz Score */}
+            <div className="wl-participant-quiz">
+              <strong>{p.quizScore || p.quiz_score || 0}%</strong>
+              Quiz
+            </div>
+
+            {/* Status */}
+            <StatusBadge status={p.status || 'PENDING'} size="sm" />
+
+            {/* Actions */}
+            <div className="wl-participant-actions">
+              {onView && (
+                <button
+                  className="wl-participant-action-btn"
+                  onClick={() => onView(p)}
+                  title="View Profile"
+                >
+                  <Eye size={16} />
+                </button>
+              )}
+              <button
+                className="wl-participant-action-btn"
+                onClick={() => { setEditingParticipant(p); setEditStatus(p.status || 'PENDING') }}
+                title="Edit Status"
               >
-                <td>
-                  <div style={{
-                    width: 30, height: 30, borderRadius: 9999,
-                    background: 'rgba(13,148,136,0.10)', color: '#0D9488',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 11, fontWeight: 700, fontFamily: "'Poppins', sans-serif",
-                    flexShrink: 0
-                  }}>
-                    {getInitials(p.name)}
-                  </div>
-                </td>
-                <td style={{ fontWeight: 600, color: '#111827', fontFamily: "'Poppins', sans-serif" }}>{p.name || '-'}</td>
-                <td style={{ color: '#6B7280', fontFamily: "'Poppins', sans-serif" }}>{p.email}</td>
-                <td style={{ color: '#6B7280', fontFamily: "'Poppins', sans-serif" }}>{p.phone || '-'}</td>
-                <td style={{ color: '#6B7280', fontFamily: "'Poppins', sans-serif", fontSize: 13 }}>
-                  {new Date(p.created_at || p.joinedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-                </td>
-                <td>
-                  <StatusBadge status={p.status || 'PENDING'} size="sm" />
-                </td>
-                <td style={{ textAlign: 'right' }}>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
-                    {onView && (
-                      <button
-                        onClick={() => onView(p)}
-                        className="btn-icon btn-sm"
-                        title="View Profile"
-                        style={{
-                          width: 32, height: 32, borderRadius: 8,
-                          border: '1px solid #ECECEC', background: '#FFFFFF',
-                          color: '#6B7280', cursor: 'pointer',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          transition: 'all 150ms ease'
-                        }}
-                        onMouseEnter={e => { e.currentTarget.style.borderColor = '#0D9488'; e.currentTarget.style.color = '#0D9488' }}
-                        onMouseLeave={e => { e.currentTarget.style.borderColor = '#ECECEC'; e.currentTarget.style.color = '#6B7280' }}
-                      >
-                        <Eye size={14} />
-                      </button>
-                    )}
-                    <button
-                      onClick={() => { setEditingParticipant(p); setEditStatus(p.status || 'PENDING') }}
-                      className="btn-icon btn-sm"
-                      title="Edit Status"
-                      style={{
-                        width: 32, height: 32, borderRadius: 8,
-                        border: '1px solid #ECECEC', background: '#FFFFFF',
-                        color: '#6B7280', cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        transition: 'all 150ms ease'
-                      }}
-                      onMouseEnter={e => { e.currentTarget.style.borderColor = '#0D9488'; e.currentTarget.style.color = '#0D9488' }}
-                      onMouseLeave={e => { e.currentTarget.style.borderColor = '#ECECEC'; e.currentTarget.style.color = '#6B7280' }}
-                    >
-                      <Edit2 size={14} />
-                    </button>
-                    {onDelete && (
-                      <button
-                        onClick={() => handleDelete(p.id, p.name)}
-                        className="btn-icon btn-sm"
-                        title="Remove Participant"
-                        style={{
-                          width: 32, height: 32, borderRadius: 8,
-                          border: '1px solid #ECECEC', background: '#FFFFFF',
-                          color: '#6B7280', cursor: 'pointer',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          transition: 'all 150ms ease'
-                        }}
-                        onMouseEnter={e => { e.currentTarget.style.borderColor = '#ef4444'; e.currentTarget.style.color = '#ef4444' }}
-                        onMouseLeave={e => { e.currentTarget.style.borderColor = '#ECECEC'; e.currentTarget.style.color = '#6B7280' }}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </div>
-                </td>
-              </motion.tr>
-            ))}
-          </tbody>
-        </table>
+                <Edit2 size={16} />
+              </button>
+              {onDelete && (
+                <button
+                  className="wl-participant-action-btn wl-participant-action-btn--danger"
+                  onClick={() => handleDelete(p.id, p.name)}
+                  title="Remove Participant"
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
+            </div>
+          </motion.div>
+        ))}
       </div>
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <nav style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 8 }} aria-label="Pagination">
-          <motion.button
+        <nav className="wl-participants-pagination" aria-label="Pagination">
+          <button
+            className="wl-participants-page-btn"
             onClick={handlePreviousPage}
             disabled={currentPage === 1}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '8px 16px', borderRadius: 10, fontSize: 13, fontWeight: 600,
-              fontFamily: "'Poppins', sans-serif",
-              border: '1px solid #ECECEC', background: '#FFFFFF',
-              color: currentPage === 1 ? '#9CA3AF' : '#111827',
-              cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
-              opacity: currentPage === 1 ? 0.5 : 1,
-              transition: 'all 150ms ease'
-            }}
           >
-            <ChevronLeft size={14} /> Previous
-          </motion.button>
-          
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', gap: 4,
-            padding: '4px 12px', background: '#F1F3F6', borderRadius: 8,
-            fontSize: 13, fontWeight: 600, fontFamily: "'Poppins', sans-serif",
-            color: '#6B7280'
-          }}>
-            {currentPage} <span style={{ color: '#9CA3AF', fontWeight: 400 }}>of</span> {totalPages}
+            <ChevronLeft size={16} /> Previous
+          </button>
+
+          <div className="wl-participants-page-info">
+            {currentPage} <span style={{ color: '#94a3b8', fontWeight: 400 }}>of</span> {totalPages}
           </div>
-          
-          <motion.button
+
+          <button
+            className="wl-participants-page-btn"
             onClick={handleNextPage}
             disabled={currentPage === totalPages}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '8px 16px', borderRadius: 10, fontSize: 13, fontWeight: 600,
-              fontFamily: "'Poppins', sans-serif",
-              border: '1px solid #ECECEC', background: '#FFFFFF',
-              color: currentPage === totalPages ? '#9CA3AF' : '#111827',
-              cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
-              opacity: currentPage === totalPages ? 0.5 : 1,
-              transition: 'all 150ms ease'
-            }}
           >
-            Next <ChevronRight size={14} />
-          </motion.button>
+            Next <ChevronRight size={16} />
+          </button>
         </nav>
       )}
 
@@ -403,62 +371,58 @@ function ParticipantList({
               <div className="modal-body">
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: 12,
-                  padding: 14, background: '#F1F3F6', borderRadius: 12,
-                  border: '1px solid #ECECEC'
+                  padding: 14, background: '#f8fafc', borderRadius: 14,
+                  border: '1px solid #e5e7eb'
                 }}>
                   <div style={{
-                    width: 38, height: 38, borderRadius: 10,
-                    background: 'rgba(13,148,136,0.10)', color: '#0D9488',
+                    width: 42, height: 42, borderRadius: 12,
+                    background: getAvatarGradient(editingParticipant.name), color: '#fff',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontWeight: 700, fontSize: 14, fontFamily: "'Poppins', sans-serif"
+                    fontWeight: 700, fontSize: 14, fontFamily: 'var(--font-display)'
                   }}>
                     {getInitials(editingParticipant.name)}
                   </div>
                   <div>
-                    <h4 style={{ fontWeight: 600, fontSize: 14, color: '#111827', fontFamily: "'Poppins', sans-serif" }}>{editingParticipant.name}</h4>
-                    <p style={{ fontSize: 12.5, color: '#6B7280', fontFamily: "'Poppins', sans-serif" }}>{editingParticipant.email}</p>
+                    <h4 style={{ fontWeight: 700, fontSize: 15, color: '#0f172a', fontFamily: 'var(--font-display)' }}>{editingParticipant.name}</h4>
+                    <p style={{ fontSize: 13, color: '#64748b', fontFamily: 'var(--font-primary)' }}>{editingParticipant.email}</p>
                   </div>
                 </div>
 
-                <div className="form-group" style={{ marginTop: 20 }}>
-                  <label className="form-label" style={{ fontFamily: "'Poppins', sans-serif", fontSize: 13, fontWeight: 500, color: '#6B7280' }}>Account Status</label>
-                  <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
-                    <motion.button
+                <div style={{ marginTop: 20 }}>
+                  <label style={{ fontFamily: 'var(--font-primary)', fontSize: 13, fontWeight: 600, color: '#64748b', display: 'block', marginBottom: 10 }}>Account Status</label>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button
                       type="button"
                       onClick={() => setEditStatus('APPROVED')}
-                      whileHover={{ scale: 1.01 }}
-                      whileTap={{ scale: 0.98 }}
                       style={{
-                        flex: 1, padding: '10px 16px', borderRadius: 10, border: '1px solid',
-                        fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'Poppins', sans-serif",
+                        flex: 1, padding: '12px 16px', borderRadius: 12, border: '1.5px solid',
+                        fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-primary)',
                         transition: 'all 180ms ease',
-                        background: editStatus === 'APPROVED' ? 'rgba(16,185,129,0.08)' : 'transparent',
-                        color: editStatus === 'APPROVED' ? '#059669' : '#6B7280',
-                        borderColor: editStatus === 'APPROVED' ? 'rgba(16,185,129,0.3)' : '#ECECEC'
+                        background: editStatus === 'APPROVED' ? '#f0fdf4' : 'transparent',
+                        color: editStatus === 'APPROVED' ? '#16a34a' : '#64748b',
+                        borderColor: editStatus === 'APPROVED' ? 'rgba(22,163,74,0.3)' : '#e2e8f0'
                       }}
                     >
-                      <Check size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: 'middle' }} /> Approved
-                    </motion.button>
-                    <motion.button
+                      <Check size={16} style={{ display: 'inline', marginRight: 8, verticalAlign: 'middle' }} /> Approved
+                    </button>
+                    <button
                       type="button"
                       onClick={() => setEditStatus('REJECTED')}
-                      whileHover={{ scale: 1.01 }}
-                      whileTap={{ scale: 0.98 }}
                       style={{
-                        flex: 1, padding: '10px 16px', borderRadius: 10, border: '1px solid',
-                        fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'Poppins', sans-serif",
+                        flex: 1, padding: '12px 16px', borderRadius: 12, border: '1.5px solid',
+                        fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-primary)',
                         transition: 'all 180ms ease',
-                        background: editStatus === 'REJECTED' ? 'rgba(239,68,68,0.08)' : 'transparent',
-                        color: editStatus === 'REJECTED' ? '#dc2626' : '#6B7280',
-                        borderColor: editStatus === 'REJECTED' ? 'rgba(239,68,68,0.3)' : '#ECECEC'
+                        background: editStatus === 'REJECTED' ? '#fef2f2' : 'transparent',
+                        color: editStatus === 'REJECTED' ? '#ef4444' : '#64748b',
+                        borderColor: editStatus === 'REJECTED' ? 'rgba(239,68,68,0.3)' : '#e2e8f0'
                       }}
                     >
-                      <X size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: 'middle' }} /> Rejected
-                    </motion.button>
+                      <X size={16} style={{ display: 'inline', marginRight: 8, verticalAlign: 'middle' }} /> Rejected
+                    </button>
                   </div>
                 </div>
 
-                <div className="modal-footer">
+                <div className="modal-footer" style={{ marginTop: 24 }}>
                   <button type="button" className="btn btn-sm" onClick={() => setEditingParticipant(null)}>Cancel</button>
                   <button type="button" className="btn btn-sm btn-primary" onClick={handleSaveStatus}>Save Status</button>
                 </div>

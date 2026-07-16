@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 280" fill="none">
+  <defs>
+    <linearGradient id="bg-grad" x1="0" y1="0" x2="280" y2="280" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f0fdf4" />
+      <stop offset="100%" stop-color="#dcfce7" />
+    </linearGradient>
+    <linearGradient id="card-grad" x1="80" y1="100" x2="200" y2="220" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#f8fafc" />
+    </linearGradient>
+    <linearGradient id="plus-grad" x1="126" y1="106" x2="154" y2="134" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#16a34a" />
+      <stop offset="100%" stop-color="#15803d" />
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#16a34a" flood-opacity="0.12"/>
+    </filter>
+    <filter id="card-shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="6" stdDeviation="12" flood-color="#0f172a" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="140" cy="140" r="120" fill="url(#bg-grad)" opacity="0.5"/>
+
+  <!-- Floating decorative dots -->
+  <circle cx="50" cy="60" r="4" fill="#86efac" opacity="0.6"/>
+  <circle cx="230" cy="50" r="3" fill="#bbf7d0" opacity="0.5"/>
+  <circle cx="40" cy="200" r="3" fill="#86efac" opacity="0.4"/>
+  <circle cx="240" cy="210" r="4" fill="#bbf7d0" opacity="0.5"/>
+  <circle cx="70" cy="130" r="2" fill="#4ade80" opacity="0.3"/>
+  <circle cx="210" cy="140" r="2.5" fill="#4ade80" opacity="0.3"/>
+
+  <!-- Back card (module placeholder) -->
+  <rect x="72" y="88" width="136" height="80" rx="16" fill="#ffffff" stroke="#e5e7eb" stroke-width="1.5" filter="url(#card-shadow)" opacity="0.6"/>
+  <rect x="88" y="104" width="60" height="8" rx="4" fill="#e2e8f0"/>
+  <rect x="88" y="120" width="40" height="6" rx="3" fill="#f1f5f9"/>
+  <rect x="88" y="136" width="50" height="6" rx="3" fill="#f1f5f9"/>
+
+  <!-- Front card (module placeholder) -->
+  <rect x="64" y="100" width="152" height="88" rx="18" fill="url(#card-grad)" stroke="#e5e7eb" stroke-width="1.5" filter="url(#card-shadow)"/>
+  <rect x="84" y="118" width="70" height="9" rx="4.5" fill="#d1d5db"/>
+  <rect x="84" y="135" width="50" height="7" rx="3.5" fill="#e5e7eb"/>
+  <rect x="84" y="150" width="60" height="7" rx="3.5" fill="#f1f5f9"/>
+  <!-- Small module lines -->
+  <rect x="84" y="165" width="44" height="5" rx="2.5" fill="#f1f5f9"/>
+
+  <!-- Plus circle -->
+  <circle cx="140" cy="196" r="24" fill="url(#plus-grad)" filter="url(#shadow)"/>
+  <line x1="140" y1="186" x2="140" y2="206" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+  <line x1="130" y1="196" x2="150" y2="196" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- Floating book icon (top right) -->
+  <g transform="translate(195, 55) rotate(12)" opacity="0.7">
+    <rect x="0" y="0" width="28" height="34" rx="4" fill="#ffffff" stroke="#d1d5db" stroke-width="1"/>
+    <rect x="5" y="8" width="14" height="2" rx="1" fill="#e5e7eb"/>
+    <rect x="5" y="14" width="10" height="2" rx="1" fill="#f1f5f9"/>
+    <rect x="5" y="20" width="12" height="2" rx="1" fill="#f1f5f9"/>
+  </g>
+
+  <!-- Floating layers icon (bottom left) -->
+  <g transform="translate(38, 168) rotate(-8)" opacity="0.6">
+    <path d="M0 8 L14 0 L28 8 L14 16 Z" fill="#dcfce7" stroke="#86efac" stroke-width="1"/>
+    <path d="M0 14 L14 6 L28 14 L14 22 Z" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1"/>
+  </g>
+</svg>

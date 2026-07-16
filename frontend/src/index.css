@@ -232,7 +232,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 .sidebar-logout-btn:hover { background: rgba(239,68,68,0.15); color: #F87171; transform: rotate(-15deg); }
 
-.main-content { flex: 1; margin-left: var(--sidebar-width); display: flex; flex-direction: column; height: 100vh; overflow: hidden; min-width: 0; }
+.main-content { flex: 1; margin-left: var(--sidebar-width); display: flex; flex-direction: column; min-height: 100vh; overflow: visible; min-width: 0; }
 
 .header-btn {
   width: 36px; height: 36px; border-radius: var(--radius-md); border: 1px solid var(--border-default);
@@ -275,7 +275,7 @@ h1, h2, h3, h4, h5, h6 {
   backdrop-filter: blur(4px);
 }
 
-.page-content { flex: 1; padding: 0 24px 0; background: #f8fafc; }
+.page-content { flex: 1; padding: 24px 32px 40px; background: #f8fafc; overflow: visible; }
 
 /* TOP HEADER BAR */
 .top-header {
