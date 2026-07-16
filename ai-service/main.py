@@ -2192,6 +2192,95 @@ async def generate_course_structure(request: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/normalize-data")
+async def normalize_data(request: dict):
+    """
+    Normalize names and department names using AI.
+    Fixes capitalization, spelling, and formatting.
+    """
+    try:
+        names = request.get("names", [])
+        departments = request.get("departments", [])
+
+        if not names and not departments:
+            return {"success": True, "normalized_names": [], "normalized_departments": []}
+
+        prompt_parts = [
+            "You are a data normalization assistant. Normalize the following names and department names.",
+            "",
+            "RULES:",
+            "1. Fix capitalization (title case for names, title case for departments)",
+            "2. Fix common misspellings",
+            "3. Normalize formatting (remove extra spaces, fix hyphens)",
+            "4. Do NOT change the meaning or intent of names",
+            "5. Return the original and normalized version for each entry",
+            "",
+        ]
+
+        if names:
+            prompt_parts.append("NAMES TO NORMALIZE:")
+            for i, name in enumerate(names, 1):
+                prompt_parts.append(f"  {i}. \"{name}\"")
+            prompt_parts.append("")
+
+        if departments:
+            prompt_parts.append("DEPARTMENTS TO NORMALIZE:")
+            for i, dept in enumerate(departments, 1):
+                prompt_parts.append(f"  {i}. \"{dept}\"")
+            prompt_parts.append("")
+
+        prompt_parts.append(
+            "Return ONLY valid JSON:\n"
+            "{\n"
+            '  "names": [\n'
+            '    {"original": "...", "normalized": "..."}\n'
+            "  ],\n"
+            '  "departments": [\n'
+            '    {"original": "...", "normalized": "..."}\n'
+            "  ]\n"
+            "}"
+        )
+
+        raw_json = gemini_client.generate_content(
+            "\n".join(prompt_parts),
+            temperature=0.1,
+            response_json=True,
+            doc_name="normalize-data",
+        )
+
+        try:
+            result = json.loads(raw_json)
+        except json.JSONDecodeError:
+            json_match = re.search(r'\{.*\}', raw_json, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+            else:
+                result = {"names": [], "departments": []}
+
+        return {
+            "success": True,
+            "normalized_names": result.get("names", []),
+            "normalized_departments": result.get("departments", []),
+        }
+
+    except GeminiTemporaryError as e:
+        log.error("Gemini temporary error during normalization: %s", e)
+        # Fallback: return original values without normalization
+        return {
+            "success": True,
+            "normalized_names": [{"original": n, "normalized": n.strip().title()} for n in request.get("names", [])],
+            "normalized_departments": [{"original": d, "normalized": d.strip().title()} for d in request.get("departments", [])],
+        }
+    except Exception as e:
+        log.error("Data normalization failed: %s", e, exc_info=True)
+        # Fallback: return original values with title-case
+        return {
+            "success": True,
+            "normalized_names": [{"original": n, "normalized": n.strip().title()} for n in request.get("names", [])],
+            "normalized_departments": [{"original": d, "normalized": d.strip().title()} for d in request.get("departments", [])],
+        }
+
+
 @app.post("/evaluate", response_model=EvaluateResponse)
 async def evaluate_answer(request: EvaluateRequest):
     """Evaluate a short answer using AI."""

@@ -113,6 +113,7 @@ export const navGroups = {
         { key: 'trainings', label: 'Trainings', icon: 'Trainings' },
         { key: 'trainers', label: 'Trainers', icon: 'Trainers' },
         { key: 'participants', label: 'Participants', icon: 'Participants' },
+        { key: 'bulkImport', label: 'Bulk Import', icon: 'Participants' },
       ],
     },
     {
@@ -145,6 +146,7 @@ const pageDescriptions = {
   trainings: 'Manage all training programs',
   trainers: 'Manage trainer accounts and assignments',
   participants: 'View and manage learner accounts',
+  bulkImport: 'Bulk import participants from Excel files',
   sessions: 'Manage assessment and quiz sessions',
   notes: 'Organize course notes and resources',
   feedback: 'View and respond to feedback',

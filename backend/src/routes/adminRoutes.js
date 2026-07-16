@@ -1,8 +1,12 @@
 const express = require('express');
 const { body } = require('express-validator');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const authController = require('../controllers/authController');
 const trainingController = require('../controllers/trainingController');
 const adminController = require('../controllers/adminController');
+const adminBulkImportController = require('../controllers/adminBulkImportController');
 const authenticateToken = require('../middleware/auth');
 const roleMiddleware = require('../middleware/roles');
 const { User, TrainerProfile } = require('../models');
@@ -366,5 +370,35 @@ router.put(   '/courses/:id',                             adminAuth, (req, res) 
 
 router.delete('/courses/:id',                             adminAuth, (req, res) =>
   adminCourseController.deleteCourse(req, res));
+
+// ── Bulk Participant Import ────────────────────────────────────────────────
+const bulkImportDir = path.join(process.cwd(), 'uploads', 'bulk-import');
+if (!fs.existsSync(bulkImportDir)) fs.mkdirSync(bulkImportDir, { recursive: true });
+
+const bulkImportUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, bulkImportDir),
+    filename: (req, file, cb) => {
+      const safe = (file.originalname || 'import').replace(/[^a-zA-Z0-9.\-_]/g, '').slice(-80);
+      cb(null, `${Date.now()}-${safe}`);
+    },
+  }),
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    if (['.xlsx', '.xls'].includes(ext)) return cb(null, true);
+    cb(new Error('Only .xlsx and .xls files are supported.'));
+  },
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
+
+router.get(  '/participants/bulk-template',  authenticateToken, roleMiddleware('ADMIN'),
+  (req, res) => adminBulkImportController.downloadTemplate(req, res));
+
+router.post( '/participants/bulk-validate',  authenticateToken, roleMiddleware('ADMIN'),
+  bulkImportUpload.single('file'),
+  (req, res) => adminBulkImportController.validateAndPreview(req, res));
+
+router.post( '/participants/bulk-import',    authenticateToken, roleMiddleware('ADMIN'),
+  (req, res) => adminBulkImportController.executeImport(req, res));
 
 module.exports = router;

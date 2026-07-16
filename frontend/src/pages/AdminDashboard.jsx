@@ -10,6 +10,7 @@ import Skeleton, { SkeletonTable } from '../components/Skeleton'
 import { API, API_BASE } from '../api/api'
 import { Loader2, TrendingUp, MessageSquare, Star, User, Users, ClipboardList, ChevronDown, X } from 'lucide-react'
 import AdminOverviewTab from '../components/admin/tabs/AdminOverviewTab'
+import BulkImportParticipants from '../components/admin/BulkImportParticipants'
 import { Button, Badge, Table, PageHeader, EmptyState, StatCard } from '../components/ui'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'
@@ -502,6 +503,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
     { key: 'trainings', label: 'Trainings' },
     { key: 'trainers', label: 'Trainers' },
     { key: 'participants', label: 'Participants' },
+    { key: 'bulkImport', label: 'Bulk Import' },
     { key: 'sessions', label: 'Assessment Sessions' },
     { key: 'notes', label: 'Notes Management' },
     { key: 'feedback', label: 'Feedback Reports' },
@@ -773,6 +775,13 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
               }}
             />
           )}
+        </motion.div>
+      )}
+
+      {/* ── BULK IMPORT ── */}
+      {tab === 'bulkImport' && (
+        <motion.div variants={itemVariants}>
+          <BulkImportParticipants user={user} />
         </motion.div>
       )}
 

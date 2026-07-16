@@ -52,7 +52,10 @@ export const API = {
     TRAINERS:        `${API_BASE}/admin/trainers`,
     PARTICIPANTS:    `${API_BASE}/admin/participants`,
     DELETE_TRAINING: (id) => `${API_BASE}/admin/trainings/${id}`,
-    NOTES:           `${API_BASE}/notes/admin/notes`
+    NOTES:           `${API_BASE}/notes/admin/notes`,
+    BULK_TEMPLATE:   `${API_BASE}/admin/participants/bulk-template`,
+    BULK_VALIDATE:   `${API_BASE}/admin/participants/bulk-validate`,
+    BULK_IMPORT:     `${API_BASE}/admin/participants/bulk-import`,
   },
 
   PARTICIPANT: {
