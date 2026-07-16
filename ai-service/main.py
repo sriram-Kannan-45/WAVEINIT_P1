@@ -2079,6 +2079,119 @@ async def trainer_generate_ai_quiz(
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
+@app.post("/generate-course-structure")
+async def generate_course_structure(request: dict):
+    """
+    Generate a course structure (modules, submodules, topics, subtopics) from
+    extracted document text and a trainer prompt.
+    """
+    try:
+        prompt_text = request.get("prompt", "")
+        extracted_text = request.get("text", "")
+        file_path = request.get("file_path")
+        mime_type = request.get("mime_type")
+
+        if not prompt_text.strip():
+            raise HTTPException(status_code=422, detail="Prompt is required.")
+
+        # If file_path is provided, extract text using existing TextExtractor
+        if file_path and not extracted_text.strip():
+            try:
+                from rag.config import RAGConfig
+                from rag.extraction import TextExtractor
+                config = RAGConfig()
+                extractor = TextExtractor(config)
+                extracted_text = extractor.extract_from_file(file_path, mime_type)
+                log.info("Extracted %d chars from file: %s", len(extracted_text), file_path)
+            except Exception as e:
+                log.warning("Document extraction failed: %s — continuing with prompt only", e)
+                extracted_text = ""
+
+        system_prompt = (
+            "You are an LMS curriculum expert.\n"
+            "Using the following course material and the trainer instructions, "
+            "generate a complete enterprise-level course structure.\n\n"
+            "Trainer Instructions:\n"
+            f"{prompt_text}\n\n"
+        )
+        if extracted_text.strip():
+            # Truncate to fit within Gemini context safely
+            truncated = extracted_text[:80000]
+            system_prompt += f"Course Material:\n{truncated}\n\n"
+        system_prompt += (
+            "Return ONLY valid JSON matching this exact schema:\n"
+            "{\n"
+            '  "courseTitle": "string",\n'
+            '  "modules": [\n'
+            "    {\n"
+            '      "title": "string",\n'
+            '      "duration": "string (e.g. 4 Hours)",\n'
+            '      "description": "string",\n'
+            '      "subModules": [\n'
+            "        {\n"
+            '          "title": "string",\n'
+            '          "topics": [\n'
+            "            {\n"
+            '              "title": "string",\n'
+            '              "duration": "string (e.g. 20 mins)"\n'
+            "            }\n"
+            "          ]\n"
+            "        }\n"
+            "      ]\n"
+            "    }\n"
+            "  ]\n"
+            "}\n\n"
+            "Create logical Modules.\n"
+            "Create Sub Modules within each module.\n"
+            "Create Topics within each sub module.\n"
+            "Create learning progression.\n"
+            "Estimate durations for each module, sub module, and topic.\n"
+            "Avoid duplicate topics.\n"
+            "Include a courseTitle.\n"
+            "Each module MUST have at least one subModule.\n"
+            "Each subModule MUST have at least one topic."
+        )
+
+        raw_json = gemini_client.generate_content(
+            system_prompt,
+            temperature=0.3,
+            response_json=True,
+            doc_name="course-structure",
+            file_size="N/A",
+            extracted_text_len=len(extracted_text),
+            first_500_chars=extracted_text[:500] if extracted_text else "N/A",
+        )
+
+        # Parse and validate the JSON
+        try:
+            structure = json.loads(raw_json)
+        except json.JSONDecodeError:
+            # Try to extract JSON from the response if wrapped in markdown
+            json_match = re.search(r'\{.*\}', raw_json, re.DOTALL)
+            if json_match:
+                structure = json.loads(json_match.group())
+            else:
+                raise HTTPException(status_code=502, detail="AI returned invalid JSON. Please retry.")
+
+        # Validate basic structure
+        if "modules" not in structure or not isinstance(structure["modules"], list):
+            raise HTTPException(status_code=502, detail="AI response missing 'modules' array. Please retry.")
+
+        return {"success": True, "structure": structure}
+
+    except HTTPException:
+        raise
+    except GeminiTemporaryError as e:
+        log.error("Gemini temporary error during structure generation: %s", e)
+        return JSONResponse(
+            status_code=503,
+            content={"success": False, "error": f"AI service temporarily unavailable: {e.api_message}", "retryable": True}
+        )
+    except Exception as e:
+        log.error("Course structure generation failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/evaluate", response_model=EvaluateResponse)
 async def evaluate_answer(request: EvaluateRequest):
     """Evaluate a short answer using AI."""

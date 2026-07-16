@@ -2,7 +2,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   AlertCircle, GraduationCap, Shield, User, ChevronRight,
   Brain, BarChart3, Code, ShieldCheck, ClipboardCheck, Award,
-  BookOpen, Bot, Users, ScrollText, BarChart2, Mail, Lock
+  BookOpen, Bot, Users, ScrollText, BarChart2, Mail, Lock, CheckCircle2
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'

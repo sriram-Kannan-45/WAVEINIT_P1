@@ -294,6 +294,40 @@ const aiService = {
       throw new Error('Failed to generate coding problems: ' + error.message);
     }
   },
+
+  async generateCourseStructure({ text, prompt }) {
+    const cleanPrompt = (prompt || '').toString().trim();
+    if (!cleanPrompt) throw new Error('Prompt cannot be empty.');
+    try {
+      console.log(`[aiService] Generating course structure (text length: ${(text || '').length})`);
+      const response = await axios.post(`${AI_SERVICE_URL}/generate-course-structure`, {
+        prompt: cleanPrompt,
+        text: text || '',
+      }, { timeout: AI_TIMEOUT, headers: { 'Content-Type': 'application/json' } });
+      if (!response.data || !response.data.success) {
+        throw new Error(response.data?.error || 'Invalid response from AI service');
+      }
+      return response.data;
+    } catch (error) {
+      console.error('[aiService] generateCourseStructure failed:', error.message);
+      if (error.response?.status === 503) {
+        throw new Error('AI service is temporarily unavailable. Please retry.');
+      }
+      if (error.response?.status === 502) {
+        throw new Error('AI returned an invalid response. Please retry.');
+      }
+      if (error.response?.status === 404) {
+        throw new Error('AI service endpoint not found. Please restart the Python AI service.');
+      }
+      if (error.code === 'ECONNREFUSED') {
+        throw new Error('AI service is not running. Please start the Python AI service first.');
+      }
+      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+        throw new Error('AI service timed out. The document may be too large or the model is overloaded.');
+      }
+      throw new Error('Failed to generate course structure: ' + error.message);
+    }
+  },
 };
 
 module.exports = aiService;

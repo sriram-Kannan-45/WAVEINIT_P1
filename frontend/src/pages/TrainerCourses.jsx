@@ -19,6 +19,7 @@ import CourseParticipantsTab from '../components/trainer/CourseParticipantsTab'
 import CourseAnalyticsTab from '../components/trainer/CourseAnalyticsTab'
 import DiscussionBoard from '../components/shared/DiscussionBoard'
 import CourseCodingTab from '../components/trainer/CourseCodingTab'
+import AIStructureGenerator from '../components/trainer/AIStructureGenerator'
 
 function getCourseArtwork(title, category) {
   return getCourseThumbnail(title, category)
@@ -567,49 +568,11 @@ function CourseDetail({ user, courseId, onBack }) {
         >
           {tab === 'structure' && (
             <div className="wl-detail-content wl-detail-content--full">
-              <div className="wl-detail-structure-card">
-                <div className="wl-detail-structure-header">
-                  <div className="wl-detail-structure-header-left">
-                    <h2 className="wl-detail-structure-title">Course Structure</h2>
-                    <span className="wl-detail-structure-badge">
-                      <span className="wl-detail-structure-badge-dot" />
-                      Module
-                    </span>
-                  </div>
-                  <div className="wl-detail-structure-header-right">
-                    <div className="wl-detail-toggle">
-                      <button className="wl-detail-toggle-btn wl-detail-toggle-btn--active" title="Grid view">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /></svg>
-                      </button>
-                      <button className="wl-detail-toggle-btn" title="List view">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" /></svg>
-                      </button>
-                    </div>
-                    <button className="wl-btn-primary">
-                      <Plus size={16} /> Add Module
-                    </button>
-                  </div>
-                </div>
-                <div className="wl-detail-structure-empty">
-                  <div className="wl-detail-structure-empty-bg" />
-                  <div className="wl-detail-structure-empty-badge">
-                    Ready to Build
-                  </div>
-                  <img
-                    src={emptyCourseImg}
-                    alt="No modules yet"
-                    className="wl-detail-structure-empty-illustration"
-                    loading="lazy"
-                  />
-                  <h3 className="wl-detail-structure-empty-title">No learning content yet</h3>
-                  <p className="wl-detail-structure-empty-desc">
-                    Create your first module to start building this course.
-                  </p>
-                  <button className="wl-detail-structure-empty-btn">
-                    <Plus size={16} /> Add Your First Module
-                  </button>
-                </div>
-              </div>
+              <AIStructureGenerator
+                user={user}
+                courseId={courseId}
+                onStructureSaved={fetchCourse}
+              />
             </div>
           )}
 

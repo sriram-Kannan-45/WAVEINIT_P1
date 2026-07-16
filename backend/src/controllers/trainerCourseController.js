@@ -48,6 +48,7 @@ const {
 } = require('../models');
 const { TYPE_LIMITS, ROOT: MATERIALS_ROOT } = require('../middleware/uploadMaterial');
 const NotificationService = require('../services/notificationService');
+const aiService = require('../services/aiService');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -1547,6 +1548,47 @@ async function addParticipant(req, res) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AI COURSE STRUCTURE GENERATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+// POST /api/trainer/courses/:courseId/generate-structure
+async function generateCourseStructure(req, res) {
+  try {
+    const course = await loadOwnedCourse(req, res, req.params.courseId);
+    if (!course) return;
+
+    const { prompt } = req.body;
+    if (!prompt || !prompt.trim()) {
+      return res.status(422).json({ error: 'Prompt is required' });
+    }
+
+    const payload = { prompt: prompt.trim() };
+
+    // If a file was uploaded, pass its path to the Python service for extraction
+    if (req.file) {
+      payload.file_path = req.file.path;
+      payload.mime_type = req.file.mimetype;
+    }
+
+    const result = await aiService.generateCourseStructure(payload);
+
+    // Clean up uploaded temp file
+    if (req.file) {
+      try { fs.unlinkSync(req.file.path); } catch (_) {}
+    }
+
+    res.json({ success: true, structure: result.structure });
+  } catch (e) {
+    // Clean up uploaded temp file on error
+    if (req.file) {
+      try { fs.unlinkSync(req.file.path); } catch (_) {}
+    }
+    console.error('generateCourseStructure:', e.message);
+    res.status(500).json({ error: e.message || 'Failed to generate course structure' });
+  }
+}
+
 module.exports = {
   // Courses
   listMyCourses,
@@ -1591,4 +1633,6 @@ module.exports = {
   listSubmissions,
   gradeSubmission,
   publishSubmission,
+  // AI Course Structure
+  generateCourseStructure,
 };

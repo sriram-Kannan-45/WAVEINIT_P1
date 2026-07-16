@@ -11,6 +11,7 @@ const c = require('../controllers/trainerCourseController');
 const authenticateToken = require('../middleware/auth');
 const roleMiddleware = require('../middleware/roles');
 const { uploadAny } = require('../middleware/uploadMaterial');
+const { uploadAIQuizMaterial } = require('../middleware/uploadAIQuizMaterial');
 
 const router = express.Router();
 router.use(authenticateToken);
@@ -34,6 +35,9 @@ router.get(  '/courses/:courseId/lessons',                   trainerOrAdmin, c.l
 router.get(  '/courses/:courseId/lessons/:lessonId',         trainerOrAdmin, c.getLesson);
 router.put(  '/courses/:courseId/lessons/:lessonId',         trainerOrAdmin, c.updateLesson);
 router.delete('/courses/:courseId/lessons/:lessonId',        trainerOrAdmin, c.deleteLesson);
+
+// ── AI Course Structure Generation ────────────────────────────────────────
+router.post( '/courses/:courseId/generate-structure',       trainerOrAdmin, uploadAIQuizMaterial.single('file'), c.generateCourseStructure);
 
 // ── Lesson Materials (uploads on POST) ─────────────────────────────────────
 router.put(  '/lessons/:lessonId/materials/reorder',         trainerOrAdmin, c.reorderMaterials);
