@@ -17,11 +17,11 @@
   --bg-input: #1E293B;
   --border-default: #334155;
   --border-muted: #1E293B;
-  --border-focus: #2DD4BF;
-  --accent: #2DD4BF;
-  --accent-hover: #5EEAD4;
-  --accent-light: rgba(45, 212, 191, 0.12);
-  --accent-medium: rgba(45, 212, 191, 0.2);
+  --border-focus: #22C55E;
+  --accent: #22C55E;
+  --accent-hover: #4ADE80;
+  --accent-light: rgba(34, 197, 94, 0.12);
+  --accent-medium: rgba(34, 197, 94, 0.2);
   --accent-glow: transparent;
   --text-primary: #F1F5F9;
   --text-secondary: #94A3B8;
@@ -40,19 +40,19 @@
 
 /* ─── Light refinements ─── */
 [data-theme='light'] {
-  --accent: #0D9488;
-  --accent-hover: #0F766E;
+  --accent: #16A34A;
+  --accent-hover: #15803D;
   --gradient-hero: none;
   --bg-base: #F8FAFC;
   --bg-surface: #ffffff;
   --bg-subtle: #f1f5f9;
   --bg-hover: #e2e8f0;
   --bg-input: #ffffff;
-  --border-default: #E2E8F0;
-  --border-muted: #F1F5F9;
+  --border-default: #E5E7EB;
+  --border-muted: #F3F4F6;
   --glass-bg: #ffffff;
   --glass-bg-strong: #ffffff;
-  --glass-border: #E2E8F0;
+  --glass-border: #E5E7EB;
   --glass-blur: none;
   --glass-blur-strong: none;
   --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.05);
@@ -208,9 +208,9 @@ body {
 }
 .tab-pill:hover { background: var(--bg-hover) !important; color: var(--text-primary) !important; }
 .tab-pill.active {
-  background: linear-gradient(135deg, #0d9488, #0f766e) !important;
+  background: linear-gradient(135deg, #16A34A, #15803D) !important;
   color: #fff !important; font-weight: 600 !important;
-  box-shadow: 0 4px 14px rgba(13, 148, 136, 0.3) !important;
+  box-shadow: 0 4px 14px rgba(22, 163, 74, 0.3) !important;
 }
 
 /* ─── Buttons ─── */
@@ -221,13 +221,13 @@ body {
 }
 .btn:active { transform: scale(0.98) translateY(0.5px) !important; }
 .btn-primary {
-  background: linear-gradient(135deg, #0D9488 0%, #14B8A6 100%) !important;
+  background: linear-gradient(135deg, #16A34A 0%, #22C55E 100%) !important;
   border: 1px solid rgba(255, 255, 255, 0.1) !important;
-  box-shadow: 0 4px 14px rgba(13, 148, 136, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
+  box-shadow: 0 4px 14px rgba(22, 163, 74, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
   color: #ffffff !important;
 }
 .btn-primary:hover {
-  box-shadow: 0 8px 24px rgba(13, 148, 136, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+  box-shadow: 0 8px 24px rgba(22, 163, 74, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
   transform: translateY(-1.5px) scale(1.01) !important;
 }
 

@@ -275,7 +275,7 @@ h1, h2, h3, h4, h5, h6 {
   backdrop-filter: blur(4px);
 }
 
-.page-content { flex: 1; padding: 24px 32px 40px; background: #f8fafc; overflow: visible; }
+.page-content { flex: 1; padding: 32px 40px 48px; background: #F8FAFC; overflow: visible; }
 
 /* TOP HEADER BAR */
 .top-header {

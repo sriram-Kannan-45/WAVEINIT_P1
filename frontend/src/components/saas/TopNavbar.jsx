@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion'
-import { Search, Bell, ChevronRight, ChevronDown } from 'lucide-react'
+import { Search, Bell, ChevronDown, Plus, Sun, Moon } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
+import { useAppTheme as useTheme } from '../../contexts/AppThemeContext'
 
 const initials = (name) =>
   name ? name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'U'
@@ -8,13 +9,17 @@ const initials = (name) =>
 export default function TopNavbar({ user, currentPageLabel, onOpenCreate, onProfile }) {
   const [showUserMenu, setShowUserMenu] = useState(false)
   const menuRef = useRef(null)
+  const { theme, toggleTheme } = useTheme()
   const roleLabel = user.role === 'ADMIN' ? 'Admin' : user.role === 'TRAINER' ? 'Trainer' : 'Learner'
 
-  const avatarBg = user.role === 'ADMIN'
-    ? 'linear-gradient(135deg, #7c3aed, #a78bfa)'
-    : user.role === 'TRAINER'
-    ? 'linear-gradient(135deg, #0d9488, #2dd4bf)'
-    : 'linear-gradient(135deg, #16a34a, #4ade80)'
+  const avatarBg = 'linear-gradient(135deg, #16A34A, #22C55E)'
+
+  const today = new Date().toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  })
 
   useEffect(() => {
     const handler = (e) => {
@@ -28,8 +33,9 @@ export default function TopNavbar({ user, currentPageLabel, onOpenCreate, onProf
     <header className="wl-topbar">
       <div className="wl-topbar-left">
         <div className="wl-topbar-breadcrumb">
-          <span style={{ color: '#9ca3af' }}>Home</span>
-          <ChevronRight size={14} style={{ color: '#d1d5db' }} />
+          <span style={{ fontSize: 12, color: '#9CA3AF', fontWeight: 500 }}>
+            {today}
+          </span>
           <span className="wl-topbar-breadcrumb-current">{currentPageLabel}</span>
         </div>
       </div>
@@ -37,7 +43,7 @@ export default function TopNavbar({ user, currentPageLabel, onOpenCreate, onProf
       <div className="wl-topbar-right">
         {/* Search */}
         <div className="wl-topbar-search">
-          <Search size={15} style={{ color: '#9ca3af' }} />
+          <Search size={15} style={{ color: '#9CA3AF' }} />
           <span className="wl-topbar-search-text">Search...</span>
           <span className="wl-topbar-search-kbd">⌘K</span>
         </div>
@@ -46,6 +52,27 @@ export default function TopNavbar({ user, currentPageLabel, onOpenCreate, onProf
         <button className="wl-topbar-icon-btn" aria-label="Notifications">
           <Bell size={18} />
           <span className="wl-topbar-notification-dot" />
+        </button>
+
+        {/* Quick Create */}
+        <motion.button
+          className="wl-topbar-create-btn"
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={onOpenCreate}
+        >
+          <Plus size={16} strokeWidth={2.5} />
+          <span>Quick Create</span>
+        </motion.button>
+
+        {/* Theme Toggle */}
+        <button
+          className="wl-topbar-icon-btn"
+          onClick={toggleTheme}
+          aria-label="Toggle theme"
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
         </button>
 
         {/* User */}
@@ -59,7 +86,7 @@ export default function TopNavbar({ user, currentPageLabel, onOpenCreate, onProf
             <span className="wl-topbar-user-name">{user.name}</span>
             <span className="wl-topbar-user-role">{roleLabel}</span>
           </div>
-          <ChevronDown size={14} style={{ color: '#9ca3af', transform: showUserMenu ? 'rotate(180deg)' : 'none', transition: 'transform 150ms ease' }} />
+          <ChevronDown size={14} style={{ color: '#9CA3AF', transform: showUserMenu ? 'rotate(180deg)' : 'none', transition: 'transform 150ms ease' }} />
 
           {showUserMenu && (
             <>

@@ -1,143 +1,72 @@
+import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  LayoutDashboard, BookOpen, BookPlus, ClipboardList, Code, FileText, GraduationCap, Home,
-  MessageSquare, Bell, Settings, Shield, Sparkles, Trophy, User, UserPlus, Users, X,
-  BarChart3, Calendar, PieChart, Lightbulb, BookMarked, Award,
-  Menu, TrendingUp, Target, LogOut, ChevronDown
+  LayoutDashboard, BookOpen, ClipboardList, FileText, GraduationCap,
+  MessageSquare, Trophy, User, Users, X,
+  BarChart3, Calendar, Award,
+  Menu, AppWindow, CircleCheck,
+  UserCheck, ClipboardCheck, NotebookPen,
+  UserCog, ShieldCheck
 } from 'lucide-react'
 import ProfileDropdown from './ProfileDropdown'
 
 const initials = (name) =>
   name ? name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'U'
 
-const roleIcons = {
-  ADMIN: {
-    Dashboard: <LayoutDashboard size={18} />,
-    Trainings: <BookOpen size={18} />,
-    Courses: <GraduationCap size={18} />,
-    Trainers: <Users size={18} />,
-    Participants: <Users size={18} />,
-    Feedback: <MessageSquare size={18} />,
-    Surveys: <ClipboardList size={18} />,
-    'Add Trainer': <UserPlus size={18} />,
-    'My Trainings': <BookOpen size={18} />,
-    'My Courses': <GraduationCap size={18} />,
-    'My Profile': <User size={18} />,
-    Available: <BookOpen size={18} />,
-    Enrollments: <BookPlus size={18} />,
-    'Give Feedback': <MessageSquare size={18} />,
-    'My Feedbacks': <MessageSquare size={18} />,
-    'AI Quizzes': <Sparkles size={18} />,
-    Overview: <PieChart size={18} />,
-    Leaderboard: <Trophy size={18} />,
-    Achievements: <Award size={18} />,
-    Lessons: <FileText size={18} />,
-    Coding: <Code size={18} />,
-    Profile: <User size={18} />,
-    ClipboardList: <ClipboardList size={18} />,
-    FileText: <FileText size={18} />,
-    Notes: <FileText size={18} />,
-    UserPlus: <UserPlus size={18} />,
-    'Enrollment Requests': <UserPlus size={18} />,
-    'Trainer Reports': <BarChart3 size={18} />,
-  },
-  TRAINER: {
-    Dashboard: <Home size={18} />,
-    Trainings: <BookMarked size={18} />,
-    Courses: <BookOpen size={18} />,
-    Trainers: <Users size={18} />,
-    Participants: <Users size={18} />,
-    Feedback: <MessageSquare size={18} />,
-    Surveys: <ClipboardList size={18} />,
-    'Add Trainer': <UserPlus size={18} />,
-    'My Trainings': <BookMarked size={18} />,
-    'My Courses': <BookOpen size={18} />,
-    'My Profile': <User size={18} />,
-    Available: <BookOpen size={18} />,
-    Enrollments: <BookPlus size={18} />,
-    'Give Feedback': <MessageSquare size={18} />,
-    'My Feedbacks': <MessageSquare size={18} />,
-    'AI Quizzes': <Sparkles size={18} />,
-    Overview: <Home size={18} />,
-    Leaderboard: <Trophy size={18} />,
-    Achievements: <Award size={18} />,
-    Lessons: <FileText size={18} />,
-    Coding: <Code size={18} />,
-    Profile: <User size={18} />,
-    ClipboardList: <ClipboardList size={18} />,
-    FileText: <FileText size={18} />,
-    Notes: <Lightbulb size={18} />,
-    UserPlus: <UserPlus size={18} />,
-    'Enrollment Requests': <UserPlus size={18} />,
-    'Trainer Reports': <BarChart3 size={18} />,
-  },
-  PARTICIPANT: {
-    Dashboard: <Home size={18} />,
-    Trainings: <BookOpen size={18} />,
-    Courses: <GraduationCap size={18} />,
-    Trainers: <Users size={18} />,
-    Participants: <Users size={18} />,
-    Feedback: <MessageSquare size={18} />,
-    Surveys: <ClipboardList size={18} />,
-    'Add Trainer': <UserPlus size={18} />,
-    'My Trainings': <BookOpen size={18} />,
-    'My Courses': <GraduationCap size={18} />,
-    'My Profile': <User size={18} />,
-    Available: <BookOpen size={18} />,
-    Enrollments: <BookPlus size={18} />,
-    'Give Feedback': <MessageSquare size={18} />,
-    'My Feedbacks': <MessageSquare size={18} />,
-    'AI Quizzes': <Sparkles size={18} />,
-    Overview: <Home size={18} />,
-    Leaderboard: <Trophy size={18} />,
-    Achievements: <Award size={18} />,
-    Lessons: <FileText size={18} />,
-    Coding: <Code size={18} />,
-    Profile: <User size={18} />,
-    ClipboardList: <ClipboardList size={18} />,
-    FileText: <FileText size={18} />,
-    Notes: <FileText size={18} />,
-    UserPlus: <UserPlus size={18} />,
-    'Enrollment Requests': <UserPlus size={18} />,
-    'Trainer Reports': <BarChart3 size={18} />,
-  },
-}
-
-export const navGroups = {
+const navGroups = {
   ADMIN: [
-    { title: 'OVERVIEW', items: [{ key: 'overview', label: 'Dashboard', icon: 'Dashboard' }] },
     {
-      title: 'MANAGEMENT',
+      title: 'Overview',
       items: [
-        { key: 'applications', label: 'Applications', icon: 'Participants' },
-        { key: 'pending', label: 'Pending Approval', icon: 'Overview' },
-        { key: 'trainings', label: 'Trainings', icon: 'Trainings' },
-        { key: 'trainers', label: 'Trainers', icon: 'Trainers' },
-        { key: 'participants', label: 'Participants', icon: 'Participants' },
-        { key: 'bulkImport', label: 'Bulk Import', icon: 'Participants' },
+        { key: 'overview', label: 'Dashboard', icon: LayoutDashboard },
       ],
     },
     {
-      title: 'CONTENT',
+      title: 'Management',
       items: [
-        { key: 'sessions', label: 'Sessions', icon: 'AI Quizzes' },
-        { key: 'notes', label: 'Notes', icon: 'Lessons' },
-        { key: 'feedback', label: 'Feedback', icon: 'Feedback' },
-        { key: 'surveys', label: 'Surveys', icon: 'Surveys' },
+        { key: 'applications', label: 'Applications', icon: AppWindow },
+        { key: 'pending', label: 'Pending Approvals', icon: CircleCheck },
+        { key: 'trainings', label: 'Training Programs', icon: BookOpen },
+        { key: 'courseManagement', label: 'Course Management', icon: GraduationCap },
+        { key: 'trainers', label: 'Trainers', icon: UserCheck },
+        { key: 'participants', label: 'Participants', icon: Users },
+      ],
+    },
+    {
+      title: 'Content',
+      items: [
+        { key: 'sessions', label: 'Sessions', icon: Calendar },
+        { key: 'assignments', label: 'Assignments', icon: ClipboardCheck },
+        { key: 'notes', label: 'Notes', icon: NotebookPen },
+        { key: 'surveys', label: 'Surveys', icon: ClipboardList },
+      ],
+    },
+    {
+      title: 'Reports',
+      items: [
+        { key: 'feedback', label: 'Feedback', icon: MessageSquare },
+        { key: 'reports', label: 'Analytics', icon: BarChart3 },
+      ],
+    },
+    {
+      title: 'Settings',
+      items: [
+        { key: 'bulkImport', label: 'User Management', icon: UserCog },
+        { key: 'programs', label: 'Roles & Permissions', icon: ShieldCheck },
       ],
     },
   ],
   TRAINER: [
-    { title: 'OVERVIEW', items: [{ key: 'overview', label: 'Dashboard', icon: 'Dashboard' }, { key: 'courses', label: 'My Courses', icon: 'Courses' }] },
-    { title: 'CONTENT', items: [{ key: 'credentials', label: 'Participant Credentials', icon: 'Notes' }, { key: 'notes', label: 'Notes', icon: 'Notes' }, { key: 'assignments', label: 'Assignments', icon: 'ClipboardList' }] },
-    { title: 'INSIGHTS', items: [{ key: 'reports', label: 'Reports', icon: 'Trainer Reports' }, { key: 'feedback', label: 'Feedback', icon: 'Feedback' }] },
-    { title: 'ACCOUNT', items: [{ key: 'profile', label: 'My Profile', icon: 'My Profile' }] },
+    { title: 'Overview', items: [{ key: 'overview', label: 'Dashboard', icon: LayoutDashboard }, { key: 'courses', label: 'My Courses', icon: GraduationCap }] },
+    { title: 'Content', items: [{ key: 'credentials', label: 'Participant Credentials', icon: FileText }, { key: 'notes', label: 'Notes', icon: NotebookPen }, { key: 'assignments', label: 'Assignments', icon: ClipboardCheck }] },
+    { title: 'Insights', items: [{ key: 'reports', label: 'Reports', icon: BarChart3 }, { key: 'feedback', label: 'Feedback', icon: MessageSquare }] },
+    { title: 'Account', items: [{ key: 'profile', label: 'My Profile', icon: User }] },
   ],
   PARTICIPANT: [
-    { title: 'OVERVIEW', items: [{ key: 'overview', label: 'Dashboard', icon: 'Overview' }] },
-    { title: 'LEARNING', items: [{ key: 'myEnrollments', label: 'My Courses', icon: 'My Courses' }, { key: 'leaderboard', label: 'Leaderboard', icon: 'Leaderboard' }, { key: 'achievements', label: 'Achievements', icon: 'Achievements' }] },
-    { title: 'ACTIVITY', items: [{ key: 'reports', label: 'My Reports', icon: 'Feedback' }, { key: 'certificates', label: 'Certificates', icon: 'Achievements' }, { key: 'feedback', label: 'Give Feedback', icon: 'Give Feedback' }, { key: 'myFeedbacks', label: 'My Feedbacks', icon: 'My Feedbacks' }] },
-    { title: 'ACCOUNT', items: [{ key: 'profile', label: 'Profile', icon: 'Profile' }] },
+    { title: 'Overview', items: [{ key: 'overview', label: 'Dashboard', icon: LayoutDashboard }] },
+    { title: 'Learning', items: [{ key: 'myEnrollments', label: 'My Courses', icon: GraduationCap }, { key: 'leaderboard', label: 'Leaderboard', icon: Trophy }, { key: 'achievements', label: 'Achievements', icon: Award }] },
+    { title: 'Activity', items: [{ key: 'reports', label: 'My Reports', icon: BarChart3 }, { key: 'certificates', label: 'Certificates', icon: Award }, { key: 'feedback', label: 'Give Feedback', icon: MessageSquare }, { key: 'myFeedbacks', label: 'My Feedbacks', icon: MessageSquare }] },
+    { title: 'Account', items: [{ key: 'profile', label: 'Profile', icon: User }] },
   ],
 }
 
@@ -146,10 +75,12 @@ const pageDescriptions = {
   applications: 'Review and manage registration applications',
   pending: 'Review and approve pending registrations',
   trainings: 'Manage all training programs',
+  courseManagement: 'Organize courses within training programs',
   trainers: 'Manage trainer accounts and assignments',
   participants: 'View and manage learner accounts',
   bulkImport: 'Bulk import participants from Excel files',
   sessions: 'Manage assessment and quiz sessions',
+  assignments: 'Manage course assignments',
   notes: 'Organize course notes and resources',
   feedback: 'View and respond to feedback',
   surveys: 'Create and manage surveys',
@@ -162,19 +93,22 @@ const pageDescriptions = {
   achievements: 'Your badges and accomplishments',
   certificates: 'Download your completion certificates',
   myFeedbacks: 'Feedback you\'ve submitted',
-  assignments: 'Manage course assignments',
 }
 
 export { pageDescriptions }
+export { navGroups }
 
 export default function Sidebar({ user, activeTab, onTabChange, onLogout, onCloseSidebar, sidebarOpen, onOpenSidebar }) {
   const groups = navGroups[user.role] || []
-  const icons = roleIcons[user.role] || roleIcons.PARTICIPANT
-  const isTrainer = user.role === 'TRAINER'
   const isAdmin = user.role === 'ADMIN'
+  const isTrainer = user.role === 'TRAINER'
 
   const roleLabel = user.role === 'ADMIN' ? 'Admin' : user.role === 'TRAINER' ? 'Trainer' : 'Learner'
-  const roleColor = isAdmin ? '#7c3aed' : isTrainer ? '#0d9488' : '#16a34a'
+  const avatarGradient = isAdmin
+    ? 'linear-gradient(135deg, #16A34A, #22C55E)'
+    : isTrainer
+    ? 'linear-gradient(135deg, #16A34A, #22C55E)'
+    : 'linear-gradient(135deg, #22C55E, #4ADE80)'
 
   return (
     <>
@@ -204,7 +138,7 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
           {/* Logo Header */}
           <div className="wl-sidebar-logo">
             <div className="wl-sidebar-logo-mark">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
                 <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
               </svg>
@@ -219,14 +153,15 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
           </div>
 
           {/* Navigation */}
-          <nav className="wl-sidebar-nav">
+          <nav className="wl-sidebar-nav" id="sidebar-nav">
             {groups.map((group, gi) => (
               <div key={gi} className="wl-sidebar-group">
                 <div className="wl-sidebar-group-label">{group.title}</div>
                 {group.items.map((item) => {
                   const isActive = activeTab === item.key
+                  const Icon = item.icon
                   return (
-                    <button
+                    <motion.button
                       key={item.key}
                       className={`wl-sidebar-item ${isActive ? 'wl-sidebar-item--active' : ''}`}
                       onClick={() => {
@@ -237,12 +172,15 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
                         }
                         onCloseSidebar && onCloseSidebar()
                       }}
+                      whileHover={{ x: 2 }}
+                      whileTap={{ scale: 0.98 }}
+                      transition={{ duration: 0.15 }}
                     >
                       <span className="wl-sidebar-item-icon">
-                        {icons[item.icon] || icons.Dashboard}
+                        <Icon size={18} strokeWidth={isActive ? 2 : 1.8} />
                       </span>
                       <span>{item.label}</span>
-                    </button>
+                    </motion.button>
                   )
                 })}
               </div>

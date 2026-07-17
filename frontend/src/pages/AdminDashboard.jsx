@@ -8,7 +8,7 @@ import AnimatedDropdown from '../components/AnimatedDropdown'
 import { useToast } from '../components/Toast'
 import Skeleton, { SkeletonTable } from '../components/Skeleton'
 import { API, API_BASE } from '../api/api'
-import { Loader2, TrendingUp, MessageSquare, Star, User, Users, ClipboardList, ChevronDown, X } from 'lucide-react'
+import { Loader2, TrendingUp, MessageSquare, Star, User, Users, ClipboardList, X } from 'lucide-react'
 import AdminOverviewTab from '../components/admin/tabs/AdminOverviewTab'
 import BulkImportParticipants from '../components/admin/BulkImportParticipants'
 import RegistrationApplications from '../components/admin/RegistrationApplications'
@@ -529,7 +529,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   return (
     <motion.div
-      style={{ padding: 'var(--space-8)', maxWidth: 1400, margin: '0 auto' }}
+      style={{ maxWidth: 1400, margin: '0 auto' }}
       variants={containerVariants}
       initial="hidden"
       animate="visible"
@@ -542,6 +542,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
           feedbacks={feedbacks}
           trainings={trainings}
           participants={participants}
+          trainers={trainers}
           initialLoading={initialLoading}
           loading={loading}
         />

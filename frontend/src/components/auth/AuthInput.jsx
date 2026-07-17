@@ -1,4 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion'
+import { Lock, Eye, EyeOff, CheckCircle2 } from 'lucide-react'
 
 export default function AuthInput({
   id, label, icon: Icon, type = 'text', value, onChange,
@@ -85,7 +86,5 @@ export function PasswordInput({
     />
   )
 }
-
-import { Lock, Eye, EyeOff, CheckCircle2 } from 'lucide-react'
 
 export { CheckCircle2 }

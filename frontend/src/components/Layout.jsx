@@ -8,7 +8,6 @@ function Layout({ user, children, activeTab, onTabChange, onLogout, headerSlot }
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const groups = navGroups[user.role] || []
-  const isParticipant = user.role === 'PARTICIPANT'
 
   const closeSidebar = () => setSidebarOpen(false)
   const openSidebar = () => setSidebarOpen(true)
@@ -35,7 +34,6 @@ function Layout({ user, children, activeTab, onTabChange, onLogout, headerSlot }
 
   return (
     <div className={`app-layout ${user.role === 'TRAINER' ? 'theme-trainer' : 'theme-academic'}`}>
-      {/* Skip links for keyboard navigation */}
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-[9999] focus:bg-primary-600 focus:text-white focus:px-4 focus:py-2 focus:rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-300"
