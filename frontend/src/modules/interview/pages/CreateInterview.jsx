@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, AlertCircle, CheckCircle } from 'lucide-react';
 import interviewApi from '../api';
@@ -8,6 +8,28 @@ export default function CreateInterview({ user, onTabChange }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
+  const [trainers, setTrainers] = useState([]);
+  const [participants, setParticipants] = useState([]);
+  const [loadingUsers, setLoadingUsers] = useState(true);
+
+  useEffect(() => {
+    const fetchUsers = async () => {
+      setLoadingUsers(true);
+      try {
+        const [trainersRes, participantsRes] = await Promise.all([
+          interviewApi.listTrainers(),
+          interviewApi.listParticipants(),
+        ]);
+        setTrainers(trainersRes.trainers || []);
+        setParticipants(participantsRes.participants || []);
+      } catch (err) {
+        console.error('Failed to load trainers/participants:', err);
+      } finally {
+        setLoadingUsers(false);
+      }
+    };
+    fetchUsers();
+  }, []);
 
   const handleSubmit = async (data) => {
     setSubmitting(true);
@@ -79,7 +101,7 @@ export default function CreateInterview({ user, onTabChange }) {
           transition={{ delay: 0.1 }}
           className="bg-white rounded-2xl border border-slate-100 p-5"
         >
-          <CreateInterviewForm onSubmit={handleSubmit} submitting={submitting} />
+          <CreateInterviewForm onSubmit={handleSubmit} submitting={submitting} trainers={trainers} participants={participants} loadingUsers={loadingUsers} />
         </motion.div>
       </div>
     </div>

@@ -30,7 +30,7 @@ function Toggle({ enabled, onChange }) {
   );
 }
 
-export default function CreateInterviewForm({ onSubmit, onCancel, loading, trainers = [], participants = [] }) {
+export default function CreateInterviewForm({ onSubmit, onCancel, loading, trainers = [], participants = [], loadingUsers = false }) {
   const [step, setStep] = useState(0);
   const [search, setSearch] = useState('');
   const [form, setForm] = useState({
@@ -266,18 +266,29 @@ export default function CreateInterviewForm({ onSubmit, onCancel, loading, train
               <div>
                 <label className="text-xs font-medium text-slate-700 mb-2 block">Trainers</label>
                 <div className="space-y-1 max-h-32 overflow-y-auto border border-slate-200 rounded-xl p-2">
-                  {trainers.map(t => (
-                    <label key={t.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={form.trainerIds.includes(t.id)}
-                        onChange={() => toggleTrainer(t.id)}
-                        className="w-3.5 h-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                      />
-                      <span className="text-xs text-slate-700">{t.name}</span>
-                    </label>
-                  ))}
-                  {trainers.length === 0 && <p className="text-xs text-slate-400 px-2">No trainers available</p>}
+                  {loadingUsers ? (
+                    <div className="flex items-center gap-2 px-2 py-3">
+                      <div className="animate-spin w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full" />
+                      <span className="text-xs text-slate-400">Loading trainers...</span>
+                    </div>
+                  ) : trainers.length === 0 ? (
+                    <p className="text-xs text-slate-400 px-2">No approved trainers found in the system</p>
+                  ) : (
+                    trainers.map(t => (
+                      <label key={t.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={form.trainerIds.includes(t.id)}
+                          onChange={() => toggleTrainer(t.id)}
+                          className="w-3.5 h-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <span className="text-xs font-medium text-slate-700 block truncate">{t.name}</span>
+                          <span className="text-[10px] text-slate-400 block truncate">{t.email}{t.phone ? ` · ${t.phone}` : ''}</span>
+                        </div>
+                      </label>
+                    ))
+                  )}
                 </div>
               </div>
               <div>
@@ -293,21 +304,29 @@ export default function CreateInterviewForm({ onSubmit, onCancel, loading, train
                   />
                 </div>
                 <div className="space-y-1 max-h-40 overflow-y-auto border border-slate-200 rounded-xl p-2">
-                  {filteredParticipants.map(p => (
-                    <label key={p.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={form.participantIds.includes(p.id)}
-                        onChange={() => toggleParticipant(p.id)}
-                        className="w-3.5 h-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                      />
-                      <div>
-                        <span className="text-xs text-slate-700 block">{p.name}</span>
-                        <span className="text-[10px] text-slate-400">{p.email}</span>
-                      </div>
-                    </label>
-                  ))}
-                  {filteredParticipants.length === 0 && <p className="text-xs text-slate-400 px-2">No participants found</p>}
+                  {loadingUsers ? (
+                    <div className="flex items-center gap-2 px-2 py-3">
+                      <div className="animate-spin w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full" />
+                      <span className="text-xs text-slate-400">Loading participants...</span>
+                    </div>
+                  ) : filteredParticipants.length === 0 ? (
+                    <p className="text-xs text-slate-400 px-2">{search ? 'No participants match your search' : 'No approved participants found in the system'}</p>
+                  ) : (
+                    filteredParticipants.map(p => (
+                      <label key={p.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={form.participantIds.includes(p.id)}
+                          onChange={() => toggleParticipant(p.id)}
+                          className="w-3.5 h-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <div>
+                          <span className="text-xs font-medium text-slate-700 block">{p.name}</span>
+                          <span className="text-[10px] text-slate-400">{p.email}{p.phone ? ` · ${p.phone}` : ''}</span>
+                        </div>
+                      </label>
+                    ))
+                  )}
                 </div>
                 <p className="text-[10px] text-slate-400 mt-1">{form.participantIds.length} selected</p>
               </div>

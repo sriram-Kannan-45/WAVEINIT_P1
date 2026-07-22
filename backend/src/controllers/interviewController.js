@@ -367,7 +367,7 @@ const interviewController = {
   // GET /api/interview/users/trainers — List available trainers
   async listTrainers(req, res) {
     try {
-      const trainers = await User.findAll({ where: { role: 'TRAINER', status: 'APPROVED' }, attributes: ['id', 'name', 'email'] });
+      const trainers = await User.findAll({ where: { role: 'TRAINER', status: 'APPROVED' }, attributes: ['id', 'name', 'email', 'phone'] });
       res.json({ trainers });
     } catch (error) {
       console.error('List trainers error:', error);
@@ -378,7 +378,7 @@ const interviewController = {
   // GET /api/interview/users/participants — List available participants
   async listParticipants(req, res) {
     try {
-      const participants = await User.findAll({ where: { role: 'PARTICIPANT', status: 'APPROVED' }, attributes: ['id', 'name', 'email'] });
+      const participants = await User.findAll({ where: { role: 'PARTICIPANT', status: 'APPROVED' }, attributes: ['id', 'name', 'email', 'phone'] });
       res.json({ participants });
     } catch (error) {
       console.error('List participants error:', error);
