@@ -173,6 +173,8 @@ const initializeSocket = (server) => {
     require('../socket/events/monitorEvents')(io, socket);
     // Register coding assessment events
     require('../socket/codingEvents')(io, socket);
+    // Register interview management events
+    require('../socket/events/interviewEvents')(io, socket);
   });
 
   return io;

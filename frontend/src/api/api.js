@@ -282,6 +282,34 @@ export const API = {
     CONTACT_LINKS:        `${API_BASE}/user-profile/contact-links`,
   },
 
+  INTERVIEW: {
+    LIST:                   `${API_BASE}/interview`,
+    CREATE:                 `${API_BASE}/interview`,
+    DETAIL:        (id)   => `${API_BASE}/interview/${id}`,
+    UPDATE:        (id)   => `${API_BASE}/interview/${id}`,
+    CANCEL:        (id)   => `${API_BASE}/interview/${id}/cancel`,
+    START:         (id)   => `${API_BASE}/interview/${id}/start`,
+    END:           (id)   => `${API_BASE}/interview/${id}/end`,
+    DASHBOARD:              `${API_BASE}/interview/dashboard`,
+    JOIN:           (id)  => `${API_BASE}/interview/${id}/join`,
+    LEAVE:          (id)  => `${API_BASE}/interview/${id}/leave`,
+    PARTICIPANTS:   (id)  => `${API_BASE}/interview/${id}/participants`,
+    TRAINERS:       (id)  => `${API_BASE}/interview/${id}/trainers`,
+    TRAINER_LIST:           `${API_BASE}/interview/users/trainers`,
+    PARTICIPANT_LIST:       `${API_BASE}/interview/users/participants`,
+    MY_INTERVIEWS:          `${API_BASE}/interview/participant/my`,
+    TRAINER_INTERVIEWS:     `${API_BASE}/interview/trainer/my`,
+    QR_GENERATE:    (id)  => `${API_BASE}/interview/${id}/qr/generate`,
+    QR_VERIFY:      (id)  => `${API_BASE}/interview/${id}/qr/verify`,
+    MOBILE_CONNECT: (id)  => `${API_BASE}/interview/${id}/mobile/connect`,
+    EVALUATION:     (id)  => `${API_BASE}/interview/${id}/evaluation`,
+    EVALUATIONS:    (id)  => `${API_BASE}/interview/${id}/evaluations`,
+    PUBLISH_RESULTS:(id)  => `${API_BASE}/interview/${id}/publish-results`,
+    REPORT:         (id)  => `${API_BASE}/interview/${id}/report`,
+    ACTIVITY:       (id)  => `${API_BASE}/interview/${id}/activity`,
+    NOTIFICATIONS:  (id)  => `${API_BASE}/interview/${id}/notifications`,
+  },
+
 };
 
 export { API_BASE, BACKEND_ORIGIN };

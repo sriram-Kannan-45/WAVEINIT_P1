@@ -38,6 +38,7 @@ const discussionRoutes = require('./routes/discussionRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const recordingRoutes = require('./routes/recordingRoutes');
 const codingAssessmentRoutes = require('./routes/codingAssessmentRoutes');
+const interviewRoutes = require('./routes/interviewRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -154,6 +155,7 @@ app.use('/api/discussion', discussionRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/recordings', recordingRoutes);
 app.use('/api/coding', codingAssessmentRoutes);
+app.use('/api/interview', interviewRoutes);
 
 // Health check for AI service (separate path to avoid conflict with router)
 app.get('/api/ai/health', async (req, res) => {
@@ -477,6 +479,31 @@ const startServer = async () => {
       logger.info('coding_assessment tables ready');
     } catch (e) {
       logger.error('Could not sync coding_assessment tables', { error: e.message });
+    }
+
+    // Interview Management tables
+    try {
+      const {
+        Interview, InterviewCandidate, InterviewTrainer, InterviewRoom,
+        InterviewEvaluation, InterviewRecording, InterviewLog, InterviewNotification, InterviewDevice,
+      } = require('./models');
+      await sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
+      try {
+        await Interview.sync({ alter: true });
+        await InterviewRoom.sync({ alter: true });
+        await InterviewCandidate.sync({ alter: true });
+        await InterviewTrainer.sync({ alter: true });
+        await InterviewEvaluation.sync({ alter: true });
+        await InterviewRecording.sync({ alter: true });
+        await InterviewLog.sync({ alter: true });
+        await InterviewNotification.sync({ alter: true });
+        await InterviewDevice.sync({ alter: true });
+      } finally {
+        await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
+      }
+      logger.info('interview management tables ready');
+    } catch (e) {
+      logger.error('Could not sync interview management tables', { error: e.message });
     }
 
     // Add course-centric indexes that were intentionally omitted from the

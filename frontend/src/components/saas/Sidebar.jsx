@@ -7,7 +7,7 @@ import {
   BarChart3, Calendar, Award,
   Menu, AppWindow, CircleCheck,
   UserCheck, ClipboardCheck, NotebookPen,
-  UserCog, ShieldCheck
+  UserCog, ShieldCheck, Video
 } from 'lucide-react'
 import ProfileDropdown from './ProfileDropdown'
 
@@ -42,6 +42,18 @@ const navGroups = {
       ],
     },
     {
+      title: 'Interviews',
+      items: [
+        { key: 'interview-dashboard', label: 'Interview Dashboard', icon: Video },
+        { key: 'interview-create', label: 'Create Interview', icon: ClipboardCheck },
+        { key: 'interview-upcoming', label: 'Upcoming', icon: Calendar },
+        { key: 'interview-completed', label: 'Completed', icon: CircleCheck },
+        { key: 'interview-reports', label: 'Interview Reports', icon: BarChart3 },
+        { key: 'interview-templates', label: 'Templates', icon: FileText },
+        { key: 'interview-settings', label: 'Settings', icon: ShieldCheck },
+      ],
+    },
+    {
       title: 'Reports',
       items: [
         { key: 'feedback', label: 'Feedback', icon: MessageSquare },
@@ -59,12 +71,22 @@ const navGroups = {
   TRAINER: [
     { title: 'Overview', items: [{ key: 'overview', label: 'Dashboard', icon: LayoutDashboard }, { key: 'courses', label: 'My Courses', icon: GraduationCap }] },
     { title: 'Content', items: [{ key: 'credentials', label: 'Participant Credentials', icon: FileText }, { key: 'notes', label: 'Notes', icon: NotebookPen }, { key: 'assignments', label: 'Assignments', icon: ClipboardCheck }] },
+    { title: 'Interviews', items: [
+      { key: 'interview-dashboard', label: 'Interview Dashboard', icon: Video },
+      { key: 'interview-upcoming', label: 'Upcoming Interviews', icon: Calendar },
+      { key: 'interview-completed', label: 'Completed', icon: CircleCheck },
+      { key: 'interview-evaluation', label: 'Evaluation', icon: ClipboardCheck },
+    ] },
     { title: 'Insights', items: [{ key: 'reports', label: 'Reports', icon: BarChart3 }, { key: 'feedback', label: 'Feedback', icon: MessageSquare }] },
     { title: 'Account', items: [{ key: 'profile', label: 'My Profile', icon: User }] },
   ],
   PARTICIPANT: [
     { title: 'Overview', items: [{ key: 'overview', label: 'Dashboard', icon: LayoutDashboard }] },
     { title: 'Learning', items: [{ key: 'myEnrollments', label: 'My Courses', icon: GraduationCap }, { key: 'leaderboard', label: 'Leaderboard', icon: Trophy }, { key: 'achievements', label: 'Achievements', icon: Award }] },
+    { title: 'Interviews', items: [
+      { key: 'interview-upcoming', label: 'My Interviews', icon: Video },
+      { key: 'interview-completed', label: 'Past Interviews', icon: CircleCheck },
+    ] },
     { title: 'Activity', items: [{ key: 'reports', label: 'My Reports', icon: BarChart3 }, { key: 'certificates', label: 'Certificates', icon: Award }, { key: 'feedback', label: 'Give Feedback', icon: MessageSquare }, { key: 'myFeedbacks', label: 'My Feedbacks', icon: MessageSquare }] },
     { title: 'Account', items: [{ key: 'profile', label: 'Profile', icon: User }] },
   ],
@@ -92,6 +114,14 @@ const pageDescriptions = {
   achievements: 'Your badges and accomplishments',
   certificates: 'Download your completion certificates',
   myFeedbacks: 'Feedback you\'ve submitted',
+  'interview-dashboard': 'Manage interviews and view real-time status',
+  'interview-create': 'Schedule a new interview session',
+  'interview-upcoming': 'View and join upcoming interviews',
+  'interview-completed': 'Review completed interview sessions',
+  'interview-evaluation': 'Evaluate candidate performance',
+  'interview-reports': 'Interview analytics and reports',
+  'interview-templates': 'Pre-configured interview templates',
+  'interview-settings': 'Configure interview defaults and security',
 }
 
 export { pageDescriptions }

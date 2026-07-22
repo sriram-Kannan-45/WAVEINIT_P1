@@ -34,6 +34,15 @@ const ParticipantCodingAttemptPage = lazy(() => import('./pages/ParticipantCodin
 const CodingAssessmentResultPage = lazy(() => import('./pages/CodingAssessmentResultPage'))
 const TrainerCourses = lazy(() => import('./pages/TrainerCourses'))
 const ProfilePage = lazy(() => import('./pages/Profile/ProfilePage'))
+const InterviewDashboard = lazy(() => import('./modules/interview/pages/InterviewDashboard'))
+const InterviewCreate = lazy(() => import('./modules/interview/pages/CreateInterview'))
+const InterviewUpcoming = lazy(() => import('./modules/interview/pages/UpcomingInterviews'))
+const InterviewCompleted = lazy(() => import('./modules/interview/pages/CompletedInterviews'))
+const InterviewRoomPage = lazy(() => import('./modules/interview/pages/InterviewRoomPage'))
+const InterviewEvaluation = lazy(() => import('./modules/interview/pages/EvaluationPage'))
+const InterviewReports = lazy(() => import('./modules/interview/pages/InterviewReports'))
+const InterviewTemplates = lazy(() => import('./modules/interview/pages/InterviewTemplates'))
+const InterviewSettings = lazy(() => import('./modules/interview/pages/InterviewSettings'))
 
 function PageLoader() {
   return (
@@ -486,6 +495,18 @@ function AppRoutes({ user, onLogin, onLogout }) {
         element={
           user ? (
             <DashboardWrapper component={ProfilePage} user={user} onLogout={onLogout} />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+
+      {/* Interview Management Routes */}
+      <Route
+        path="/interview/:interviewId/room"
+        element={
+          user ? (
+            <InterviewRoomPage user={user} />
           ) : (
             <Navigate to="/login" replace />
           )

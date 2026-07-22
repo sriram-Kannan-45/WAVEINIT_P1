@@ -85,6 +85,17 @@ const ProfileProject = require('./ProfileProject');
 const ProfileContactLink = require('./ProfileContactLink');
 const ProfileActivityLog = require('./ProfileActivityLog');
 
+// Interview Management module
+const Interview = require('./interview');
+const InterviewCandidate = require('./interviewCandidate');
+const InterviewTrainer = require('./interviewTrainer');
+const InterviewRoom = require('./interviewRoom');
+const InterviewEvaluation = require('./interviewEvaluation');
+const InterviewRecording = require('./interviewRecording');
+const InterviewLog = require('./interviewLog');
+const InterviewNotification = require('./interviewNotification');
+const InterviewDevice = require('./interviewDevice');
+
 // --- Core LMS Associations ---
 
 // User <-> TrainerProfile
@@ -363,6 +374,45 @@ ProfileContactLink.belongsTo(UserProfile, { foreignKey: 'profileId', as: 'profil
 UserProfile.hasMany(ProfileActivityLog, { foreignKey: 'profileId', as: 'activityLogs' });
 ProfileActivityLog.belongsTo(UserProfile, { foreignKey: 'profileId', as: 'profile' });
 
+// --- Interview Management Associations ---
+Interview.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
+User.hasMany(Interview, { foreignKey: 'createdBy', as: 'createdInterviews' });
+
+Interview.hasMany(InterviewCandidate, { foreignKey: 'interviewId', as: 'candidates' });
+InterviewCandidate.belongsTo(Interview, { foreignKey: 'interviewId', as: 'interview' });
+InterviewCandidate.belongsTo(User, { foreignKey: 'participantId', as: 'participant' });
+User.hasMany(InterviewCandidate, { foreignKey: 'participantId', as: 'interviewCandidates' });
+
+Interview.hasMany(InterviewTrainer, { foreignKey: 'interviewId', as: 'trainers' });
+InterviewTrainer.belongsTo(Interview, { foreignKey: 'interviewId', as: 'interview' });
+InterviewTrainer.belongsTo(User, { foreignKey: 'trainerId', as: 'trainer' });
+User.hasMany(InterviewTrainer, { foreignKey: 'trainerId', as: 'interviewTrainerAssignments' });
+
+Interview.hasOne(InterviewRoom, { foreignKey: 'interviewId', as: 'room' });
+InterviewRoom.belongsTo(Interview, { foreignKey: 'interviewId', as: 'interview' });
+
+Interview.hasMany(InterviewEvaluation, { foreignKey: 'interviewId', as: 'evaluations' });
+InterviewEvaluation.belongsTo(Interview, { foreignKey: 'interviewId', as: 'interview' });
+InterviewEvaluation.belongsTo(User, { foreignKey: 'participantId', as: 'participant' });
+InterviewEvaluation.belongsTo(User, { foreignKey: 'evaluatorId', as: 'evaluator' });
+User.hasMany(InterviewEvaluation, { foreignKey: 'evaluatorId', as: 'interviewEvaluations' });
+
+Interview.hasMany(InterviewRecording, { foreignKey: 'interviewId', as: 'recordings' });
+InterviewRecording.belongsTo(Interview, { foreignKey: 'interviewId', as: 'interview' });
+
+Interview.hasMany(InterviewLog, { foreignKey: 'interviewId', as: 'logs' });
+InterviewLog.belongsTo(Interview, { foreignKey: 'interviewId', as: 'interview' });
+InterviewLog.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+
+Interview.hasMany(InterviewNotification, { foreignKey: 'interviewId', as: 'interviewNotifications' });
+InterviewNotification.belongsTo(Interview, { foreignKey: 'interviewId', as: 'interview' });
+InterviewNotification.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+User.hasMany(InterviewNotification, { foreignKey: 'userId', as: 'interviewNotifications' });
+
+Interview.hasMany(InterviewDevice, { foreignKey: 'interviewId', as: 'devices' });
+InterviewDevice.belongsTo(Interview, { foreignKey: 'interviewId', as: 'interview' });
+InterviewDevice.belongsTo(User, { foreignKey: 'participantId', as: 'participant' });
+
 module.exports = {
   sequelize,
   User,
@@ -437,4 +487,14 @@ module.exports = {
   ProfileProject,
   ProfileContactLink,
   ProfileActivityLog,
+  // Interview Management
+  Interview,
+  InterviewCandidate,
+  InterviewTrainer,
+  InterviewRoom,
+  InterviewEvaluation,
+  InterviewRecording,
+  InterviewLog,
+  InterviewNotification,
+  InterviewDevice,
 };
