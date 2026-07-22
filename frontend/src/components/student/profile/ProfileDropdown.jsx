@@ -1,7 +1,9 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { User, Settings, LogOut, ChevronDown } from 'lucide-react'
 
 export default function ProfileDropdown({ user, onTabChange, onLogout }) {
+  const navigate = useNavigate()
   const [open, setOpen] = useState(false)
 
   const initials = user?.name
@@ -54,7 +56,7 @@ export default function ProfileDropdown({ user, onTabChange, onLogout }) {
             boxShadow: '0 10px 30px rgba(0,0,0,0.1)',
           }}>
             <button
-              onClick={() => { setOpen(false); onTabChange?.('profile') }}
+              onClick={() => { setOpen(false); navigate('/my-profile') }}
               style={dropdownItemStyle}
             >
               <User size={14} /> My Profile

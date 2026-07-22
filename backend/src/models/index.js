@@ -75,6 +75,16 @@ const CodingResult = require('./codingResult');
 // Registration Application module
 const RegistrationApplication = require('./registrationApplication');
 
+// User Profile module (LinkedIn-style)
+const UserProfile = require('./UserProfile');
+const ProfileSkill = require('./ProfileSkill');
+const ProfileExperience = require('./ProfileExperience');
+const ProfileEducation = require('./ProfileEducation');
+const ProfileCertificate = require('./ProfileCertificate');
+const ProfileProject = require('./ProfileProject');
+const ProfileContactLink = require('./ProfileContactLink');
+const ProfileActivityLog = require('./ProfileActivityLog');
+
 // --- Core LMS Associations ---
 
 // User <-> TrainerProfile
@@ -335,6 +345,24 @@ RegistrationApplication.belongsTo(User, { foreignKey: 'reviewerId', as: 'reviewe
 RegistrationApplication.belongsTo(User, { foreignKey: 'trainerId', as: 'trainer' });
 RegistrationApplication.belongsTo(User, { foreignKey: 'userId', as: 'user' });
 
+// --- User Profile Module Associations ---
+User.hasOne(UserProfile, { foreignKey: 'userId', as: 'userProfile' });
+UserProfile.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+UserProfile.hasMany(ProfileSkill, { foreignKey: 'profileId', as: 'skills' });
+ProfileSkill.belongsTo(UserProfile, { foreignKey: 'profileId', as: 'profile' });
+UserProfile.hasMany(ProfileExperience, { foreignKey: 'profileId', as: 'experiences' });
+ProfileExperience.belongsTo(UserProfile, { foreignKey: 'profileId', as: 'profile' });
+UserProfile.hasMany(ProfileEducation, { foreignKey: 'profileId', as: 'educations' });
+ProfileEducation.belongsTo(UserProfile, { foreignKey: 'profileId', as: 'profile' });
+UserProfile.hasMany(ProfileCertificate, { foreignKey: 'profileId', as: 'certificates' });
+ProfileCertificate.belongsTo(UserProfile, { foreignKey: 'profileId', as: 'profile' });
+UserProfile.hasMany(ProfileProject, { foreignKey: 'profileId', as: 'projects' });
+ProfileProject.belongsTo(UserProfile, { foreignKey: 'profileId', as: 'profile' });
+UserProfile.hasOne(ProfileContactLink, { foreignKey: 'profileId', as: 'contactLinks' });
+ProfileContactLink.belongsTo(UserProfile, { foreignKey: 'profileId', as: 'profile' });
+UserProfile.hasMany(ProfileActivityLog, { foreignKey: 'profileId', as: 'activityLogs' });
+ProfileActivityLog.belongsTo(UserProfile, { foreignKey: 'profileId', as: 'profile' });
+
 module.exports = {
   sequelize,
   User,
@@ -400,4 +428,13 @@ module.exports = {
   CodingSubmission,
   CodingResult,
   RegistrationApplication,
+  // User Profile module
+  UserProfile,
+  ProfileSkill,
+  ProfileExperience,
+  ProfileEducation,
+  ProfileCertificate,
+  ProfileProject,
+  ProfileContactLink,
+  ProfileActivityLog,
 };

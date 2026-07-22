@@ -34,10 +34,12 @@ const mysql = require('mysql2/promise');
 
 const DB = {
   host: process.env.DB_HOST || 'localhost',
+  port: parseInt(process.env.DB_PORT, 10) || 3306,
   user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASS || '',
+  password: process.env.DB_PASS || process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'training_db',
   multipleStatements: false,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : undefined,
 };
 
 const CONFIRM = process.argv.includes('--yes');

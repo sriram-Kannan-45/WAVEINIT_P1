@@ -183,7 +183,7 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                onClick={() => onTabChange('profile')}
+                onClick={() => navigate('/my-profile')}
                 style={{
                   padding: '10px 20px', borderRadius: 10,
                   border: 'none', background: '#16a34a',

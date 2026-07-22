@@ -258,6 +258,30 @@ export const API = {
     DELETE_EDUCATION:(id) => `${API_BASE}/profile/trainer/education/${id}`,
   },
 
+  USER_PROFILE: {
+    GET:                  `${API_BASE}/user-profile`,
+    GET_BY_ID:    (id) => `${API_BASE}/user-profile/${id}`,
+    UPDATE:               `${API_BASE}/user-profile`,
+    BANNER:               `${API_BASE}/user-profile/banner`,
+    AVATAR:               `${API_BASE}/user-profile/avatar`,
+    RESUME:               `${API_BASE}/user-profile/resume`,
+    SKILLS:               `${API_BASE}/user-profile/skills`,
+    DELETE_SKILL:  (id) => `${API_BASE}/user-profile/skills/${id}`,
+    EXPERIENCE:           `${API_BASE}/user-profile/experience`,
+    UPDATE_EXP:   (id) => `${API_BASE}/user-profile/experience/${id}`,
+    DELETE_EXP:   (id) => `${API_BASE}/user-profile/experience/${id}`,
+    EDUCATION:            `${API_BASE}/user-profile/education`,
+    UPDATE_EDU:   (id) => `${API_BASE}/user-profile/education/${id}`,
+    DELETE_EDU:   (id) => `${API_BASE}/user-profile/education/${id}`,
+    CERTIFICATES:         `${API_BASE}/user-profile/certificates`,
+    UPDATE_CERT:  (id) => `${API_BASE}/user-profile/certificates/${id}`,
+    DELETE_CERT:  (id) => `${API_BASE}/user-profile/certificates/${id}`,
+    PROJECTS:             `${API_BASE}/user-profile/projects`,
+    UPDATE_PROJECT:(id) => `${API_BASE}/user-profile/projects/${id}`,
+    DELETE_PROJECT:(id) => `${API_BASE}/user-profile/projects/${id}`,
+    CONTACT_LINKS:        `${API_BASE}/user-profile/contact-links`,
+  },
+
 };
 
 export { API_BASE, BACKEND_ORIGIN };

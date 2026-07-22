@@ -2,10 +2,22 @@ require('dotenv').config();
 const { Sequelize } = require('sequelize');
 const logger = require('../utils/logger');
 
-const dbName = process.env.DB_NAME || 'training_db';
-const dbUser = process.env.DB_USER || 'root';
-const dbPass = process.env.DB_PASS || '';
-const dbHost = process.env.DB_HOST || 'localhost';
+// ── Aiven MySQL Configuration ──────────────────────────────────────────
+// All credentials MUST come from environment variables.
+// Never hardcode passwords in source control.
+const dbName   = process.env.DB_NAME   || 'training_db';
+const dbUser   = process.env.DB_USER   || 'avnadmin';
+const dbPass   = process.env.DB_PASS   || process.env.DB_PASSWORD || '';
+const dbHost   = process.env.DB_HOST   || 'localhost';
+const dbPort   = parseInt(process.env.DB_PORT, 10) || 3306;
+const isProduction = process.env.NODE_ENV === 'production';
+
+// SSL config for Aiven (required for cloud connections)
+const sslConfig = isProduction ? {
+  require: true,
+  rejectUnauthorized: true,
+  ca: process.env.DB_SSL_CA || undefined,
+} : undefined;
 
 const sequelize = new Sequelize(
   dbName,
@@ -13,29 +25,61 @@ const sequelize = new Sequelize(
   dbPass,
   {
     host: dbHost,
+    port: dbPort,
     dialect: 'mysql',
-    logging: false,
+    logging: isProduction ? false : console.log,
+    ssl: sslConfig,
+    dialectOptions: isProduction ? {
+      ssl: {
+        require: true,
+        rejectUnauthorized: true,
+        ca: process.env.DB_SSL_CA || undefined,
+      },
+      connectTimeout: 30000,
+    } : {
+      connectTimeout: 30000,
+    },
     pool: {
-      max: 10,
+      max: isProduction ? 5 : 10,
       min: 0,
       acquire: 30000,
-      idle: 10000
+      idle: 10000,
+      evict: 1000,
+    },
+    retry: {
+      match: [
+        /ETIMEDOUT/,
+        /EHOSTUNREACH/,
+        /ECONNRESET/,
+        /ECONNREFUSED/,
+        /PROTOCOL_CONNECTION_LOST/,
+        /ER_CON_COUNT_ERROR/,
+        /ER_CON_LOST/,
+      ],
+      max: 5,
     },
     define: {
-      freezeTableName: true // Prevent automatic table name pluralization
-    }
+      freezeTableName: true,
+    },
   }
 );
 
+// Skip createDatabase for Aiven — the database already exists on the cloud instance.
+// On localhost, we still try to create it if it doesn't exist.
 const createDatabase = async () => {
+  if (isProduction) {
+    logger.info('☁️  Production mode — skipping database creation (Aiven manages this)');
+    return;
+  }
   try {
     const tempSeq = new Sequelize('mysql', dbUser, dbPass, { 
       host: dbHost, 
+      port: dbPort,
       dialect: 'mysql', 
       logging: false,
       define: { freezeTableName: true }
     });
-    await tempSeq.query(`CREATE DATABASE IF NOT EXISTS ${dbName}`);
+    await tempSeq.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``);
     logger.logAlways(`✅ Database '${dbName}' created or already exists`);
     await tempSeq.close();
   } catch (error) {
@@ -46,6 +90,7 @@ const createDatabase = async () => {
 const connectDB = async () => {
   try {
     await createDatabase();
+    logger.logAlways(`🔗 Connecting to MySQL: ${dbHost}:${dbPort}/${dbName} ...`);
     await sequelize.authenticate();
     logger.logAlways('✅ Database connected successfully');
     
@@ -616,21 +661,58 @@ const connectDB = async () => {
     }
     
   } catch (error) {
-    logger.error('❌ Database connection failed', { error: error.message });
+    logger.error('❌ Database connection failed', { error: error.message, code: error.code });
     
-    // Helpful error message for "too many keys" issue
-    if (error.message && error.message.includes('Too many keys specified')) {
-      logger.logAlways('\n⚠️  DUPLICATE INDEX DETECTION:');
-      logger.logAlways('   The error "Too many keys specified; max 64 keys allowed"');
-      logger.logAlways('   indicates duplicate indexes in the database.');
-      logger.logAlways('\n💡 SOLUTION:');
+    // Helpful error messages for common issues
+    const msg = (error.message || '').toLowerCase();
+    
+    if (msg.includes('etoimedout') || msg.includes('econnrefused')) {
+      logger.logAlways('\n⚠️  CONNECTION TIMEOUT / REFUSED:');
+      logger.logAlways('   The database server is unreachable.');
+      logger.logAlways('   Checklist:');
+      logger.logAlways('   1. Verify DB_HOST and DB_PORT are correct in .env / Render env vars');
+      logger.logAlways('   2. Check Aiven service status: https://console.aiven.io');
+      logger.logAlways('   3. Ensure your IP is whitelisted (Aiven → Service → Settings → IP allow list)');
+      logger.logAlways('   4. For Render: ensure the service is not in sleep mode\n');
+    } else if (msg.includes('access denied') || msg.includes('er_access_denied')) {
+      logger.logAlways('\n⚠️  ACCESS DENIED:');
+      logger.logAlways('   Username or password is incorrect.');
+      logger.logAlways('   1. Verify DB_USER and DB_PASS are correct');
+      logger.logAlways('   2. Reset password in Aiven console if needed\n');
+    } else if (msg.includes('ssl') || msg.includes('handshake')) {
+      logger.logAlways('\n⚠️  SSL ERROR:');
+      logger.logAlways('   SSL handshake failed.');
+      logger.logAlways('   1. Aiven requires SSL — ensure DB_SSL_CA is set or rejectUnauthorized is false');
+      logger.logAlways('   2. Try setting NODE_ENV=production\n');
+    } else if (msg.includes('unknown database') || msg.includes('er_bad_db_error')) {
+      logger.logAlways('\n⚠️  UNKNOWN DATABASE:');
+      logger.logAlways(`   Database '${dbName}' does not exist.`);
+      logger.logAlways('   1. Create it in the Aiven console');
+      logger.logAlways('   2. Import your SQL dump before starting the app\n');
+    } else if (msg.includes('too many connections')) {
+      logger.logAlways('\n⚠️  TOO MANY CONNECTIONS:');
+      logger.logAlways('   Connection pool exhausted.');
+      logger.logAlways('   1. Reduce pool.max in config');
+      logger.logAlways('   2. Check for connection leaks');
+      logger.logAlways('   3. Upgrade Aiven plan for more connections\n');
+    } else if (msg.includes('er_parse_error') || msg.includes('too many keys')) {
+      logger.logAlways('\n⚠️  SCHEMA ISSUE:');
+      logger.logAlways('   Duplicate indexes detected.');
       logger.logAlways('   1. Run: node cleanup-duplicate-indexes.js');
-      logger.logAlways('   2. Verify all tables show ✅ (under 64 keys)');
-      logger.logAlways('   3. Restart the server');
-      logger.logAlways('   4. Never use alter: true in production\n');
+      logger.logAlways('   2. Never use alter: true in production\n');
+    } else if (error.code === 'ER_NO_SUCH_TABLE') {
+      logger.logAlways('\n⚠️  TABLE DOES NOT EXIST:');
+      logger.logAlways('   Run the SQL migration script to create tables.\n');
     }
     
-    process.exit(1);
+    if (isProduction) {
+      logger.logAlways('🛑 Production mode — exiting after connection failure.\n');
+      process.exit(1);
+    }
+    
+    // In development, don't exit — allow hot-reload to retry
+    logger.logAlways('⚠️  Development mode — server will start without database.');
+    logger.logAlways('   Fix the connection and restart.\n');
   }
 };
 

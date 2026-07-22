@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   BookOpen, Users, UserCheck, Star, MessageSquare,
@@ -28,6 +29,7 @@ function fmtTimeAgo(d) {
 }
 
 export default function AdminOverviewTab({ user, stats, feedbacks, trainings, participants, trainers, initialLoading, loading }) {
+  const navigate = useNavigate()
   const firstName = user?.name?.split(' ')[0] || 'Admin'
 
   const overviewStatCards = [
@@ -113,6 +115,7 @@ export default function AdminOverviewTab({ user, stats, feedbacks, trainings, pa
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
+            onClick={() => navigate('/my-profile')}
             style={{
               padding: '10px 20px', borderRadius: 10,
               border: 'none', background: '#16a34a',

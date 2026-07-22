@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   LayoutDashboard, BookOpen, ClipboardList, FileText, GraduationCap,
@@ -25,7 +26,6 @@ const navGroups = {
       title: 'Management',
       items: [
         { key: 'applications', label: 'Applications', icon: AppWindow },
-        { key: 'pending', label: 'Pending Approvals', icon: CircleCheck },
         { key: 'trainings', label: 'Training Programs', icon: BookOpen },
         { key: 'courseManagement', label: 'Course Management', icon: GraduationCap },
         { key: 'trainers', label: 'Trainers', icon: UserCheck },
@@ -73,7 +73,6 @@ const navGroups = {
 const pageDescriptions = {
   overview: 'Monitor your platform activity and key metrics',
   applications: 'Review and manage registration applications',
-  pending: 'Review and approve pending registrations',
   trainings: 'Manage all training programs',
   courseManagement: 'Organize courses within training programs',
   trainers: 'Manage trainer accounts and assignments',
@@ -99,6 +98,7 @@ export { pageDescriptions }
 export { navGroups }
 
 export default function Sidebar({ user, activeTab, onTabChange, onLogout, onCloseSidebar, sidebarOpen, onOpenSidebar }) {
+  const navigate = useNavigate()
   const groups = navGroups[user.role] || []
   const isAdmin = user.role === 'ADMIN'
   const isTrainer = user.role === 'TRAINER'
@@ -165,8 +165,8 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
                       key={item.key}
                       className={`wl-sidebar-item ${isActive ? 'wl-sidebar-item--active' : ''}`}
                       onClick={() => {
-                        if (item.key === 'profile' && user?.role === 'TRAINER') {
-                          onTabChange('profile')
+                        if (item.key === 'profile') {
+                          navigate('/my-profile')
                         } else {
                           onTabChange(item.key)
                         }
@@ -192,7 +192,7 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
         <div className="wl-sidebar-footer">
           <ProfileDropdown
             user={user}
-            onProfile={() => onTabChange('profile')}
+            onProfile={() => navigate('/my-profile')}
             onLogout={onLogout}
           />
         </div>

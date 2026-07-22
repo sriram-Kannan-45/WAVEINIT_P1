@@ -4,7 +4,7 @@ import {
   ArrowLeft, Search, Plus, Pencil, Trash2,
   BookOpen, FileText, Users, BarChart3, Layers, Sparkles,
   CheckCircle2, Folder, MessageSquare, Code,
-  ChevronRight, ArrowRight, MoreVertical, GripVertical
+  ChevronRight, MoreVertical, GripVertical
 } from 'lucide-react'
 import { API } from '../api/api'
 import { StatCard } from '../components/ui'
@@ -52,8 +52,10 @@ function TrainingCard({ course, artwork, onOpen, fmtTimeAgo }) {
   return (
     <motion.div
       className="wl-training-card"
+      onClick={() => onOpen(course.id)}
       whileHover={{ y: -4 }}
       transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+      style={{ cursor: 'pointer' }}
     >
       {/* Thumbnail */}
       <div className="wl-training-card-thumb" style={{ background: thumb.gradient }}>
@@ -107,20 +109,6 @@ function TrainingCard({ course, artwork, onOpen, fmtTimeAgo }) {
           <span>Assigned by Admin</span>
         </div>
 
-        <div className="wl-training-card-actions">
-          <button
-            className="wl-training-card-btn-primary"
-            onClick={(e) => { e.stopPropagation(); onOpen(course.id); }}
-          >
-            Open Course <ArrowRight size={14} />
-          </button>
-          <button
-            className="wl-training-card-btn-secondary"
-            onClick={(e) => { e.stopPropagation(); onOpen(course.id); }}
-          >
-            View Participants
-          </button>
-        </div>
       </div>
     </motion.div>
   )

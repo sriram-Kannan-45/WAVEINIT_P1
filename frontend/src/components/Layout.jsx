@@ -28,8 +28,7 @@ function Layout({ user, children, activeTab, onTabChange, onLogout, headerSlot }
   }
 
   const handleProfile = () => {
-    if (user?.role === 'TRAINER') navigate('/trainer/profile')
-    else onTabChange('profile')
+    navigate('/my-profile')
   }
 
   return (

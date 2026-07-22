@@ -143,6 +143,9 @@ app.get('/api/attempts/:attemptId', authenticateToken, async (req, res) => {
 });
 
 app.use('/api/profile', profileRoutes);
+
+const userProfileRoutes = require('./routes/userProfileRoutes');
+app.use('/api/user-profile', userProfileRoutes);
 app.use('/api/participant-profile', participantProfileRoutes);
 app.use('/api/proctor', proctoringRoutes);
 app.use('/api', monitorRoutes);
@@ -185,8 +188,23 @@ const { testMail } = require('./controllers/forgotPasswordController');
 app.get('/api/test-mail', testMail);
 
 // Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+app.get('/health', async (req, res) => {
+  try {
+    await sequelize.authenticate();
+    res.json({
+      status: 'OK',
+      database: 'connected',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'ERROR',
+      database: 'disconnected',
+      error: error.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
 // ─── Global error handler ────────────────────────────────────────────────────
@@ -328,6 +346,30 @@ const startServer = async () => {
       logger.info('registration_applications table ready');
     } catch (e) {
       logger.error('Could not sync registration_applications', { error: e.message });
+    }
+
+    // Sync UserProfile tables — additive, scoped to profile module
+    try {
+      const {
+        UserProfile, ProfileSkill, ProfileExperience, ProfileEducation,
+        ProfileCertificate, ProfileProject, ProfileContactLink, ProfileActivityLog,
+      } = require('./models');
+      await sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
+      try {
+        await UserProfile.sync({ alter: true });
+        await ProfileSkill.sync({ alter: true });
+        await ProfileExperience.sync({ alter: true });
+        await ProfileEducation.sync({ alter: true });
+        await ProfileCertificate.sync({ alter: true });
+        await ProfileProject.sync({ alter: true });
+        await ProfileContactLink.sync({ alter: true });
+        await ProfileActivityLog.sync({ alter: true });
+      } finally {
+        await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
+      }
+      logger.info('user profile tables ready');
+    } catch (e) {
+      logger.error('Could not sync user profile tables', { error: e.message });
     }
 
     // Sync Certificate table

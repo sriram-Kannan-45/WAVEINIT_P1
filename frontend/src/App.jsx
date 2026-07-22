@@ -33,6 +33,7 @@ const TrainerCodingAssessmentDetails = lazy(() => import('./pages/TrainerCodingA
 const ParticipantCodingAttemptPage = lazy(() => import('./pages/ParticipantCodingAttemptPage'))
 const CodingAssessmentResultPage = lazy(() => import('./pages/CodingAssessmentResultPage'))
 const TrainerCourses = lazy(() => import('./pages/TrainerCourses'))
+const ProfilePage = lazy(() => import('./pages/Profile/ProfilePage'))
 
 function PageLoader() {
   return (
@@ -302,7 +303,7 @@ function AppRoutes({ user, onLogin, onLogout }) {
         path="/trainer/profile"
         element={
           user?.role === 'TRAINER' ? (
-            <DashboardWrapper component={TrainerProfile} user={user} onLogout={onLogout} />
+            <DashboardWrapper component={ProfilePage} user={user} onLogout={onLogout} />
           ) : (
             <Navigate to="/login" state={{ fromRole: 'TRAINER' }} replace />
           )
@@ -474,6 +475,17 @@ function AppRoutes({ user, onLogin, onLogout }) {
             <Layout user={user} onLogout={onLogout} activeTab="myEnrollments" onTabChange={() => window.location.href = '/participant'}>
               <CodingAssessmentResultPage user={user} />
             </Layout>
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+
+      <Route
+        path="/my-profile"
+        element={
+          user ? (
+            <DashboardWrapper component={ProfilePage} user={user} onLogout={onLogout} />
           ) : (
             <Navigate to="/login" replace />
           )
