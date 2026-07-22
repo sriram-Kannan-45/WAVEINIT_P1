@@ -6,8 +6,9 @@ import interviewApi from '../api';
 import { useInterview } from '../hooks/useInterview';
 import EvaluationForm from '../components/EvaluationForm';
 
-export default function EvaluationPage({ user }) {
-  const { interviewId } = useParams();
+export default function EvaluationPage({ user, interviewId: propInterviewId }) {
+  const params = useParams();
+  const interviewId = propInterviewId || params.interviewId;
   const navigate = useNavigate();
   const { interview, loading: interviewLoading } = useInterview(interviewId);
 

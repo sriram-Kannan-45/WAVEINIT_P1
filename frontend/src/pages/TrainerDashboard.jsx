@@ -14,6 +14,7 @@ import { useToast } from '../components/Toast'
 import Pagination from '../components/Pagination'
 import { Button, Badge, EmptyState, StatCard, ProgressBar } from '../components/ui'
 import { API_BASE } from '../api/api'
+import InterviewShell from '../modules/interview/pages/InterviewShell'
 
 const API = API_BASE
 
@@ -547,6 +548,10 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
             )}
           </div>
         </motion.div>
+      )}
+
+      {tab.startsWith('interview-') && (
+        <InterviewShell activeTab={tab} onTabChange={onTabChange} user={user} />
       )}
 
       {/* Reply Modal */}

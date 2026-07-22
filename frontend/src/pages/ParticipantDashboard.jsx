@@ -19,6 +19,7 @@ import ParticipantCourses from './ParticipantCourses'
 import { useContinueLearning } from '../hooks/useContinueLearning'
 import { Button, Badge, Table, PageHeader, EmptyState, StatCard, ProgressBar } from '../components/ui'
 import { useSocketEvent } from '../hooks/useSocket'
+import InterviewShell from '../modules/interview/pages/InterviewShell'
 
 const fadeVariant = {
   initial: { opacity: 0, y: 8 },
@@ -574,6 +575,10 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
             onTabChange={handleTabChange}
           />
         </motion.div>
+      )}
+
+      {tab.startsWith('interview-') && (
+        <InterviewShell activeTab={tab} onTabChange={handleTabChange} user={user} />
       )}
     </div>
   )

@@ -13,6 +13,7 @@ import AdminOverviewTab from '../components/admin/tabs/AdminOverviewTab'
 import BulkImportParticipants from '../components/admin/BulkImportParticipants'
 import RegistrationApplications from '../components/admin/RegistrationApplications'
 import { Button, Badge, Table, PageHeader, EmptyState, StatCard } from '../components/ui'
+import InterviewShell from '../modules/interview/pages/InterviewShell'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'
@@ -1431,6 +1432,10 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
             </div>
           )}
         </motion.div>
+      )}
+
+      {tab.startsWith('interview-') && (
+        <InterviewShell activeTab={tab} onTabChange={handleTabChange} user={user} />
       )}
 
       {/* ── EDIT MODAL ── */}
