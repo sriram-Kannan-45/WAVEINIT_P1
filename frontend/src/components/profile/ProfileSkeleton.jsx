@@ -11,7 +11,7 @@ export default function ProfileSkeleton() {
           boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.06)',
         }}>
           {/* Banner */}
-          <Skeleton style={{ height: 280, borderRadius: 0 }} />
+          <Skeleton style={{ height: 200, borderRadius: 0 }} />
 
           {/* Content */}
           <div style={{ position: 'relative', padding: '0 32px 28px' }}>

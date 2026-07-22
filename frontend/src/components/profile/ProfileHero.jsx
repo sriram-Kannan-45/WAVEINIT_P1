@@ -79,7 +79,7 @@ export default function ProfileHero({ profile, completion, onEditProfile, onBann
       <div
         onMouseEnter={() => setBannerHover(true)}
         onMouseLeave={() => setBannerHover(false)}
-        style={{ position: 'relative', height: 280, overflow: 'hidden' }}
+        style={{ position: 'relative', height: 200, overflow: 'hidden' }}
       >
         <img
           src={profile?.bannerImage ? assetUrl(profile.bannerImage) : DEFAULT_BANNER}

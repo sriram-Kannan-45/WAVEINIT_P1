@@ -17,9 +17,10 @@ import AchievementsCard from '../../components/profile/AchievementsCard';
 import RecentActivity from '../../components/profile/RecentActivity';
 import QuickActions from '../../components/profile/QuickActions';
 import {
-  EditProfileDialog, AddExperienceDialog, AddEducationDialog,
+  AddExperienceDialog, AddEducationDialog,
   AddCertificateDialog, AddProjectDialog, EditContactDialog, ResumeUploadDialog,
 } from '../../components/profile/ProfileDialogs';
+import { EditProfileModal } from '../../components/profile/edit-modal';
 
 const fadeUp = { hidden: { opacity: 0, y: 16 }, visible: { opacity: 1, y: 0 } };
 const stagger = { visible: { transition: { staggerChildren: 0.04 } } };
@@ -54,8 +55,19 @@ export default function ProfilePage({ user }) {
   const closeDialog = (key) => { setDialogs(d => ({ ...d, [key]: false })); setEditItem(null); };
 
   const handleSaveProfile = async (data) => {
-    try { await profileService.updateProfile(data); toast.success('Profile updated'); fetchProfile(); }
-    catch { toast.error('Failed to update'); }
+    try {
+      const { skills, contactLinks, ...profileData } = data;
+      await profileService.updateProfile(profileData);
+      
+      if (contactLinks) {
+        await profileService.updateContactLinks(contactLinks);
+      }
+      
+      toast.success('Profile updated');
+      fetchProfile();
+    } catch {
+      toast.error('Failed to update');
+    }
   };
   const handleBannerUpdate = (path) => { setProfile(p => p ? { ...p, bannerImage: path } : p); };
   const handleAvatarUpdate = (path) => { setProfile(p => p ? { ...p, profileImage: path } : p); };
@@ -226,7 +238,7 @@ export default function ProfilePage({ user }) {
       `}</style>
 
       {/* Dialogs */}
-      <EditProfileDialog open={dialogs.edit} onClose={() => closeDialog('edit')} profile={profile} onSave={handleSaveProfile} />
+      <EditProfileModal open={dialogs.edit} onClose={() => closeDialog('edit')} profile={profile} onSave={handleSaveProfile} />
       <AddExperienceDialog open={dialogs.experience} onClose={() => closeDialog('experience')} onSave={handleSaveExperience} editData={editItem} />
       <AddEducationDialog open={dialogs.education} onClose={() => closeDialog('education')} onSave={handleSaveEducation} editData={editItem} />
       <AddCertificateDialog open={dialogs.certificate} onClose={() => closeDialog('certificate')} onSave={handleSaveCertificate} editData={editItem} />

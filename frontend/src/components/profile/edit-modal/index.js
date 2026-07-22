@@ -1,0 +1,9 @@
+export { default as EditProfileModal } from './EditProfileModal';
+export { default as ProfilePhotoUploader } from './ProfilePhotoUploader';
+export { default as BasicInformationSection } from './BasicInformationSection';
+export { default as ProfessionalSection } from './ProfessionalSection';
+export { default as ContactSection } from './ContactSection';
+export { default as SkillsInput } from './SkillsInput';
+export { default as ResumeUploader } from './ResumeUploader';
+export { default as SocialLinksSection } from './SocialLinksSection';
+export { default as ModalFooter } from './ModalFooter';
