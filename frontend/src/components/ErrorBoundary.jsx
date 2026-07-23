@@ -41,7 +41,7 @@ ${this.state.errorInfo?.componentStack || 'No stack trace available'}`
   handleGoToLogin = () => {
     localStorage.removeItem('user')
     localStorage.removeItem('rememberMe')
-    window.location.href = '/participant'
+    window.location.href = '/login'
   }
 
   handleRetry = () => {

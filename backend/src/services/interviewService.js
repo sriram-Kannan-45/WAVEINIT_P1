@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const { v4: uuidv4 } = require('uuid') || { v4: () => crypto.randomUUID() };
+const uuidv4 = () => crypto.randomUUID();
 const { Op } = require('sequelize');
 const sequelize = require('../config/db');
 const {

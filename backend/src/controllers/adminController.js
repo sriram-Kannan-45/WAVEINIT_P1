@@ -969,4 +969,100 @@ const rejectParticipant = async (req, res) => {
   }
 };
 
-module.exports = { updateTraining, deleteTraining, updateTrainer, deleteTrainer, getStats, getParticipants, sendReminders, deleteParticipant, exportFeedbacksCSV, getTrainingStats, getPendingParticipants, approveParticipant, rejectParticipant };
+// ── Trainer Approval ─────────────────────────────────────────────────────────
+
+const approveTrainer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const trainer = await User.findOne({ where: { id, role: 'TRAINER', status: 'PENDING' } });
+    
+    if (!trainer) {
+      return res.status(404).json({ error: 'Pending trainer not found' });
+    }
+
+    await trainer.update({ status: 'APPROVED' });
+
+    const io = req.app.get('io');
+
+    await ActivityService.logActivity({
+      userId: req.user.id,
+      userName: req.user.name || 'Admin',
+      action: 'USER_APPROVED',
+      entityType: 'User',
+      entityId: trainer.id,
+      details: { targetUserName: trainer.name, targetRole: 'TRAINER' }
+    }, io);
+
+    await Notification.create({
+      userId: trainer.id,
+      message: 'Your trainer account has been approved. You can now log in.',
+      type: 'APPROVAL',
+      isRead: false
+    });
+
+    res.json({
+      message: 'Trainer approved successfully',
+      trainer: {
+        id: trainer.id,
+        name: trainer.name,
+        email: trainer.email,
+        status: trainer.status
+      }
+    });
+  } catch (error) {
+    console.error('Approve trainer error:', error.message);
+    res.status(500).json({ error: 'Server error approving trainer' });
+  }
+};
+
+const rejectTrainer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const trainer = await User.findOne({ where: { id, role: 'TRAINER', status: 'PENDING' } });
+    
+    if (!trainer) {
+      return res.status(404).json({ error: 'Pending trainer not found' });
+    }
+
+    await trainer.update({ status: 'INACTIVE' });
+
+    const io = req.app.get('io');
+
+    await ActivityService.logActivity({
+      userId: req.user.id,
+      userName: req.user.name || 'Admin',
+      action: 'USER_REJECTED',
+      entityType: 'User',
+      entityId: trainer.id,
+      details: { targetUserName: trainer.name, targetRole: 'TRAINER' }
+    }, io);
+
+    res.json({
+      message: 'Trainer rejected successfully',
+      trainer: {
+        id: trainer.id,
+        name: trainer.name,
+        email: trainer.email,
+        status: trainer.status
+      }
+    });
+  } catch (error) {
+    console.error('Reject trainer error:', error.message);
+    res.status(500).json({ error: 'Server error rejecting trainer' });
+  }
+};
+
+const getPendingTrainers = async (req, res) => {
+  try {
+    const trainers = await User.findAll({
+      where: { role: 'TRAINER', status: 'PENDING' },
+      attributes: ['id', 'name', 'email', 'phone', 'created_at']
+    });
+    res.json({ trainers });
+  } catch (error) {
+    console.error('Get pending trainers error:', error.message);
+    res.status(500).json({ error: 'Server error fetching pending trainers' });
+  }
+};
+
+module.exports = { updateTraining, deleteTraining, updateTrainer, deleteTrainer, getStats, getParticipants, sendReminders, deleteParticipant, exportFeedbacksCSV, getTrainingStats, getPendingParticipants, approveParticipant, rejectParticipant, approveTrainer, rejectTrainer, getPendingTrainers };

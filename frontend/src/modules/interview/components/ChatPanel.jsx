@@ -19,16 +19,16 @@ export default function ChatPanel({ messages = [], onSend, currentUserId }) {
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {messages.length === 0 && (
-          <p className="text-xs text-slate-400 text-center py-8">No messages yet</p>
+          <p className="text-xs text-white/40 text-center py-8">No messages yet</p>
         )}
         {messages.map((msg, i) => {
           const isOwn = msg.senderId === currentUserId;
           return (
             <div key={msg.id || i} className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[80%] px-3 py-2 rounded-xl text-xs ${
-                isOwn ? 'bg-emerald-600 text-white rounded-br-sm' : 'bg-slate-100 text-slate-700 rounded-bl-sm'
+                isOwn ? 'bg-emerald-600 text-white rounded-br-sm' : 'bg-white/10 text-white/90 rounded-bl-sm'
               }`}>
-                {!isOwn && <p className="text-[10px] font-semibold text-emerald-600 mb-0.5">{msg.senderName || 'User'}</p>}
+                {!isOwn && <p className="text-[10px] font-semibold text-emerald-400 mb-0.5">{msg.senderName || 'User'}</p>}
                 <p>{msg.content}</p>
               </div>
             </div>
@@ -36,7 +36,7 @@ export default function ChatPanel({ messages = [], onSend, currentUserId }) {
         })}
         <div ref={messagesEndRef} />
       </div>
-      <div className="p-3 border-t border-slate-100">
+      <div className="p-3 border-t border-white/10">
         <div className="flex gap-2">
           <input
             type="text"
@@ -44,7 +44,7 @@ export default function ChatPanel({ messages = [], onSend, currentUserId }) {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
             placeholder="Type a message..."
-            className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            className="flex-1 px-3 py-2 text-xs bg-white/10 border border-white/10 rounded-xl text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-emerald-500"
           />
           <button
             onClick={handleSend}

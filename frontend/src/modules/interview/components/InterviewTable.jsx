@@ -1,16 +1,16 @@
 import { motion } from 'framer-motion';
-import { Calendar, Clock, Users, MoreVertical, Video, Eye, XCircle } from 'lucide-react';
+import { Calendar, Clock, Users, MoreVertical, Video, Eye, XCircle, UserPlus } from 'lucide-react';
 import { INTERVIEW_STATUS, INTERVIEW_TYPES } from '../constants';
 import { useState } from 'react';
+import Spinner from '../../../components/ui/Spinner';
 
-export default function InterviewTable({ interviews = [], onView, onJoin, onCancel, loading }) {
+export default function InterviewTable({ interviews = [], onView, onJoin, onCancel, onAssignHR, loading, isAdmin = false }) {
   const [openMenu, setOpenMenu] = useState(null);
 
   if (loading) {
     return (
       <div className="bg-white rounded-2xl border border-slate-100 p-8 text-center">
-        <div className="animate-spin w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full mx-auto" />
-        <p className="text-sm text-slate-500 mt-3">Loading interviews...</p>
+        <Spinner size={32} text="Loading interviews..." />
       </div>
     );
   }
@@ -33,6 +33,7 @@ export default function InterviewTable({ interviews = [], onView, onJoin, onCanc
             <tr className="border-b border-slate-100">
               <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Interview</th>
               <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Type</th>
+              <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Trainer</th>
               <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Date & Time</th>
               <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Duration</th>
               <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Candidates</th>
@@ -45,6 +46,8 @@ export default function InterviewTable({ interviews = [], onView, onJoin, onCanc
               const status = INTERVIEW_STATUS[interview.status] || INTERVIEW_STATUS.SCHEDULED;
               const type = INTERVIEW_TYPES.find(t => t.value === interview.interviewType);
               const date = new Date(interview.scheduledAt);
+              const trainers = interview.trainers || [];
+              const trainerNames = trainers.map(t => t.trainer?.name || t.name).filter(Boolean).join(', ');
               return (
                 <motion.tr
                   key={interview.id}
@@ -58,6 +61,11 @@ export default function InterviewTable({ interviews = [], onView, onJoin, onCanc
                   </td>
                   <td className="px-5 py-3">
                     <span className="text-xs font-medium text-slate-600">{type?.label}</span>
+                  </td>
+                  <td className="px-5 py-3">
+                    <span className="text-xs text-slate-500 max-w-[120px] truncate block">
+                      {trainerNames || <span className="text-slate-300">Unassigned</span>}
+                    </span>
                   </td>
                   <td className="px-5 py-3">
                     <div className="text-sm text-slate-600">
@@ -91,7 +99,7 @@ export default function InterviewTable({ interviews = [], onView, onJoin, onCanc
                         <MoreVertical size={14} className="text-slate-400" />
                       </button>
                       {openMenu === interview.id && (
-                        <div className="absolute right-0 top-8 z-10 bg-white rounded-xl shadow-lg border border-slate-100 py-1 min-w-[140px]">
+                        <div className="absolute right-0 top-8 z-10 bg-white rounded-xl shadow-lg border border-slate-100 py-1 min-w-[160px]">
                           <button
                             onClick={() => { onView(interview); setOpenMenu(null); }}
                             className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50"
@@ -104,6 +112,14 @@ export default function InterviewTable({ interviews = [], onView, onJoin, onCanc
                               className="w-full flex items-center gap-2 px-3 py-2 text-xs text-emerald-700 hover:bg-emerald-50"
                             >
                               <Video size={12} /> Join
+                            </button>
+                          )}
+                          {interview.status === 'SCHEDULED' && isAdmin && onAssignHR && (
+                            <button
+                              onClick={() => { onAssignHR(interview); setOpenMenu(null); }}
+                              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-blue-700 hover:bg-blue-50"
+                            >
+                              <UserPlus size={12} /> Assign HR
                             </button>
                           )}
                           {interview.status === 'SCHEDULED' && onCancel && (

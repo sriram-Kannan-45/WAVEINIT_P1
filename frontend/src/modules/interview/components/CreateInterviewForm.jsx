@@ -5,6 +5,7 @@ import {
   CheckCircle, Link2, Search, Eye
 } from 'lucide-react';
 import { INTERVIEW_TYPES, FEATURES } from '../constants';
+import Spinner from '../../../components/ui/Spinner';
 
 const STEPS = [
   { key: 'details', label: 'Details', icon: Settings },
@@ -268,7 +269,7 @@ export default function CreateInterviewForm({ onSubmit, onCancel, loading, train
                 <div className="space-y-1 max-h-32 overflow-y-auto border border-slate-200 rounded-xl p-2">
                   {loadingUsers ? (
                     <div className="flex items-center gap-2 px-2 py-3">
-                      <div className="animate-spin w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full" />
+                      <Spinner size={14} />
                       <span className="text-xs text-slate-400">Loading trainers...</span>
                     </div>
                   ) : trainers.length === 0 ? (
@@ -306,7 +307,7 @@ export default function CreateInterviewForm({ onSubmit, onCancel, loading, train
                 <div className="space-y-1 max-h-40 overflow-y-auto border border-slate-200 rounded-xl p-2">
                   {loadingUsers ? (
                     <div className="flex items-center gap-2 px-2 py-3">
-                      <div className="animate-spin w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full" />
+                      <Spinner size={14} />
                       <span className="text-xs text-slate-400">Loading participants...</span>
                     </div>
                   ) : filteredParticipants.length === 0 ? (

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { Video, Mic, MicOff, CameraOff, Pin } from 'lucide-react';
+import { Mic, MicOff, CameraOff, Pin } from 'lucide-react';
 
 function VideoTile({ stream, name, isLocal, isMuted, isCameraOff, isSpeaking, isPinned, style }) {
   const videoRef = useRef(null);
@@ -20,7 +20,7 @@ function VideoTile({ stream, name, isLocal, isMuted, isCameraOff, isSpeaking, is
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.9 }}
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-      className={`relative rounded-xl overflow-hidden bg-slate-900 ${isSpeaking ? 'ring-2 ring-yellow-400' : ''} ${isPinned ? 'ring-2 ring-emerald-500' : ''}`}
+      className={`relative rounded-xl overflow-hidden bg-slate-800 ${isSpeaking ? 'ring-2 ring-yellow-400' : ''} ${isPinned ? 'ring-2 ring-emerald-500' : ''}`}
       style={style}
     >
       {!isCameraOff && stream ? (
@@ -33,7 +33,7 @@ function VideoTile({ stream, name, isLocal, isMuted, isCameraOff, isSpeaking, is
           style={isLocal ? { transform: 'scaleX(-1)' } : undefined}
         />
       ) : (
-        <div className="w-full h-full flex items-center justify-center bg-slate-800">
+        <div className="w-full h-full flex items-center justify-center bg-slate-700/50">
           <div className="w-16 h-16 rounded-full bg-emerald-600 flex items-center justify-center">
             <span className="text-xl font-bold text-white">{initials}</span>
           </div>
@@ -99,11 +99,11 @@ export default function VideoGrid({ localStream, remoteStreams = new Map(), loca
 
   const getGridClass = () => {
     const count = pinnedId ? unpinnedRemotes.length + 1 : total;
-    if (pinnedId) return 'grid grid-cols-1 lg:grid-cols-4 gap-3 h-full';
-    if (count === 1) return 'grid grid-cols-1 gap-3 h-full';
-    if (count === 2) return 'grid grid-cols-2 gap-3 h-full';
-    if (count <= 4) return 'grid grid-cols-2 grid-rows-2 gap-3 h-full';
-    return 'grid grid-cols-3 gap-3 h-full overflow-y-auto auto-rows-fr';
+    if (pinnedId) return 'grid grid-cols-1 lg:grid-cols-4 gap-2 h-full';
+    if (count === 1) return 'grid grid-cols-1 gap-2 h-full';
+    if (count === 2) return 'grid grid-cols-2 gap-2 h-full';
+    if (count <= 4) return 'grid grid-cols-2 grid-rows-2 gap-2 h-full';
+    return 'grid grid-cols-3 gap-2 h-full overflow-y-auto auto-rows-fr';
   };
 
   return (
@@ -151,7 +151,7 @@ export default function VideoGrid({ localStream, remoteStreams = new Map(), loca
       ))}
 
       {pinnedId && (
-        <div className="flex flex-col gap-3 overflow-y-auto">
+        <div className="flex flex-col gap-2 overflow-y-auto">
           <VideoTile
             stream={localStream}
             name={localName}

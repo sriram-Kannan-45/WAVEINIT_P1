@@ -70,7 +70,6 @@ const login = async (req, res) => {
     }
 
     if (requestedRole && requestedRole !== user.role) {
-      console.log(`⚠️ Role mismatch: requested=${requestedRole}, actual=${user.role}`);
       return res.status(403).json({ error: 'Incorrect role selected. Please choose the correct role.' });
     }
 
@@ -193,6 +192,7 @@ const createTrainer = async (req, res) => {
       password: hashedPassword,
       phone: null,
       role: 'TRAINER',
+      status: 'APPROVED',
       passwordVersion: 2
     });
 

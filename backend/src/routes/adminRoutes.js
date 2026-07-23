@@ -10,6 +10,7 @@ const adminBulkImportController = require('../controllers/adminBulkImportControl
 const authenticateToken = require('../middleware/auth');
 const roleMiddleware = require('../middleware/roles');
 const { User, TrainerProfile } = require('../models');
+const logger = require('../utils/logger');
 
 const router = express.Router();
 
@@ -47,7 +48,7 @@ router.get(
         profile: t.profile || null
       })) });
     } catch (error) {
-      console.error('Get trainers error:', error.message);
+      logger.error('Get trainers error:', { error: error.message });
       res.status(500).json({ error: 'Server error fetching trainers' });
     }
   }
@@ -79,7 +80,7 @@ router.get(
         }
       });
     } catch (error) {
-      console.error('Get trainer error:', error.message);
+      logger.error('Get trainer error:', { error: error.message });
       res.status(500).json({ error: 'Server error fetching trainer' });
     }
   }
@@ -177,7 +178,7 @@ router.get('/pending-participants', authenticateToken, roleMiddleware('ADMIN'), 
     });
     res.json({ participants });
   } catch (error) {
-    console.error('Get pending participants error:', error.message);
+    logger.error('Get pending participants error:', { error: error.message });
     res.status(500).json({ error: 'Server error fetching pending participants' });
   }
 });
@@ -187,6 +188,15 @@ router.post('/approve-participant/:id', authenticateToken, roleMiddleware('ADMIN
 
 // POST /api/admin/reject-participant/:id
 router.post('/reject-participant/:id', authenticateToken, roleMiddleware('ADMIN'), (req, res) => adminController.rejectParticipant(req, res));
+
+// GET /api/admin/pending-trainers
+router.get('/pending-trainers', authenticateToken, roleMiddleware('ADMIN'), (req, res) => adminController.getPendingTrainers(req, res));
+
+// POST /api/admin/approve-trainer/:id
+router.post('/approve-trainer/:id', authenticateToken, roleMiddleware('ADMIN'), (req, res) => adminController.approveTrainer(req, res));
+
+// POST /api/admin/reject-trainer/:id
+router.post('/reject-trainer/:id', authenticateToken, roleMiddleware('ADMIN'), (req, res) => adminController.rejectTrainer(req, res));
 
 // GET /api/admin/activity-logs
 router.get('/activity-logs', authenticateToken, roleMiddleware('ADMIN'), async (req, res) => {
@@ -222,7 +232,7 @@ router.get('/activity-logs', authenticateToken, roleMiddleware('ADMIN'), async (
       }
     });
   } catch (error) {
-    console.error('Get activity logs error:', error.message);
+    logger.error('Get activity logs error:', { error: error.message });
     res.status(500).json({ success: false, error: 'Server error' });
   }
 });
@@ -268,7 +278,7 @@ router.get('/search-participants', authenticateToken, roleMiddleware('ADMIN'), a
       }
     });
   } catch (error) {
-    console.error('Search participants error:', error.message);
+    logger.error('Search participants error:', { error: error.message });
     res.status(500).json({ success: false, error: 'Server error' });
   }
 });

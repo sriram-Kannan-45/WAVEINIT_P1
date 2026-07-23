@@ -1,27 +1,19 @@
 export async function apiRequest(url, options = {}) {
-  try {
-    console.log('🌐 CALLING:', url, options.method || 'GET');
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
 
-    const res = await fetch(url, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    });
+  const data = await res.json().catch(() => ({}));
 
-    const data = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-      throw new Error(data.error || `HTTP ${res.status}: Request failed`);
-    }
-
-    console.log('✅ SUCCESS:', res.status, url);
-    return data;
-  } catch (err) {
-    console.error('❌ API ERROR:', err.message, url);
-    throw err;
+  if (!res.ok) {
+    throw new Error(data.error || `HTTP ${res.status}: Request failed`);
   }
+
+  return data;
 }
 
 export function getAuthHeaders(userProp) {

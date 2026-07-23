@@ -1,13 +1,16 @@
 import { motion } from 'framer-motion';
-import { Calendar, Clock, Users, Video, ChevronRight } from 'lucide-react';
+import { Calendar, Clock, Users, Video, ChevronRight, UserPlus } from 'lucide-react';
 import { INTERVIEW_STATUS, INTERVIEW_TYPES } from '../constants';
 
-export default function InterviewCard({ interview, onJoin, onView, showCandidate = false, showTrainer = false }) {
+export default function InterviewCard({ interview, onJoin, onView, onAssignHR, showCandidate = false, showTrainer = false, isAdmin = false }) {
   const status = INTERVIEW_STATUS[interview.status] || INTERVIEW_STATUS.SCHEDULED;
   const type = INTERVIEW_TYPES.find(t => t.value === interview.interviewType);
   const scheduledDate = new Date(interview.scheduledAt);
   const isLive = interview.status === 'LIVE';
   const isUpcoming = interview.status === 'SCHEDULED';
+
+  const trainers = interview.trainers || [];
+  const trainerNames = trainers.map(t => t.trainer?.name || t.name).filter(Boolean);
 
   return (
     <motion.div
@@ -36,6 +39,19 @@ export default function InterviewCard({ interview, onJoin, onView, showCandidate
         </div>
         <ChevronRight size={16} className="text-slate-400 mt-1" />
       </div>
+
+      {trainerNames.length > 0 && (
+        <div className="mb-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Users size={11} className="text-slate-400" />
+            {trainerNames.map((name, i) => (
+              <span key={i} className="text-[10px] font-medium text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
+                {name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center gap-4 text-xs text-slate-500 mt-3">
         <span className="flex items-center gap-1">
@@ -82,6 +98,14 @@ export default function InterviewCard({ interview, onJoin, onView, showCandidate
               className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-colors"
             >
               <Video size={14} /> Join Now
+            </button>
+          )}
+          {isUpcoming && isAdmin && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onAssignHR?.(interview); }}
+              className="flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold rounded-xl transition-colors"
+            >
+              <UserPlus size={13} /> Assign HR
             </button>
           )}
           {isUpcoming && (

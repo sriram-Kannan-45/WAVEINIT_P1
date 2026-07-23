@@ -19,16 +19,16 @@ export default function NotesPanel({ interviewId, userId }) {
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           placeholder="Take notes during the interview..."
-          className="w-full h-full min-h-[200px] p-3 text-sm text-slate-700 border border-slate-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          className="w-full h-full min-h-[200px] p-3 text-sm text-white bg-white/10 border border-white/10 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500 placeholder-white/40"
         />
       </div>
-      <div className="p-3 border-t border-slate-100 flex items-center justify-between">
-        <span className="text-xs text-slate-400">
+      <div className="p-3 border-t border-white/10 flex items-center justify-between">
+        <span className="text-xs text-white/40">
           {saved ? 'Saved!' : 'Notes are saved locally'}
         </span>
         <button
           onClick={handleSave}
-          className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors"
+          className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-emerald-400 bg-emerald-500/20 hover:bg-emerald-500/30 rounded-lg transition-colors"
         >
           <Save size={12} /> Save
         </button>

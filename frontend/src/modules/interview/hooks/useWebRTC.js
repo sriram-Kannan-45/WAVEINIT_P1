@@ -10,6 +10,8 @@ const ICE_SERVERS = {
 
 export function useWebRTC(localStream, socketHandlers) {
   const [remoteStreams, setRemoteStreams] = useState(new Map());
+  const [screenShareStream, setScreenShareStream] = useState(null);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
   const peerConnectionsRef = useRef(new Map());
   const pendingCandidatesRef = useRef(new Map());
 
@@ -108,12 +110,75 @@ export function useWebRTC(localStream, socketHandlers) {
     pendingCandidatesRef.current.delete(peerId);
   }, []);
 
+  const startScreenShare = useCallback(async () => {
+    try {
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { cursor: 'always' },
+        audio: false,
+      });
+      const screenTrack = screenStream.getVideoTracks()[0];
+
+      screenTrack.onended = () => {
+        stopScreenShare();
+      };
+
+      setScreenShareStream(screenStream);
+      setIsScreenSharing(true);
+
+      peerConnectionsRef.current.forEach((pc) => {
+        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+        if (sender) {
+          sender.replaceTrack(screenTrack);
+        } else {
+          pc.addTrack(screenTrack, screenStream);
+        }
+      });
+
+      return screenStream;
+    } catch (err) {
+      console.error('Screen share failed:', err);
+      return null;
+    }
+  }, []);
+
+  const stopScreenShare = useCallback(() => {
+    if (screenShareStream) {
+      screenShareStream.getTracks().forEach(t => t.stop());
+    }
+
+    const cameraTrack = localStream?.getVideoTracks()[0];
+    if (cameraTrack) {
+      peerConnectionsRef.current.forEach((pc) => {
+        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+        if (sender) {
+          sender.replaceTrack(cameraTrack);
+        }
+      });
+    }
+
+    setScreenShareStream(null);
+    setIsScreenSharing(false);
+  }, [screenShareStream, localStream]);
+
+  const toggleScreenShare = useCallback(async () => {
+    if (isScreenSharing) {
+      stopScreenShare();
+    } else {
+      await startScreenShare();
+    }
+  }, [isScreenSharing, startScreenShare, stopScreenShare]);
+
   const cleanup = useCallback(() => {
     peerConnectionsRef.current.forEach(pc => pc.close());
     peerConnectionsRef.current.clear();
     pendingCandidatesRef.current.clear();
     setRemoteStreams(new Map());
-  }, []);
+    if (screenShareStream) {
+      screenShareStream.getTracks().forEach(t => t.stop());
+    }
+    setScreenShareStream(null);
+    setIsScreenSharing(false);
+  }, [screenShareStream]);
 
   useEffect(() => {
     return cleanup;
@@ -121,6 +186,9 @@ export function useWebRTC(localStream, socketHandlers) {
 
   return {
     remoteStreams,
+    screenShareStream,
+    isScreenSharing,
+    toggleScreenShare,
     createPeerConnection,
     handleOffer,
     handleAnswer,

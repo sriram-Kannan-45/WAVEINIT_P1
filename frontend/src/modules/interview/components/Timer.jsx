@@ -20,8 +20,8 @@ export default function Timer({ startTime, className = '' }) {
 
   return (
     <div className={`flex items-center gap-1.5 font-mono text-sm ${className}`}>
-      <Clock size={14} className="text-slate-400" />
-      <span className="font-semibold text-slate-900">
+      <Clock size={14} className="text-white/60" />
+      <span className="font-semibold text-white">
         {hours > 0 ? `${pad(hours)}:` : ''}{pad(minutes)}:{pad(seconds)}
       </span>
     </div>

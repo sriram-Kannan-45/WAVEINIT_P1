@@ -9,6 +9,7 @@ import RoomTopBar from './RoomTopBar';
 import RoomControls from './RoomControls';
 import RoomSidePanel from './RoomSidePanel';
 import VideoGrid from './VideoGrid';
+import ScreenShareView from './ScreenShareView';
 import QRVerification from './QRVerification';
 import MobileCameraStatus from './MobileCameraStatus';
 
@@ -18,7 +19,6 @@ export default function InterviewRoom({ interviewId, user, onExit }) {
   const [localStream, setLocalStream] = useState(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
-  const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isSidePanelOpen, setIsSidePanelOpen] = useState(false);
@@ -37,7 +37,18 @@ export default function InterviewRoom({ interviewId, user, onExit }) {
   const heartbeatRef = useRef(null);
   const streamRef = useRef(null);
 
-  const { remoteStreams, createPeerConnection, handleOffer, handleAnswer, handleIceCandidate, removePeer, cleanup } = useWebRTC(localStream, socketHandlers);
+  const {
+    remoteStreams,
+    screenShareStream,
+    isScreenSharing,
+    toggleScreenShare,
+    createPeerConnection,
+    handleOffer,
+    handleAnswer,
+    handleIceCandidate,
+    removePeer,
+    cleanup,
+  } = useWebRTC(localStream, socketHandlers);
 
   const isTrainer = user.role === 'TRAINER' || user.role === 'ADMIN';
 
@@ -150,37 +161,6 @@ export default function InterviewRoom({ interviewId, user, onExit }) {
     setIsCameraOff(!isCameraOff);
   }, [localStream, isCameraOff]);
 
-  const toggleScreenShare = useCallback(async () => {
-    if (isScreenSharing) {
-      const tracks = localStream?.getVideoTracks();
-      if (tracks) tracks.forEach(t => t.stop());
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      const videoTrack = stream.getVideoTracks()[0];
-      if (localStream) {
-        const oldVideo = localStream.getVideoTracks()[0];
-        if (oldVideo) localStream.removeTrack(oldVideo);
-        localStream.addTrack(videoTrack);
-      }
-      setIsScreenSharing(false);
-      socketHandlers.sendScreenShareStatus(false);
-    } else {
-      try {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-        const screenTrack = screenStream.getVideoTracks()[0];
-        screenTrack.onended = () => toggleScreenShare();
-        if (localStream) {
-          const oldVideo = localStream.getVideoTracks()[0];
-          if (oldVideo) localStream.removeTrack(oldVideo);
-          localStream.addTrack(screenTrack);
-        }
-        setIsScreenSharing(true);
-        socketHandlers.sendScreenShareStatus(true);
-      } catch (err) {
-        console.error('Screen share failed:', err);
-      }
-    }
-  }, [isScreenSharing, localStream, socketHandlers]);
-
   const handleToggleRecording = useCallback(() => {
     setIsRecording(!isRecording);
   }, [isRecording]);
@@ -230,7 +210,7 @@ export default function InterviewRoom({ interviewId, user, onExit }) {
 
   if (interviewLoading || joining) {
     return (
-      <div className="h-screen flex items-center justify-center bg-slate-900">
+      <div className="h-screen w-screen flex items-center justify-center bg-slate-900">
         <div className="text-center">
           <Loader2 size={40} className="text-emerald-500 animate-spin mx-auto" />
           <p className="text-sm text-slate-400 mt-3">Joining interview room...</p>
@@ -241,7 +221,7 @@ export default function InterviewRoom({ interviewId, user, onExit }) {
 
   if (interviewError) {
     return (
-      <div className="h-screen flex items-center justify-center bg-slate-900">
+      <div className="h-screen w-screen flex items-center justify-center bg-slate-900">
         <div className="text-center">
           <p className="text-sm text-red-400 mb-3">{interviewError}</p>
           <button onClick={onExit} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-colors">
@@ -253,88 +233,107 @@ export default function InterviewRoom({ interviewId, user, onExit }) {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-slate-900">
-      <RoomTopBar
-        interview={interview}
-        isRecording={isRecording}
-        participantCount={participants.length + 1}
-        elapsedTime={elapsedTime}
-        onBack={onExit}
-        isTrainer={isTrainer}
-      />
+    <div className="h-screen w-screen overflow-hidden bg-slate-900">
+      <div className="relative h-full w-full">
+        <div className="absolute inset-0">
+          {isScreenSharing ? (
+            <ScreenShareView
+              screenStream={screenShareStream}
+              cameraStream={localStream}
+              localName={user.name}
+              isCameraOff={isCameraOff}
+            />
+          ) : (
+            <VideoGrid
+              localStream={localStream}
+              remoteStreams={remoteStreams}
+              localName={user.name}
+              isMuted={isMuted}
+              isCameraOff={isCameraOff}
+              participants={participants}
+              pinnedId={null}
+            />
+          )}
+        </div>
 
-      <div className="flex-1 flex overflow-hidden mt-[52px]">
-        <div className="flex-1 p-4">
-          <VideoGrid
-            localStream={localStream}
-            remoteStreams={remoteStreams}
-            localName={user.name}
-            isMuted={isMuted}
-            isCameraOff={isCameraOff}
-            participants={participants}
-            pinnedId={null}
+        <div className="absolute top-0 left-0 right-0 z-40 pointer-events-none">
+          <div className="pointer-events-auto">
+            <RoomTopBar
+              interview={interview}
+              isRecording={isRecording}
+              participantCount={participants.length + 1}
+              elapsedTime={elapsedTime}
+              onBack={onExit}
+              isTrainer={isTrainer}
+            />
+          </div>
+        </div>
+
+        <div className="absolute bottom-0 left-0 right-0 z-40 pointer-events-none">
+          <div className="pointer-events-auto">
+            <RoomControls
+              isMuted={isMuted}
+              isCameraOff={isCameraOff}
+              isScreenSharing={isScreenSharing}
+              isRecording={isRecording}
+              isChatOpen={isChatOpen}
+              isSidePanelOpen={isSidePanelOpen}
+              activeSideTab={activeSideTab}
+              onToggleMic={toggleMic}
+              onToggleCamera={toggleCamera}
+              onToggleScreenShare={toggleScreenShare}
+              onToggleRecording={handleToggleRecording}
+              onToggleChat={handleToggleChat}
+              onOpenSidePanel={handleOpenSidePanel}
+              onRaiseHand={handleRaiseHand}
+              onEndCall={handleEndCall}
+              isTrainer={isTrainer}
+              handRaised={handRaised}
+              features={interview?.features || { chatEnabled: true, notesEnabled: true, recordingEnabled: true, screenShareEnabled: true, resumeViewerEnabled: true, whiteboardEnabled: false, mobileCameraEnabled: false, qrVerificationEnabled: false, aiSummaryEnabled: false }}
+            />
+          </div>
+        </div>
+
+        <div className="absolute top-0 right-0 bottom-0 z-50 pointer-events-auto">
+          <RoomSidePanel
+            isOpen={isSidePanelOpen}
+            activeTab={activeSideTab}
+            onClose={() => { setIsSidePanelOpen(false); setActiveSideTab(null); }}
+            interviewId={interviewId}
+            userId={user.id}
+            messages={messages}
+            onSendMessage={handleSendMessage}
+            selectedParticipant={selectedParticipant}
+            evaluatingParticipant={evaluatingParticipant}
+            onSubmitEvaluation={handleSubmitEvaluation}
           />
         </div>
 
-        <RoomSidePanel
-          isOpen={isSidePanelOpen}
-          activeTab={activeSideTab}
-          onClose={() => { setIsSidePanelOpen(false); setActiveSideTab(null); }}
-          interviewId={interviewId}
-          userId={user.id}
-          messages={messages}
-          onSendMessage={handleSendMessage}
-          selectedParticipant={selectedParticipant}
-          evaluatingParticipant={evaluatingParticipant}
-          onSubmitEvaluation={handleSubmitEvaluation}
-        />
+        {mobileDevice && (
+          <div className="fixed bottom-24 right-4 z-30">
+            <MobileCameraStatus device={mobileDevice} />
+          </div>
+        )}
+
+        <AnimatePresence>
+          {showQR && (
+            <QRVerification interviewId={interviewId} onClose={() => setShowQR(false)} />
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {handRaised && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-amber-400 text-white px-4 py-2 rounded-full text-xs font-semibold shadow-lg"
+            >
+              Hand Raised
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
-
-      <RoomControls
-        isMuted={isMuted}
-        isCameraOff={isCameraOff}
-        isScreenSharing={isScreenSharing}
-        isRecording={isRecording}
-        isChatOpen={isChatOpen}
-        isSidePanelOpen={isSidePanelOpen}
-        activeSideTab={activeSideTab}
-        onToggleMic={toggleMic}
-        onToggleCamera={toggleCamera}
-        onToggleScreenShare={toggleScreenShare}
-        onToggleRecording={handleToggleRecording}
-        onToggleChat={handleToggleChat}
-        onOpenSidePanel={handleOpenSidePanel}
-        onRaiseHand={handleRaiseHand}
-        onEndCall={handleEndCall}
-        isTrainer={isTrainer}
-        handRaised={handRaised}
-        features={interview?.features || { chatEnabled: true, notesEnabled: true, recordingEnabled: true, screenShareEnabled: true, resumeViewerEnabled: true, whiteboardEnabled: false, mobileCameraEnabled: false, qrVerificationEnabled: false, aiSummaryEnabled: false }}
-      />
-
-      {mobileDevice && (
-        <div className="fixed bottom-24 right-4 z-20">
-          <MobileCameraStatus device={mobileDevice} />
-        </div>
-      )}
-
-      <AnimatePresence>
-        {showQR && (
-          <QRVerification interviewId={interviewId} onClose={() => setShowQR(false)} />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {handRaised && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-20 bg-amber-400 text-white px-4 py-2 rounded-full text-xs font-semibold shadow-lg"
-          >
-            Hand Raised
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

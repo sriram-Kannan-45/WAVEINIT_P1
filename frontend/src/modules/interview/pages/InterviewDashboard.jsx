@@ -1,20 +1,24 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Plus, Video, CalendarClock, ChevronRight } from 'lucide-react';
 import { useInterviewDashboard, useInterviewList } from '../hooks/useInterview';
 import InterviewCard from '../components/InterviewCard';
 import InterviewTable from '../components/InterviewTable';
 import InterviewStats from '../components/InterviewStats';
+import AssignHRModal from '../components/AssignHRModal';
+import Spinner from '../../../components/ui/Spinner';
 
 export default function InterviewDashboard({ user, onTabChange }) {
-  const { stats, loading: statsLoading } = useInterviewDashboard();
+  const { stats, loading: statsLoading, refetch: refetchStats } = useInterviewDashboard();
   const [activeFilter, setActiveFilter] = useState('all');
+  const [assignHRInterview, setAssignHRInterview] = useState(null);
 
   const canCreate = user?.role === 'ADMIN' || user?.role === 'TRAINER';
+  const isAdmin = user?.role === 'ADMIN';
 
-  const { interviews: scheduledInterviews, loading: scheduledLoading } = useInterviewList({ status: 'SCHEDULED' });
-  const { interviews: liveInterviews, loading: liveLoading } = useInterviewList({ status: 'LIVE' });
-  const { interviews: completedInterviews, loading: completedLoading } = useInterviewList({ status: 'COMPLETED' });
+  const { interviews: scheduledInterviews, loading: scheduledLoading, refetch: refetchScheduled } = useInterviewList({ status: 'SCHEDULED' });
+  const { interviews: liveInterviews, loading: liveLoading, refetch: refetchLive } = useInterviewList({ status: 'LIVE' });
+  const { interviews: completedInterviews, loading: completedLoading, refetch: refetchCompleted } = useInterviewList({ status: 'COMPLETED' });
 
   const liveAndUpcoming = useMemo(() => {
     return [...liveInterviews, ...scheduledInterviews].sort(
@@ -32,13 +36,23 @@ export default function InterviewDashboard({ user, onTabChange }) {
     onTabChange?.('interview-room', { interviewId: interview.id });
   };
 
+  const handleAssignHR = useCallback((interview) => {
+    setAssignHRInterview(interview);
+  }, []);
+
+  const handleAssigned = useCallback(() => {
+    refetchScheduled();
+    refetchLive();
+    refetchStats();
+  }, [refetchScheduled, refetchLive, refetchStats]);
+
   const loading = statsLoading || scheduledLoading || liveLoading || completedLoading;
 
   if (loading && liveAndUpcoming.length === 0 && recentCompleted.length === 0) {
     return (
       <div className="min-h-screen bg-slate-50 p-6">
         <div className="flex items-center justify-center py-24">
-          <div className="animate-spin w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full" />
+          <Spinner size={32} text="Loading interviews..." />
         </div>
       </div>
     );
@@ -109,6 +123,8 @@ export default function InterviewDashboard({ user, onTabChange }) {
                     interview={interview}
                     onJoin={handleJoin}
                     onView={handleView}
+                    onAssignHR={handleAssignHR}
+                    isAdmin={isAdmin}
                   />
                 </motion.div>
               ))}
@@ -141,9 +157,18 @@ export default function InterviewDashboard({ user, onTabChange }) {
             loading={completedLoading}
             onView={handleView}
             onJoin={handleJoin}
+            onAssignHR={handleAssignHR}
+            isAdmin={isAdmin}
           />
         </motion.div>
       </div>
+
+      <AssignHRModal
+        isOpen={!!assignHRInterview}
+        onClose={() => setAssignHRInterview(null)}
+        interview={assignHRInterview}
+        onAssigned={handleAssigned}
+      />
     </div>
   );
 }

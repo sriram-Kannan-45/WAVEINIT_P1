@@ -125,21 +125,17 @@ app.get('/api/attempts/:attemptId', authenticateToken, async (req, res) => {
       include: [{ model: AIQuiz, as: 'quiz' }]
     });
     if (!attempt) {
-      console.log(`[GET /api/attempts/${req.params.attemptId}] Attempt not found`);
       return res.status(404).json({ error: 'Attempt not found' });
     }
     
     // Check ownership if participant
     if (req.user.role === 'PARTICIPANT' && attempt.participantId !== req.user.id) {
-      console.log(`[GET /api/attempts/${req.params.attemptId}] Access denied for user #${req.user.id}`);
       return res.status(403).json({ error: 'Access denied' });
     }
     
-    console.log(`[GET /api/attempts/${req.params.attemptId}] Returning attempt details for user #${req.user.id}`);
     res.json({ attempt });
   } catch (error) {
-    console.error(`[GET /api/attempts/${req.params.attemptId}] Error:`, error.message);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Failed to fetch attempt' });
   }
 });
 
@@ -211,9 +207,6 @@ app.get('/health', async (req, res) => {
 
 // ─── Global error handler ────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
-  console.error('❌ Unhandled error on', req.method, req.originalUrl);
-  console.error(err.stack);
-
   // Multer file-type / size errors
   if (err.code === 'LIMIT_FILE_SIZE') {
     return res.status(413).json({ success: false, message: 'File too large. Maximum size is 5 MB.' });
@@ -225,7 +218,6 @@ app.use((err, req, res, next) => {
   // Never expose raw SQL/database errors to the frontend
   const msg = err.message || '';
   if (msg.includes('cannot be null') || msg.includes('Column') || msg.includes('ER_PARSE_ERROR') || msg.includes('ER_BAD_FIELD_ERROR') || msg.includes('ER_NO_REFERENCED_ROW') || msg.includes('ER_DUP_ENTRY') || msg.includes('ER_DATA_TOO_LONG') || msg.includes('Sequelize')) {
-    console.error('⚠️ Sanitized database error for client:', err.message);
     return res.status(err.status || 500).json({
       success: false,
       message: 'A database error occurred. Please try again or contact support.'
@@ -234,19 +226,13 @@ app.use((err, req, res, next) => {
 
   res.status(err.status || 500).json({
     success: false,
-    message: err.message || 'Internal server error',
-    stack: process.env.NODE_ENV !== 'production' ? err.stack : undefined
+    message: process.env.NODE_ENV === 'production' ? 'Internal server error' : (err.message || 'Internal server error'),
   });
 });
 
-// Global 404 fallback with detailed logging
+// Global 404 fallback
 app.use((req, res) => {
-  console.error('❌ ENDPOINT NOT FOUND:', req.method, req.originalUrl);
-  res.status(404).json({
-    error: 'Endpoint not found',
-    path: req.originalUrl,
-    method: req.method
-  });
+  res.status(404).json({ error: 'Endpoint not found' });
 });
 
 const startServer = async () => {

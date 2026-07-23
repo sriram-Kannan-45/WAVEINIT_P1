@@ -6,6 +6,7 @@ import { INTERVIEW_TYPES, RECOMMENDATIONS } from '../constants';
 import InterviewTable from '../components/InterviewTable';
 import InterviewFilters from '../components/InterviewFilters';
 import interviewApi from '../api';
+import Spinner from '../../../components/ui/Spinner';
 
 export default function CompletedInterviews({ user, onTabChange }) {
   const [filters, setFilters] = useState({ search: '', interviewType: '' });
@@ -157,7 +158,7 @@ export default function CompletedInterviews({ user, onTabChange }) {
 
                   {loadingEvals ? (
                     <div className="flex items-center justify-center py-8">
-                      <div className="animate-spin w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full" />
+                      <Spinner size={24} />
                     </div>
                   ) : evaluations && evaluations.length > 0 ? (
                     <div>

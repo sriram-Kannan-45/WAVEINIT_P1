@@ -16,7 +16,7 @@ function StarRating({ value, onChange }) {
     <div className="flex gap-1">
       {[1, 2, 3, 4, 5].map(star => (
         <button key={star} type="button" onClick={() => onChange(star)} className="focus:outline-none">
-          <Star size={18} className={`transition-colors ${star <= value ? 'text-amber-400 fill-amber-400' : 'text-slate-300'}`} />
+          <Star size={18} className={`transition-colors ${star <= value ? 'text-amber-400 fill-amber-400' : 'text-white/20'}`} />
         </button>
       ))}
     </div>
@@ -47,28 +47,28 @@ export default function EvaluationForm({ interviewId, participantId, participant
 
   return (
     <div className="space-y-4">
-      <div className="bg-emerald-50 rounded-xl p-3 flex items-center justify-between">
+      <div className="bg-emerald-500/10 rounded-xl p-3 flex items-center justify-between">
         <div>
-          <p className="text-xs text-emerald-600 font-medium">Evaluating</p>
-          <p className="text-sm font-semibold text-slate-900">{participantName}</p>
+          <p className="text-xs text-emerald-400 font-medium">Evaluating</p>
+          <p className="text-sm font-semibold text-white">{participantName}</p>
         </div>
         <div className="text-right">
-          <p className="text-2xl font-bold text-emerald-600">{overall}</p>
-          <p className="text-[10px] text-slate-500">Overall</p>
+          <p className="text-2xl font-bold text-emerald-400">{overall}</p>
+          <p className="text-[10px] text-white/50">Overall</p>
         </div>
       </div>
 
       <div className="space-y-3">
         {CATEGORIES.map(cat => (
           <div key={cat.key} className="flex items-center justify-between">
-            <span className="text-xs text-slate-600">{cat.label}</span>
+            <span className="text-xs text-white/70">{cat.label}</span>
             <StarRating value={form[cat.key]} onChange={(v) => updateRating(cat.key, v)} />
           </div>
         ))}
       </div>
 
       <div>
-        <label className="text-xs font-medium text-slate-700 mb-1 block">Recommendation</label>
+        <label className="text-xs font-medium text-white/70 mb-1 block">Recommendation</label>
         <div className="flex gap-2">
           {[
             { value: 'HIKE', label: 'Hire', icon: ThumbsUp, color: 'emerald' },
@@ -81,10 +81,10 @@ export default function EvaluationForm({ interviewId, participantId, participant
               onClick={() => setForm(prev => ({ ...prev, recommendation: opt.value }))}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-medium border transition-all ${
                 form.recommendation === opt.value
-                  ? opt.color === 'emerald' ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
-                    : opt.color === 'amber' ? 'bg-amber-50 border-amber-300 text-amber-700'
-                    : 'bg-red-50 border-red-300 text-red-700'
-                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  ? opt.color === 'emerald' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                    : opt.color === 'amber' ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
+                    : 'bg-red-500/20 border-red-500/40 text-red-400'
+                  : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10'
               }`}
             >
               <opt.icon size={14} /> {opt.label}
@@ -94,13 +94,13 @@ export default function EvaluationForm({ interviewId, participantId, participant
       </div>
 
       <div>
-        <label className="text-xs font-medium text-slate-700 mb-1 block">Remarks</label>
+        <label className="text-xs font-medium text-white/70 mb-1 block">Remarks</label>
         <textarea
           value={form.remarks}
           onChange={(e) => setForm(prev => ({ ...prev, remarks: e.target.value }))}
           placeholder="Add remarks about the candidate..."
           rows={3}
-          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          className="w-full px-3 py-2 text-sm bg-white/10 border border-white/10 rounded-xl text-white placeholder-white/40 resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500"
         />
       </div>
 

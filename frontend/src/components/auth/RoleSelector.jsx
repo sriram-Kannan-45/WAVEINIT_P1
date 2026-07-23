@@ -1,28 +1,22 @@
-export default function RoleSelector({ roles, value, onChange }) {
+export default function RoleSelector({ roles, activeRole, onRoleChange }) {
   return (
-    <div className="wl-auth-roles" role="tablist">
-      {roles.map(r => {
-        const Icon = r.icon
-        const on = value === r.key
+    <div className="auth-role-selector" role="tablist">
+      {roles.map((r) => {
+        const isActive = activeRole === r.id;
         return (
           <button
-            key={r.key}
+            key={r.id}
             role="tab"
-            aria-selected={on}
-            className={`wl-auth-role${on ? ' wl-auth-role--on' : ''}`}
-            onClick={() => onChange(r.key)}
+            aria-selected={isActive}
+            className={`auth-role-btn${isActive ? ' auth-role-btn--active' : ''}`}
+            onClick={() => onRoleChange(r.id)}
+            type="button"
           >
-            <Icon size={15} />
+            <span>{r.icon}</span>
             {r.label}
           </button>
-        )
+        );
       })}
-      <div
-        className="wl-auth-role-slider"
-        style={{
-          left: value === 'PARTICIPANT' ? '0%' : value === 'TRAINER' ? '33.333%' : '66.666%'
-        }}
-      />
     </div>
-  )
+  );
 }

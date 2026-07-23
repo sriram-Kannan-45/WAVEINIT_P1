@@ -21,21 +21,22 @@ export default function RoomSidePanel({
     <AnimatePresence>
       {isOpen && (
         <motion.div
-          initial={{ width: 0, opacity: 0 }}
-          animate={{ width: 320, opacity: 1 }}
-          exit={{ width: 0, opacity: 0 }}
+          initial={{ x: 320, opacity: 0 }}
+          animate={{ x: 0, opacity: 1 }}
+          exit={{ x: 320, opacity: 0 }}
           transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-          className="h-full bg-white border-l border-slate-100 flex flex-col overflow-hidden flex-shrink-0"
+          className="h-full w-80 bg-slate-900/95 backdrop-blur-xl border-l border-white/10 flex flex-col overflow-hidden"
         >
-          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
             <div className="flex items-center gap-1">
               {TABS.map(tab => (
                 <button
                   key={tab.key}
+                  onClick={() => {}}
                   className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
                     activeTab === tab.key
-                      ? 'bg-emerald-50 text-emerald-700'
-                      : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : 'text-white/50 hover:bg-white/10 hover:text-white/70'
                   }`}
                 >
                   <tab.icon size={13} />
@@ -45,9 +46,9 @@ export default function RoomSidePanel({
             </div>
             <button
               onClick={onClose}
-              className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
+              className="p-1.5 hover:bg-white/10 rounded-lg transition-colors"
             >
-              <X size={14} className="text-slate-400" />
+              <X size={14} className="text-white/50" />
             </button>
           </div>
 
@@ -82,8 +83,8 @@ export default function RoomSidePanel({
             )}
             {activeTab === 'evaluation' && !evaluatingParticipant && (
               <div className="flex flex-col items-center justify-center h-full py-8">
-                <ClipboardCheck size={32} className="text-slate-300 mb-2" />
-                <p className="text-xs text-slate-500">Select a participant to evaluate</p>
+                <ClipboardCheck size={32} className="text-white/20 mb-2" />
+                <p className="text-xs text-white/40">Select a participant to evaluate</p>
               </div>
             )}
           </div>
