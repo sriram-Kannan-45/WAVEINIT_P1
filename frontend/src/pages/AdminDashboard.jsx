@@ -1,19 +1,19 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import TrainerList from '../components/TrainerList'
-import ParticipantList from '../components/ParticipantList'
 import ParticipantProfileView from '../components/shared/ParticipantProfileView'
+import TrainerDetails from '../components/TrainerDetails'
+import TrainerList from '../components/TrainerList'
 import AssessmentSessionsPanel from '../components/admin/AssessmentSessionsPanel'
 import AnimatedDropdown from '../components/AnimatedDropdown'
 import { useToast } from '../components/Toast'
 import Skeleton, { SkeletonTable } from '../components/Skeleton'
 import { API, API_BASE } from '../api/api'
-import { Loader2, TrendingUp, MessageSquare, Star, User, Users, ClipboardList, X } from 'lucide-react'
+import { Loader2, TrendingUp, MessageSquare, Star, User, Users, ClipboardList, X, Search, Eye, Trash2, CheckCircle2, XCircle, Download, Clock, UserPlus, AlertCircle, BookOpen } from 'lucide-react'
 import AdminOverviewTab from '../components/admin/tabs/AdminOverviewTab'
 import BulkImportParticipants from '../components/admin/BulkImportParticipants'
 import RegistrationApplications from '../components/admin/RegistrationApplications'
 import { Button, Badge, Table, PageHeader, EmptyState, StatCard } from '../components/ui'
-import InterviewShell from '../modules/interview/pages/InterviewShell'
+
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'
@@ -64,6 +64,15 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
   const [editModal, setEditModal] = useState(null)
   const [editForm, setEditForm] = useState({})
   const [adminReport, setAdminReport] = useState(null)
+
+  const [trainerSearch, setTrainerSearch] = useState('')
+  const [trainerDetailModal, setTrainerDetailModal] = useState(null)
+  const [participantSearch, setParticipantSearch] = useState('')
+  const [participantStatusFilter, setParticipantStatusFilter] = useState('ALL')
+  const [participantDetailModal, setParticipantDetailModal] = useState(null)
+  const [trainingSearch, setTrainingSearch] = useState('')
+  const [trainingStatusFilter, setTrainingStatusFilter] = useState('ALL')
+  const [trainingDetailModal, setTrainingDetailModal] = useState(null)
 
   const [trainerForm, setTrainerForm] = useState({ name: '', email: '', password: '' })
   const [trainingForm, setTrainingForm] = useState({ title: '', description: '', trainerId: '', trainerIds: [], startDate: '', endDate: '', capacity: '', sequentialLearning: false })
@@ -605,107 +614,296 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       )}
 
       {/* ── TRAININGS (list) ── */}
-      {tab === 'trainings' && (
-        <motion.div variants={itemVariants}>
-          <PageHeader
-            title="Training Sessions"
-            subtitle="Manage scheduled training programs, enrollments, and status."
-            action={
-              <Button variant="primary" onClick={() => handleTabChange('createTraining')}>
-                + Add Training
-              </Button>
-            }
-          />
-          {initialLoading ? (
-            <div className="enterprise-card"><div className="enterprise-card__body"><SkeletonTable rows={5} /></div></div>
-          ) : trainings.length === 0 ? (
-            <div className="enterprise-card">
-              <EmptyState
-                icon={Users}
-                title="No Trainings Yet"
-                description="Create your first training session to schedule classes, assign trainers, and track enrollment."
-                actionLabel="+ Create Training"
-                onAction={() => handleTabChange('createTraining')}
-              />
+      {tab === 'trainings' && (() => {
+        const getTrainingStatus = (t) => {
+          const now = new Date()
+          const start = t.startDate ? new Date(t.startDate) : null
+          const end = t.endDate ? new Date(t.endDate) : null
+          if (start && now < start) return 'UPCOMING'
+          if (end && now > end) return 'COMPLETED'
+          return 'ACTIVE'
+        }
+        const filtered = trainings.filter(t => {
+          const matchesSearch = !trainingSearch || t.title?.toLowerCase().includes(trainingSearch.toLowerCase()) || t.trainerName?.toLowerCase().includes(trainingSearch.toLowerCase())
+          const status = getTrainingStatus(t)
+          const matchesStatus = trainingStatusFilter === 'ALL' || status === trainingStatusFilter
+          return matchesSearch && matchesStatus
+        })
+        return (
+          <motion.div variants={itemVariants} className="reg-admin">
+            {/* Header */}
+            <div className="reg-admin-header">
+              <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}>
+                <BookOpen size={22} color="#fff" />
+              </div>
+              <div>
+                <h2 className="reg-admin-title">Training Sessions</h2>
+                <p className="reg-admin-subtitle">Manage scheduled training programs, enrollments, and status</p>
+              </div>
+              <div style={{ flex: 1 }} />
+              <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => handleTabChange('createTraining')}>
+                <UserPlus size={15} /> Add Training
+              </button>
             </div>
-          ) : (
-            <div className="enterprise-table-wrapper">
-              <Table
-                columns={[
-                  { key: 'title', header: 'Title', className: 'font-semibold', style: { color: 'var(--neutral-900)' } },
-                  {
-                    key: 'trainerName',
-                    header: 'Trainer',
-                    render: (row) =>
-                      row.trainerName ? (
-                        <span className="badge badge--success">{row.trainerName}</span>
-                      ) : (
-                        <span className="badge badge--neutral">Unassigned</span>
-                      ),
-                  },
-                  { key: 'startDate', header: 'Start', render: (row) => fmtDate(row.startDate) },
-                  { key: 'endDate', header: 'End', render: (row) => fmtDate(row.endDate) },
-                  {
-                    key: 'capacity',
-                    header: 'Capacity',
-                    render: (row) => (row.capacity ? row.capacity : <span className="badge badge--neutral">Unlimited</span>),
-                  },
-                  { key: 'enrolledCount', header: 'Enrolled', render: (row) => row.enrolledCount ?? 0 },
-                  {
-                    key: 'actions',
-                    header: '',
-                    className: 'text-right',
-                    render: (row) => (
-                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                        <Button size="sm" variant="secondary" onClick={() => openEdit(row)}>
-                          Edit
-                        </Button>
-                        <Button size="sm" variant="danger" onClick={() => handleDeleteTraining(row.id, row.title)}>
-                          Delete
-                        </Button>
+            {/* Stats */}
+            <div className="reg-admin-stats">
+              {[
+                { label: 'Total', value: trainings.length, icon: BookOpen, color: '#2563eb' },
+                { label: 'Active', value: trainings.filter(t => getTrainingStatus(t) === 'ACTIVE').length, icon: CheckCircle2, color: '#16A34A' },
+                { label: 'Upcoming', value: trainings.filter(t => getTrainingStatus(t) === 'UPCOMING').length, icon: Clock, color: '#F59E0B' },
+                { label: 'Completed', value: trainings.filter(t => getTrainingStatus(t) === 'COMPLETED').length, icon: XCircle, color: '#64748b' },
+              ].map(s => (
+                <div key={s.label} className="reg-admin-stat">
+                  <s.icon size={20} style={{ color: s.color }} />
+                  <div>
+                    <span className="reg-admin-stat-num">{s.value}</span>
+                    <span className="reg-admin-stat-label">{s.label}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {/* Filters */}
+            <div className="reg-admin-filters">
+              <div className="reg-admin-search">
+                <Search size={16} />
+                <input value={trainingSearch} onChange={e => setTrainingSearch(e.target.value)} placeholder="Search by title or trainer..." />
+              </div>
+              <div className="reg-admin-filter-tabs">
+                {['ALL', 'ACTIVE', 'UPCOMING', 'COMPLETED'].map(f => {
+                  const count = f === 'ALL' ? trainings.length : trainings.filter(t => getTrainingStatus(t) === f).length
+                  return (
+                    <button key={f} className={`reg-admin-filter-tab ${trainingStatusFilter === f ? 'reg-admin-filter-tab--active' : ''}`}
+                      onClick={() => setTrainingStatusFilter(f)}>
+                      {f === 'ALL' ? 'All' : f.charAt(0) + f.slice(1).toLowerCase()}
+                      {count > 0 && <span className="reg-admin-badge">{count}</span>}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+            {/* Trainings Table */}
+            {initialLoading ? (
+              <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading trainings...</p></div>
+            ) : filtered.length === 0 ? (
+              <div className="reg-admin-empty"><BookOpen size={40} /><h3>No Trainings Found</h3><p>{trainingSearch || trainingStatusFilter !== 'ALL' ? 'No trainings match your current filter.' : 'Create your first training session to get started.'}</p>
+                {!trainingSearch && trainingStatusFilter === 'ALL' && (
+                  <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => handleTabChange('createTraining')}>+ Create Training</button>
+                )}
+              </div>
+            ) : (
+              <div className="reg-admin-table-wrap">
+                <table className="reg-admin-table">
+                  <thead>
+                    <tr>
+                      <th>Title</th>
+                      <th>Trainer</th>
+                      <th>Start Date</th>
+                      <th>End Date</th>
+                      <th>Capacity</th>
+                      <th>Enrolled</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map(t => {
+                      const status = getTrainingStatus(t)
+                      const sc = { ACTIVE: { bg: '#d1fae5', text: '#065f46', border: '#6ee7b7' }, UPCOMING: { bg: '#fef3c7', text: '#92400e', border: '#fcd34d' }, COMPLETED: { bg: '#f1f5f9', text: '#64748b', border: '#e2e8f0' } }[status]
+                      return (
+                        <tr key={t.id}>
+                          <td>
+                            <span className="reg-admin-name" style={{ fontWeight: 600 }}>{t.title}</span>
+                          </td>
+                          <td>
+                            {t.trainerName ? (
+                              <span className="reg-admin-status" style={{ background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd' }}>{t.trainerName}</span>
+                            ) : (
+                              <span className="reg-admin-status" style={{ background: '#f1f5f9', color: '#64748b', border: '1px solid #e2e8f0' }}>Unassigned</span>
+                            )}
+                          </td>
+                          <td className="reg-admin-date">{fmtDate(t.startDate)}</td>
+                          <td className="reg-admin-date">{fmtDate(t.endDate)}</td>
+                          <td style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>
+                            {t.capacity || <span style={{ color: '#94a3b8', fontWeight: 400 }}>Unlimited</span>}
+                          </td>
+                          <td style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>{t.enrolledCount ?? 0}</td>
+                          <td>
+                            <span className="reg-admin-status" style={{ background: sc.bg, color: sc.text, borderColor: sc.border }}>{status}</span>
+                          </td>
+                          <td>
+                            <div className="reg-admin-actions">
+                              <button className="reg-admin-action" title="View Details" onClick={() => setTrainingDetailModal(t)}><Eye size={14} /></button>
+                              <button className="reg-admin-action" title="Edit Training" onClick={() => openEdit(t)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button>
+                              <button className="reg-admin-action reg-admin-action--reject" title="Delete Training" onClick={() => handleDeleteTraining(t.id, t.title)}><Trash2 size={14} /></button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {/* Training Detail Modal */}
+            {trainingDetailModal && (() => {
+              const status = getTrainingStatus(trainingDetailModal)
+              const sc = { ACTIVE: { bg: '#d1fae5', text: '#065f46', border: '#6ee7b7' }, UPCOMING: { bg: '#fef3c7', text: '#92400e', border: '#fcd34d' }, COMPLETED: { bg: '#f1f5f9', text: '#64748b', border: '#e2e8f0' } }[status]
+              return (
+                <div className="reg-modal-overlay" onClick={() => setTrainingDetailModal(null)}>
+                  <div className="reg-modal" onClick={e => e.stopPropagation()}>
+                    <div className="reg-modal-header">
+                      <h3>Training Details</h3>
+                      <button onClick={() => setTrainingDetailModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={20} color="#64748b" /></button>
+                    </div>
+                    <div className="reg-modal-body">
+                      <div className="reg-modal-grid">
+                        <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Title</span>
+                          <div style={{ fontSize: 14, fontWeight: 600 }}>{trainingDetailModal.title}</div></div>
+                        <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Status</span>
+                          <div><span className="reg-admin-status" style={{ background: sc.bg, color: sc.text, borderColor: sc.border }}>{status}</span></div></div>
+                        <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Trainer</span>
+                          <div style={{ fontSize: 14 }}>{trainingDetailModal.trainerName || 'Unassigned'}</div></div>
+                        <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Start Date</span>
+                          <div style={{ fontSize: 14 }}>{fmtDate(trainingDetailModal.startDate)}</div></div>
+                        <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>End Date</span>
+                          <div style={{ fontSize: 14 }}>{fmtDate(trainingDetailModal.endDate)}</div></div>
+                        <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Capacity</span>
+                          <div style={{ fontSize: 14 }}>{trainingDetailModal.capacity || 'Unlimited'}</div></div>
+                        <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Enrolled</span>
+                          <div style={{ fontSize: 14, fontWeight: 600 }}>{trainingDetailModal.enrolledCount ?? 0}</div></div>
+                        {trainingDetailModal.description && (
+                          <div style={{ gridColumn: '1 / -1' }}><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Description</span>
+                            <div style={{ fontSize: 14, marginTop: 4, color: '#334155', lineHeight: 1.6 }}>{trainingDetailModal.description}</div></div>
+                        )}
+                        {trainingDetailModal.sequentialLearning && (
+                          <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Sequential Learning</span>
+                            <div style={{ fontSize: 14, color: '#16A34A', fontWeight: 600 }}>Enabled</div></div>
+                        )}
                       </div>
-                    ),
-                  },
-                ]}
-                data={trainings}
-              />
-            </div>
-          )}
-        </motion.div>
-      )}
+                    </div>
+                    <div className="reg-modal-footer">
+                      <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => setTrainingDetailModal(null)}>Close</button>
+                      <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => { setTrainingDetailModal(null); openEdit(trainingDetailModal) }}>Edit Training</button>
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
+          </motion.div>
+        )
+      })()}
 
       {/* ── TRAINERS (list) ── */}
       {tab === 'trainers' && (
-        <motion.div variants={itemVariants}>
-          <PageHeader
-            title="Trainers"
-            subtitle="Manage training instructors and assign courses."
-            action={
-              <Button variant="primary" onClick={() => handleTabChange('createTrainer')}>
-                + Add Trainer
-              </Button>
-            }
-          />
-          {initialLoading ? (
-            <div className="enterprise-card"><div className="enterprise-card__body"><SkeletonTable rows={5} /></div></div>
-          ) : trainers.length === 0 ? (
-            <div className="enterprise-card">
-              <EmptyState
-                icon={User}
-                title="No Trainers Yet"
-                description="Add your first trainer to assign them courses and start tracking performance feedback."
-                actionLabel="+ Add First Trainer"
-                onAction={() => handleTabChange('createTrainer')}
-              />
+        <motion.div variants={itemVariants} className="reg-admin">
+          {/* Header */}
+          <div className="reg-admin-header">
+            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)' }}>
+              <User size={22} color="#fff" />
             </div>
+            <div>
+              <h2 className="reg-admin-title">Trainers</h2>
+              <p className="reg-admin-subtitle">Manage training instructors and assign courses</p>
+            </div>
+            <div style={{ flex: 1 }} />
+            <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => handleTabChange('createTrainer')}>
+              <UserPlus size={15} /> Add Trainer
+            </button>
+          </div>
+          {/* Stats */}
+          <div className="reg-admin-stats">
+            {[
+              { label: 'Total Trainers', value: trainers.length, icon: Users, color: '#8b5cf6' },
+              { label: 'Profile Set', value: trainers.filter(t => t.profile && (t.profile.phone || t.profile.dob || t.profile.qualification || t.profile.experience)).length, icon: CheckCircle2, color: '#16A34A' },
+              { label: 'No Profile', value: trainers.filter(t => !t.profile || (!t.profile.phone && !t.profile.dob && !t.profile.qualification && !t.profile.experience)).length, icon: AlertCircle, color: '#F59E0B' },
+            ].map(s => (
+              <div key={s.label} className="reg-admin-stat">
+                <s.icon size={20} style={{ color: s.color }} />
+                <div>
+                  <span className="reg-admin-stat-num">{s.value}</span>
+                  <span className="reg-admin-stat-label">{s.label}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          {/* Filters */}
+          <div className="reg-admin-filters">
+            <div className="reg-admin-search">
+              <Search size={16} />
+              <input value={trainerSearch} onChange={e => setTrainerSearch(e.target.value)} placeholder="Search trainers..." />
+            </div>
+            <div style={{ flex: 1 }} />
+            <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => handleTabChange('createTrainer')}>
+              <UserPlus size={15} /> Add Trainer
+            </button>
+          </div>
+          {/* Trainers Table */}
+          {initialLoading ? (
+            <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading trainers...</p></div>
+          ) : trainers.filter(t => !trainerSearch || t.name?.toLowerCase().includes(trainerSearch.toLowerCase()) || t.email?.toLowerCase().includes(trainerSearch.toLowerCase())).length === 0 ? (
+            <div className="reg-admin-empty"><User size={40} /><h3>No Trainers Found</h3><p>{trainerSearch ? 'No trainers match your search.' : 'Add your first trainer to get started.'}</p></div>
           ) : (
-            <div className="enterprise-card">
-              <div className="enterprise-card__body">
-                <TrainerList 
-                  trainers={trainers}
-                  token={user.token}
-                  onDelete={handleDeleteTrainer}
-                />
+            <div className="reg-admin-table-wrap">
+              <table className="reg-admin-table">
+                <thead>
+                  <tr>
+                    <th>Trainer</th>
+                    <th>Email</th>
+                    <th>Phone</th>
+                    <th>Profile</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trainers.filter(t => !trainerSearch || t.name?.toLowerCase().includes(trainerSearch.toLowerCase()) || t.email?.toLowerCase().includes(trainerSearch.toLowerCase())).map(trainer => {
+                    const hasProfile = trainer.profile && (trainer.profile.phone || trainer.profile.dob || trainer.profile.qualification || trainer.profile.experience)
+                    return (
+                      <tr key={trainer.id}>
+                        <td>
+                          <div className="reg-admin-participant">
+                            <div className="reg-admin-avatar" style={{ background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)' }}>
+                              {trainer.name?.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                            </div>
+                            <span className="reg-admin-name">{trainer.name}</span>
+                          </div>
+                        </td>
+                        <td className="reg-admin-email">{trainer.email}</td>
+                        <td className="reg-admin-date">{trainer.profile?.phone || '—'}</td>
+                        <td>
+                          <span className={`reg-admin-status`} style={{
+                            background: hasProfile ? '#d1fae5' : '#f1f5f9',
+                            color: hasProfile ? '#065f46' : '#64748b',
+                            borderColor: hasProfile ? '#6ee7b7' : '#e2e8f0',
+                          }}>{hasProfile ? 'Profile Set' : 'No Profile'}</span>
+                        </td>
+                        <td>
+                          <div className="reg-admin-actions">
+                            <button className="reg-admin-action" title="View Details" onClick={() => setTrainerDetailModal(trainer)}><Eye size={14} /></button>
+                            <button className="reg-admin-action reg-admin-action--reject" title="Delete Trainer" onClick={() => handleDeleteTrainer(trainer.id, trainer.name)}><Trash2 size={14} /></button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {/* Trainer Detail Modal */}
+          {trainerDetailModal && (
+            <div className="reg-modal-overlay" onClick={() => setTrainerDetailModal(null)}>
+              <div className="reg-modal" onClick={e => e.stopPropagation()}>
+                <div className="reg-modal-header">
+                  <h3>Trainer Details — {trainerDetailModal.name}</h3>
+                  <button onClick={() => setTrainerDetailModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={20} color="#64748b" /></button>
+                </div>
+                <div className="reg-modal-body">
+                  <TrainerDetails trainer={trainerDetailModal} token={user.token} />
+                </div>
+                <div className="reg-modal-footer">
+                  <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => setTrainerDetailModal(null)}>Close</button>
+                  <button className="reg-admin-btn reg-admin-btn--danger" onClick={() => { setTrainerDetailModal(null); handleDeleteTrainer(trainerDetailModal.id, trainerDetailModal.name) }}>Delete Trainer</button>
+                </div>
               </div>
             </div>
           )}
@@ -714,77 +912,129 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
       {/* ── PARTICIPANTS ── */}
       {tab === 'participants' && (
-        <motion.div variants={itemVariants} style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-          {/* KPI Cards */}
-          <div className="wl-participants-kpi">
-            <div className="wl-participants-kpi-card">
-              <div className="wl-participants-kpi-icon" style={{ background: 'rgba(22,163,74,0.08)', color: '#16a34a' }}>
-                <Users size={28} />
-              </div>
-              <div className="wl-participants-kpi-data">
-                <div className="wl-participants-kpi-number">{participants.length}</div>
-                <div className="wl-participants-kpi-label">Total Participants</div>
-              </div>
+        <motion.div variants={itemVariants} className="reg-admin">
+          {/* Header */}
+          <div className="reg-admin-header">
+            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
+              <Users size={22} color="#fff" />
             </div>
-
-            <div className="wl-participants-kpi-card">
-              <div className="wl-participants-kpi-icon" style={{ background: 'rgba(16,185,129,0.08)', color: '#10b981' }}>
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-              </div>
-              <div className="wl-participants-kpi-data">
-                <div className="wl-participants-kpi-number">{participants.filter(p => (p.status || '').toUpperCase() === 'APPROVED').length}</div>
-                <div className="wl-participants-kpi-label">Approved</div>
-                <div className="wl-participants-kpi-trend wl-participants-kpi-trend--up">
-                  {participants.length > 0 ? Math.round((participants.filter(p => (p.status || '').toUpperCase() === 'APPROVED').length / participants.length) * 100) : 0}% of total
+            <div>
+              <h2 className="reg-admin-title">Participants</h2>
+              <p className="reg-admin-subtitle">View and manage participant accounts, status, and enrollments</p>
+            </div>
+            <div style={{ flex: 1 }} />
+            <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => setAddParticipantModal(true)}>
+              <UserPlus size={15} /> Add Participant
+            </button>
+          </div>
+          {/* Stats */}
+          <div className="reg-admin-stats">
+            {[
+              { label: 'Total', value: participants.length, icon: Users, color: '#6366f1' },
+              { label: 'Approved', value: participants.filter(p => (p.status || '').toUpperCase() === 'APPROVED').length, icon: CheckCircle2, color: '#16A34A' },
+              { label: 'Pending', value: participants.filter(p => (p.status || '').toUpperCase() === 'PENDING').length, icon: Clock, color: '#F59E0B' },
+              { label: 'Rejected', value: participants.filter(p => (p.status || '').toUpperCase() === 'REJECTED').length, icon: XCircle, color: '#dc2626' },
+            ].map(s => (
+              <div key={s.label} className="reg-admin-stat">
+                <s.icon size={20} style={{ color: s.color }} />
+                <div>
+                  <span className="reg-admin-stat-num">{s.value}</span>
+                  <span className="reg-admin-stat-label">{s.label}</span>
                 </div>
               </div>
+            ))}
+          </div>
+          {/* Filters */}
+          <div className="reg-admin-filters">
+            <div className="reg-admin-search">
+              <Search size={16} />
+              <input value={participantSearch} onChange={e => { setParticipantSearch(e.target.value); }} placeholder="Search participants..." />
             </div>
-
-            <div className="wl-participants-kpi-card">
-              <div className="wl-participants-kpi-icon" style={{ background: 'rgba(245,158,11,0.08)', color: '#f59e0b' }}>
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              </div>
-              <div className="wl-participants-kpi-data">
-                <div className="wl-participants-kpi-number">{participants.filter(p => (p.status || '').toUpperCase() === 'PENDING').length}</div>
-                <div className="wl-participants-kpi-label">Pending Approval</div>
-                <div className="wl-participants-kpi-trend wl-participants-kpi-trend--neutral">
-                  Awaiting review
-                </div>
-              </div>
+            <div className="reg-admin-filter-tabs">
+              {['ALL', 'APPROVED', 'PENDING', 'REJECTED'].map(f => {
+                const count = f === 'ALL' ? participants.length : participants.filter(p => (p.status || '').toUpperCase() === f).length
+                return (
+                  <button key={f} className={`reg-admin-filter-tab ${participantStatusFilter === f ? 'reg-admin-filter-tab--active' : ''}`}
+                    onClick={() => setParticipantStatusFilter(f)}>
+                    {f === 'ALL' ? 'All' : f.charAt(0) + f.slice(1).toLowerCase()}
+                    {count > 0 && <span className="reg-admin-badge">{count}</span>}
+                  </button>
+                )
+              })}
             </div>
           </div>
-
-          {/* Participant List */}
+          {/* Participants Table */}
           {initialLoading ? (
-            <div className="enterprise-card"><div className="enterprise-card__body"><SkeletonTable rows={5} /></div></div>
+            <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading participants...</p></div>
+          ) : participants.filter(p => {
+            const matchesSearch = !participantSearch || p.name?.toLowerCase().includes(participantSearch.toLowerCase()) || p.email?.toLowerCase().includes(participantSearch.toLowerCase()) || p.phone?.includes(participantSearch)
+            const matchesStatus = participantStatusFilter === 'ALL' || (p.status || '').toUpperCase() === participantStatusFilter
+            return matchesSearch && matchesStatus
+          }).length === 0 ? (
+            <div className="reg-admin-empty"><Users size={40} /><h3>No Participants Found</h3><p>{participantSearch || participantStatusFilter !== 'ALL' ? 'No participants match your current filter.' : 'Invite your first learner to get started.'}</p></div>
           ) : (
-            <ParticipantList
-              participants={participants}
-              loading={false}
-              onDelete={handleDeleteParticipant}
-              onRefresh={() => fetchParticipants()}
-              onView={(p) => setViewingParticipant(p)}
-              onApprove={async (id) => {
-                const r = await fetch(`${API_BASE}/admin/approve-participant/${id}`, { method: 'POST', headers: auth() })
-                if (r.ok) {
-                  success('Participant approved successfully')
-                  fetchParticipants()
-                } else {
-                  const d = await r.json()
-                  showError(d.error || 'Failed to approve participant')
-                }
-              }}
-              onReject={async (id) => {
-                const r = await fetch(`${API_BASE}/admin/reject-participant/${id}`, { method: 'POST', headers: auth() })
-                if (r.ok) {
-                  success('Participant rejected successfully')
-                  fetchParticipants()
-                } else {
-                  const d = await r.json()
-                  showError(d.error || 'Failed to reject participant')
-                }
-              }}
-            />
+            <div className="reg-admin-table-wrap">
+              <table className="reg-admin-table">
+                <thead>
+                  <tr>
+                    <th>Participant</th>
+                    <th>Status</th>
+                    <th>Enrolled</th>
+                    <th>Progress</th>
+                    <th>Quiz</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {participants.filter(p => {
+                    const matchesSearch = !participantSearch || p.name?.toLowerCase().includes(participantSearch.toLowerCase()) || p.email?.toLowerCase().includes(participantSearch.toLowerCase()) || p.phone?.includes(participantSearch)
+                    const matchesStatus = participantStatusFilter === 'ALL' || (p.status || '').toUpperCase() === participantStatusFilter
+                    return matchesSearch && matchesStatus
+                  }).map(p => {
+                    const sc = { PENDING: { bg: '#fef3c7', text: '#92400e', border: '#fcd34d' }, APPROVED: { bg: '#d1fae5', text: '#065f46', border: '#6ee7b7' }, REJECTED: { bg: '#fee2e2', text: '#991b1b', border: '#fca5a5' } }[(p.status || 'PENDING').toUpperCase()] || { bg: '#f1f5f9', text: '#64748b', border: '#e2e8f0' }
+                    const avatarGradients = ['linear-gradient(135deg, #16a34a, #15803d)', 'linear-gradient(135deg, #0d9488, #0f766e)', 'linear-gradient(135deg, #2563eb, #1d4ed8)', 'linear-gradient(135deg, #7c3aed, #6d28d9)', 'linear-gradient(135deg, #ea580c, #c2410c)', 'linear-gradient(135deg, #0ea5e9, #0284c7)']
+                    let hash = 0; for (let i = 0; i < (p.name || '').length; i++) { hash = p.name.charCodeAt(i) + ((hash << 5) - hash) }
+                    const gradient = avatarGradients[Math.abs(hash) % avatarGradients.length]
+                    return (
+                      <tr key={p.id}>
+                        <td>
+                          <div className="reg-admin-participant">
+                            <div className="reg-admin-avatar" style={{ background: gradient }}>
+                              {(p.name || '?').trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                            </div>
+                            <div>
+                              <span className="reg-admin-name">{p.name || '-'}</span>
+                              <span className="reg-admin-email">{p.email}</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td>
+                          <span className="reg-admin-status" style={{ background: sc.bg, color: sc.text, borderColor: sc.border }}>
+                            {(p.status || 'PENDING').toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="reg-admin-date">{fmtDate(p.created_at || p.joinedAt)}</td>
+                        <td style={{ minWidth: 90 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <div style={{ flex: 1, height: 5, background: '#e2e8f0', borderRadius: 3, overflow: 'hidden' }}>
+                              <div style={{ width: `${Math.min(100, p.progress || 0)}%`, height: '100%', background: '#16A34A', borderRadius: 3 }} />
+                            </div>
+                            <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600, minWidth: 28 }}>{p.progress || 0}%</span>
+                          </div>
+                        </td>
+                        <td style={{ fontSize: 12, fontWeight: 600, color: '#334155' }}>{p.quizScore || p.quiz_score || 0}%</td>
+                        <td>
+                          <div className="reg-admin-actions">
+                            <button className="reg-admin-action" title="View Details" onClick={() => setViewingParticipant(p)}><Eye size={14} /></button>
+                            <button className="reg-admin-action reg-admin-action--reject" title="Remove Participant" onClick={() => handleDeleteParticipant(p.id, p.name)}><Trash2 size={14} /></button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </motion.div>
       )}
@@ -1214,13 +1464,103 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
       {/* ── PROGRAMS & COURSES ── */}
       {tab === 'programs' && (
-        <motion.div variants={itemVariants}>
-          <PageHeader
-            title="Programs & Courses"
-            subtitle="Organize training into programs and individual courses."
-          />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-6)', marginBottom: 'var(--space-6)' }}>
-            <div className="enterprise-card">
+        <motion.div variants={itemVariants} className="reg-admin">
+          {/* Header */}
+          <div className="reg-admin-header">
+            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #0d9488, #0f766e)' }}>
+              <ClipboardList size={22} color="#fff" />
+            </div>
+            <div>
+              <h2 className="reg-admin-title">Programs & Courses</h2>
+              <p className="reg-admin-subtitle">Organize training into programs and individual courses</p>
+            </div>
+          </div>
+          {/* Stats */}
+          <div className="reg-admin-stats">
+            {[
+              { label: 'Programs', value: programs.length, icon: ClipboardList, color: '#0d9488' },
+              { label: 'Courses', value: courses.length, icon: Users, color: '#2563eb' },
+              { label: 'Active Trainers', value: trainers.length, icon: User, color: '#8b5cf6' },
+            ].map(s => (
+              <div key={s.label} className="reg-admin-stat">
+                <s.icon size={20} style={{ color: s.color }} />
+                <div>
+                  <span className="reg-admin-stat-num">{s.value}</span>
+                  <span className="reg-admin-stat-label">{s.label}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          {/* Programs Table */}
+          <div className="reg-admin-table-wrap" style={{ marginBottom: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderBottom: '1px solid #e2e8f0' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>Programs ({programs.length})</span>
+              <button className="reg-admin-btn reg-admin-btn--primary" style={{ fontSize: 12 }} onClick={() => document.getElementById('create-program-form')?.scrollIntoView({ behavior: 'smooth' })}>+ New Program</button>
+            </div>
+            {programs.length === 0 ? (
+              <div className="reg-admin-empty" style={{ padding: 32 }}><ClipboardList size={32} /><p>No programs created yet.</p></div>
+            ) : (
+              <table className="reg-admin-table">
+                <thead>
+                  <tr><th>Title</th><th>Description</th><th>Courses</th><th>Actions</th></tr>
+                </thead>
+                <tbody>
+                  {programs.map(p => (
+                    <tr key={p.id}>
+                      <td><span className="reg-admin-name">{p.title}</span></td>
+                      <td className="reg-admin-date" style={{ maxWidth: 260 }}>{(p.description || '—').slice(0, 80)}</td>
+                      <td style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>{p.courseCount ?? 0}</td>
+                      <td>
+                        <div className="reg-admin-actions">
+                          <button className="reg-admin-action reg-admin-action--reject" title="Delete Program" onClick={() => handleDeleteProgram(p.id, p.title)}><Trash2 size={14} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          {/* Courses Table */}
+          <div className="reg-admin-table-wrap" style={{ marginBottom: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderBottom: '1px solid #e2e8f0' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>Courses ({courses.length})</span>
+              <button className="reg-admin-btn reg-admin-btn--primary" style={{ fontSize: 12 }} onClick={() => document.getElementById('create-course-form')?.scrollIntoView({ behavior: 'smooth' })}>+ New Course</button>
+            </div>
+            {courses.length === 0 ? (
+              <div className="reg-admin-empty" style={{ padding: 32 }}><Users size={32} /><p>No courses created yet.</p></div>
+            ) : (
+              <table className="reg-admin-table">
+                <thead>
+                  <tr><th>Title</th><th>Program</th><th>Trainer</th><th>Status</th><th>Actions</th></tr>
+                </thead>
+                <tbody>
+                  {courses.map(c => (
+                    <tr key={c.id}>
+                      <td><span className="reg-admin-name">{c.title}</span></td>
+                      <td className="reg-admin-date">{c.programTitle || '—'}</td>
+                      <td className="reg-admin-date">{c.trainerName || 'Unassigned'}</td>
+                      <td>
+                        <span className="reg-admin-status" style={{
+                          background: c.status === 'ACTIVE' ? '#d1fae5' : '#f1f5f9',
+                          color: c.status === 'ACTIVE' ? '#065f46' : '#64748b',
+                          borderColor: c.status === 'ACTIVE' ? '#6ee7b7' : '#e2e8f0',
+                        }}>{c.status || 'ACTIVE'}</span>
+                      </td>
+                      <td>
+                        <div className="reg-admin-actions">
+                          <button className="reg-admin-action reg-admin-action--reject" title="Delete Course" onClick={() => handleDeleteCourse(c.id, c.title)}><Trash2 size={14} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          {/* Create Forms */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-6)' }}>
+            <div id="create-program-form" className="enterprise-card">
               <div className="enterprise-card__header">
                 <h3 className="enterprise-card__title">Create Program</h3>
               </div>
@@ -1240,35 +1580,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                 </form>
               </div>
             </div>
-            <div className="enterprise-card">
-              <div className="enterprise-card__header">
-                <h3 className="enterprise-card__title">Programs ({programs.length})</h3>
-              </div>
-              {programs.length === 0 ? (
-                <div className="enterprise-card__body" style={{ textAlign: 'center', padding: 'var(--space-12)' }}>
-                  <p style={{ color: 'var(--neutral-400)', fontSize: 14 }}>No programs created yet.</p>
-                </div>
-              ) : (
-                <div style={{ overflow: 'auto' }}>
-                  <table className="enterprise-table">
-                    <thead><tr><th>Title</th><th>Description</th><th>Courses</th><th></th></tr></thead>
-                    <tbody>
-                      {programs.map(p => (
-                        <tr key={p.id}>
-                          <td className="font-semibold" style={{ color: 'var(--neutral-900)' }}>{p.title}</td>
-                          <td style={{ color: 'var(--neutral-500)', maxWidth: 200 }} className="text-sm">{(p.description || '').slice(0, 60)}</td>
-                          <td>{p.courseCount ?? 0}</td>
-                          <td><Button size="sm" variant="danger" onClick={() => handleDeleteProgram(p.id, p.title)}>Delete</Button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-6)' }}>
-            <div className="enterprise-card">
+            <div id="create-course-form" className="enterprise-card">
               <div className="enterprise-card__header">
                 <h3 className="enterprise-card__title">Create Course</h3>
               </div>
@@ -1306,33 +1618,6 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                   <Button type="submit" variant="primary" disabled={loading}>Create Course</Button>
                 </form>
               </div>
-            </div>
-            <div className="enterprise-card">
-              <div className="enterprise-card__header">
-                <h3 className="enterprise-card__title">Courses ({courses.length})</h3>
-              </div>
-              {courses.length === 0 ? (
-                <div className="enterprise-card__body" style={{ textAlign: 'center', padding: 'var(--space-12)' }}>
-                  <p style={{ color: 'var(--neutral-400)', fontSize: 14 }}>No courses created yet.</p>
-                </div>
-              ) : (
-                <div style={{ overflow: 'auto' }}>
-                  <table className="enterprise-table">
-                    <thead><tr><th>Title</th><th>Program</th><th>Trainer</th><th>Status</th><th></th></tr></thead>
-                    <tbody>
-                      {courses.map(c => (
-                        <tr key={c.id}>
-                          <td className="font-semibold" style={{ color: 'var(--neutral-900)' }}>{c.title}</td>
-                          <td style={{ color: 'var(--neutral-500)' }}>{c.programTitle || '-'}</td>
-                          <td style={{ color: 'var(--neutral-500)' }}>{c.trainerName || 'Unassigned'}</td>
-                          <td><span className={`badge ${c.status === 'ACTIVE' ? 'badge--success' : 'badge--neutral'}`}>{c.status || 'ACTIVE'}</span></td>
-                          <td><Button size="sm" variant="danger" onClick={() => handleDeleteCourse(c.id, c.title)}>Delete</Button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
             </div>
           </div>
         </motion.div>
@@ -1432,10 +1717,6 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
             </div>
           )}
         </motion.div>
-      )}
-
-      {tab.startsWith('interview-') && (
-        <InterviewShell activeTab={tab} onTabChange={handleTabChange} user={user} />
       )}
 
       {/* ── EDIT MODAL ── */}

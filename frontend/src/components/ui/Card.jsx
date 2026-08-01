@@ -1,4 +1,4 @@
-import { colors, radius, shadows, transitions } from '../../theme/tokens'
+import { colors, radius, shadows, spacing, transitions } from '../../theme/tokens'
 
 export default function Card({ children, className = '', padding = true, hover = false, style = {}, ...props }) {
   const baseStyle = {

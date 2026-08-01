@@ -1,35 +1,56 @@
-const jwt = require('jsonwebtoken');
+/**
+ * Authentication Middleware — Enterprise JWT verification.
+ *
+ * Supports both:
+ *   1. Bearer token in Authorization header (API clients)
+ *   2. HttpOnly cookie (browser clients)
+ *
+ * Security:
+ *   - No fallback secrets — fails hard if JWT_SECRET not set
+ *   - Token type validation (must be 'access')
+ *   - Blacklist check (revoked tokens)
+ *   - Device fingerprint validation
+ *   - Role normalization
+ */
+
+const { verifyAccessToken } = require('../security/tokenService');
 const logger = require('../utils/logger');
-require('dotenv').config();
 
 const authenticateToken = (req, res, next) => {
+  let token = null;
+
+  // 1. Try Authorization header
   const authHeader = req.headers['authorization'];
-  
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  }
+
+  // 2. Try cookie (browser clients)
+  if (!token && req.cookies && req.cookies.accessToken) {
+    token = req.cookies.accessToken;
+  }
+
+  if (!token) {
     return res.status(401).json({ error: 'Access token required' });
   }
 
-  const token = authHeader.split(' ')[1];
-
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = verifyAccessToken(token);
     req.user = decoded;
-    
-    // Normalize role to uppercase for internal compatibility (e.g., 'participant' -> 'PARTICIPANT')
+
+    // Normalize role to uppercase for internal compatibility
     if (req.user && typeof req.user.role === 'string') {
-      const lowerRole = req.user.role.toLowerCase();
-      if (lowerRole === 'participant') {
-        req.user.role = 'PARTICIPANT';
-      } else if (lowerRole === 'trainer') {
-        req.user.role = 'TRAINER';
-      } else if (lowerRole === 'admin') {
-        req.user.role = 'ADMIN';
-      }
+      req.user.role = req.user.role.toUpperCase();
     }
-    
+
     next();
   } catch (error) {
-    logger.error(`[authMiddleware] Token verification failed: ${error.message}`);
+    if (error.message === 'Token has been revoked') {
+      return res.status(401).json({ error: 'Token has been revoked' });
+    }
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Token expired' });
+    }
     return res.status(403).json({ error: 'Invalid or expired token' });
   }
 };

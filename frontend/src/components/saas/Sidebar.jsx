@@ -1,15 +1,21 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   LayoutDashboard, BookOpen, ClipboardList, FileText, GraduationCap,
   MessageSquare, Trophy, User, Users, X,
-  BarChart3, Calendar, Award,
+  BarChart3, Calendar, Award, Video,
   Menu, AppWindow, CircleCheck,
   UserCheck, ClipboardCheck, NotebookPen,
-  UserCog, ShieldCheck, Video
+  UserCog, ShieldCheck
 } from 'lucide-react'
 import ProfileDropdown from './ProfileDropdown'
+
+const ROLE_HOME = {
+  ADMIN: '/admin',
+  TRAINER: '/trainer',
+  PARTICIPANT: '/participant',
+}
 
 const initials = (name) =>
   name ? name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'U'
@@ -27,7 +33,6 @@ const navGroups = {
       items: [
         { key: 'applications', label: 'Applications', icon: AppWindow },
         { key: 'trainings', label: 'Training Programs', icon: BookOpen },
-        { key: 'courseManagement', label: 'Course Management', icon: GraduationCap },
         { key: 'trainers', label: 'Trainers', icon: UserCheck },
         { key: 'participants', label: 'Participants', icon: Users },
       ],
@@ -42,22 +47,16 @@ const navGroups = {
       ],
     },
     {
-      title: 'Interviews',
-      items: [
-        { key: 'interview-dashboard', label: 'Interview Dashboard', icon: Video },
-        { key: 'interview-create', label: 'Create Interview', icon: ClipboardCheck },
-        { key: 'interview-upcoming', label: 'Upcoming', icon: Calendar },
-        { key: 'interview-completed', label: 'Completed', icon: CircleCheck },
-        { key: 'interview-reports', label: 'Interview Reports', icon: BarChart3 },
-        { key: 'interview-templates', label: 'Templates', icon: FileText },
-        { key: 'interview-settings', label: 'Settings', icon: ShieldCheck },
-      ],
-    },
-    {
       title: 'Reports',
       items: [
         { key: 'feedback', label: 'Feedback', icon: MessageSquare },
         { key: 'reports', label: 'Analytics', icon: BarChart3 },
+      ],
+    },
+    {
+      title: 'Interviews',
+      items: [
+        { key: 'interviews', label: 'Interviews', icon: Video },
       ],
     },
     {
@@ -71,23 +70,15 @@ const navGroups = {
   TRAINER: [
     { title: 'Overview', items: [{ key: 'overview', label: 'Dashboard', icon: LayoutDashboard }, { key: 'courses', label: 'My Courses', icon: GraduationCap }] },
     { title: 'Content', items: [{ key: 'credentials', label: 'Participant Credentials', icon: FileText }, { key: 'notes', label: 'Notes', icon: NotebookPen }, { key: 'assignments', label: 'Assignments', icon: ClipboardCheck }] },
-    { title: 'Interviews', items: [
-      { key: 'interview-dashboard', label: 'Interview Dashboard', icon: Video },
-      { key: 'interview-upcoming', label: 'Upcoming Interviews', icon: Calendar },
-      { key: 'interview-completed', label: 'Completed', icon: CircleCheck },
-      { key: 'interview-evaluation', label: 'Evaluation', icon: ClipboardCheck },
-    ] },
     { title: 'Insights', items: [{ key: 'reports', label: 'Reports', icon: BarChart3 }, { key: 'feedback', label: 'Feedback', icon: MessageSquare }] },
+    { title: 'Interviews', items: [{ key: 'interviews', label: 'Interviews', icon: Video }] },
     { title: 'Account', items: [{ key: 'profile', label: 'My Profile', icon: User }] },
   ],
   PARTICIPANT: [
     { title: 'Overview', items: [{ key: 'overview', label: 'Dashboard', icon: LayoutDashboard }] },
     { title: 'Learning', items: [{ key: 'myEnrollments', label: 'My Courses', icon: GraduationCap }, { key: 'leaderboard', label: 'Leaderboard', icon: Trophy }, { key: 'achievements', label: 'Achievements', icon: Award }] },
-    { title: 'Interviews', items: [
-      { key: 'interview-upcoming', label: 'My Interviews', icon: Video },
-      { key: 'interview-completed', label: 'Past Interviews', icon: CircleCheck },
-    ] },
     { title: 'Activity', items: [{ key: 'reports', label: 'My Reports', icon: BarChart3 }, { key: 'certificates', label: 'Certificates', icon: Award }, { key: 'feedback', label: 'Give Feedback', icon: MessageSquare }, { key: 'myFeedbacks', label: 'My Feedbacks', icon: MessageSquare }] },
+    { title: 'Interviews', items: [{ key: 'interviews', label: 'Interviews', icon: Video }] },
     { title: 'Account', items: [{ key: 'profile', label: 'Profile', icon: User }] },
   ],
 }
@@ -96,7 +87,6 @@ const pageDescriptions = {
   overview: 'Monitor your platform activity and key metrics',
   applications: 'Review and manage registration applications',
   trainings: 'Manage all training programs',
-  courseManagement: 'Organize courses within training programs',
   trainers: 'Manage trainer accounts and assignments',
   participants: 'View and manage learner accounts',
   bulkImport: 'Bulk import participants from Excel files',
@@ -114,14 +104,7 @@ const pageDescriptions = {
   achievements: 'Your badges and accomplishments',
   certificates: 'Download your completion certificates',
   myFeedbacks: 'Feedback you\'ve submitted',
-  'interview-dashboard': 'Manage interviews and view real-time status',
-  'interview-create': 'Schedule a new interview session',
-  'interview-upcoming': 'View and join upcoming interviews',
-  'interview-completed': 'Review completed interview sessions',
-  'interview-evaluation': 'Evaluate candidate performance',
-  'interview-reports': 'Interview analytics and reports',
-  'interview-templates': 'Pre-configured interview templates',
-  'interview-settings': 'Configure interview defaults and security',
+  interviews: 'Schedule and manage interviews',
 }
 
 export { pageDescriptions }
@@ -129,6 +112,7 @@ export { navGroups }
 
 export default function Sidebar({ user, activeTab, onTabChange, onLogout, onCloseSidebar, sidebarOpen, onOpenSidebar }) {
   const navigate = useNavigate()
+  const location = useLocation()
   const groups = navGroups[user.role] || []
   const isAdmin = user.role === 'ADMIN'
   const isTrainer = user.role === 'TRAINER'
@@ -197,8 +181,15 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
                       onClick={() => {
                         if (item.key === 'profile') {
                           navigate('/my-profile')
+                        } else if (item.key === 'interviews') {
+                          navigate('/interviews')
                         } else {
-                          onTabChange(item.key)
+                          const home = ROLE_HOME[user.role] || '/admin'
+                          if (location.pathname !== home) {
+                            navigate(home, { state: { tab: item.key } })
+                          } else {
+                            onTabChange(item.key)
+                          }
                         }
                         onCloseSidebar && onCloseSidebar()
                       }}

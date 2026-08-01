@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { colors, typography, radius, transitions } from '../../theme/tokens'
+import { colors, radius, spacing, typography, transitions } from '../../theme/tokens'
 
 export default function Pagination({ totalItems, itemsPerPage = 10, currentPage = 1, onPageChange }) {
   const totalPages = Math.ceil(totalItems / itemsPerPage)
@@ -30,7 +30,7 @@ export default function Pagination({ totalItems, itemsPerPage = 10, currentPage 
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
-      marginTop: '24px',
+      marginTop: spacing[6],
       fontFamily: typography.fontFamily,
       fontSize: '0.875rem',
       color: colors.text.muted,

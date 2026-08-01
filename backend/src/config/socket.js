@@ -52,7 +52,13 @@ const initializeSocket = (server) => {
         return next(new Error('Authentication error: No token provided'));
       }
 
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_jwt_secret');
+      // Standard JWT auth
+      const secret = process.env.JWT_SECRET;
+      if (!secret) {
+        console.error('[Socket.IO] JWT_SECRET not set — rejecting connection');
+        return next(new Error('Server configuration error'));
+      }
+      const decoded = jwt.verify(token, secret);
       const userId = decoded.id || decoded.userId;
       const user = await User.findByPk(userId);
 
@@ -173,8 +179,9 @@ const initializeSocket = (server) => {
     require('../socket/events/monitorEvents')(io, socket);
     // Register coding assessment events
     require('../socket/codingEvents')(io, socket);
-    // Register interview management events
-    require('../socket/events/interviewEvents')(io, socket);
+    // Register interview module events (WebRTC signalling, room management)
+    const { registerInterviewEvents } = require('../socket/interviewEvents');
+    registerInterviewEvents(io, socket);
   });
 
   return io;

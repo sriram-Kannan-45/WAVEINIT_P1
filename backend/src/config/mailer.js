@@ -36,12 +36,14 @@ function isEmailConfigured() {
 let transporter = null;
 let ready = false;
 
-function build() {
+function build(user, pass) {
   return nodemailer.createTransport({
     host: HOST,
     port: PORT,
-    secure: PORT === 465, // 465 = SSL, 587 = STARTTLS
-    auth: { user: GMAIL_USER, pass: GMAIL_APP_PASS },
+    secure: PORT === 465,
+    auth: { user: user || GMAIL_USER, pass: pass || GMAIL_APP_PASS },
+    logger: process.env.SMTP_DEBUG === 'true',
+    debug: process.env.SMTP_DEBUG === 'true',
     pool: true,
     maxConnections: 5,
     maxMessages: 100,
@@ -51,24 +53,103 @@ function build() {
   });
 }
 
+/**
+ * Re-read env vars and rebuild the transporter.
+ * Call after changing .env at runtime (no full restart needed).
+ * Returns { ok, user, ready, error? }
+ */
+async function rebuildTransporter() {
+  try {
+    // Force-reload env from disk if .env was edited externally
+    const fs = require('fs');
+    const path = require('path');
+    const envPath = path.resolve(__dirname, '../../.env');
+    if (fs.existsSync(envPath)) {
+      const lines = fs.readFileSync(envPath, 'utf8').split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx === -1) continue;
+        const key = trimmed.slice(0, eqIdx).trim();
+        const val = trimmed.slice(eqIdx + 1).trim();
+        process.env[key] = val;
+      }
+    }
+
+    const newUser = (process.env.GMAIL_USER || process.env.EMAIL_USER || '').trim();
+    const newPass = (process.env.GMAIL_APP_PASS || process.env.EMAIL_PASS || '').replace(/\s+/g, '');
+
+    if (!newUser || !newPass || PLACEHOLDER_PATTERN.test(`${newUser} ${newPass}`)) {
+      return { ok: false, error: 'Email credentials not configured or still placeholders', user: newUser || null };
+    }
+
+    const newTransporter = build(newUser, newPass);
+    await newTransporter.verify();
+
+    // Swap globals
+    transporter = newTransporter;
+    ready = true;
+    console.log(`✅ SMTP transporter rebuilt & verified for ${newUser}`);
+    return { ok: true, user: newUser, ready: true };
+  } catch (err) {
+    ready = false;
+    console.error('❌ SMTP rebuild failed:', err.message);
+    explainSmtpError(err);
+    return { ok: false, error: err.message, code: err.code || null };
+  }
+}
+
 function explainSmtpError(err) {
   const msg = (err && err.message) || '';
   const code = (err && err.code) || '';
+  console.error('');
+  console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   if (code === 'EAUTH' || /535|BadCredentials|Username and Password not accepted/i.test(msg)) {
-    console.error('   → Gmail rejected the credentials. Fix:');
-    console.error('     1. Enable 2-Step Verification: https://myaccount.google.com/security');
-    console.error('     2. Create an App Password:     https://myaccount.google.com/apppasswords');
-    console.error('     3. Put the 16-char password (no spaces) in backend/.env as GMAIL_APP_PASS');
-    console.error('     4. Restart the backend');
+    console.error('❌  GMAIL SMTP AUTHENTICATION FAILED (535)');
+    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.error(`   Current user: ${GMAIL_USER}`);
+    console.error(`   Password length: ${GMAIL_APP_PASS.length} chars`);
+    console.error('');
+    console.error('   Causes (check in order):');
+    console.error('   1. App Password is wrong or expired');
+    console.error('      → Go to https://myaccount.google.com/apppasswords');
+    console.error('      → Delete old password, create a NEW one');
+    console.error('   2. 2-Step Verification is NOT enabled');
+    console.error('      → Go to https://myaccount.google.com/security');
+    console.error('      → Turn ON 2-Step Verification first');
+    console.error('   3. Using regular password instead of App Password');
+    console.error('      → App Passwords are 16 chars (xxxx xxxx xxxx xxxx)');
+    console.error('      → Regular Gmail passwords do NOT work with SMTP');
+    console.error('   4. Wrong email address');
+    console.error(`      → Confirm "${GMAIL_USER}" is the exact Google account email`);
+    console.error('');
+    console.error('   Quick fix:');
+    console.error('   a) Update GMAIL_APP_PASS in backend/.env');
+    console.error('   b) POST /api/auth/smtp-rebuild  (no restart needed)');
+    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   } else if (code === 'ECONNECTION' || code === 'ETIMEDOUT' || /timeout|ENOTFOUND/i.test(msg)) {
-    console.error('   → Network/SMTP unreachable. Check firewall / outbound port 465 / try EMAIL_PORT=587');
+    console.error('❌  SMTP CONNECTION FAILED (network/timeout)');
+    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.error(`   Host: ${HOST}:${PORT}`);
+    console.error('   → Check firewall / outbound port 465');
+    console.error('   → Try EMAIL_PORT=587 in .env (STARTTLS)');
   } else if (/self.signed|certificate/i.test(msg)) {
-    console.error('   → TLS certificate issue. On corporate networks try EMAIL_PORT=587');
+    console.error('❌  TLS CERTIFICATE ERROR');
+    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.error('   → Corporate networks often block SSL. Try EMAIL_PORT=587');
+  } else {
+    console.error('❌  SMTP ERROR');
+    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.error(`   Code: ${code || '(none)'}`);
+    console.error(`   Message: ${msg}`);
   }
+  console.error('');
 }
 
 if (isEmailConfigured()) {
   transporter = build();
+  console.log(`[MAILER] Configured: user=${GMAIL_USER}, pass=${GMAIL_APP_PASS.length} chars, host=${HOST}:${PORT}`);
   // Non-blocking startup verification with exponential-backoff retry.
   // Tries 3 times — handles transient network/Gmail blips on boot.
   (async function verifyWithRetry() {
@@ -78,15 +159,16 @@ if (isEmailConfigured()) {
       try {
         await transporter.verify();
         ready = true;
-        console.log(`✅ SMTP Connected (${HOST}:${PORT}). Ready to send emails as ${GMAIL_USER}`);
+        console.log(`✅ SMTP Connected & Authenticated (${HOST}:${PORT}) as ${GMAIL_USER}`);
         return;
       } catch (err) {
         const attempt = i + 1;
         console.error(`❌ SMTP verify attempt ${attempt}/${delays.length} failed: ${err.message}`);
+        if (err.code) console.error(`   Error code: ${err.code}`);
         if (attempt === delays.length) {
           ready = false;
           explainSmtpError(err);
-          console.error('   Will still attempt to send mail on demand — fix creds and restart for full health.');
+          console.error('   Will still attempt to send mail on demand — fix creds and run POST /api/auth/smtp-rebuild');
         }
       }
     }
@@ -262,4 +344,5 @@ module.exports = {
   isEmailConfigured,
   getMailerStatus,
   explainSmtpError,
+  rebuildTransporter,
 };

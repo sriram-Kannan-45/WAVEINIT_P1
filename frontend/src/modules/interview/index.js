@@ -1,5 +1,0 @@
-export { default as InterviewDashboard } from './pages/InterviewDashboard'
-export { default as CompletedInterviews } from './pages/CompletedInterviews'
-export { default as CreateInterview } from './pages/CreateInterview'
-export { default as InterviewRoomPage } from './pages/InterviewRoomPage'
-export { default as EvaluationPage } from './pages/EvaluationPage'

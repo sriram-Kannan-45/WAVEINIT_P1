@@ -113,7 +113,7 @@ function RegistrationPage() {
 
   const fetchTrainings = async () => {
     try {
-      const r = await fetch(`${API_BASE}/trainings`)
+      const r = await fetch(`${API_BASE}/api/trainings`)
       const d = await r.json()
       if (r.ok) {
         const list = (d.trainings || d || []).filter(t => t.status !== 'DELETED')

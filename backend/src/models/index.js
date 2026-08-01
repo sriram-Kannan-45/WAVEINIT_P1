@@ -28,6 +28,11 @@ const QuizResult = require('./quizResult');
 const PasswordResetOtp = require('./PasswordResetOtp');
 const AssessmentSession = require('./AssessmentSession');
 
+// Security models
+const RefreshToken = require('./RefreshToken');
+const UserSession = require('./UserSession');
+const AuditLog = require('./AuditLog');
+
 // Lesson workflow module (lessons + quiz/assessment gating + progress)
 const Lesson = require('./lesson');
 const LessonQuiz = require('./lessonQuiz');
@@ -85,18 +90,24 @@ const ProfileProject = require('./ProfileProject');
 const ProfileContactLink = require('./ProfileContactLink');
 const ProfileActivityLog = require('./ProfileActivityLog');
 
-// Interview Management module
-const Interview = require('./interview');
-const InterviewCandidate = require('./interviewCandidate');
-const InterviewTrainer = require('./interviewTrainer');
-const InterviewRoom = require('./interviewRoom');
-const InterviewEvaluation = require('./interviewEvaluation');
-const InterviewRecording = require('./interviewRecording');
-const InterviewLog = require('./interviewLog');
-const InterviewNotification = require('./interviewNotification');
-const InterviewDevice = require('./interviewDevice');
+// Interview Module
+const Interview = require('./Interview');
+const InterviewSession = require('./InterviewSession');
+const InterviewDevice = require('./InterviewDevice');
+const InterviewRecording = require('./InterviewRecording');
+const InterviewLog = require('./InterviewLog');
+const InterviewAlert = require('./InterviewAlert');
+const InterviewFeedback = require('./InterviewFeedback');
+const InterviewResult = require('./InterviewResult');
+const InterviewNotes = require('./InterviewNotes');
 
 // --- Core LMS Associations ---
+
+// Security: User ↔ RefreshToken, UserSession
+User.hasMany(RefreshToken, { foreignKey: 'userId', as: 'refreshTokens' });
+RefreshToken.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+User.hasMany(UserSession, { foreignKey: 'userId', as: 'sessions' });
+UserSession.belongsTo(User, { foreignKey: 'userId', as: 'user' });
 
 // User <-> TrainerProfile
 User.hasOne(TrainerProfile, { foreignKey: 'userId', as: 'profile' });
@@ -374,44 +385,48 @@ ProfileContactLink.belongsTo(UserProfile, { foreignKey: 'profileId', as: 'profil
 UserProfile.hasMany(ProfileActivityLog, { foreignKey: 'profileId', as: 'activityLogs' });
 ProfileActivityLog.belongsTo(UserProfile, { foreignKey: 'profileId', as: 'profile' });
 
-// --- Interview Management Associations ---
-Interview.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
-User.hasMany(Interview, { foreignKey: 'createdBy', as: 'createdInterviews' });
+// --- Interview Module Associations ---
+Interview.belongsTo(User, { foreignKey: 'candidate_id', as: 'candidate' });
+Interview.belongsTo(User, { foreignKey: 'interviewer_id', as: 'interviewer' });
+Interview.belongsTo(User, { foreignKey: 'created_by', as: 'creator' });
+User.hasMany(Interview, { foreignKey: 'candidate_id', as: 'candidateInterviews' });
+User.hasMany(Interview, { foreignKey: 'interviewer_id', as: 'interviewerInterviews' });
 
-Interview.hasMany(InterviewCandidate, { foreignKey: 'interviewId', as: 'candidates' });
-InterviewCandidate.belongsTo(Interview, { foreignKey: 'interviewId', as: 'interview' });
-InterviewCandidate.belongsTo(User, { foreignKey: 'participantId', as: 'participant' });
-User.hasMany(InterviewCandidate, { foreignKey: 'participantId', as: 'interviewCandidates' });
+Interview.hasMany(InterviewSession, { foreignKey: 'interview_id', as: 'sessions' });
+InterviewSession.belongsTo(Interview, { foreignKey: 'interview_id', as: 'interview' });
 
-Interview.hasMany(InterviewTrainer, { foreignKey: 'interviewId', as: 'trainers' });
-InterviewTrainer.belongsTo(Interview, { foreignKey: 'interviewId', as: 'interview' });
-InterviewTrainer.belongsTo(User, { foreignKey: 'trainerId', as: 'trainer' });
-User.hasMany(InterviewTrainer, { foreignKey: 'trainerId', as: 'interviewTrainerAssignments' });
+InterviewSession.hasMany(InterviewDevice, { foreignKey: 'session_id', as: 'devices' });
+InterviewDevice.belongsTo(InterviewSession, { foreignKey: 'session_id', as: 'session' });
+InterviewDevice.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
-Interview.hasOne(InterviewRoom, { foreignKey: 'interviewId', as: 'room' });
-InterviewRoom.belongsTo(Interview, { foreignKey: 'interviewId', as: 'interview' });
+InterviewSession.hasMany(InterviewRecording, { foreignKey: 'session_id', as: 'recordings' });
+InterviewRecording.belongsTo(InterviewSession, { foreignKey: 'session_id', as: 'session' });
+InterviewRecording.belongsTo(User, { foreignKey: 'uploaded_by', as: 'uploader' });
 
-Interview.hasMany(InterviewEvaluation, { foreignKey: 'interviewId', as: 'evaluations' });
-InterviewEvaluation.belongsTo(Interview, { foreignKey: 'interviewId', as: 'interview' });
-InterviewEvaluation.belongsTo(User, { foreignKey: 'participantId', as: 'participant' });
-InterviewEvaluation.belongsTo(User, { foreignKey: 'evaluatorId', as: 'evaluator' });
-User.hasMany(InterviewEvaluation, { foreignKey: 'evaluatorId', as: 'interviewEvaluations' });
+InterviewSession.hasMany(InterviewLog, { foreignKey: 'session_id', as: 'logs' });
+InterviewLog.belongsTo(InterviewSession, { foreignKey: 'session_id', as: 'session' });
+InterviewLog.belongsTo(User, { foreignKey: 'actor_id', as: 'actor' });
 
-Interview.hasMany(InterviewRecording, { foreignKey: 'interviewId', as: 'recordings' });
-InterviewRecording.belongsTo(Interview, { foreignKey: 'interviewId', as: 'interview' });
+InterviewSession.hasMany(InterviewAlert, { foreignKey: 'session_id', as: 'alerts' });
+InterviewAlert.belongsTo(InterviewSession, { foreignKey: 'session_id', as: 'session' });
 
-Interview.hasMany(InterviewLog, { foreignKey: 'interviewId', as: 'logs' });
-InterviewLog.belongsTo(Interview, { foreignKey: 'interviewId', as: 'interview' });
-InterviewLog.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+InterviewSession.hasMany(InterviewFeedback, { foreignKey: 'session_id', as: 'feedbacks' });
+InterviewFeedback.belongsTo(InterviewSession, { foreignKey: 'session_id', as: 'session' });
+InterviewFeedback.belongsTo(Interview, { foreignKey: 'interview_id', as: 'interview' });
+InterviewFeedback.belongsTo(User, { foreignKey: 'interviewer_id', as: 'interviewer' });
+Interview.hasMany(InterviewFeedback, { foreignKey: 'interview_id', as: 'feedbacks' });
 
-Interview.hasMany(InterviewNotification, { foreignKey: 'interviewId', as: 'interviewNotifications' });
-InterviewNotification.belongsTo(Interview, { foreignKey: 'interviewId', as: 'interview' });
-InterviewNotification.belongsTo(User, { foreignKey: 'userId', as: 'user' });
-User.hasMany(InterviewNotification, { foreignKey: 'userId', as: 'interviewNotifications' });
+InterviewSession.hasMany(InterviewNotes, { foreignKey: 'session_id', as: 'notes' });
+InterviewNotes.belongsTo(InterviewSession, { foreignKey: 'session_id', as: 'session' });
+InterviewNotes.belongsTo(Interview, { foreignKey: 'interview_id', as: 'interview' });
+InterviewNotes.belongsTo(User, { foreignKey: 'author_id', as: 'author' });
+Interview.hasMany(InterviewNotes, { foreignKey: 'interview_id', as: 'notes' });
+User.hasMany(InterviewNotes, { foreignKey: 'author_id', as: 'interviewNotes' });
 
-Interview.hasMany(InterviewDevice, { foreignKey: 'interviewId', as: 'devices' });
-InterviewDevice.belongsTo(Interview, { foreignKey: 'interviewId', as: 'interview' });
-InterviewDevice.belongsTo(User, { foreignKey: 'participantId', as: 'participant' });
+Interview.hasOne(InterviewResult, { foreignKey: 'interview_id', as: 'result' });
+InterviewResult.belongsTo(Interview, { foreignKey: 'interview_id', as: 'interview' });
+InterviewResult.belongsTo(InterviewSession, { foreignKey: 'session_id', as: 'session' });
+InterviewResult.belongsTo(User, { foreignKey: 'decided_by', as: 'decider' });
 
 module.exports = {
   sequelize,
@@ -438,6 +453,10 @@ module.exports = {
   QuizAttempt,
   QuizAnswer,
   QuizResult,
+  // Security
+  RefreshToken,
+  UserSession,
+  AuditLog,
   // Proctoring
   ExamSession,
   Violation,
@@ -487,14 +506,14 @@ module.exports = {
   ProfileProject,
   ProfileContactLink,
   ProfileActivityLog,
-  // Interview Management
+  // Interview Module
   Interview,
-  InterviewCandidate,
-  InterviewTrainer,
-  InterviewRoom,
-  InterviewEvaluation,
+  InterviewSession,
+  InterviewDevice,
   InterviewRecording,
   InterviewLog,
-  InterviewNotification,
-  InterviewDevice,
+  InterviewAlert,
+  InterviewFeedback,
+  InterviewResult,
+  InterviewNotes,
 };

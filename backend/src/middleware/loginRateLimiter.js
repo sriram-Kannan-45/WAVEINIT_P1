@@ -44,7 +44,7 @@ const CLEANUP_INTERVAL_MS = 60_000;          // purge stale entries every 60s
 const store = new Map();
 
 function getEmail(req) {
-  return (req.body?.email || '').toString().toLowerCase().trim();
+  return (req.body?.email || req.body?.username || '').toString().toLowerCase().trim();
 }
 
 // ── IP rate limiter (express-rate-limit) ────────────────────────

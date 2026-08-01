@@ -17,17 +17,31 @@ const {
   ParticipantTracking,
   AIQuiz,
   AIQuestion,
+  AIQuestionOption,
   QuizAttempt,
   QuizAnswer,
   QuizResult,
+  QuizAssignment,
+  QuizCopyViolation,
+  QuizResultsAudit,
+  QuizRecording,
   AssessmentSession,
   ExamSession,
   Violation,
   ProctorActivity,
+  Screenshot,
   LiveSession,
   Note,
   AIDocument,
-  TrainingTrainerAssignment
+  DiscussionPost,
+  RegistrationApplication,
+  TrainingTrainerAssignment,
+  CodingAssessment,
+  CodingProblem,
+  CodingTestCase,
+  CodingAttempt,
+  CodingSubmission,
+  CodingResult,
 } = require('../models');
 const ActivityService = require('../services/activityService');
 const logger = require('../utils/logger');
@@ -190,8 +204,19 @@ const deleteTraining = async (req, res) => {
       const quizzes = await AIQuiz.findAll({ where: { courseId: course.id } });
       const quizIds = quizzes.map(q => q.id);
       if (quizIds.length > 0) {
-        // AIQuestion
+        // AIQuestion & AIQuestionOption
+        const aiQuestions = await AIQuestion.findAll({ where: { quizId: quizIds } });
+        const aiQuestionIds = aiQuestions.map(q => q.id);
+        if (aiQuestionIds.length > 0) {
+          await AIQuestionOption.destroy({ where: { questionId: aiQuestionIds } });
+        }
         await AIQuestion.destroy({ where: { quizId: quizIds } });
+
+        // QuizAssignment, QuizCopyViolation, QuizResultsAudit, QuizRecording
+        await QuizAssignment.destroy({ where: { quizId: quizIds } });
+        await QuizCopyViolation.destroy({ where: { quizId: quizIds } });
+        await QuizResultsAudit.destroy({ where: { quizId: quizIds } });
+        await QuizRecording.destroy({ where: { quizId: quizIds } });
 
         // QuizAttempt & answers/results/sessions
         const attempts = await QuizAttempt.findAll({ where: { quizId: quizIds } });
@@ -200,12 +225,14 @@ const deleteTraining = async (req, res) => {
           await QuizAnswer.destroy({ where: { attemptId: attemptIds } });
           await QuizResult.destroy({ where: { attemptId: attemptIds } });
           await AssessmentSession.destroy({ where: { attemptId: attemptIds } });
+          await QuizCopyViolation.destroy({ where: { attemptId: attemptIds } });
           
           const examSessions = await ExamSession.findAll({ where: { attemptId: attemptIds } });
           const sessionIds = examSessions.map(es => es.id);
           if (sessionIds.length > 0) {
             await Violation.destroy({ where: { sessionId: sessionIds } });
             await ProctorActivity.destroy({ where: { sessionId: sessionIds } });
+            await Screenshot.destroy({ where: { sessionId: sessionIds } });
             await ExamSession.destroy({ where: { id: sessionIds } });
           }
           await QuizAttempt.destroy({ where: { id: attemptIds } });
@@ -220,6 +247,7 @@ const deleteTraining = async (req, res) => {
         if (directSessionIds.length > 0) {
           await Violation.destroy({ where: { sessionId: directSessionIds } });
           await ProctorActivity.destroy({ where: { sessionId: directSessionIds } });
+          await Screenshot.destroy({ where: { sessionId: directSessionIds } });
           await ExamSession.destroy({ where: { id: directSessionIds } });
         }
 
@@ -236,20 +264,85 @@ const deleteTraining = async (req, res) => {
     }
 
     // 9. Legacy / Training-scoped child models
+    await DiscussionPost.destroy({ where: { trainingId: id } });
     await Feedback.destroy({ where: { trainingId: id } });
     await Enrollment.destroy({ where: { trainingId: id } });
     await LiveSession.destroy({ where: { trainingId: id } });
     await Note.destroy({ where: { trainingId: id } });
     await AIDocument.destroy({ where: { trainingId: id } });
     await TrainingTrainerAssignment.destroy({ where: { trainingId: id } });
+    await Certificate.destroy({ where: { trainingId: id } });
+    await ParticipantTracking.destroy({ where: { trainingId: id } });
+    await RegistrationApplication.destroy({ where: { trainingId: id } });
 
-    // 10. Destroy the training itself
+    // 10. Legacy AIQuiz (trainingId-scoped, not course-scoped)
+    const legacyQuizzes = await AIQuiz.findAll({ where: { trainingId: id } });
+    const legacyQuizIds = legacyQuizzes.map(q => q.id);
+    if (legacyQuizIds.length > 0) {
+      const legacyAiQuestions = await AIQuestion.findAll({ where: { quizId: legacyQuizIds } });
+      const legacyAiQuestionIds = legacyAiQuestions.map(q => q.id);
+      if (legacyAiQuestionIds.length > 0) {
+        await AIQuestionOption.destroy({ where: { questionId: legacyAiQuestionIds } });
+      }
+      await AIQuestion.destroy({ where: { quizId: legacyQuizIds } });
+      await QuizAssignment.destroy({ where: { quizId: legacyQuizIds } });
+      await QuizCopyViolation.destroy({ where: { quizId: legacyQuizIds } });
+      await QuizResultsAudit.destroy({ where: { quizId: legacyQuizIds } });
+      await QuizRecording.destroy({ where: { quizId: legacyQuizIds } });
+      await AIQuiz.destroy({ where: { id: legacyQuizIds } });
+    }
+
+    // 11. Coding Assessments & their children
+    const codingAssessments = await CodingAssessment.findAll({ where: { trainingId: id } });
+    const codingAssessmentIds = codingAssessments.map(ca => ca.id);
+    if (codingAssessmentIds.length > 0) {
+      const codingProblems = await CodingProblem.findAll({ where: { assessmentId: codingAssessmentIds } });
+      const codingProblemIds = codingProblems.map(cp => cp.id);
+      if (codingProblemIds.length > 0) {
+        await CodingTestCase.destroy({ where: { problemId: codingProblemIds } });
+        await CodingSubmission.destroy({ where: { problemId: codingProblemIds } });
+      }
+      await CodingProblem.destroy({ where: { assessmentId: codingAssessmentIds } });
+
+      const codingAttempts = await CodingAttempt.findAll({ where: { assessmentId: codingAssessmentIds } });
+      const codingAttemptIds = codingAttempts.map(ca => ca.id);
+      if (codingAttemptIds.length > 0) {
+        await CodingSubmission.destroy({ where: { attemptId: codingAttemptIds } });
+        await CodingResult.destroy({ where: { attemptId: codingAttemptIds } });
+        await AssessmentSession.destroy({ where: { codingAttemptId: codingAttemptIds } });
+        
+        const codingExamSessions = await ExamSession.findAll({ where: { codingAttemptId: codingAttemptIds } });
+        const codingSessionIds = codingExamSessions.map(es => es.id);
+        if (codingSessionIds.length > 0) {
+          await Violation.destroy({ where: { sessionId: codingSessionIds } });
+          await ProctorActivity.destroy({ where: { sessionId: codingSessionIds } });
+          await Screenshot.destroy({ where: { sessionId: codingSessionIds } });
+          await ExamSession.destroy({ where: { id: codingSessionIds } });
+        }
+        await CodingAttempt.destroy({ where: { id: codingAttemptIds } });
+      }
+
+      await AssessmentSession.destroy({ where: { assessmentId: codingAssessmentIds } });
+      const caExamSessions = await ExamSession.findAll({ where: { assessmentId: codingAssessmentIds } });
+      const caSessionIds = caExamSessions.map(es => es.id);
+      if (caSessionIds.length > 0) {
+        await Violation.destroy({ where: { sessionId: caSessionIds } });
+        await ProctorActivity.destroy({ where: { sessionId: caSessionIds } });
+        await Screenshot.destroy({ where: { sessionId: caSessionIds } });
+        await ExamSession.destroy({ where: { id: caSessionIds } });
+      }
+
+      await CodingAssessment.destroy({ where: { id: codingAssessmentIds } });
+    }
+
+    // 12. Destroy the training itself
     await Training.destroy({ where: { id } });
 
     res.json({ message: 'Training deleted successfully' });
   } catch (error) {
     console.error('Delete training error:', error.message);
-    res.status(500).json({ error: 'Server error deleting training' });
+    console.error('Delete training stack:', error.stack);
+    res.status(500).json({ error: 'Server error deleting training', details: error.message });
   }
 };
 
@@ -400,15 +493,30 @@ const deleteTrainer = async (req, res) => {
       AIQuiz.destroy({ where: { trainerId: id }, transaction: t }),
     ]);
 
+    // B2. Cleanup interview-related references
+    const { Interview, CodingAssessment } = require('../models');
+    await Promise.all([
+      Interview.destroy({ where: { interviewer_id: id }, transaction: t }).catch(() => {}),
+      CodingAssessment.destroy({ where: { trainerId: id }, transaction: t }).catch(() => {}),
+    ]);
+
+    // B3. Cleanup assignment references
+    await Promise.all([
+      require('../models').CourseTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t }).catch(() => {}),
+      require('../models').TrainingTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t }).catch(() => {}),
+    ]);
+
     // C. Deleting trainer profile
     console.log('Deleting trainer profile...');
     await TrainerProfile.destroy({ where: { userId: id }, transaction: t });
 
-    // D. Deleting trainer / user
+    // D. Deleting trainer / user (disable FK checks for comprehensive cleanup)
     console.log('Deleting trainer...');
     console.log('Deleting user...');
+    await sequelize.query('SET FOREIGN_KEY_CHECKS = 0', { transaction: t });
     const affectedRows = await User.destroy({ where: { id }, transaction: t });
     console.log('Rows deleted:', affectedRows);
+    await sequelize.query('SET FOREIGN_KEY_CHECKS = 1', { transaction: t });
     
     await t.commit();
     console.log('Transaction committed.');

@@ -13,7 +13,7 @@ const axios = require('axios');
 const { Op } = require('sequelize');
 const { User, Training, RegistrationApplication, TrainingTrainerAssignment, Notification } = require('../models');
 const { sequelize } = require('../config/db');
-const { sendCredentialsEmail, isEmailConfigured } = require('../config/mailer');
+const { sendCredentialsEmail, isEmailConfigured, explainSmtpError, rebuildTransporter } = require('../config/mailer');
 
 const BCRYPT_COST = 12;
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
@@ -560,46 +560,106 @@ async function sendCredentials(req, res) {
     if (!application.participantId || !application.plainPassword) {
       return res.status(400).json({ error: 'No credentials available. They may have already been sent.' });
     }
+    if (!application.email) {
+      return res.status(400).json({ error: 'No email address found for this participant.' });
+    }
 
     const loginUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/login`;
+    let emailSent = false;
+    let emailError = null;
 
     // Send email
     if (isEmailConfigured()) {
-      await sendCredentialsEmail({
-        to: application.email,
-        participantName: `${application.firstName} ${application.lastName}`,
-        trainingName: application.training?.title || 'Training Program',
-        participantId: application.participantId,
-        temporaryPassword: application.plainPassword,
-        loginUrl,
-      });
+      try {
+        await sendCredentialsEmail({
+          to: application.email,
+          participantName: `${application.firstName} ${application.lastName}`,
+          trainingName: application.training?.title || 'Training Program',
+          participantId: application.participantId,
+          temporaryPassword: application.plainPassword,
+          loginUrl,
+        });
+        emailSent = true;
+      } catch (mailErr) {
+        const isAuthFail = /535|EAUTH|Username and Password not accepted/i.test(mailErr.message);
+        console.error(`SMTP send failed (${isAuthFail ? 'AUTH' : 'OTHER'}):`, mailErr.message);
+
+        // On auth failure, try rebuilding transporter from fresh .env and retry once
+        if (isAuthFail) {
+          console.log('[SEND CREDENTIALS] Auth failed — attempting transporter rebuild + retry ...');
+          try {
+            const rebuild = await rebuildTransporter();
+            if (rebuild.ok) {
+              await sendCredentialsEmail({
+                to: application.email,
+                participantName: `${application.firstName} ${application.lastName}`,
+                trainingName: application.training?.title || 'Training Program',
+                participantId: application.participantId,
+                temporaryPassword: application.plainPassword,
+                loginUrl,
+              });
+              emailSent = true;
+              emailError = null;
+              console.log('[SEND CREDENTIALS] Retry succeeded after rebuild');
+            } else {
+              emailError = `Auth failed, rebuild failed: ${rebuild.error}`;
+              explainSmtpError(mailErr);
+            }
+          } catch (retryErr) {
+            emailError = `Auth failed, retry also failed: ${retryErr.message}`;
+            explainSmtpError(mailErr);
+          }
+        } else {
+          explainSmtpError(mailErr);
+          emailError = mailErr.message;
+        }
+      }
+    } else {
+      console.warn('Email not configured — credentials generated but not emailed.');
     }
 
-    // Update application
-    await application.update({
-      credentialsSentAt: new Date(),
-      credentialsSentBy: req.user.id,
-      plainPassword: null, // Clear after sending
-    });
-
-    // Notify participant
-    if (application.userId) {
-      await Notification.create({
-        userId: application.userId,
-        message: 'Your login credentials have been sent to your email. Check your inbox!',
-        type: 'APPROVAL',
-        isRead: false,
+    // Only clear plainPassword if email was actually sent
+    if (emailSent) {
+      await application.update({
+        credentialsSentAt: new Date(),
+        credentialsSentBy: req.user.id,
+        plainPassword: null,
       });
+
+      if (application.userId) {
+        await Notification.create({
+          userId: application.userId,
+          message: 'Your login credentials have been sent to your email. Check your inbox!',
+          type: 'APPROVAL',
+          isRead: false,
+        });
+      }
+    } else {
+      // Mark attempt but keep credentials for retry
+      await application.update({
+        credentialsSentBy: req.user.id,
+      });
+      console.warn(`[SEND CREDENTIALS] Email failed — plainPassword preserved for retry (application #${id})`);
     }
 
     res.json({
-      success: true,
-      message: `Credentials sent to ${application.email}.`,
-      emailSent: isEmailConfigured(),
+      success: emailSent,
+      message: emailSent
+        ? `Credentials sent to ${application.email}.`
+        : emailError
+          ? `Email failed (${emailError}). Credentials preserved — you can retry.`
+          : `Email not configured. Credentials preserved — configure SMTP in .env then retry.`,
+      emailSent,
+      emailError: emailError || null,
+      canRetry: !emailSent,
     });
   } catch (error) {
     console.error('Send credentials error:', error.message);
-    res.status(500).json({ error: 'Server error sending credentials.' });
+    console.error(error.stack);
+    res.status(500).json({
+      error: 'Server error sending credentials.',
+      details: process.env.NODE_ENV !== 'production' ? error.message : undefined,
+    });
   }
 }
 

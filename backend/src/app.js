@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const path = require('path');
 const http = require('http');
 const bcrypt = require('bcryptjs');
@@ -13,6 +14,9 @@ const {
   setupRedisAdapter,
   cleanupSocket,
 } = require('./config/socket');
+
+// Security middleware
+const { detectSqlInjection, detectXss, detectPathTraversal, detectAnomalies } = require('./security/threatDetector');
 
 const authRoutes = require('./routes/authRoutes');
 const adminRoutes = require('./routes/adminRoutes');
@@ -64,14 +68,61 @@ app.use(cors({
     if (allowedOrigins.has(origin)) return cb(null, true);
     return cb(new Error(`CORS: origin ${origin} not allowed`));
   },
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['X-Request-Id'],
+  maxAge: 86400,
 }));
+
+// Helmet — sets security HTTP headers (CSP, HSTS, X-Frame-Options, etc.)
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:'],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
+
+// Threat detection middleware (applied globally)
+app.use(detectAnomalies);
+app.use(detectPathTraversal);
 // Body parsers — limit raised to 10 MB to safely accommodate participant
 // avatar payloads (sent as base-64 data URLs). The frontend now compresses
 // avatars to ~400×400 JPEG before upload, so real payloads are typically
 // <100 KB; this header is the safety net.
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// SQL injection + XSS detection on all POST/PUT/PATCH requests
+app.use((req, res, next) => {
+  if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
+    return detectSqlInjection(req, res, () => detectXss(req, res, next));
+  }
+  next();
+});
+
+// Security response headers
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.removeHeader('X-Powered-By');
+  next();
+});
 
 // Serve uploaded files statically
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
@@ -151,7 +202,7 @@ app.use('/api/discussion', discussionRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/recordings', recordingRoutes);
 app.use('/api/coding', codingAssessmentRoutes);
-app.use('/api/interview', interviewRoutes);
+app.use('/api/interviews', interviewRoutes);
 
 // Health check for AI service (separate path to avoid conflict with router)
 app.get('/api/ai/health', async (req, res) => {
@@ -243,6 +294,17 @@ const startServer = async () => {
     // Sync is already handled safely in connectDB()
     // await sequelize.sync({ alter: false });
 
+    // Sync security tables (new — non-critical, additive)
+    try {
+      const { RefreshToken, UserSession, AuditLog } = require('./models');
+      await RefreshToken.sync({ alter: true });
+      await UserSession.sync({ alter: true });
+      await AuditLog.sync({ alter: true });
+      logger.info('security tables ready (refresh_tokens, user_sessions, audit_logs)');
+    } catch (e) {
+      logger.error('Could not sync security tables', { error: e.message });
+    }
+
     // Lightweight, additive: ensure the participant_profiles table exists
     // and that any column type drift is corrected. `alter: true` here is
     // scoped to ONE just-introduced model (not the whole DB), so it only
@@ -258,6 +320,8 @@ const startServer = async () => {
     }
 
     // Proctoring tables — additive sync, scoped to module
+    // Note: proctor_violations may hit 64-key limit from repeated sync({ alter: true }).
+    // If so, run: node src/scripts/fixDuplicateIndexes.js
     try {
       const {
         ExamSession,
@@ -271,7 +335,11 @@ const startServer = async () => {
       await ProctorActivity.sync({ alter: true });
       logger.info('proctoring tables ready');
     } catch (e) {
-      logger.error('Could not sync proctoring tables', { error: e.message });
+      if (e.message && e.message.includes('Too many keys')) {
+        logger.warn('proctor_violations hit 64-key limit — skipping sync. Run: node src/scripts/fixDuplicateIndexes.js');
+      } else {
+        logger.error('Could not sync proctoring tables', { error: e.message });
+      }
     }
 
     // Parallel monitor system tables — additive sync, scoped to module
@@ -328,12 +396,18 @@ const startServer = async () => {
     }
 
     // Sync RegistrationApplication table
+    // Note: This table has hit the MySQL 64-index limit due to repeated sync({ alter: true }).
+    // If sync fails with "Too many keys", run: node src/scripts/fixDuplicateIndexes.js
     try {
       const { RegistrationApplication } = require('./models');
       await RegistrationApplication.sync({ alter: true });
       logger.info('registration_applications table ready');
     } catch (e) {
-      logger.error('Could not sync registration_applications', { error: e.message });
+      if (e.message && e.message.includes('Too many keys')) {
+        logger.warn('registration_applications hit 64-key limit — skipping sync. Run: node src/scripts/fixDuplicateIndexes.js');
+      } else {
+        logger.error('Could not sync registration_applications', { error: e.message });
+      }
     }
 
     // Sync UserProfile tables — additive, scoped to profile module
@@ -366,7 +440,11 @@ const startServer = async () => {
       await Certificate.sync({ alter: true });
       logger.info('certificates table ready');
     } catch (e) {
-      logger.error('Could not sync certificates', { error: e.message });
+      if (e.message && e.message.includes('Too many keys')) {
+        logger.warn('certificates hit 64-key limit — skipping sync. Run: node src/scripts/fixDuplicateIndexes.js');
+      } else {
+        logger.error('Could not sync certificates', { error: e.message });
+      }
     }
 
     // Sync ParticipantTracking table
@@ -467,29 +545,24 @@ const startServer = async () => {
       logger.error('Could not sync coding_assessment tables', { error: e.message });
     }
 
-    // Interview Management tables
+    // Interview Module tables — additive sync, scoped to module
     try {
       const {
-        Interview, InterviewCandidate, InterviewTrainer, InterviewRoom,
-        InterviewEvaluation, InterviewRecording, InterviewLog, InterviewNotification, InterviewDevice,
+        Interview, InterviewSession, InterviewDevice, InterviewRecording,
+        InterviewLog, InterviewAlert, InterviewFeedback, InterviewResult, InterviewNotes,
       } = require('./models');
-      await sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
-      try {
-        await Interview.sync({ alter: true });
-        await InterviewRoom.sync({ alter: true });
-        await InterviewCandidate.sync({ alter: true });
-        await InterviewTrainer.sync({ alter: true });
-        await InterviewEvaluation.sync({ alter: true });
-        await InterviewRecording.sync({ alter: true });
-        await InterviewLog.sync({ alter: true });
-        await InterviewNotification.sync({ alter: true });
-        await InterviewDevice.sync({ alter: true });
-      } finally {
-        await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
-      }
-      logger.info('interview management tables ready');
+      await Interview.sync({ alter: true });
+      await InterviewSession.sync({ alter: true });
+      await InterviewDevice.sync({ alter: true });
+      await InterviewRecording.sync({ alter: true });
+      await InterviewLog.sync({ alter: true });
+      await InterviewAlert.sync({ alter: true });
+      await InterviewFeedback.sync({ alter: true });
+      await InterviewResult.sync({ alter: true });
+      await InterviewNotes.sync({ alter: true });
+      logger.info('interview module tables ready');
     } catch (e) {
-      logger.error('Could not sync interview management tables', { error: e.message });
+      logger.error('Could not sync interview module tables', { error: e.message });
     }
 
     // Add course-centric indexes that were intentionally omitted from the
@@ -533,6 +606,10 @@ const startServer = async () => {
     app.set('io', io);
     logger.info('Socket.IO initialized');
 
+    // Wire socket into interview notification service
+    const interviewNotificationService = require('./services/interviewNotificationService');
+    interviewNotificationService.setIo(io);
+
     // Setup Redis adapter for multi-instance scaling (disabled for local dev)
     logger.info('Running Socket.IO in single-instance mode (Redis disabled for local dev)');
 
@@ -555,16 +632,28 @@ const startServer = async () => {
     // Create default admin if not exists
     const adminExists = await User.findOne({ where: { email: 'admin@test.com' } });
     if (!adminExists) {
-      const hashedPassword = await bcrypt.hash('admin123', 12);
-      await User.create({
-        name: 'Admin',
-        email: 'admin@test.com',
-        password: hashedPassword,
-        phone: '0000000000',
-        role: 'ADMIN'
-      });
-      logger.info('Default admin created: admin@test.com / admin123');
+      // In production, admin should be created via CLI or secure setup script, not auto-created with a weak password.
+      const isProduction = process.env.NODE_ENV === 'production';
+      if (isProduction) {
+        logger.warn('⚠️  No admin account found. Create one via: node src/scripts/createAdmin.js');
+      } else {
+        const hashedPassword = await bcrypt.hash('admin123', 12);
+        await User.create({
+          name: 'Admin',
+          email: 'admin@test.com',
+          password: hashedPassword,
+          phone: '0000000000',
+          role: 'ADMIN',
+          status: 'APPROVED'
+        });
+        logger.info('Default admin created: admin@test.com / admin123 (DEV ONLY)');
+      }
     } else {
+      // Ensure existing admin has APPROVED status (may have been created without explicit status)
+      await User.update(
+        { status: 'APPROVED' },
+        { where: { email: 'admin@test.com', status: { [require('sequelize').Op.ne]: 'APPROVED' } } }
+      );
       logger.info('Admin already exists');
     }
 

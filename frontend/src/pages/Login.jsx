@@ -18,7 +18,7 @@ const ROLES = [
 export default function Login({ onLogin, defaultRole }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { success: showSuccess } = useToast();
+  const { success: showSuccess, warning: showWarning } = useToast();
 
   const [form, setForm] = useState(() => {
     const lastRole = localStorage.getItem('lastRole') || 'PARTICIPANT';
@@ -81,6 +81,15 @@ export default function Login({ onLogin, defaultRole }) {
         localStorage.removeItem('rememberedEmail');
       }
       onLogin(data);
+
+      if (data.forcePasswordChange) {
+        navigate('/forgot-password', { replace: true });
+        return;
+      }
+
+      if (data.warnings && data.warnings.length > 0) {
+        data.warnings.forEach(w => showWarning(w));
+      }
 
       const role = data?.role?.toLowerCase();
       if (role === 'admin') navigate('/admin', { replace: true });

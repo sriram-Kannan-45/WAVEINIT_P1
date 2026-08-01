@@ -1,54 +1,104 @@
-const router = require('express').Router();
-const auth = require('../middleware/auth');
-const roleMiddleware = require('../middleware/roles');
+/**
+ * Interview Routes
+ * All routes prefixed with /api/interviews
+ */
+
+const express = require('express');
+const router = express.Router();
 const interviewController = require('../controllers/interviewController');
+const authenticateToken = require('../middleware/auth');
+const roleMiddleware = require('../middleware/roles');
+const { Interview, InterviewSession, InterviewDevice } = require('../models');
+const tokenService = require('../services/interviewTokenService');
+const logger = require('../utils/logger');
 
-// === Interview CRUD ===
-router.post('/', auth, roleMiddleware('ADMIN'), interviewController.create);
-router.get('/', auth, interviewController.list);
-router.get('/dashboard', auth, interviewController.dashboardStats);
-router.get('/users/trainers', auth, interviewController.listTrainers);
-router.get('/users/participants', auth, interviewController.listParticipants);
+// Public endpoint: mobile device pairs using token (no auth required)
+router.post('/pair-by-token', async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ error: 'Token is required' });
 
-// === Participant & Trainer lists ===
-router.get('/participant/my', auth, roleMiddleware('PARTICIPANT'), interviewController.myInterviews);
-router.get('/trainer/my', auth, roleMiddleware('TRAINER'), interviewController.trainerInterviews);
+    // Find device by pairing token
+    const device = await InterviewDevice.findOne({
+      where: { pairing_token: token, token_status: 'PENDING' },
+    });
+    if (!device) {
+      return res.status(404).json({ error: 'Invalid or expired pairing token' });
+    }
 
-// === Single interview operations ===
-router.get('/:id', auth, interviewController.getOne);
-router.put('/:id', auth, roleMiddleware('ADMIN'), interviewController.update);
-router.put('/:id/cancel', auth, roleMiddleware('ADMIN'), interviewController.cancel);
-router.put('/:id/start', auth, roleMiddleware('TRAINER', 'ADMIN'), interviewController.start);
-router.put('/:id/end', auth, roleMiddleware('TRAINER', 'ADMIN'), interviewController.end);
+    // Check expiry
+    if (device.token_expires_at && new Date(device.token_expires_at) < new Date()) {
+      await device.update({ token_status: 'EXPIRED' });
+      return res.status(410).json({ error: 'Pairing token has expired' });
+    }
 
-// === Room join/leave ===
-router.post('/:id/join', auth, interviewController.join);
-router.post('/:id/leave', auth, interviewController.leave);
+    // Find the active session
+    const session = await InterviewSession.findByPk(device.session_id);
+    if (!session || session.status === 'ENDED') {
+      return res.status(400).json({ error: 'Session is no longer active' });
+    }
 
-// === Participant & Trainer assignment ===
-router.post('/:id/participants', auth, roleMiddleware('ADMIN'), interviewController.assignParticipants);
-router.post('/:id/trainers', auth, roleMiddleware('ADMIN'), interviewController.assignTrainers);
+    // Find the interview to get candidate_id
+    const interview = await Interview.findByPk(session.interview_id);
+    if (!interview) {
+      return res.status(404).json({ error: 'Interview not found' });
+    }
 
-// === Password verification ===
-router.post('/:id/verify-password', auth, interviewController.verifyPassword);
+    // Consume the token
+    const result = await tokenService.consumePairingToken(token, interview.candidate_id);
+    if (!result.success) {
+      return res.status(result.status || 400).json({ error: result.message });
+    }
 
-// === QR Verification ===
-router.post('/:id/qr/generate', auth, interviewController.generateQR);
-router.post('/:id/qr/verify', auth, interviewController.verifyQR);
+    await result.device.update({
+      status: 'CONNECTED',
+      connected_at: new Date(),
+    });
 
-// === Mobile Camera ===
-router.post('/:id/mobile/connect', auth, interviewController.connectMobile);
+    res.json({
+      success: true,
+      message: 'Mobile device paired successfully',
+    });
+  } catch (error) {
+    logger.error('Error pairing by token', { error: error.message });
+    res.status(500).json({ error: 'Failed to pair device' });
+  }
+});
 
-// === Evaluation ===
-router.post('/:id/evaluation', auth, roleMiddleware('TRAINER'), interviewController.submitEvaluation);
-router.get('/:id/evaluations', auth, interviewController.getEvaluations);
+// All interview routes below require authentication
+router.use(authenticateToken);
 
-// === Results ===
-router.post('/:id/publish-results', auth, roleMiddleware('ADMIN'), interviewController.publishResults);
-router.get('/:id/report', auth, interviewController.getReport);
+// Lookup data for scheduling (MUST be before /:id to avoid param capture)
+router.get('/candidates', roleMiddleware('ADMIN', 'TRAINER'), interviewController.getCandidates);
+router.get('/interviewers', roleMiddleware('ADMIN', 'TRAINER'), interviewController.getInterviewers);
+router.get('/stats', interviewController.getInterviewStats);
 
-// === Activity & Notifications ===
-router.get('/:id/activity', auth, interviewController.getActivityLog);
-router.get('/:id/notifications', auth, interviewController.getNotifications);
+// CRUD
+router.post('/create', roleMiddleware('ADMIN', 'TRAINER'), interviewController.createInterview);
+router.get('/', interviewController.listInterviews);
+router.get('/:id', interviewController.getInterview);
+
+// Update & Delete
+router.put('/:id', roleMiddleware('ADMIN', 'TRAINER'), interviewController.updateInterview);
+router.delete('/:id', roleMiddleware('ADMIN'), interviewController.deleteInterview);
+
+// Session lifecycle
+router.post('/:id/join', interviewController.joinInterview);
+router.post('/:id/pair-mobile', interviewController.pairMobile);
+router.post('/:id/refresh-qr', interviewController.refreshQr);
+router.post('/:id/start', roleMiddleware('ADMIN', 'TRAINER'), interviewController.startInterview);
+router.post('/:id/end', roleMiddleware('ADMIN', 'TRAINER'), interviewController.endInterview);
+
+// Feedback & Results
+router.post('/:id/feedback', roleMiddleware('ADMIN', 'TRAINER'), interviewController.submitFeedback);
+router.get('/:id/feedback', interviewController.getFeedback);
+router.post('/:id/result', roleMiddleware('ADMIN', 'TRAINER'), interviewController.submitResult);
+
+// Status & Recordings
+router.get('/:id/status', interviewController.getInterviewStatus);
+router.get('/:id/recordings', interviewController.getRecordings);
+
+// AI Monitoring alerts
+router.post('/:id/alerts', interviewController.logAlert);
 
 module.exports = router;

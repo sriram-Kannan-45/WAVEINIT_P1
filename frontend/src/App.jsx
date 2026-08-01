@@ -6,6 +6,7 @@ import Layout from './components/Layout'
 import NotificationsPanel from './components/student/shell/NotificationsPanel'
 import { ToastProvider } from './components/Toast'
 import { AppThemeProvider } from './contexts/AppThemeContext'
+import { API_BASE } from './api/api'
 
 // Lazy-loaded pages — each chunk is separate
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'))
@@ -17,7 +18,8 @@ const ParticipantDashboard = lazy(() => import('./pages/ParticipantDashboard'))
 const ParticipantQuizAttemptPage = lazy(() => import('./pages/ParticipantQuizAttemptPage'))
 const ParticipantQuizResultPage = lazy(() => import('./pages/ParticipantQuizResultPage'))
 const PreExamReadiness = lazy(() => import('./pages/PreExamReadiness'))
-const Register = lazy(() => import('./pages/RegistrationPage'))
+const Register = lazy(() => import('./pages/Register'))
+const RegistrationPage = lazy(() => import('./pages/RegistrationPage'))
 const TrainerDashboard = lazy(() => import('./pages/TrainerDashboard'))
 const TrainerProfile = lazy(() => import('./pages/TrainerProfile'))
 const AdminTrainerProfile = lazy(() => import('./pages/AdminTrainerProfile'))
@@ -34,15 +36,13 @@ const ParticipantCodingAttemptPage = lazy(() => import('./pages/ParticipantCodin
 const CodingAssessmentResultPage = lazy(() => import('./pages/CodingAssessmentResultPage'))
 const TrainerCourses = lazy(() => import('./pages/TrainerCourses'))
 const ProfilePage = lazy(() => import('./pages/Profile/ProfilePage'))
-const InterviewDashboard = lazy(() => import('./modules/interview/pages/InterviewDashboard'))
-const InterviewCreate = lazy(() => import('./modules/interview/pages/CreateInterview'))
-const InterviewUpcoming = lazy(() => import('./modules/interview/pages/UpcomingInterviews'))
-const InterviewCompleted = lazy(() => import('./modules/interview/pages/CompletedInterviews'))
-const InterviewRoomPage = lazy(() => import('./modules/interview/pages/InterviewRoomPage'))
-const InterviewEvaluation = lazy(() => import('./modules/interview/pages/EvaluationPage'))
-const InterviewReports = lazy(() => import('./modules/interview/pages/InterviewReports'))
-const InterviewTemplates = lazy(() => import('./modules/interview/pages/InterviewTemplates'))
-const InterviewSettings = lazy(() => import('./modules/interview/pages/InterviewSettings'))
+
+// Interview Module
+const InterviewDashboard = lazy(() => import('./pages/interview/InterviewDashboard'))
+const ScheduleInterview = lazy(() => import('./pages/interview/ScheduleInterview'))
+const InterviewRoom = lazy(() => import('./pages/interview/InterviewRoom'))
+const MobileJoin = lazy(() => import('./pages/interview/MobileJoin'))
+const InterviewEvaluation = lazy(() => import('./pages/interview/InterviewEvaluation'))
 
 function PageLoader() {
   return (
@@ -107,28 +107,67 @@ function App() {
 
   useEffect(() => {
     const originalFetch = window.fetch
+    let refreshPromise = null
+
+    const doRefresh = async () => {
+      if (refreshPromise) return refreshPromise
+      refreshPromise = (async () => {
+        try {
+          const user = JSON.parse(localStorage.getItem('user') || '{}')
+          const body = user.refreshToken ? { refreshToken: user.refreshToken } : {}
+          const res = await originalFetch(`${API_BASE}/auth/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(body),
+          })
+          if (res.ok) {
+            const data = await res.json()
+            if (data.accessToken) {
+              const stored = JSON.parse(localStorage.getItem('user') || '{}')
+              const updated = { ...stored, token: data.accessToken, accessToken: data.accessToken }
+              localStorage.setItem('user', JSON.stringify(updated))
+              setUser(updated)
+              return data.accessToken
+            }
+          }
+        } catch {}
+        return null
+      })()
+      const result = await refreshPromise
+      refreshPromise = null
+      return result
+    }
+
     window.fetch = async (...args) => {
-      const response = await originalFetch(...args)
+      const [url, options = {}] = args
+      const mergedOptions = {
+        ...options,
+        credentials: options.credentials || 'include',
+      }
+
+      const response = await originalFetch(url, mergedOptions)
+
       if (response.status === 401 || response.status === 403) {
         const urlStr = response.url || ''
         const isAuthEndpoint = urlStr.includes('/api/auth/login') || urlStr.includes('/api/auth/register')
-        if (!isAuthEndpoint) {
-          let shouldLogout = response.status === 401;
-          if (response.status === 403) {
-            try {
-              const clone = response.clone();
-              const data = await clone.json();
-              const errMsg = (data?.error || '').toLowerCase();
-              if (errMsg.includes('token') || errMsg.includes('expired') || errMsg.includes('auth')) {
-                shouldLogout = true;
-              }
-            } catch (e) {
+        const isRefreshEndpoint = urlStr.includes('/api/auth/refresh')
+
+        if (!isAuthEndpoint && !isRefreshEndpoint) {
+          const newToken = await doRefresh()
+          if (newToken) {
+            const retryOptions = {
+              ...mergedOptions,
+              headers: {
+                ...(mergedOptions.headers || {}),
+                Authorization: `Bearer ${newToken}`,
+              },
             }
+            return originalFetch(url, retryOptions)
           }
-          if (shouldLogout) {
-            localStorage.removeItem('user')
-            setUser(null)
-          }
+
+          localStorage.removeItem('user')
+          setUser(null)
         }
       }
       return response
@@ -273,6 +312,7 @@ function AppRoutes({ user, onLogin, onLogout }) {
       <Route path="/trainer/login" element={<Login onLogin={onLogin} defaultRole="TRAINER" />} />
       <Route path="/participant/login" element={<Login onLogin={onLogin} defaultRole="PARTICIPANT" />} />
       <Route path="/register" element={<Register onLogin={onLogin} />} />
+      <Route path="/apply" element={<RegistrationPage />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
 
       <Route
@@ -501,16 +541,50 @@ function AppRoutes({ user, onLogin, onLogout }) {
         }
       />
 
-      {/* Interview Management Routes */}
+      {/* Interview Module Routes */}
       <Route
-        path="/interview/:interviewId/room"
+        path="/interviews"
         element={
           user ? (
-            <InterviewRoomPage user={user} />
+            <DashboardWrapper component={InterviewDashboard} user={user} onLogout={onLogout} />
           ) : (
             <Navigate to="/login" replace />
           )
         }
+      />
+      <Route
+        path="/interview/schedule"
+        element={
+          (user?.role === 'ADMIN' || user?.role === 'TRAINER') ? (
+            <DashboardWrapper component={ScheduleInterview} user={user} onLogout={onLogout} />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+      <Route
+        path="/interview/:id/room"
+        element={
+          user ? (
+            <DashboardWrapper component={InterviewRoom} user={user} onLogout={onLogout} />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+      <Route
+        path="/interview/:id"
+        element={
+          user ? (
+            <DashboardWrapper component={InterviewEvaluation} user={user} onLogout={onLogout} />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+      <Route
+        path="/mobile-join/:token"
+        element={<MobileJoin />}
       />
 
       <Route path="*" element={<Navigate to="/login" />} />

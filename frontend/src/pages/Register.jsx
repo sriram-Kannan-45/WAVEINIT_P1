@@ -21,7 +21,7 @@ function getStrength(pw) {
   return { score: 4, label: 'Strong', color: '#16a34a' };
 }
 
-export default function Register() {
+export default function Register({ onLogin }) {
   const navigate = useNavigate();
   const [form, setForm] = useState({ name: '', email: '', password: '', confirmPassword: '', phone: '' });
   const [error, setError] = useState('');
@@ -62,11 +62,16 @@ export default function Register() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Registration failed');
-      setSuccess('Registration successful! Your account is pending admin approval.');
+
+      localStorage.setItem('user', JSON.stringify(data));
+      localStorage.setItem('lastRole', 'PARTICIPANT');
+      if (onLogin) onLogin(data);
+
+      setSuccess('Registration successful! Redirecting to dashboard...');
       setForm({ name: '', email: '', password: '', confirmPassword: '', phone: '' });
       setTimeout(() => {
-        navigate('/login', { state: { message: 'Your account is pending admin approval. You will be notified by email once approved!' } });
-      }, 3000);
+        navigate('/participant', { replace: true });
+      }, 2000);
     } catch (err) {
       setError(err.message === 'Failed to fetch' ? 'Cannot connect to server.' : err.message);
     } finally {
@@ -268,7 +273,7 @@ export default function Register() {
           </form>
         ) : (
           <div style={{ textAlign: 'center', padding: '24px 0', color: '#64748b', fontSize: 13.5 }}>
-            Redirecting to login...
+            Redirecting to dashboard...
           </div>
         )}
 

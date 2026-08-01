@@ -25,8 +25,12 @@ function getKey() {
     );
     warned = true;
   }
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('PROCTOR_ENC_KEY and JWT_SECRET are both unset — cannot derive encryption key');
+  }
   return crypto.createHash('sha256')
-    .update(process.env.JWT_SECRET || 'fallback-key')
+    .update(secret)
     .digest();
 }
 

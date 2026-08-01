@@ -26,6 +26,8 @@ export { DropdownItem } from './Dropdown'
 
 // ── Data Display ─────────────────────────────────────────────────
 export { default as Table } from './Table'
+export { default as DataTable } from './DataTable'
+export { default as FilterPills } from './FilterPills'
 export { default as StatCard } from './StatCard'
 export { default as DataCard } from './DataCard'
 export { LineAreaChart, DonutChart, ProgressBar } from './ChartWrappers'

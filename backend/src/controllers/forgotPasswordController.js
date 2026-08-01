@@ -10,6 +10,7 @@ const {
   isEmailConfigured,
   getMailerStatus,
   explainSmtpError,
+  rebuildTransporter,
 } = require('../config/mailer');
 
 // ── Rate limit + cooldown state (in-memory; per-process) ──────────
@@ -297,6 +298,32 @@ async function cleanupExpiredOtps() {
   }
 }
 
+// GET /api/auth/smtp-status — returns current mailer configuration (no secrets)
+const getSmtpStatus = (req, res) => {
+  const status = getMailerStatus();
+  res.json({
+    ...status,
+    hint: status.configured && !status.ready
+      ? 'SMTP credentials set but verification failed. Try POST /api/auth/smtp-rebuild after fixing .env'
+      : !status.configured
+        ? 'Set GMAIL_USER and GMAIL_APP_PASS in backend/.env, then POST /api/auth/smtp-rebuild'
+        : 'SMTP is ready',
+  });
+};
+
+// POST /api/auth/smtp-rebuild — re-reads .env and rebuilds the Nodemailer transporter
+const rebuildSmtp = async (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ error: 'SMTP rebuild is disabled in production' });
+  }
+  console.log('[SMTP REBUILD] Rebuilding transporter from .env ...');
+  const result = await rebuildTransporter();
+  if (result.ok) {
+    return res.json({ ok: true, message: `SMTP ready as ${result.user}`, user: result.user });
+  }
+  return res.status(500).json({ ok: false, error: result.error, code: result.code || null });
+};
+
 module.exports = {
   sendOtp,
   verifyOtp,
@@ -304,4 +331,6 @@ module.exports = {
   getEmailStatus,
   testMail,
   cleanupExpiredOtps,
+  getSmtpStatus,
+  rebuildSmtp,
 };
