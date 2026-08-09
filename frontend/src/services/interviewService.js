@@ -18,6 +18,8 @@ export const interviewService = {
 
   update: (id, data) => api.put(`${INTERVIEW_BASE}/${id}`, data),
 
+  updateStatus: (id, status) => api.patch(`${INTERVIEW_BASE}/${id}/status`, { status }),
+
   delete: (id) => api.delete(`${INTERVIEW_BASE}/${id}`),
 
   join: (id) => api.post(`${INTERVIEW_BASE}/${id}/join`),

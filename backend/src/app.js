@@ -51,6 +51,9 @@ const PORT = process.env.PORT || 3001;
 // CORS — allow common Vite dev ports plus any origin in FRONTEND_URL.
 // Vite picks 5174/5175/... when 5173 is busy, so we whitelist a small range
 // to avoid "Cannot connect to server" failures during local dev.
+// In development any origin is allowed so a phone on the same LAN can open
+// the interview room via QR / mobile web page.
+const isDev = process.env.NODE_ENV !== 'production';
 const allowedOrigins = new Set([
   'http://localhost:5173',
   'http://localhost:5174',
@@ -58,6 +61,7 @@ const allowedOrigins = new Set([
   'http://127.0.0.1:5173',
   'http://127.0.0.1:5174',
   'http://127.0.0.1:5175',
+  'https://localhost:5174',
   ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
 ]);
 
@@ -65,6 +69,7 @@ app.use(cors({
   origin: (origin, cb) => {
     // Allow same-origin / curl / server-to-server (no Origin header)
     if (!origin) return cb(null, true);
+    if (isDev) return cb(null, true);
     if (allowedOrigins.has(origin)) return cb(null, true);
     return cb(new Error(`CORS: origin ${origin} not allowed`));
   },

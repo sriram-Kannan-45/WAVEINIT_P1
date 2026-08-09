@@ -22,8 +22,15 @@ export class AIMonitorProvider {
  * Tab/copy-paste/window-blur detectors — fully implemented, no ML needed.
  */
 export function useInterviewDetectors({ socket, sessionId, interviewId, enabled = true }) {
+  // Keep the latest `enabled` value in a ref so listeners created before a
+  // consent state change still pick up the new value when the track ends.
+  const enabledRef = useRef(enabled)
+  useEffect(() => {
+    enabledRef.current = enabled
+  }, [enabled])
+
   const emitAlert = useCallback((alertType, severity, sourceDevice, message, metadata) => {
-    if (!socket || !sessionId || !enabled) return
+    if (!socket || !sessionId || !enabledRef.current) return
     socket.emit('interview-alert', {
       sessionId,
       interviewId,
@@ -33,7 +40,7 @@ export function useInterviewDetectors({ socket, sessionId, interviewId, enabled 
       message,
       metadata,
     })
-  }, [socket, sessionId, interviewId, enabled])
+  }, [socket, sessionId, interviewId])
 
   useEffect(() => {
     if (!enabled) return

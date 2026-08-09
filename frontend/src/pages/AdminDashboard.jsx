@@ -1,23 +1,24 @@
-import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import ParticipantProfileView from '../components/shared/ParticipantProfileView'
-import TrainerDetails from '../components/TrainerDetails'
-import TrainerList from '../components/TrainerList'
-import AssessmentSessionsPanel from '../components/admin/AssessmentSessionsPanel'
-import AnimatedDropdown from '../components/AnimatedDropdown'
-import { useToast } from '../components/Toast'
-import Skeleton, { SkeletonTable } from '../components/Skeleton'
+import { AlertCircle, BookOpen, CheckCircle2, ClipboardList, Clock, Eye, Loader2, MessageSquare, Search, Star, Trash2, TrendingUp, User, UserPlus, Users, X, XCircle } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { API, API_BASE } from '../api/api'
-import { Loader2, TrendingUp, MessageSquare, Star, User, Users, ClipboardList, X, Search, Eye, Trash2, CheckCircle2, XCircle, Download, Clock, UserPlus, AlertCircle, BookOpen } from 'lucide-react'
-import AdminOverviewTab from '../components/admin/tabs/AdminOverviewTab'
+import AssessmentSessionsPanel from '../components/admin/AssessmentSessionsPanel'
 import BulkImportParticipants from '../components/admin/BulkImportParticipants'
-import RegistrationApplications from '../components/admin/RegistrationApplications'
-import { Button, Badge, Table, PageHeader, EmptyState, StatCard } from '../components/ui'
+import CreateTrainerModule from '../components/admin/CreateTrainerModule'
+import CreateTrainingModule from '../components/admin/CreateTrainingModule'
+import AdminOverviewTab from '../components/admin/tabs/AdminOverviewTab'
+import AnimatedDropdown from '../components/AnimatedDropdown'
+import ParticipantProfileView from '../components/shared/ParticipantProfileView'
+import { SkeletonTable } from '../components/Skeleton'
+import { useToast } from '../components/Toast'
+import TrainerDetails from '../components/TrainerDetails'
+import { Button, EmptyState, PageHeader, StatCard, Table } from '../components/ui'
 
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'
 const initials = (name) => name ? name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'AD'
+
 const Stars = ({ v }) => (
   <span style={{ display: 'inline-flex', gap: '1px' }}>
     {[1,2,3,4,5].map(s => <span key={s} style={{ color: s <= v ? '#F59E0B' : '#D0D5DD', fontSize: 14 }}>&#9733;</span>)}
@@ -39,15 +40,17 @@ const itemVariants = {
 
 function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
   const { success, error: showError, info, warning } = useToast()
-  const [tab, setTab] = useState(activeTab || 'overview')
+  const normalizeTab = (tabKey) => tabKey === 'applications' ? 'pending' : tabKey || 'overview'
+  const [tab, setTab] = useState(normalizeTab(activeTab))
 
   useEffect(() => {
-    if (activeTab) setTab(activeTab)
+    if (activeTab) setTab(normalizeTab(activeTab))
   }, [activeTab])
 
   const handleTabChange = (newTab) => {
-    setTab(newTab)
-    if (onTabChange) onTabChange(newTab)
+    const normalizedTab = normalizeTab(newTab)
+    setTab(normalizedTab)
+    if (onTabChange) onTabChange(normalizedTab)
   }
   const [trainers, setTrainers] = useState([])
   const [trainings, setTrainings] = useState([])
@@ -60,7 +63,6 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
   const [stats, setStats] = useState({})
   const [loading, setLoading] = useState(false)
   const [viewingParticipant, setViewingParticipant] = useState(null)
-  const [credentials, setCredentials] = useState(null)
   const [editModal, setEditModal] = useState(null)
   const [editForm, setEditForm] = useState({})
   const [adminReport, setAdminReport] = useState(null)
@@ -74,11 +76,8 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
   const [trainingStatusFilter, setTrainingStatusFilter] = useState('ALL')
   const [trainingDetailModal, setTrainingDetailModal] = useState(null)
 
-  const [trainerForm, setTrainerForm] = useState({ name: '', email: '', password: '' })
   const [trainingForm, setTrainingForm] = useState({ title: '', description: '', trainerId: '', trainerIds: [], startDate: '', endDate: '', capacity: '', sequentialLearning: false })
   const [questionForm, setQuestionForm] = useState({ trainingId: '', questionText: '', questionType: 'TEXT', options: '' })
-  const [addParticipantModal, setAddParticipantModal] = useState(false)
-  const [participantForm, setParticipantForm] = useState({ name: '', email: '', phone: '', password: '' })
 
   const [programs, setPrograms] = useState([])
   const [courses, setCourses] = useState([])
@@ -145,27 +144,17 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const fetchPendingParticipants = async () => {
     try {
-      const r = await fetch(`${API_BASE}/admin/pending-participants`, { headers: auth() })
+      const r = await fetch(API.ADMIN.PENDING_PARTICIPANTS, { headers: auth() })
       const d = await r.json()
       setPendingParticipants(d.participants || [])
     } catch {}
-  }
-
-  const handleApproveParticipant = async (id) => {
-    setConfirmModal({ action: 'approve-participant', id, title: 'Approve Participant?' })
   }
 
   const confirmAction = async () => {
     if (!confirmModal) return
     setLoading(true)
     try {
-      if (confirmModal.action === 'approve-participant') {
-        const r = await fetch(`${API_BASE}/admin/approve-participant/${confirmModal.id}`, { method: 'POST', headers: auth() })
-        const d = await r.json()
-        if (!r.ok) throw new Error(d.error)
-        success('Participant approved successfully')
-        fetchPendingParticipants(); fetchParticipants()
-      } else if (confirmModal.action === 'delete-question') {
+      if (confirmModal.action === 'delete-question') {
         const r = await fetch(`${API_BASE}/survey/${confirmModal.id}`, { method: 'DELETE', headers: auth() })
         if (!r.ok) throw new Error('Failed to delete question')
         success('Question deleted')
@@ -242,7 +231,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const fetchParticipants = async () => {
     try {
-      const r = await fetch(`${API_BASE}/admin/participants`, { headers: auth() })
+      const r = await fetch(API.ADMIN.PARTICIPANTS, { headers: auth() })
       const d = await r.json()
       const participants = d.participants || (d.data && d.data.participants) || []
       setParticipants(participants)
@@ -324,19 +313,6 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
     }
   }
 
-  const handleCreateTrainer = async (e) => {
-    e.preventDefault(); setLoading(true); setCredentials(null)
-    try {
-      const r = await fetch(`${API_BASE}/admin/create-trainer`, { method: 'POST', headers: auth(), body: JSON.stringify(trainerForm) })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d.error)
-      setTrainerForm({ name: '', email: '', password: '' })
-      fetchTrainers(); fetchStats()
-      success('Trainer account created successfully.')
-    } catch (e) { showError(e.message) }
-    finally { setLoading(false) }
-  }
-
   const handleCreateTraining = async (e) => {
     e.preventDefault(); setLoading(true)
     try {
@@ -378,23 +354,6 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
     finally { setLoading(false) }
   }
 
-  const handleCreateParticipant = async (e) => {
-    e.preventDefault(); setLoading(true)
-    try {
-      const r = await fetch(API.REGISTER, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(participantForm)
-      })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d.error)
-      setParticipantForm({ name: '', email: '', phone: '', password: '' })
-      setAddParticipantModal(false)
-      fetchParticipants(); fetchStats()
-      success('Participant account created successfully.')
-    } catch (e) { showError(e.message) }
-    finally { setLoading(false) }
-  }
 
   const handleCreateProgram = async (e) => {
     e.preventDefault(); setLoading(true)
@@ -413,13 +372,22 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
   }
 
   const handleCreateCourse = async (e) => {
-    e.preventDefault(); setLoading(true)
+    e.preventDefault()
+    if (!courseForm.programId) {
+      showError('Please select a training program.')
+      return
+    }
+    if (!courseForm.trainerId) {
+      showError('Please select a trainer.')
+      return
+    }
+    setLoading(true)
     try {
       const body = {
         title: courseForm.title,
         description: courseForm.description,
         trainerId: parseInt(courseForm.trainerId),
-        programId: courseForm.programId ? parseInt(courseForm.programId) : undefined,
+        programId: parseInt(courseForm.programId),
         status: courseForm.status
       }
       const r = await fetch(`${API_BASE}/admin/training-programs/${courseForm.programId}/courses`, {
@@ -447,8 +415,46 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
     setConfirmModal({ action: 'delete-participant', id, title: `Delete participant "${name}"?`, subtitle: 'All their enrollments and feedback will also be removed.' })
   }
 
-  const handleDeleteTrainer = async (id, name) => {
-    setConfirmModal({ action: 'delete-trainer', id, title: `Delete trainer "${name}"?`, subtitle: 'Their training assignments will be unlinked.' })
+  const handleApproveParticipant = async (id) => {
+    setLoading(true)
+    try {
+      const r = await fetch(API.ADMIN.APPROVE_PARTICIPANT(id), {
+        method: 'POST',
+        headers: auth(),
+        body: JSON.stringify({})
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || d.message || 'Failed to approve participant')
+      success('Participant approved successfully')
+      fetchParticipants(); fetchPendingParticipants(); fetchStats()
+    } catch (e) {
+      showError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleRejectParticipant = async (id) => {
+    setLoading(true)
+    try {
+      const r = await fetch(API.ADMIN.REJECT_PARTICIPANT(id), {
+        method: 'POST',
+        headers: auth(),
+        body: JSON.stringify({ reason: '' })
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || d.message || 'Failed to reject participant')
+      success('Participant rejected successfully')
+      fetchParticipants(); fetchPendingParticipants(); fetchStats()
+    } catch (e) {
+      showError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDeleteTrainer = (id, name) => {
+    setConfirmModal({ action: 'delete-trainer', id, title: 'Delete Trainer?', subtitle: 'This action cannot be undone.', confirmText: 'Delete' })
   }
 
   const handleDeleteProgram = async (id, name) => {
@@ -510,7 +516,6 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const TABS = [
     { key: 'overview', label: 'Overview' },
-    { key: 'applications', label: 'Applications' },
     { key: 'pending', label: 'Pending Approval' },
     { key: 'trainings', label: 'Trainings' },
     { key: 'trainers', label: 'Trainers' },
@@ -558,19 +563,12 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
         />
       )}
 
-      {/* ── APPLICATIONS ── */}
-      {tab === 'applications' && (
-        <motion.div variants={itemVariants}>
-          <RegistrationApplications user={user} />
-        </motion.div>
-      )}
-
       {/* ── PENDING APPROVAL ── */}
       {tab === 'pending' && (
         <motion.div variants={itemVariants}>
           <PageHeader
             title="Pending Approval"
-            subtitle="Review and approve participant registration requests."
+            subtitle="Review pending participant registrations and approve or reject participant accounts."
           />
           {initialLoading ? (
             <div className="enterprise-card"><div className="enterprise-card__body"><SkeletonTable rows={3} /></div></div>
@@ -589,20 +587,30 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                   { key: 'name', header: 'Name', className: 'font-semibold', style: { color: 'var(--neutral-900)' } },
                   { key: 'email', header: 'Email' },
                   { key: 'phone', header: 'Phone', render: (row) => row.phone || '-' },
-                  { key: 'created_at', header: 'Registered', render: (row) => fmtDate(row.created_at) },
+                  { key: 'created_at', header: 'Registered', render: (row) => fmtDate(row.appliedAt || row.created_at || row.createdAt) },
                   {
                     key: 'actions',
-                    header: '',
+                    header: 'Actions',
                     className: 'text-right',
                     render: (row) => (
-                      <Button
-                        size="sm"
-                        variant="primary"
-                        onClick={() => handleApproveParticipant(row.id)}
-                        disabled={loading}
-                      >
-                        Approve
-                      </Button>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                        <button
+                          type="button"
+                          className="reg-admin-action"
+                          title="Approve"
+                          onClick={() => handleApproveParticipant(row.id)}
+                        >
+                          <CheckCircle2 size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className="reg-admin-action reg-admin-action--reject"
+                          title="Reject"
+                          onClick={() => handleRejectParticipant(row.id)}
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
                     ),
                   },
                 ]}
@@ -889,24 +897,6 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
               </table>
             </div>
           )}
-          {/* Trainer Detail Modal */}
-          {trainerDetailModal && (
-            <div className="reg-modal-overlay" onClick={() => setTrainerDetailModal(null)}>
-              <div className="reg-modal" onClick={e => e.stopPropagation()}>
-                <div className="reg-modal-header">
-                  <h3>Trainer Details — {trainerDetailModal.name}</h3>
-                  <button onClick={() => setTrainerDetailModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={20} color="#64748b" /></button>
-                </div>
-                <div className="reg-modal-body">
-                  <TrainerDetails trainer={trainerDetailModal} token={user.token} />
-                </div>
-                <div className="reg-modal-footer">
-                  <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => setTrainerDetailModal(null)}>Close</button>
-                  <button className="reg-admin-btn reg-admin-btn--danger" onClick={() => { setTrainerDetailModal(null); handleDeleteTrainer(trainerDetailModal.id, trainerDetailModal.name) }}>Delete Trainer</button>
-                </div>
-              </div>
-            </div>
-          )}
         </motion.div>
       )}
 
@@ -923,9 +913,6 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
               <p className="reg-admin-subtitle">View and manage participant accounts, status, and enrollments</p>
             </div>
             <div style={{ flex: 1 }} />
-            <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => setAddParticipantModal(true)}>
-              <UserPlus size={15} /> Add Participant
-            </button>
           </div>
           {/* Stats */}
           <div className="reg-admin-stats">
@@ -1026,6 +1013,11 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                         <td>
                           <div className="reg-admin-actions">
                             <button className="reg-admin-action" title="View Details" onClick={() => setViewingParticipant(p)}><Eye size={14} /></button>
+                            {String(p.status || 'PENDING').toUpperCase() === 'PENDING' && (
+                              <button className="reg-admin-action reg-admin-action--secondary" title="Go to Pending Approval" onClick={() => handleTabChange('pending')}>
+                                Review<br />Application
+                              </button>
+                            )}
                             <button className="reg-admin-action reg-admin-action--reject" title="Remove Participant" onClick={() => handleDeleteParticipant(p.id, p.name)}><Trash2 size={14} /></button>
                           </div>
                         </td>
@@ -1270,195 +1262,37 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
           </div>
         </motion.div>
       )}
-
       {/* ── CREATE TRAINER ── */}
       {tab === 'createTrainer' && (
         <motion.div variants={itemVariants}>
-          <PageHeader
-            title="Create Trainer"
+          <CreateTrainerModule
+            trainers={trainers}
+            initialLoading={initialLoading}
+            token={user.token}
+            onCreated={() => { fetchTrainers(); fetchStats() }}
+            onDelete={handleDeleteTrainer}
+            onView={(t) => setTrainerDetailModal(t)}
             onBack={() => handleTabChange('trainers')}
           />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-6)' }}>
-            <div className="enterprise-card">
-              <div className="enterprise-card__header">
-                <h3 className="enterprise-card__title">Create Trainer Account</h3>
-              </div>
-              <div className="enterprise-card__body">
-                <form onSubmit={handleCreateTrainer}>
-                  <div className="field-group">
-                    <label className="field-label">Full Name</label>
-                    <input className="field-input" style={{ paddingLeft: 14 }} type="text" value={trainerForm.name}
-                      onChange={e => setTrainerForm(p => ({ ...p, name: e.target.value }))} required placeholder="Trainer full name" />
-                  </div>
-                  <div className="field-group">
-                    <label className="field-label">Email Address</label>
-                    <input className="field-input" style={{ paddingLeft: 14 }} type="email" value={trainerForm.email}
-                      onChange={e => setTrainerForm(p => ({ ...p, email: e.target.value }))} required placeholder="trainer@company.com" />
-                  </div>
-                  <div className="field-group">
-                    <label className="field-label">Password</label>
-                    <input className="field-input" style={{ paddingLeft: 14 }} type="password" value={trainerForm.password}
-                      onChange={e => setTrainerForm(p => ({ ...p, password: e.target.value }))} required placeholder="Set password for trainer" />
-                  </div>
-                  <Button type="submit" variant="primary" disabled={loading}>
-                    {loading ? 'Creating...' : 'Create Trainer'}
-                  </Button>
-                </form>
-              </div>
-            </div>
-            <div className="enterprise-card">
-              <div className="enterprise-card__header">
-                <h3 className="enterprise-card__title">Trainers ({trainers.length})</h3>
-              </div>
-              <div className="enterprise-card__body">
-                <TrainerList
-                  trainers={trainers}
-                  token={user.token}
-                  onDelete={handleDeleteTrainer}
-                  onAddTrainer={() => handleTabChange('createTrainer')}
-                />
-              </div>
-            </div>
-          </div>
         </motion.div>
       )}
+
 
       {/* ── CREATE TRAINING ── */}
       {tab === 'createTraining' && (
         <motion.div variants={itemVariants}>
-          <PageHeader
-            title="Create Training"
+          <CreateTrainingModule
+            trainers={trainers}
+            trainings={trainings}
+            form={trainingForm}
+            onFormChange={setTrainingForm}
+            onSubmit={handleCreateTraining}
+            onEdit={openEdit}
+            onDelete={handleDeleteTraining}
+            loading={loading}
+            initialLoading={initialLoading}
             onBack={() => handleTabChange('trainings')}
           />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-6)' }}>
-            <div className="enterprise-card">
-              <div className="enterprise-card__header">
-                <h3 className="enterprise-card__title">Create Training Session</h3>
-              </div>
-              <div className="enterprise-card__body">
-                <form onSubmit={handleCreateTraining}>
-                  <div className="field-group">
-                    <label className="field-label">Training Title</label>
-                    <input className="field-input" style={{ paddingLeft: 14 }} type="text" value={trainingForm.title}
-                      onChange={e => setTrainingForm(p => ({ ...p, title: e.target.value }))} required placeholder="e.g. React Fundamentals" />
-                  </div>
-                  <div className="field-group">
-                    <label className="field-label">Description</label>
-                    <textarea className="field-input" style={{ paddingLeft: 14, minHeight: 80, resize: 'vertical' }} value={trainingForm.description}
-                      onChange={e => setTrainingForm(p => ({ ...p, description: e.target.value }))} placeholder="Training objectives and content overview..." />
-                  </div>
-                  <div className="field-group">
-                    <label className="field-label">Assign Trainer(s)</label>
-                    <div style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-                      gap: 'var(--space-2)',
-                      maxHeight: 160,
-                      overflowY: 'auto',
-                      border: '1.5px solid var(--neutral-200)',
-                      padding: 'var(--space-3)',
-                      borderRadius: 'var(--radius-lg)',
-                      background: 'var(--neutral-25)',
-                      marginTop: 'var(--space-1)'
-                    }}>
-                      {trainers.map(t => {
-                        const isChecked = trainingForm.trainerIds?.includes(t.id);
-                        return (
-                          <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', cursor: 'pointer', fontSize: 13, color: 'var(--neutral-700)', padding: '6px', borderRadius: 'var(--radius-md)', background: isChecked ? 'var(--brand-admin-bg)' : 'transparent', transition: 'background 150ms' }}>
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={(e) => {
-                                const updated = e.target.checked
-                                  ? [...(trainingForm.trainerIds || []), t.id]
-                                  : (trainingForm.trainerIds || []).filter(id => id !== t.id);
-                                setTrainingForm(p => ({
-                                  ...p,
-                                  trainerIds: updated,
-                                  trainerId: updated[0] || ''
-                                }));
-                              }}
-                              style={{ cursor: 'pointer' }}
-                            />
-                            <div>
-                              <span style={{ fontWeight: 600 }}>{t.name}</span>
-                              <div style={{ fontSize: 11, color: 'var(--neutral-400)' }}>{t.email}</div>
-                            </div>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <div className="field-group" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-4)', marginBottom: 'var(--space-4)' }}>
-                    <input
-                      type="checkbox"
-                      id="sequentialLearning"
-                      checked={trainingForm.sequentialLearning || false}
-                      onChange={e => setTrainingForm(p => ({ ...p, sequentialLearning: e.target.checked }))}
-                      style={{ width: 'auto', height: 'auto', cursor: 'pointer', margin: 0 }}
-                    />
-                    <label htmlFor="sequentialLearning" style={{ fontSize: 13, fontWeight: 600, color: 'var(--neutral-700)', cursor: 'pointer', margin: 0 }}>
-                      Enable Sequential Learning Lock
-                    </label>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)' }}>
-                    <div className="field-group">
-                      <label className="field-label">Start Date & Time</label>
-                      <input className="field-input" style={{ paddingLeft: 14 }} type="datetime-local" value={trainingForm.startDate}
-                        onChange={e => setTrainingForm(p => ({ ...p, startDate: e.target.value }))} required />
-                    </div>
-                    <div className="field-group">
-                      <label className="field-label">End Date & Time</label>
-                      <input className="field-input" style={{ paddingLeft: 14 }} type="datetime-local" value={trainingForm.endDate}
-                        onChange={e => setTrainingForm(p => ({ ...p, endDate: e.target.value }))} required />
-                    </div>
-                  </div>
-                  <div className="field-group">
-                    <label className="field-label">Capacity (blank for unlimited)</label>
-                    <input className="field-input" style={{ paddingLeft: 14 }} type="number" value={trainingForm.capacity}
-                      onChange={e => setTrainingForm(p => ({ ...p, capacity: e.target.value }))} placeholder="e.g. 30" min="1" />
-                  </div>
-                  <Button type="submit" variant="primary" disabled={loading}>
-                    {loading ? 'Creating...' : 'Create Training Session'}
-                  </Button>
-                </form>
-              </div>
-            </div>
-            <div className="enterprise-card">
-              <div className="enterprise-card__header">
-                <h3 className="enterprise-card__title">Recent Trainings</h3>
-              </div>
-              {trainings.length === 0 ? (
-                <div className="enterprise-card__body" style={{ textAlign: 'center', padding: 'var(--space-12)' }}>
-                  <p style={{ color: 'var(--neutral-400)', fontSize: 14 }}>No training sessions created yet.</p>
-                </div>
-              ) : (
-                <div style={{ overflow: 'auto' }}>
-                  <table className="enterprise-table">
-                    <thead>
-                      <tr><th>Title</th><th>Trainer</th><th>Start</th><th>End</th><th></th></tr>
-                    </thead>
-                    <tbody>
-                      {trainings.slice(0, 10).map(t => (
-                        <tr key={t.id}>
-                          <td className="font-semibold" style={{ color: 'var(--neutral-900)' }}>{t.title}</td>
-                          <td>{t.trainerName ? <span className="badge badge--info">{t.trainerName}</span> : <span className="badge badge--neutral">Unassigned</span>}</td>
-                          <td style={{ color: 'var(--neutral-500)' }}>{fmtDate(t.startDate)}</td>
-                          <td style={{ color: 'var(--neutral-500)' }}>{fmtDate(t.endDate)}</td>
-                          <td>
-                            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                              <Button size="sm" variant="secondary" onClick={() => openEdit(t)}>Edit</Button>
-                              <Button size="sm" variant="danger" onClick={() => handleDeleteTraining(t.id, t.title)}>Delete</Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
         </motion.div>
       )}
 
@@ -1836,6 +1670,25 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
         </div>
       )}
 
+      {/* ── TRAINER DETAIL MODAL ── */}
+      {trainerDetailModal && (
+        <div className="reg-modal-overlay" onClick={() => setTrainerDetailModal(null)}>
+          <div className="reg-modal" onClick={e => e.stopPropagation()}>
+            <div className="reg-modal-header">
+              <h3>Trainer Details — {trainerDetailModal.name}</h3>
+              <button onClick={() => setTrainerDetailModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={20} color="#64748b" /></button>
+            </div>
+            <div className="reg-modal-body">
+              <TrainerDetails trainer={trainerDetailModal} token={user.token} />
+            </div>
+            <div className="reg-modal-footer">
+              <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => setTrainerDetailModal(null)}>Close</button>
+              <button className="reg-admin-btn reg-admin-btn--danger" onClick={() => { setTrainerDetailModal(null); handleDeleteTrainer(trainerDetailModal.id, trainerDetailModal.name) }}>Delete Trainer</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── CONFIRM MODAL ── */}
       {confirmModal && (
         <div style={{
@@ -1865,7 +1718,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)' }}>
                 <Button variant="secondary" onClick={() => setConfirmModal(null)}>Cancel</Button>
                 <Button variant="danger" onClick={confirmAction} disabled={loading}>
-                  {loading ? 'Processing...' : 'Confirm'}
+                  {loading ? 'Processing...' : (confirmModal.confirmText || 'Confirm')}
                 </Button>
               </div>
             </div>
@@ -1873,63 +1726,6 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
         </div>
       )}
 
-      {/* ── ADD PARTICIPANT MODAL ── */}
-      {addParticipantModal && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
-          backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
-          justifyContent: 'center', zIndex: 1000, padding: 'var(--space-4)'
-        }} onClick={() => setAddParticipantModal(false)}>
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="enterprise-card"
-            style={{ width: '100%', maxWidth: 480 }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="enterprise-card__header">
-              <h3 className="enterprise-card__title">Add New Participant</h3>
-              <button
-                onClick={() => setAddParticipantModal(false)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--neutral-400)', padding: 4, borderRadius: 'var(--radius-md)' }}
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <div className="enterprise-card__body">
-              <form onSubmit={handleCreateParticipant}>
-                <div className="field-group">
-                  <label className="field-label">Full Name</label>
-                  <input className="field-input" style={{ paddingLeft: 14 }} type="text" value={participantForm.name}
-                    onChange={e => setParticipantForm(p => ({ ...p, name: e.target.value }))} required placeholder="e.g. John Doe" />
-                </div>
-                <div className="field-group">
-                  <label className="field-label">Email Address</label>
-                  <input className="field-input" style={{ paddingLeft: 14 }} type="email" value={participantForm.email}
-                    onChange={e => setParticipantForm(p => ({ ...p, email: e.target.value }))} required placeholder="e.g. john@example.com" />
-                </div>
-                <div className="field-group">
-                  <label className="field-label">Phone Number</label>
-                  <input className="field-input" style={{ paddingLeft: 14 }} type="tel" value={participantForm.phone}
-                    onChange={e => setParticipantForm(p => ({ ...p, phone: e.target.value }))} required placeholder="e.g. +91 9876543210" />
-                </div>
-                <div className="field-group">
-                  <label className="field-label">Password</label>
-                  <input className="field-input" style={{ paddingLeft: 14 }} type="password" value={participantForm.password}
-                    onChange={e => setParticipantForm(p => ({ ...p, password: e.target.value }))} required placeholder="Min 6 characters" minLength="6" />
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)', marginTop: 'var(--space-6)' }}>
-                  <Button type="button" variant="secondary" onClick={() => setAddParticipantModal(false)}>Cancel</Button>
-                  <Button type="submit" variant="primary" disabled={loading}>
-                    {loading ? 'Creating...' : 'Create Participant'}
-                  </Button>
-                </div>
-              </form>
-            </div>
-          </motion.div>
-        </div>
-      )}
 
       <ParticipantProfileView
         open={!!viewingParticipant}

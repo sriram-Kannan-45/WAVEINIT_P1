@@ -35,7 +35,7 @@ router.get(
     try {
       const trainers = await User.findAll({
         where: { role: 'TRAINER', isDeleted: false },
-        attributes: ['id', 'name', 'email', 'username'],
+        attributes: ['id', 'name', 'email', 'username', 'phone', 'employeeId', 'department', 'designation', 'status'],
         include: [{
           model: TrainerProfile,
           as: 'profile',
@@ -45,6 +45,8 @@ router.get(
       });
       res.json({ trainers: trainers.map(t => ({
         id: t.id, name: t.name, email: t.email, username: t.username,
+        phone: t.phone, employeeId: t.employeeId, department: t.department,
+        designation: t.designation, status: t.status,
         profile: t.profile || null
       })) });
     } catch (error) {
@@ -63,7 +65,7 @@ router.get(
     try {
       const trainer = await User.findOne({
         where: { id: req.params.id, role: 'TRAINER', isDeleted: false },
-        attributes: ['id', 'name', 'email', 'username', 'phone'],
+        attributes: ['id', 'name', 'email', 'username', 'phone', 'employeeId', 'department', 'designation', 'status'],
         include: [{
           model: TrainerProfile,
           as: 'profile',
@@ -76,6 +78,8 @@ router.get(
         trainer: {
           id: trainer.id, name: trainer.name, email: trainer.email,
           username: trainer.username, phone: trainer.phone,
+          employeeId: trainer.employeeId, department: trainer.department,
+          designation: trainer.designation, status: trainer.status,
           profile: trainer.profile || null
         }
       });
@@ -183,11 +187,15 @@ router.get('/pending-participants', authenticateToken, roleMiddleware('ADMIN'), 
   }
 });
 
-// POST /api/admin/approve-participant/:id
-router.post('/approve-participant/:id', authenticateToken, roleMiddleware('ADMIN'), (req, res) => adminController.approveParticipant(req, res));
+router.post('/participants/:id/approve', authenticateToken, roleMiddleware('ADMIN'), (req, res) =>
+  adminController.approveParticipant(req, res)
+);
 
-// POST /api/admin/reject-participant/:id
-router.post('/reject-participant/:id', authenticateToken, roleMiddleware('ADMIN'), (req, res) => adminController.rejectParticipant(req, res));
+router.post('/participants/:id/reject', authenticateToken, roleMiddleware('ADMIN'), (req, res) =>
+  adminController.rejectParticipant(req, res)
+);
+
+// Participant approvals and rejections are managed through the Participants workflow.
 
 // GET /api/admin/pending-trainers
 router.get('/pending-trainers', authenticateToken, roleMiddleware('ADMIN'), (req, res) => adminController.getPendingTrainers(req, res));

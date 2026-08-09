@@ -81,6 +81,18 @@ function TrainerDetails({ trainer, token }) {
               <span className="detail-value">{profile?.profile?.phone || trainer.profile?.phone || '—'}</span>
             </div>
             <div className="trainer-detail-item">
+              <span className="detail-label">Employee ID</span>
+              <span className="detail-value">{profile?.employeeId || trainer.employeeId || '—'}</span>
+            </div>
+            <div className="trainer-detail-item">
+              <span className="detail-label">Department</span>
+              <span className="detail-value">{profile?.department || trainer.department || '—'}</span>
+            </div>
+            <div className="trainer-detail-item">
+              <span className="detail-label">Designation</span>
+              <span className="detail-value">{profile?.designation || trainer.designation || '—'}</span>
+            </div>
+            <div className="trainer-detail-item">
               <span className="detail-label">Date of Birth</span>
               <span className="detail-value">{fmtDate(profile?.profile?.dob)}</span>
             </div>

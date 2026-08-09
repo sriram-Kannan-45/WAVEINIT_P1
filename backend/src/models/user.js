@@ -24,6 +24,19 @@ const User = sequelize.define('User', {
     type: DataTypes.STRING,
     allowNull: true
   },
+  employeeId: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    field: 'employee_id'
+  },
+  department: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  designation: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
   dob: {
     type: DataTypes.DATEONLY,
     allowNull: true
@@ -43,7 +56,7 @@ const User = sequelize.define('User', {
     defaultValue: 'PARTICIPANT'
   },
   status: {
-    type: DataTypes.ENUM('PENDING', 'APPROVED', 'INACTIVE'),
+    type: DataTypes.ENUM('PENDING', 'APPROVED', 'REJECTED', 'INACTIVE'),
     allowNull: false,
     defaultValue: 'PENDING'
   },

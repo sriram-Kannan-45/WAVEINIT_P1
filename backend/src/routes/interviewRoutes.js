@@ -4,6 +4,7 @@
  */
 
 const express = require('express');
+const multer = require('multer');
 const router = express.Router();
 const interviewController = require('../controllers/interviewController');
 const authenticateToken = require('../middleware/auth');
@@ -11,6 +12,16 @@ const roleMiddleware = require('../middleware/roles');
 const { Interview, InterviewSession, InterviewDevice } = require('../models');
 const tokenService = require('../services/interviewTokenService');
 const logger = require('../utils/logger');
+
+// Multer for interview recording chunks (kept in memory, written by service).
+const chunkUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB per chunk
+});
+
+// Public endpoint: mobile device validates a pairing token and receives a
+// short-lived socket token (no auth required).
+router.post('/pair-validate', interviewController.validatePairing);
 
 // Public endpoint: mobile device pairs using token (no auth required)
 router.post('/pair-by-token', async (req, res) => {
@@ -80,6 +91,7 @@ router.get('/:id', interviewController.getInterview);
 
 // Update & Delete
 router.put('/:id', roleMiddleware('ADMIN', 'TRAINER'), interviewController.updateInterview);
+router.patch('/:id/status', roleMiddleware('ADMIN', 'TRAINER'), interviewController.updateInterviewStatus);
 router.delete('/:id', roleMiddleware('ADMIN'), interviewController.deleteInterview);
 
 // Session lifecycle
@@ -100,5 +112,18 @@ router.get('/:id/recordings', interviewController.getRecordings);
 
 // AI Monitoring alerts
 router.post('/:id/alerts', interviewController.logAlert);
+
+// Recording chunk upload + finalize (MediaRecorder → chunks → merged webm)
+router.post(
+  '/upload-chunk',
+  roleMiddleware('TRAINER', 'ADMIN'),
+  chunkUpload.single('chunk'),
+  interviewController.uploadChunk
+);
+router.post(
+  '/finalize-recording',
+  roleMiddleware('TRAINER', 'ADMIN'),
+  interviewController.finalizeRecording
+);
 
 module.exports = router;

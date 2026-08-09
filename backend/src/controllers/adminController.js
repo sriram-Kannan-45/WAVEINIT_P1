@@ -513,10 +513,13 @@ const deleteTrainer = async (req, res) => {
     // D. Deleting trainer / user (disable FK checks for comprehensive cleanup)
     console.log('Deleting trainer...');
     console.log('Deleting user...');
-    await sequelize.query('SET FOREIGN_KEY_CHECKS = 0', { transaction: t });
-    const affectedRows = await User.destroy({ where: { id }, transaction: t });
-    console.log('Rows deleted:', affectedRows);
-    await sequelize.query('SET FOREIGN_KEY_CHECKS = 1', { transaction: t });
+    try {
+      await sequelize.query('SET FOREIGN_KEY_CHECKS = 0', { transaction: t });
+      const affectedRows = await User.destroy({ where: { id }, transaction: t });
+      console.log('Rows deleted:', affectedRows);
+    } finally {
+      await sequelize.query('SET FOREIGN_KEY_CHECKS = 1', { transaction: t }).catch(() => {});
+    }
     
     await t.commit();
     console.log('Transaction committed.');
@@ -618,6 +621,7 @@ const getStats = async (req, res) => {
       totalEnrollments,
       totalFeedbacks,
       pendingNotes,
+      pendingApprovals: pendingParticipants,
       avgTrainerRating,
       avgSubjectRating,
       satisfactionScore,
@@ -631,6 +635,7 @@ const getStats = async (req, res) => {
         totalTrainers,
         totalParticipants,
         pendingParticipants,
+        pendingApprovals: pendingParticipants,
         totalEnrollments,
         totalFeedbacks,
         pendingNotes,
@@ -984,7 +989,9 @@ const getPendingParticipants = async (req, res) => {
       email: p.email,
       phone: p.phone,
       username: p.username,
-      appliedAt: p.createdAt
+      appliedAt: p.createdAt,
+      created_at: p.createdAt,
+      createdAt: p.createdAt
     }));
 
     res.json({ participants: formattedParticipants, total: formattedParticipants.length });
@@ -997,13 +1004,26 @@ const getPendingParticipants = async (req, res) => {
 const approveParticipant = async (req, res) => {
   try {
     const { id } = req.params;
-    const participant = await User.findOne({ where: { id, role: 'PARTICIPANT', status: 'PENDING' } });
-    
+    const participant = await User.findOne({ where: { id, role: 'PARTICIPANT' } });
+
     if (!participant) {
-      return res.status(404).json({ error: 'Pending participant not found' });
+      return res.status(404).json({ error: 'Participant not found' });
+    }
+
+    if (participant.status !== 'PENDING') {
+      return res.status(409).json({ error: 'Participant status has already been updated.' });
     }
 
     await participant.update({ status: 'APPROVED' });
+
+    // Keep the linked application (if any) in sync.
+    try {
+      const { RegistrationApplication } = require('../models');
+      await RegistrationApplication.update(
+        { status: 'APPROVED', reviewerId: req.user.id, reviewedAt: new Date() },
+        { where: { userId: participant.id, status: 'PENDING' } }
+      );
+    } catch (e) { logger.warn('Sync application on approve failed:', { error: e.message }); }
 
     const io = req.app.get('io');
 
@@ -1020,12 +1040,13 @@ const approveParticipant = async (req, res) => {
     // Notify user
     await Notification.create({
       userId: participant.id,
-      message: 'Your account has been approved. You can now log in.',
+      message: 'Your participant application has been approved.',
       type: 'APPROVAL',
       isRead: false
     });
 
     res.json({
+      success: true,
       message: 'Participant approved successfully',
       participant: {
         id: participant.id,
@@ -1036,44 +1057,67 @@ const approveParticipant = async (req, res) => {
     });
   } catch (error) {
     console.error('Approve participant error:', error.message);
-    res.status(500).json({ error: 'Server error approving participant' });
+    res.status(500).json({ error: 'Unable to update participant status. Please try again.' });
   }
 };
 
 const rejectParticipant = async (req, res) => {
-  const { id } = req.params;
-  const { sequelize } = require('../config/db');
-  const t = await sequelize.transaction();
-
   try {
-    const participant = await User.findOne({ 
-      where: { id, role: 'PARTICIPANT', status: 'PENDING' },
-      transaction: t
-    });
-    
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    const participant = await User.findOne({ where: { id, role: 'PARTICIPANT' } });
+
     if (!participant) {
-      await t.rollback();
-      return res.status(404).json({ error: 'Pending participant not found' });
+      return res.status(404).json({ error: 'Participant not found' });
     }
 
-    // Delete all related data
-    const { DeviceFingerprint, ParticipantProfile, Notification, Enrollment, Feedback } = require('../models');
-    await Promise.all([
-      DeviceFingerprint.destroy({ where: { userId: id }, transaction: t }),
-      ParticipantProfile.destroy({ where: { userId: id }, transaction: t }),
-      Notification.destroy({ where: { userId: id }, transaction: t }),
-      Enrollment.destroy({ where: { participantId: id }, transaction: t }),
-      Feedback.destroy({ where: { participantId: id }, transaction: t })
-    ]);
-    
-    await User.destroy({ where: { id }, transaction: t });
+    if (participant.status !== 'PENDING') {
+      return res.status(409).json({ error: 'Participant status has already been updated.' });
+    }
 
-    await t.commit();
-    res.json({ message: 'Participant rejected and removed successfully' });
+    await participant.update({ status: 'REJECTED' });
+
+    // Keep the linked application (if any) in sync.
+    try {
+      const { RegistrationApplication } = require('../models');
+      await RegistrationApplication.update(
+        { status: 'REJECTED', rejectionReason: reason || null, reviewerId: req.user.id, reviewedAt: new Date() },
+        { where: { userId: participant.id, status: 'PENDING' } }
+      );
+    } catch (e) { logger.warn('Sync application on reject failed:', { error: e.message }); }
+
+    const io = req.app.get('io');
+
+    await ActivityService.logActivity({
+      userId: req.user.id,
+      userName: req.user.name || 'Admin',
+      action: 'USER_REJECTED',
+      entityType: 'User',
+      entityId: participant.id,
+      details: { targetUserName: participant.name, targetRole: 'PARTICIPANT', reason: reason || null }
+    }, io);
+
+    await Notification.create({
+      userId: participant.id,
+      message: 'Your participant application has been rejected.',
+      type: 'APPROVAL',
+      isRead: false
+    });
+
+    res.json({
+      success: true,
+      message: 'Participant rejected successfully',
+      participant: {
+        id: participant.id,
+        name: participant.name,
+        email: participant.email,
+        status: participant.status
+      }
+    });
   } catch (error) {
-    await t.rollback();
     console.error('Reject participant error:', error.message);
-    res.status(500).json({ error: 'Server error rejecting participant' });
+    res.status(500).json({ error: 'Unable to update participant status. Please try again.' });
   }
 };
 

@@ -78,7 +78,7 @@ const RegistrationApplication = sequelize.define('RegistrationApplication', {
   // ── Training Selection ──
   trainingId: {
     type: DataTypes.BIGINT.UNSIGNED,
-    allowNull: false,
+    allowNull: true,
     field: 'training_id',
   },
   batch: {

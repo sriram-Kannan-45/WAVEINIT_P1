@@ -47,12 +47,15 @@ export const API = {
   },
 
   ADMIN: {
-    CREATE_TRAINER:  `${API_BASE}/admin/create-trainer`,
-    TRAININGS:       `${API_BASE}/admin/trainings`,
-    TRAINERS:        `${API_BASE}/admin/trainers`,
-    PARTICIPANTS:    `${API_BASE}/admin/participants`,
-    DELETE_TRAINING: (id) => `${API_BASE}/admin/trainings/${id}`,
-    NOTES:           `${API_BASE}/notes/admin/notes`,
+    CREATE_TRAINER:      `${API_BASE}/admin/create-trainer`,
+    TRAININGS:           `${API_BASE}/admin/trainings`,
+    TRAINERS:            `${API_BASE}/admin/trainers`,
+    PARTICIPANTS:        `${API_BASE}/admin/participants`,
+    PENDING_PARTICIPANTS:`${API_BASE}/admin/pending-participants`,
+    APPROVE_PARTICIPANT: (id) => `${API_BASE}/admin/participants/${id}/approve`,
+    REJECT_PARTICIPANT:  (id) => `${API_BASE}/admin/participants/${id}/reject`,
+    DELETE_TRAINING:     (id) => `${API_BASE}/admin/trainings/${id}`,
+    NOTES:               `${API_BASE}/notes/admin/notes`,
     BULK_TEMPLATE:   `${API_BASE}/admin/participants/bulk-template`,
     BULK_VALIDATE:   `${API_BASE}/admin/participants/bulk-validate`,
     BULK_IMPORT:     `${API_BASE}/admin/participants/bulk-import`,
@@ -61,6 +64,7 @@ export const API = {
   REGISTRATION: {
     APPLY:                `${API_BASE}/registration/apply`,
     APPLICATIONS:         `${API_BASE}/registration/applications`,
+    APPLICATION:          (id) => `${API_BASE}/registration/applications/${id}`,
     STATS:                `${API_BASE}/registration/applications/stats`,
     EXPORT:               `${API_BASE}/registration/applications/export`,
     TRAINERS:             `${API_BASE}/registration/trainers`,
@@ -285,3 +289,4 @@ export const API = {
 };
 
 export { API_BASE, BACKEND_ORIGIN };
+

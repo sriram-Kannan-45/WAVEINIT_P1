@@ -655,6 +655,39 @@ const connectDB = async () => {
         logger.error('⚠️ Error adding columns to coding_submissions', { error: csErr.message });
       }
 
+      // Add missing columns to trainer_profiles (Sequelize model defines them,
+      // but sync({ alter: false }) never adds columns to existing tables)
+      try {
+        const [tpCols] = await sequelize.query("SHOW COLUMNS FROM `trainer_profiles`");
+        const tpNames = tpCols.map(c => c.Field);
+        if (!tpNames.includes('cover_image_path')) {
+          await sequelize.query("ALTER TABLE `trainer_profiles` ADD COLUMN `cover_image_path` VARCHAR(255) NULL AFTER `image_path`");
+          logger.info('➕ Added cover_image_path to trainer_profiles');
+        }
+        if (!tpNames.includes('headline')) {
+          await sequelize.query("ALTER TABLE `trainer_profiles` ADD COLUMN `headline` VARCHAR(200) NULL AFTER `cover_image_path`");
+          logger.info('➕ Added headline to trainer_profiles');
+        }
+        if (!tpNames.includes('about')) {
+          await sequelize.query("ALTER TABLE `trainer_profiles` ADD COLUMN `about` TEXT NULL AFTER `headline`");
+          logger.info('➕ Added about to trainer_profiles');
+        }
+        if (!tpNames.includes('skills')) {
+          await sequelize.query("ALTER TABLE `trainer_profiles` ADD COLUMN `skills` JSON NULL AFTER `about`");
+          logger.info('➕ Added skills to trainer_profiles');
+        }
+        if (!tpNames.includes('certifications')) {
+          await sequelize.query("ALTER TABLE `trainer_profiles` ADD COLUMN `certifications` JSON NULL AFTER `skills`");
+          logger.info('➕ Added certifications to trainer_profiles');
+        }
+        if (!tpNames.includes('social_links')) {
+          await sequelize.query("ALTER TABLE `trainer_profiles` ADD COLUMN `social_links` JSON NULL AFTER `certifications`");
+          logger.info('➕ Added social_links to trainer_profiles');
+        }
+      } catch (tpErr) {
+        logger.error('⚠️ Error adding columns to trainer_profiles', { error: tpErr.message });
+      }
+
       logger.info('✅ Manual schema migration checks completed successfully');
     } catch (migError) {
       logger.error('⚠️ Error applying manual schema migrations to ai_questions', { error: migError.message });

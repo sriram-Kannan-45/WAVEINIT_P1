@@ -190,12 +190,15 @@ async function call(method, path, { token, body, query } = {}) {
     body: JSON.stringify({ name: 'E2E Participant', email: pEmail, phone: '9000000000', password: pPass }),
   });
   if (!reg.ok) fail('register', new Error(`HTTP ${reg.status}`));
-  // Find pending and approve
-  const pending = await call('GET', '/api/admin/pending-participants', { token: adminToken });
-  const newP = (pending.participants || []).find(p => p.email === pEmail);
-  if (!newP) fail('approve', new Error('new participant not in pending list'));
-  await call('POST', `/api/admin/approve-participant/${newP.id}`, { token: adminToken });
-  ok(`participant id=${newP.id} approved`);
+  // Find the linked application and approve it via the Applications flow.
+  const apps = await call('GET', `/api/registration/applications`, {
+    token: adminToken,
+    query: { status: 'PENDING', search: pEmail }
+  });
+  const appEntry = (apps.applications || []).find(a => a.email === pEmail);
+  if (!appEntry) fail('approve', new Error('application for new participant not found'));
+  await call('PATCH', `/api/registration/applications/${appEntry.id}/approve`, { token: adminToken, body: {} });
+  ok(`participant application id=${appEntry.id} approved`);
 
   // ── 9. Participant logs in and enrolls in the course ─────────────────
   step('Participant logs in and enrolls in the course');

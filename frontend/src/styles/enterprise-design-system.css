@@ -6090,6 +6090,7 @@ h1, h2, h3, h4, h5, h6 {
 
 /* Actions */
 .reg-admin-actions {
+  position: relative;
   display: flex;
   gap: 4px;
 }
@@ -6403,17 +6404,19 @@ h1, h2, h3, h4, h5, h6 {
   display: inline-block;
 }
 .reg-admin-action-menu {
-  position: absolute;
+  position: fixed;
   right: 0;
   top: 100%;
   margin-top: 4px;
   background: #fff;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
-  min-width: 160px;
-  z-index: 100;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16), 0 2px 8px rgba(15, 23, 42, 0.06);
+  min-width: 172px;
+  z-index: 1200;
   padding: 4px;
+  max-height: calc(100vh - 20px);
+  overflow-y: auto;
 }
 .reg-admin-action-menu-item {
   display: flex;

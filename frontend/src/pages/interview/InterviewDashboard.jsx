@@ -3,13 +3,14 @@
  * Enterprise admin table view — matches RegistrationApplications design exactly.
  */
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Video, Calendar, Clock, User, Plus, Search, Filter,
   Eye, Pencil, CalendarClock, Play, XCircle, Trash2,
   FileText, X, Loader2, ChevronLeft, ChevronRight as ChevronRightIcon,
 } from 'lucide-react'
+import { useToast } from '../../components/Toast'
 import interviewService from '../../services/interviewService'
 
 const STATUS_COLORS = {
@@ -35,13 +36,43 @@ const MEETING_BADGE = {
   IN_PLATFORM: { cls: 'reg-admin-meeting--online', label: 'In-Platform' },
 }
 
+// Allowed next statuses per current status (matches backend transition rules).
+const STATUS_OPTIONS = {
+  SCHEDULED:   [{ value: 'IN_PROGRESS', label: 'In Progress' }, { value: 'COMPLETED', label: 'Completed' }, { value: 'CANCELLED', label: 'Cancelled' }],
+  IN_PROGRESS: [{ value: 'COMPLETED', label: 'Completed' }, { value: 'CANCELLED', label: 'Cancelled' }],
+  COMPLETED:   [],
+  CANCELLED:   [],
+}
+
 const itemVariants = {
   hidden: { opacity: 0, y: 12 },
   visible: { opacity: 1, y: 0, transition: { duration: 0.3, ease: [0.16, 1, 0.3, 1] } },
 }
 
+// Shared form styles — matches the Schedule Interview page design system.
+const labelStyle = { fontSize: 12, fontWeight: 600, color: '#334155', display: 'block', marginBottom: 5 }
+const inputStyle = { width: '100%', padding: '9px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13, fontFamily: 'Inter, system-ui, sans-serif', outline: 'none', boxSizing: 'border-box' }
+const selectStyle = { ...inputStyle, appearance: 'none', background: '#fff url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%2364748b\' stroke-width=\'2\'%3E%3Cpath d=\'m6 9 6 6 6-6\'/%3E%3C/svg%3E") no-repeat right 10px center', paddingRight: 30 }
+
+const EMPTY_EDIT_FORM = {
+  title: '',
+  candidateId: '',
+  interviewerId: '',
+  type: 'TECHNICAL',
+  date: '',
+  time: '',
+  durationMinutes: 60,
+  meetingType: 'IN_PLATFORM',
+  meetingLink: '',
+  description: '',
+  requireMobilePairing: true,
+  recordInterview: false,
+}
+
 export default function InterviewDashboard({ user }) {
   const navigate = useNavigate()
+  const location = useLocation()
+  const { success, error: showError } = useToast()
   const [interviews, setInterviews] = useState([])
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({ total: 0, scheduled: 0, inProgress: 0, completed: 0, cancelled: 0, today: 0 })
@@ -50,12 +81,20 @@ export default function InterviewDashboard({ user }) {
   const [typeFilter, setTypeFilter] = useState('')
   const [pagination, setPagination] = useState({ total: 0, page: 1, pages: 1 })
   const [detailInterview, setDetailInterview] = useState(null)
-  const [editInterview, setEditInterview] = useState(null)
-  const [deleteTarget, setDeleteTarget] = useState(null)
-  const [editForm, setEditForm] = useState({})
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [confirmTarget, setConfirmTarget] = useState(null) // { interview, action: 'delete' | 'cancel' }
+  const [changeStatusTarget, setChangeStatusTarget] = useState(null)
+  const [newStatus, setNewStatus] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
   const [menuOpen, setMenuOpen] = useState(null)
+  const [menuPos, setMenuPos] = useState(null)
   const menuRef = useRef(null)
+  const [editInterview, setEditInterview] = useState(null)
+  const [editFetching, setEditFetching] = useState(false)
+  const [editSaving, setEditSaving] = useState(false)
+  const [candidates, setCandidates] = useState([])
+  const [interviewers, setInterviewers] = useState([])
+  const [editForm, setEditForm] = useState(EMPTY_EDIT_FORM)
   const limit = 15
 
   const fetchData = async (page = 1) => {
@@ -73,7 +112,7 @@ export default function InterviewDashboard({ user }) {
       setPagination(listRes.pagination || { total: 0, page: 1, pages: 1 })
       setStats(statsRes || {})
     } catch (err) {
-      console.error('Failed to fetch interviews:', err)
+      showError(err?.message || 'Failed to fetch interviews')
     } finally {
       setLoading(false)
     }
@@ -81,12 +120,28 @@ export default function InterviewDashboard({ user }) {
 
   useEffect(() => { fetchData() }, [statusFilter, typeFilter])
 
+  // Show the success toast passed from the ScheduleInterview page after save.
+  useEffect(() => {
+    if (location.state?.toast) {
+      success(location.state.toast)
+      window.history.replaceState({}, document.title)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     const handler = (e) => {
-      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(null)
+      if (!e.target.closest('.reg-admin-actions')) setMenuOpen(null)
     }
+    const closeOnScrollOrResize = () => setMenuOpen(null)
     document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
+    window.addEventListener('scroll', closeOnScrollOrResize, true)
+    window.addEventListener('resize', closeOnScrollOrResize)
+    return () => {
+      document.removeEventListener('mousedown', handler)
+      window.removeEventListener('scroll', closeOnScrollOrResize, true)
+      window.removeEventListener('resize', closeOnScrollOrResize)
+    }
   }, [])
 
   const handleSearch = (e) => {
@@ -94,31 +149,108 @@ export default function InterviewDashboard({ user }) {
     fetchData(1)
   }
 
-  const handleView = (interview) => { setDetailInterview(interview); setMenuOpen(null) }
-
-  const handleEdit = (interview) => {
-    setEditForm({
-      title: interview.title || '',
-      description: interview.description || '',
-      type: interview.type,
-      meeting_type: interview.meeting_type || 'ONLINE',
-      meeting_link: interview.meeting_link || '',
-      record_interview: interview.record_interview || false,
-    })
-    setEditInterview(interview)
+  const handleView = async (interview) => {
     setMenuOpen(null)
+    setDetailLoading(true)
+    setDetailInterview(interview)
+    try {
+      const res = await interviewService.get(interview.id)
+      setDetailInterview(res.interview || interview)
+    } catch (err) {
+      showError(err?.message || 'Failed to load interview details')
+    } finally {
+      setDetailLoading(false)
+    }
   }
 
-  const handleSaveEdit = async () => {
+  // Open the ⋮ actions dropdown anchored to the clicked button. Uses fixed
+  // positioning so the menu is never clipped by the table wrapper or hidden
+  // behind the sidebar/header, and flips upward when near the viewport bottom.
+  const openMenu = (e, id) => {
+    e.stopPropagation()
+    const rect = e.currentTarget.getBoundingClientRect()
+    const right = Math.max(8, window.innerWidth - rect.right)
+    const estHeight = menuRef.current?.offsetHeight || 260
+    let top = rect.bottom + 6
+    if (top + estHeight > window.innerHeight - 8) {
+      top = Math.max(8, rect.top - estHeight - 6)
+    }
+    setMenuPos({ top, right })
+    setMenuOpen(prev => (prev === id ? null : id))
+  }
+
+  const openEdit = async (interview) => {
+    setMenuOpen(null)
+    setEditInterview(interview)
+    setEditFetching(true)
     try {
-      setActionLoading(true)
-      await interviewService.update(editInterview.id, editForm)
-      setEditInterview(null)
-      fetchData(pagination.page)
+      const [res, candRes, intRes] = await Promise.all([
+        interviewService.get(interview.id),
+        interviewService.getCandidates(),
+        interviewService.getInterviewers(),
+      ])
+      const iv = res?.interview || interview
+      setCandidates(candRes?.candidates || [])
+      setInterviewers(intRes?.interviewers || [])
+      const d = new Date(iv.scheduled_at)
+      const pad = (n) => String(n).padStart(2, '0')
+      setEditForm({
+        title: iv.title || '',
+        candidateId: iv.candidate_id != null ? String(iv.candidate_id) : '',
+        interviewerId: iv.interviewer_id != null ? String(iv.interviewer_id) : '',
+        type: iv.type || 'TECHNICAL',
+        date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+        time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+        durationMinutes: iv.duration_minutes || 60,
+        meetingType: iv.meeting_type || 'IN_PLATFORM',
+        meetingLink: iv.meeting_link || '',
+        description: iv.description || '',
+        requireMobilePairing: iv.require_mobile_pairing !== false,
+        recordInterview: !!iv.record_interview,
+      })
     } catch (err) {
-      console.error('Failed to update interview:', err)
+      showError(err?.message || 'Failed to load interview details')
     } finally {
-      setActionLoading(false)
+      setEditFetching(false)
+    }
+  }
+
+  const handleEditChange = (field, value) => setEditForm(f => ({ ...f, [field]: value }))
+
+  const handleEditSave = async () => {
+    if (!editInterview) return
+    if (!editForm.candidateId || !editForm.interviewerId || !editForm.date || !editForm.time) {
+      showError('Please fill in the candidate, interviewer, date and time')
+      return
+    }
+    try {
+      setEditSaving(true)
+      const scheduledAt = new Date(`${editForm.date}T${editForm.time}`).toISOString()
+      const payload = {
+        candidateId: parseInt(editForm.candidateId),
+        interviewerId: parseInt(editForm.interviewerId),
+        scheduledAt,
+        durationMinutes: parseInt(editForm.durationMinutes),
+        type: editForm.type,
+        title: editForm.title || undefined,
+        description: editForm.description || undefined,
+        requireMobilePairing: editForm.requireMobilePairing,
+        meetingType: editForm.meetingType,
+        meetingLink: editForm.meetingLink || undefined,
+        recordInterview: editForm.recordInterview,
+      }
+      const res = await interviewService.update(editInterview.id, payload)
+      setEditInterview(null)
+      setEditForm(EMPTY_EDIT_FORM)
+      success('Interview updated successfully')
+      if (res?.interview?.id) {
+        setInterviews(prev => prev.map(iv => (iv.id === res.interview.id ? res.interview : iv)))
+      }
+      await fetchData(pagination.page)
+    } catch (err) {
+      showError(err?.response?.data?.error || err?.message || 'Failed to update interview')
+    } finally {
+      setEditSaving(false)
     }
   }
 
@@ -130,11 +262,12 @@ export default function InterviewDashboard({ user }) {
   const handleCancel = async (interview) => {
     try {
       setActionLoading(true)
-      await interviewService.update(interview.id, { status: 'CANCELLED' })
-      setDeleteTarget(null)
-      fetchData(pagination.page)
+      await interviewService.updateStatus(interview.id, 'CANCELLED')
+      setConfirmTarget(null)
+      success('Interview cancelled successfully')
+      await fetchData(pagination.page)
     } catch (err) {
-      console.error('Failed to cancel:', err)
+      showError(err?.message || 'Failed to cancel interview')
     } finally {
       setActionLoading(false)
     }
@@ -143,18 +276,52 @@ export default function InterviewDashboard({ user }) {
   const handleDelete = async (interview) => {
     try {
       setActionLoading(true)
-      await interviewService.delete(interview.id)
-      setDeleteTarget(null)
-      fetchData(pagination.page)
+      const res = await interviewService.delete(interview.id)
+      if (!res?.success) throw new Error(res?.message || 'Failed to delete interview')
+      setConfirmTarget(null)
+      success('Interview deleted successfully')
+      await fetchData(pagination.page)
     } catch (err) {
-      console.error('Failed to delete:', err)
+      showError(err?.message || 'Failed to delete interview')
     } finally {
       setActionLoading(false)
     }
   }
 
+  const handleConfirmAction = async () => {
+    if (!confirmTarget) return
+    if (confirmTarget.action === 'delete') await handleDelete(confirmTarget.interview)
+    else await handleCancel(confirmTarget.interview)
+  }
+
+  const handleChangeStatus = async () => {
+    if (!changeStatusTarget || !newStatus) return
+    try {
+      setActionLoading(true)
+      const res = await interviewService.updateStatus(changeStatusTarget.id, newStatus)
+      setChangeStatusTarget(null)
+      setNewStatus('')
+      success(`Interview marked as ${newStatus.replace('_', ' ')}`)
+      if (res?.interview?.id) {
+        setInterviews(prev => prev.map(iv => (iv.id === res.interview.id ? res.interview : iv)))
+      }
+      await fetchData(pagination.page)
+    } catch (err) {
+      showError(err?.message || 'Failed to update interview status')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const canManage = (iv) => {
+    if (user?.role === 'ADMIN') return true
+    if (user?.role === 'TRAINER') return iv.interviewer_id === user.id
+    return false
+  }
+
   const formatDate = (dt) => new Date(dt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
   const formatTime = (dt) => new Date(dt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+  const formatDateTime = (dt) => dt ? `${formatDate(dt)} at ${formatTime(dt)}` : '—'
   const getInitials = (name) => (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
   const isAdmin = user?.role === 'ADMIN'
 
@@ -173,6 +340,8 @@ export default function InterviewDashboard({ user }) {
     { key: 'COMPLETED', label: 'Completed' },
     { key: 'CANCELLED', label: 'Cancelled' },
   ]
+
+  const allowedStatuses = changeStatusTarget ? (STATUS_OPTIONS[changeStatusTarget.status] || []) : []
 
   return (
     <motion.div variants={itemVariants} initial="hidden" animate="visible" className="reg-admin">
@@ -214,7 +383,7 @@ export default function InterviewDashboard({ user }) {
           <Search size={16} />
           <input
             type="text"
-            placeholder="Search by name, email, title..."
+            placeholder="Search by name, email, interviewer, title..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -295,6 +464,7 @@ export default function InterviewDashboard({ user }) {
                 const sc = STATUS_COLORS[iv.status] || STATUS_COLORS.SCHEDULED
                 const tb = TYPE_BADGE[iv.type] || TYPE_BADGE.TECHNICAL
                 const mb = MEETING_BADGE[iv.meeting_type] || MEETING_BADGE.ONLINE
+                const manage = canManage(iv)
                 return (
                   <tr key={iv.id}>
                     <td>
@@ -327,11 +497,12 @@ export default function InterviewDashboard({ user }) {
                     </td>
                     <td><span className={`reg-admin-meeting ${mb.cls}`}>{mb.label}</span></td>
                     <td>
-                      <div className="reg-admin-actions" ref={menuRef}>
+                      <div className="reg-admin-actions">
                         <button
                           className="reg-admin-action"
                           title="Actions"
-                          onClick={() => setMenuOpen(menuOpen === iv.id ? null : iv.id)}
+                          data-menu-btn={iv.id}
+                          onClick={(e) => openMenu(e, iv.id)}
                         >
                           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                             <circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/>
@@ -340,7 +511,9 @@ export default function InterviewDashboard({ user }) {
                         <AnimatePresence>
                           {menuOpen === iv.id && (
                             <motion.div
+                              ref={menuRef}
                               className="reg-admin-action-menu"
+                              style={{ top: menuPos?.top, right: menuPos?.right }}
                               initial={{ opacity: 0, y: -4 }}
                               animate={{ opacity: 1, y: 0 }}
                               exit={{ opacity: 0, y: -4 }}
@@ -349,29 +522,29 @@ export default function InterviewDashboard({ user }) {
                               <button className="reg-admin-action-menu-item" onClick={() => handleView(iv)}>
                                 <Eye size={14} /> View Details
                               </button>
-                              {iv.status === 'SCHEDULED' && isAdmin && (
-                                <button className="reg-admin-action-menu-item" onClick={() => handleEdit(iv)}>
-                                  <Pencil size={14} /> Edit
+                              {manage && (
+                                <button className="reg-admin-action-menu-item" onClick={() => openEdit(iv)}>
+                                  <Pencil size={14} /> Edit Interview
                                 </button>
                               )}
-                              {iv.status === 'SCHEDULED' && isAdmin && (
-                                <button className="reg-admin-action-menu-item" onClick={() => { navigate(`/interview/schedule?reschedule=${iv.id}`); setMenuOpen(null) }}>
-                                  <CalendarClock size={14} /> Reschedule
+                              {manage && (
+                                <button className="reg-admin-action-menu-item" onClick={() => { setChangeStatusTarget(iv); setNewStatus(''); setMenuOpen(null) }}>
+                                  <Filter size={14} /> Change Status
                                 </button>
                               )}
-                              {(iv.status === 'SCHEDULED' || iv.status === 'IN_PROGRESS') && isAdmin && (
+                              {(iv.status === 'SCHEDULED' || iv.status === 'IN_PROGRESS') && (
                                 <button className="reg-admin-action-menu-item" onClick={() => handleStart(iv)}>
                                   <Play size={14} /> Start Interview
                                 </button>
                               )}
-                              {iv.status === 'SCHEDULED' && (
-                                <button className="reg-admin-action-menu-item" onClick={() => { setDeleteTarget(iv); setMenuOpen(null) }}>
-                                  <XCircle size={14} /> Cancel
+                              {iv.status === 'SCHEDULED' && manage && (
+                                <button className="reg-admin-action-menu-item" onClick={() => { setConfirmTarget({ interview: iv, action: 'cancel' }); setMenuOpen(null) }}>
+                                  <CalendarClock size={14} /> Cancel
                                 </button>
                               )}
-                              {iv.status !== 'COMPLETED' && isAdmin && (
-                                <button className="reg-admin-action-menu-item reg-admin-action-menu-item--danger" onClick={() => { setDeleteTarget(iv); setMenuOpen(null) }}>
-                                  <Trash2 size={14} /> Delete
+                              {isAdmin && (
+                                <button className="reg-admin-action-menu-item reg-admin-action-menu-item--danger" onClick={() => { setConfirmTarget({ interview: iv, action: 'delete' }); setMenuOpen(null) }}>
+                                  <Trash2 size={14} /> Delete Interview
                                 </button>
                               )}
                             </motion.div>
@@ -426,49 +599,66 @@ export default function InterviewDashboard({ user }) {
                 </button>
               </div>
               <div className="reg-modal-body">
-                <div className="reg-modal-grid">
-                  <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Title</span>
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>{detailInterview.title || `Interview #${detailInterview.id}`}</div></div>
-                  <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Status</span>
-                    <div><span className="reg-admin-status" style={{ background: STATUS_COLORS[detailInterview.status]?.bg, color: STATUS_COLORS[detailInterview.status]?.text, borderColor: STATUS_COLORS[detailInterview.status]?.border }}>
-                      {detailInterview.status?.replace('_', ' ')}
-                    </span></div></div>
-                  <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Candidate</span>
-                    <div style={{ fontSize: 14 }}>{detailInterview.candidate?.name} ({detailInterview.candidate?.email})</div></div>
-                  <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Mobile</span>
-                    <div style={{ fontSize: 14 }}>{detailInterview.candidate?.phone || '—'}</div></div>
-                  <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Interviewer</span>
-                    <div style={{ fontSize: 14 }}>{detailInterview.interviewer?.name} ({detailInterview.interviewer?.email})</div></div>
-                  <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Type</span>
-                    <div><span className={`reg-admin-type ${TYPE_BADGE[detailInterview.type]?.cls}`}>{TYPE_BADGE[detailInterview.type]?.label}</span></div></div>
-                  <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Date & Time</span>
-                    <div style={{ fontSize: 14 }}>{formatDate(detailInterview.scheduled_at)} at {formatTime(detailInterview.scheduled_at)}</div></div>
-                  <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Duration</span>
-                    <div style={{ fontSize: 14 }}>{detailInterview.duration_minutes} minutes</div></div>
-                  <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Meeting Type</span>
-                    <div><span className={`reg-admin-meeting ${MEETING_BADGE[detailInterview.meeting_type]?.cls}`}>{MEETING_BADGE[detailInterview.meeting_type]?.label}</span></div></div>
-                  {detailInterview.meeting_link && (
-                    <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Meeting Link</span>
-                      <div style={{ fontSize: 14, wordBreak: 'break-all' }}>{detailInterview.meeting_link}</div></div>
-                  )}
-                  <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Record Interview</span>
-                    <div style={{ fontSize: 14 }}>{detailInterview.record_interview ? 'Yes' : 'No'}</div></div>
-                  <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Mobile Pairing</span>
-                    <div style={{ fontSize: 14 }}>{detailInterview.require_mobile_pairing ? 'Required' : 'Not Required'}</div></div>
-                </div>
-                {detailInterview.description && (
-                  <div style={{ marginTop: 16 }}>
-                    <span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Description</span>
-                    <div style={{ fontSize: 14, marginTop: 4, color: '#334155' }}>{detailInterview.description}</div>
+                {detailLoading ? (
+                  <div className="reg-admin-loading">
+                    <Loader2 size={24} className="spin" />
+                    <span>Loading details...</span>
                   </div>
-                )}
-                {detailInterview.result && (
-                  <div style={{ marginTop: 16, padding: '10px 14px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
-                    <span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Result</span>
-                    <div style={{ fontSize: 14, fontWeight: 600, marginTop: 4, color: detailInterview.result.decision === 'SELECTED' ? '#16A34A' : detailInterview.result.decision === 'REJECTED' ? '#dc2626' : '#F59E0B' }}>
-                      {detailInterview.result.decision}
+                ) : (
+                  <>
+                    <div className="reg-modal-grid">
+                      <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Title</span>
+                        <div style={{ fontSize: 14, fontWeight: 600 }}>{detailInterview.title || `Interview #${detailInterview.id}`}</div></div>
+                      <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Status</span>
+                        <div><span className="reg-admin-status" style={{ background: STATUS_COLORS[detailInterview.status]?.bg, color: STATUS_COLORS[detailInterview.status]?.text, borderColor: STATUS_COLORS[detailInterview.status]?.border }}>
+                          {detailInterview.status?.replace('_', ' ')}
+                        </span></div></div>
+                      <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Candidate</span>
+                        <div style={{ fontSize: 14 }}>{detailInterview.candidate?.name || '—'}{detailInterview.candidate?.email ? ` (${detailInterview.candidate.email})` : ''}</div></div>
+                      <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Mobile / Email</span>
+                        <div style={{ fontSize: 14 }}>{detailInterview.candidate?.phone || detailInterview.candidate?.email || '—'}</div></div>
+                      <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Interviewer</span>
+                        <div style={{ fontSize: 14 }}>{detailInterview.interviewer?.name || '—'}{detailInterview.interviewer?.email ? ` (${detailInterview.interviewer.email})` : ''}</div></div>
+                      <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Type</span>
+                        <div><span className={`reg-admin-type ${TYPE_BADGE[detailInterview.type]?.cls}`}>{TYPE_BADGE[detailInterview.type]?.label}</span></div></div>
+                      <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Date & Time</span>
+                        <div style={{ fontSize: 14 }}>{formatDateTime(detailInterview.scheduled_at)}</div></div>
+                      <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Duration</span>
+                        <div style={{ fontSize: 14 }}>{detailInterview.duration_minutes} minutes</div></div>
+                      <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Meeting Type</span>
+                        <div><span className={`reg-admin-meeting ${MEETING_BADGE[detailInterview.meeting_type]?.cls}`}>{MEETING_BADGE[detailInterview.meeting_type]?.label}</span></div></div>
+                      {detailInterview.meeting_link && (
+                        <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Meeting Link</span>
+                          <div style={{ fontSize: 14, wordBreak: 'break-all' }}>
+                            {/^https?:\/\//i.test(detailInterview.meeting_link) ? (
+                              <a href={detailInterview.meeting_link} target="_blank" rel="noopener noreferrer" style={{ color: '#16A34A' }}>{detailInterview.meeting_link}</a>
+                            ) : detailInterview.meeting_link}
+                          </div></div>
+                      )}
+                      <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Record Interview</span>
+                        <div style={{ fontSize: 14 }}>{detailInterview.record_interview ? 'Yes' : 'No'}</div></div>
+                      <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Mobile Pairing</span>
+                        <div style={{ fontSize: 14 }}>{detailInterview.require_mobile_pairing ? 'Required' : 'Not Required'}</div></div>
+                      <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Created</span>
+                        <div style={{ fontSize: 14 }}>{formatDateTime(detailInterview.created_at)}</div></div>
+                      <div><span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Last Updated</span>
+                        <div style={{ fontSize: 14 }}>{formatDateTime(detailInterview.updated_at)}</div></div>
                     </div>
-                  </div>
+                    {detailInterview.description && (
+                      <div style={{ marginTop: 16 }}>
+                        <span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Notes</span>
+                        <div style={{ fontSize: 14, marginTop: 4, color: '#334155' }}>{detailInterview.description}</div>
+                      </div>
+                    )}
+                    {detailInterview.result && (
+                      <div style={{ marginTop: 16, padding: '10px 14px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                        <span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Result</span>
+                        <div style={{ fontSize: 14, fontWeight: 600, marginTop: 4, color: detailInterview.result.decision === 'SELECTED' ? '#16A34A' : detailInterview.result.decision === 'REJECTED' ? '#dc2626' : '#F59E0B' }}>
+                          {detailInterview.result.decision}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
               <div className="reg-modal-footer">
@@ -479,7 +669,72 @@ export default function InterviewDashboard({ user }) {
         )}
       </AnimatePresence>
 
-      {/* ── EDIT MODAL ── */}
+      {/* ── CHANGE STATUS MODAL ── */}
+      <AnimatePresence>
+        {changeStatusTarget && (
+          <motion.div className="reg-modal-overlay"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setChangeStatusTarget(null)}>
+            <motion.div className="reg-modal reg-modal--small"
+              initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+              onClick={e => e.stopPropagation()}>
+              <div className="reg-modal-header">
+                <h3>Change Interview Status</h3>
+                <button onClick={() => setChangeStatusTarget(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                  <X size={20} color="#64748b" />
+                </button>
+              </div>
+              <div className="reg-modal-body">
+                <p style={{ fontSize: 14, color: '#475569', margin: '0 0 14px' }}>
+                  Interview <strong>#{changeStatusTarget.id}</strong> is currently{' '}
+                  <strong>{changeStatusTarget.status?.replace('_', ' ')}</strong>.
+                </p>
+                {allowedStatuses.length === 0 ? (
+                  <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>
+                    This interview is in a terminal state and cannot be changed.
+                  </p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {allowedStatuses.map(opt => (
+                      <label
+                        key={opt.value}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
+                          border: `1px solid ${newStatus === opt.value ? '#16A34A' : '#e2e8f0'}`,
+                          borderRadius: 8, cursor: 'pointer', fontSize: 13, color: '#334155',
+                          background: newStatus === opt.value ? '#f0fdf4' : '#fff',
+                        }}
+                      >
+                        <input
+                          type="radio"
+                          name="interview-status"
+                          value={opt.value}
+                          checked={newStatus === opt.value}
+                          onChange={() => setNewStatus(opt.value)}
+                          style={{ accentColor: '#16A34A' }}
+                        />
+                        {opt.label}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="reg-modal-footer">
+                <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => setChangeStatusTarget(null)}>Close</button>
+                <button
+                  className="reg-admin-btn reg-admin-btn--primary"
+                  onClick={handleChangeStatus}
+                  disabled={actionLoading || !newStatus}
+                >
+                  {actionLoading ? 'Updating...' : 'Save Status'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── EDIT INTERVIEW MODAL ── */}
       <AnimatePresence>
         {editInterview && (
           <motion.div className="reg-modal-overlay"
@@ -489,72 +744,179 @@ export default function InterviewDashboard({ user }) {
               initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
               onClick={e => e.stopPropagation()}>
               <div className="reg-modal-header">
-                <h3>Edit Interview</h3>
+                <h3>Edit Interview{editInterview.id ? ` #${editInterview.id}` : ''}</h3>
                 <button onClick={() => setEditInterview(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
                   <X size={20} color="#64748b" />
                 </button>
               </div>
-              <div className="reg-modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 600, color: '#334155', display: 'block', marginBottom: 4 }}>Title</label>
-                  <input value={editForm.title} onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))}
-                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13 }} />
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <div>
-                    <label style={{ fontSize: 12, fontWeight: 600, color: '#334155', display: 'block', marginBottom: 4 }}>Type</label>
-                    <select value={editForm.type} onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))}
-                      style={{ width: '100%', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13 }}>
-                      <option value="TECHNICAL">Technical</option>
-                      <option value="HR">HR</option>
-                      <option value="MANAGERIAL">Managerial</option>
-                      <option value="CUSTOM">Custom</option>
-                    </select>
+              <div className="reg-modal-body">
+                {editFetching ? (
+                  <div className="reg-admin-loading">
+                    <Loader2 size={24} className="spin" />
+                    <span>Loading interview data...</span>
                   </div>
-                  <div>
-                    <label style={{ fontSize: 12, fontWeight: 600, color: '#334155', display: 'block', marginBottom: 4 }}>Meeting Type</label>
-                    <select value={editForm.meeting_type} onChange={e => setEditForm(f => ({ ...f, meeting_type: e.target.value }))}
-                      style={{ width: '100%', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13 }}>
-                      <option value="IN_PLATFORM">In-Platform</option>
-                      <option value="ONLINE">External Online</option>
-                      <option value="IN_PERSON">In-Person</option>
-                      <option value="HYBRID">Hybrid</option>
-                    </select>
-                  </div>
-                </div>
-                {editForm.meeting_type === 'IN_PLATFORM' && (
-                  <div style={{ padding: '8px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, fontSize: 13, color: '#166534' }}>
-                    Room URL auto-generated at <code>{editInterview.meeting_link || `/interview/${editInterview.id}/room`}</code>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    <div className="interview-form-grid">
+                      {/* Left column */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                        <div>
+                          <label style={labelStyle}>Interview Title</label>
+                          <input
+                            type="text"
+                            placeholder="e.g., Senior Developer Technical Interview"
+                            value={editForm.title}
+                            onChange={e => handleEditChange('title', e.target.value)}
+                            style={inputStyle}
+                          />
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Candidate *</label>
+                          <select
+                            value={editForm.candidateId}
+                            onChange={e => handleEditChange('candidateId', e.target.value)}
+                            style={selectStyle}
+                            required
+                          >
+                            <option value="">Select candidate</option>
+                            {candidates.length === 0 ? (
+                              <option value="" disabled>No approved participants found</option>
+                            ) : candidates.map(c => (
+                              <option key={c.id} value={c.id}>
+                                {c.name} ({c.email}) {c.training?.title ? ` - ${c.training.title}` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={labelStyle}>HR / Interviewer *</label>
+                          <select
+                            value={editForm.interviewerId}
+                            onChange={e => handleEditChange('interviewerId', e.target.value)}
+                            style={selectStyle}
+                            required
+                          >
+                            <option value="">Select interviewer</option>
+                            {interviewers.length === 0 ? (
+                              <option value="" disabled>No trainers found</option>
+                            ) : interviewers.map(i => (
+                              <option key={i.id} value={i.id}>
+                                {i.name} ({i.email}) {i.activeInterviews > 0 ? ` [${i.activeInterviews} active]` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Interview Type</label>
+                          <select value={editForm.type} onChange={e => handleEditChange('type', e.target.value)} style={selectStyle}>
+                            <option value="TECHNICAL">Technical</option>
+                            <option value="HR">HR</option>
+                            <option value="MANAGERIAL">Managerial</option>
+                            <option value="CUSTOM">Custom</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Duration</label>
+                          <select value={editForm.durationMinutes} onChange={e => handleEditChange('durationMinutes', parseInt(e.target.value))} style={selectStyle}>
+                            <option value={30}>30 minutes</option>
+                            <option value={45}>45 minutes</option>
+                            <option value={60}>60 minutes</option>
+                            <option value={90}>90 minutes</option>
+                            <option value={120}>120 minutes</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Right column */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                        <div>
+                          <label style={labelStyle}>Interview Date *</label>
+                          <input
+                            type="date"
+                            value={editForm.date}
+                            onChange={e => handleEditChange('date', e.target.value)}
+                            style={inputStyle}
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Interview Time *</label>
+                          <input
+                            type="time"
+                            value={editForm.time}
+                            onChange={e => handleEditChange('time', e.target.value)}
+                            style={inputStyle}
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Meeting Type</label>
+                          <select value={editForm.meetingType} onChange={e => handleEditChange('meetingType', e.target.value)} style={selectStyle}>
+                            <option value="IN_PLATFORM">In-Platform (Interview in this app)</option>
+                            <option value="ONLINE">External Online (Google Meet, Zoom, etc.)</option>
+                            <option value="IN_PERSON">In-Person</option>
+                            <option value="HYBRID">Hybrid</option>
+                          </select>
+                        </div>
+                        {(editForm.meetingType === 'ONLINE' || editForm.meetingType === 'HYBRID') && (
+                          <div>
+                            <label style={labelStyle}>Meeting Link</label>
+                            <input
+                              type="url"
+                              placeholder="https://meet.google.com/..."
+                              value={editForm.meetingLink}
+                              onChange={e => handleEditChange('meetingLink', e.target.value)}
+                              style={inputStyle}
+                            />
+                          </div>
+                        )}
+                        <div>
+                          <label style={labelStyle}>Notes / Description</label>
+                          <textarea
+                            rows={4}
+                            placeholder="Optional notes about this interview..."
+                            value={editForm.description}
+                            onChange={e => handleEditChange('description', e.target.value)}
+                            style={{ ...inputStyle, resize: 'vertical', minHeight: 80 }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Toggles */}
+                    <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <button
+                          type="button"
+                          className={`interview-toggle ${editForm.requireMobilePairing ? 'interview-toggle--active' : ''}`}
+                          onClick={() => handleEditChange('requireMobilePairing', !editForm.requireMobilePairing)}
+                        >
+                          <div className="interview-toggle-knob" />
+                        </button>
+                        <span style={{ fontSize: 13, color: '#475569' }}>Mobile Camera Monitoring</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <button
+                          type="button"
+                          className={`interview-toggle ${editForm.recordInterview ? 'interview-toggle--active' : ''}`}
+                          onClick={() => handleEditChange('recordInterview', !editForm.recordInterview)}
+                        >
+                          <div className="interview-toggle-knob" />
+                        </button>
+                        <span style={{ fontSize: 13, color: '#475569' }}>Record Interview</span>
+                      </div>
+                    </div>
                   </div>
                 )}
-                {(editForm.meeting_type === 'ONLINE' || editForm.meeting_type === 'HYBRID') && (
-                  <div>
-                    <label style={{ fontSize: 12, fontWeight: 600, color: '#334155', display: 'block', marginBottom: 4 }}>Meeting Link</label>
-                    <input value={editForm.meeting_link} onChange={e => setEditForm(f => ({ ...f, meeting_link: e.target.value }))}
-                      placeholder="https://meet.google.com/..."
-                      style={{ width: '100%', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13 }} />
-                  </div>
-                )}
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 600, color: '#334155', display: 'block', marginBottom: 4 }}>Description</label>
-                  <textarea rows={3} value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
-                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13, resize: 'vertical' }} />
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <button
-                    type="button"
-                    className={`interview-toggle ${editForm.record_interview ? 'interview-toggle--active' : ''}`}
-                    onClick={() => setEditForm(f => ({ ...f, record_interview: !f.record_interview }))}
-                  >
-                    <div className="interview-toggle-knob" />
-                  </button>
-                  <span style={{ fontSize: 13, color: '#475569' }}>Record Interview</span>
-                </div>
               </div>
               <div className="reg-modal-footer">
                 <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => setEditInterview(null)}>Cancel</button>
-                <button className="reg-admin-btn reg-admin-btn--primary" onClick={handleSaveEdit} disabled={actionLoading}>
-                  {actionLoading ? 'Saving...' : 'Save Changes'}
+                <button
+                  className="reg-admin-btn reg-admin-btn--primary"
+                  onClick={handleEditSave}
+                  disabled={editFetching || editSaving}
+                >
+                  {editSaving ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
             </motion.div>
@@ -562,36 +924,39 @@ export default function InterviewDashboard({ user }) {
         )}
       </AnimatePresence>
 
-      {/* ── DELETE/CANCEL MODAL ── */}
+      {/* ── DELETE / CANCEL CONFIRM MODAL ── */}
       <AnimatePresence>
-        {deleteTarget && (
+        {confirmTarget && (
           <motion.div className="reg-modal-overlay"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            onClick={() => setDeleteTarget(null)}>
+            onClick={() => setConfirmTarget(null)}>
             <motion.div className="reg-modal reg-modal--small"
               initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
               onClick={e => e.stopPropagation()}>
               <div className="reg-modal-header">
-                <h3>{isAdmin ? 'Delete Interview' : 'Cancel Interview'}</h3>
-                <button onClick={() => setDeleteTarget(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                <h3>{confirmTarget.action === 'delete' ? 'Delete Interview' : 'Cancel Interview'}</h3>
+                <button onClick={() => setConfirmTarget(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
                   <X size={20} color="#64748b" />
                 </button>
               </div>
               <div className="reg-modal-body">
                 <p style={{ fontSize: 14, color: '#475569', margin: 0 }}>
-                  Are you sure you want to {isAdmin ? 'delete' : 'cancel'} interview <strong>#{deleteTarget.id}</strong>
-                  {deleteTarget.title ? ` "${deleteTarget.title}"` : ''}?
-                  {isAdmin ? ' This will cancel the interview and notify all participants.' : ' This action cannot be undone.'}
+                  Are you sure you want to {confirmTarget.action === 'delete' ? 'delete' : 'cancel'} interview{' '}
+                  <strong>#{confirmTarget.interview.id}</strong>
+                  {confirmTarget.interview.title ? ` "${confirmTarget.interview.title}"` : ''}?
+                  {confirmTarget.action === 'delete'
+                    ? ' This will permanently remove the interview and all its associated data.'
+                    : ' The interview will be marked as cancelled and all participants notified.'}
                 </p>
               </div>
               <div className="reg-modal-footer">
-                <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => setDeleteTarget(null)}>Keep Interview</button>
+                <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => setConfirmTarget(null)}>Keep Interview</button>
                 <button
                   className="reg-admin-btn reg-admin-btn--danger"
-                  onClick={() => isAdmin ? handleDelete(deleteTarget) : handleCancel(deleteTarget)}
+                  onClick={handleConfirmAction}
                   disabled={actionLoading}
                 >
-                  {actionLoading ? 'Processing...' : isAdmin ? 'Delete Interview' : 'Cancel Interview'}
+                  {actionLoading ? 'Processing...' : confirmTarget.action === 'delete' ? 'Delete Interview' : 'Cancel Interview'}
                 </button>
               </div>
             </motion.div>

@@ -8,6 +8,7 @@ const redis = require('redis');
 const { createAdapter } = require('@socket.io/redis-adapter');
 const jwt = require('jsonwebtoken');
 const { User } = require('../models');
+const tokenService = require('../services/interviewTokenService');
 const logger = require('../utils/logger');
 
 /**
@@ -16,7 +17,8 @@ const logger = require('../utils/logger');
  * @returns {Object} Socket.IO instance
  */
 const initializeSocket = (server) => {
-  const allowedSocketOrigins = [
+  const isDev = process.env.NODE_ENV !== 'production';
+  const allowedSocketOrigins = new Set([
     process.env.FRONTEND_URL,
     'http://localhost:5173',
     'http://localhost:5174',
@@ -24,13 +26,16 @@ const initializeSocket = (server) => {
     'http://127.0.0.1:5173',
     'http://127.0.0.1:5174',
     'http://127.0.0.1:5175',
-  ].filter(Boolean);
+    'https://localhost:5174',
+  ].filter(Boolean));
 
   const io = socketIO(server, {
     cors: {
       origin: (origin, cb) => {
         if (!origin) return cb(null, true);
-        if (allowedSocketOrigins.includes(origin)) return cb(null, true);
+        // In development allow any origin (LAN phone access via QR / mobile web).
+        if (isDev) return cb(null, true);
+        if (allowedSocketOrigins.has(origin)) return cb(null, true);
         return cb(new Error(`Socket.IO CORS: origin ${origin} not allowed`));
       },
       credentials: true,
@@ -69,6 +74,23 @@ const initializeSocket = (server) => {
       socket.userId = userId;
       socket.userRole = user.role;
       socket.userName = user.name;
+
+      // Mobile pairing sockets authenticate with a short-lived socket token that
+      // embeds the one-time pairing token. Re-validate the pairing token is still
+      // PENDING + unexpired; it is consumed when the device joins its room.
+      if (decoded.deviceType === 'MOBILE') {
+        const result = await tokenService.validatePairingToken(decoded.pairingToken);
+        if (!result.success) {
+          logger.warn('Mobile socket pairing rejected', { userId, message: result.message });
+          return next(new Error(`Pairing error: ${result.message}`));
+        }
+        socket.deviceType = 'MOBILE';
+        socket.pairingToken = decoded.pairingToken;
+        socket.sessionId = decoded.sessionId || result.device.session_id;
+        socket.currentInterviewId = decoded.interviewId || null;
+        logger.info('Mobile socket connected', { userId, sessionId: socket.sessionId });
+        return next();
+      }
 
       logger.info('Socket connected', { userId: socket.userId, role: socket.userRole });
       next();

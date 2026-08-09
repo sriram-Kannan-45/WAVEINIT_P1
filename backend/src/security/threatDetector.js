@@ -47,6 +47,16 @@ const PATH_TRAVERSAL_PATTERNS = [
   /\.\.%5c/i,
 ];
 
+// URL-safe injection markers. SQL keywords (SELECT, CREATE, DELETE, …) are
+// intentionally NOT applied to URLs — legitimate REST paths contain those
+// words (e.g. /api/admin/create-trainer) and the \b word-boundary match
+// produces false positives that block real requests.
+const URL_INJECTION_PATTERNS = [
+  /(--|;|\/\*|\*\/|xp_|sp_)/i,
+  /(CHAR\(|CONCAT\(|0x[0-9a-f]+)/i,
+  /('.*(\bOR\b|\bAND\b).*')/i,
+];
+
 // ── In-memory rate tracking ────────────────────────────────────────────────
 const ipThreatMap = new Map();
 
@@ -111,7 +121,7 @@ function detectSqlInjection(req, res, next) {
   if (checkObject(req.query)) threats.push('query');
   if (checkObject(req.body)) threats.push('body');
   if (checkObject(req.params)) threats.push('params');
-  if (checkString(req.url)) threats.push('url');
+  if (URL_INJECTION_PATTERNS.some(p => p.test(req.url || ''))) threats.push('url');
 
   if (threats.length > 0) {
     const ip = req.ip || req.connection?.remoteAddress;

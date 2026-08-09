@@ -13,27 +13,27 @@ export default function StatusStrip({
   const StatusIndicator = ({ label, active, icon }) => (
     <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
       active
-        ? 'bg-green-500/10 text-green-400 border border-green-500/20'
-        : 'bg-gray-700/30 text-gray-400 border border-gray-700/20'
+        ? 'bg-primary-50 text-primary-700 border border-primary-200'
+        : 'bg-surface-100 text-surface-500 border border-surface-200'
     }`}>
-      <span className="w-1.5 h-1.5 rounded-full bg-current" />
+      <span className={`w-1.5 h-1.5 rounded-full ${active ? 'bg-primary-600' : 'bg-surface-400'}`} />
       <span>{icon}</span>
       <span>{label}</span>
     </div>
   )
 
   return (
-    <div className={`flex items-center gap-2 px-4 py-2 bg-gray-800/60 backdrop-blur-sm border-b border-gray-700/50 flex-wrap ${className}`}>
+    <div className={`flex items-center gap-2 px-4 py-2 bg-white/90 backdrop-blur-sm border-b border-surface-200 flex-wrap ${className}`}>
       <StatusIndicator label="Laptop" active={devices.laptop} icon="💻" />
       <StatusIndicator label="Mobile" active={devices.mobile} icon="📱" />
-      <div className="w-px h-4 bg-gray-700" />
+      <div className="w-px h-4 bg-surface-200" />
       <StatusIndicator label="Camera" active={isCameraActive} icon="📹" />
       <StatusIndicator label="Screen Share" active={isScreenSharing} icon="🖥️" />
       <StatusIndicator label="Recording" active={isRecording} icon="⏺️" />
       {alertCount > 0 && (
         <>
-          <div className="w-px h-4 bg-gray-700" />
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20">
+          <div className="w-px h-4 bg-surface-200" />
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-danger-50 text-danger-600 border border-danger-200">
             <span>⚠️</span>
             <span>{alertCount} Alert{alertCount !== 1 ? 's' : ''}</span>
           </div>

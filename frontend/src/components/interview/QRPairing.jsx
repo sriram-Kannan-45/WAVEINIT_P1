@@ -1,12 +1,16 @@
 /**
  * QRPairing Component
- * Renders a QR code for mobile device pairing and handles refresh.
+ * Renders a real scannable QR code for mobile device pairing and handles
+ * expiry countdown, refresh (with backend error surfacing), and status.
  */
 import { useState, useEffect } from 'react'
+import { QRCodeSVG } from 'qrcode.react'
+import { buildMobilePairingUrl } from '../../utils/mobilePairingUrl'
 
 export default function QRPairing({ qrPayload, onRefresh, expiresAt, tokenStatus }) {
   const [timeLeft, setTimeLeft] = useState(0)
-  const [qrSvg, setQrSvg] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshError, setRefreshError] = useState(null)
 
   useEffect(() => {
     if (!expiresAt) return
@@ -19,86 +23,91 @@ export default function QRPairing({ qrPayload, onRefresh, expiresAt, tokenStatus
     return () => clearInterval(interval)
   }, [expiresAt])
 
-  // Generate a simple QR-like SVG (placeholder — frontend can use qrcode.react in production)
-  useEffect(() => {
-    if (!qrPayload?.payload) return
-    // Create a simple encoded data visualization
-    const data = qrPayload.payload
-    const size = 200
-    const cellSize = 8
-    const cells = Math.floor(size / cellSize)
+  // Encode the full URL the phone browser will open after scanning.
+  const pairUrl = buildMobilePairingUrl(qrPayload?.shortUrl)
 
-    let svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`
-    svgContent += `<rect width="${size}" height="${size}" fill="white"/>`
+  const targetIsLocalhost = !!pairUrl && /localhost|127\.0\.0\.1/.test(pairUrl)
+  const targetIsSecure = !!pairUrl && /^https:/.test(pairUrl)
+  const insecurePhoneContext = !targetIsSecure && !targetIsLocalhost
 
-    // Simple hash-based pattern generation
-    let hash = 0
-    for (let i = 0; i < data.length; i++) {
-      const char = data.charCodeAt(i)
-      hash = ((hash << 5) - hash) + char
-      hash |= 0
+  const isExpired = timeLeft <= 0
+
+  const handleRefresh = async () => {
+    if (!onRefresh || refreshing) return
+    setRefreshing(true)
+    setRefreshError(null)
+    try {
+      await onRefresh()
+    } catch (err) {
+      setRefreshError(err?.message || 'Unable to refresh QR code. Please try again.')
+    } finally {
+      setRefreshing(false)
     }
-
-    for (let y = 0; y < cells; y++) {
-      for (let x = 0; x < cells; x++) {
-        // Corner patterns (finder patterns)
-        const isCorner = (x < 4 && y < 4) || (x >= cells - 4 && y < 4) || (x < 4 && y >= cells - 4)
-        const isCornerBorder = isCorner && (x === 0 || y === 0 || x === 3 || y === 3 ||
-          x === cells - 1 || y === 3 || x === 3 || y === cells - 1)
-
-        if (isCorner) {
-          const isInner = (x >= 1 && x <= 2 && y >= 1 && y <= 2) ||
-            (x >= cells - 3 && x <= cells - 2 && y >= 1 && y <= 2) ||
-            (x >= 1 && x <= 2 && y >= cells - 3 && y <= cells - 2)
-          if (isInner || isCornerBorder || (x === 0 || y === 0 || x === 3 || y === 3 ||
-            x === cells - 1 || x === cells - 4)) {
-            svgContent += `<rect x="${x * cellSize}" y="${y * cellSize}" width="${cellSize}" height="${cellSize}" fill="black"/>`
-          }
-        } else {
-          // Data pattern from hash
-          const idx = y * cells + x
-          const bit = ((hash >> (idx % 31)) ^ (idx * 7)) & 1
-          if (bit) {
-            svgContent += `<rect x="${x * cellSize}" y="${y * cellSize}" width="${cellSize}" height="${cellSize}" fill="black"/>`
-          }
-        }
-      }
-    }
-    svgContent += '</svg>'
-    setQrSvg(svgContent)
-  }, [qrPayload])
+  }
 
   if (!qrPayload) {
     return (
-      <div className="flex flex-col items-center justify-center p-6 bg-gray-800/50 rounded-2xl border border-gray-700/50">
-        <div className="text-gray-400 text-sm">QR code will appear when ready</div>
+      <div className="bg-white rounded-2xl border border-surface-200 shadow-card p-6 text-center">
+        <div className="text-sm text-surface-500">QR code will appear once you join.</div>
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col items-center p-6 bg-gray-800/50 backdrop-blur-sm rounded-2xl border border-gray-700/50">
-      <h3 className="text-white font-semibold text-sm mb-3">Scan to pair mobile device</h3>
+    <div className="bg-white rounded-2xl border border-surface-200 shadow-card p-5 flex flex-col items-center">
+      <h3 className="text-surface-900 font-semibold text-sm mb-1">Pair Mobile Device</h3>
+      <p className="text-surface-500 text-xs mb-4 text-center">
+        Scan with your phone camera to pair it as a second camera.
+      </p>
 
-      <div className="bg-white p-3 rounded-xl mb-3" dangerouslySetInnerHTML={{ __html: qrSvg }} />
+      <div className={`bg-white p-3 rounded-xl border border-surface-200 transition-opacity ${isExpired ? 'opacity-40' : ''}`}>
+        {pairUrl ? (
+          <QRCodeSVG value={pairUrl} size={168} level="M" />
+        ) : (
+          <div className="w-[168px] h-[168px] bg-surface-100 rounded-lg" />
+        )}
+      </div>
 
-      {timeLeft > 0 ? (
-        <div className="text-amber-400 text-xs mb-2">
-          Expires in {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
-        </div>
+      {isExpired ? (
+        <div className="text-danger-600 text-xs mt-3 font-medium">QR code expired</div>
       ) : (
-        <div className="text-red-400 text-xs mb-2">QR code expired</div>
+        <div className="text-surface-600 text-xs mt-3 font-mono">
+          Expires in {String(Math.floor(timeLeft / 60)).padStart(2, '0')}:
+          {String(timeLeft % 60).padStart(2, '0')}
+        </div>
       )}
 
       <button
-        onClick={onRefresh}
-        className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded-lg transition-colors"
+        onClick={handleRefresh}
+        disabled={refreshing}
+        className="mt-3 px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded-lg transition-colors"
       >
-        Refresh QR Code
+        {refreshing ? 'Refreshing...' : 'Refresh QR Code'}
       </button>
 
-      <p className="text-gray-400 text-xs mt-3 text-center max-w-[240px]">
-        Open the LMS mobile page and scan this code to pair your phone as a secondary camera
+      {refreshError && (
+        <div className="mt-2 text-danger-600 text-xs text-center max-w-[220px]">{refreshError}</div>
+      )}
+
+      {tokenStatus && (
+        <p className="text-surface-400 text-[10px] mt-2">{tokenStatus}</p>
+      )}
+
+      {targetIsLocalhost && (
+        <p className="mt-2 text-warning-600 text-[10px] text-center max-w-[230px]">
+          This QR points to localhost. Set VITE_PUBLIC_HOST to this computer's
+          LAN IP so the phone can reach it.
+        </p>
+      )}
+      {insecurePhoneContext && (
+        <p className="mt-2 text-warning-600 text-[10px] text-center max-w-[230px]">
+          The phone will open this page over plain HTTP — camera access may be
+          blocked. Use the HTTPS dev server (mkcert) for reliable pairing.
+        </p>
+      )}
+
+      <p className="text-surface-400 text-[10px] mt-3 text-center max-w-[220px]">
+        Opens the interview pairing page on your phone.
       </p>
     </div>
   )

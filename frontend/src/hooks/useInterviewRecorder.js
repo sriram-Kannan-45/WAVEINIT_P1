@@ -13,6 +13,9 @@ export function useInterviewRecorder(sessionId) {
   const recorderRef = useRef(null)
   const chunkIndexRef = useRef(0)
   const chunkTimerRef = useRef(null)
+  const recordedBytesRef = useRef(0)
+  const recordingIdRef = useRef(null)
+  recordingIdRef.current = recordingId
 
   const startRecording = useCallback(async (stream, deviceType = 'LAPTOP') => {
     if (!stream || !sessionId) return null
@@ -24,11 +27,13 @@ export function useInterviewRecorder(sessionId) {
 
       const recorder = new MediaRecorder(stream, { mimeType })
       chunkIndexRef.current = 0
+      recordedBytesRef.current = 0
 
       recorder.ondataavailable = async (event) => {
         if (event.data.size > 0) {
           const chunk = event.data
           const index = chunkIndexRef.current++
+          recordedBytesRef.current += chunk.size
 
           try {
             const formData = new FormData()
@@ -37,18 +42,27 @@ export function useInterviewRecorder(sessionId) {
             formData.append('deviceType', deviceType)
             formData.append('chunkIndex', index)
 
-            await api.post('/api/interviews/upload-chunk', formData, {
-              headers: { 'Content-Type': 'multipart/form-data' },
-            })
+            const res = await api.post('/api/interviews/upload-chunk', formData)
+            if (res?.recordingId) setRecordingId(res.recordingId)
           } catch (err) {
             console.error('Chunk upload failed:', err)
           }
         }
       }
 
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
         clearInterval(chunkTimerRef.current)
         setIsRecording(false)
+        // Merge chunks into the final recording file.
+        if (recordingIdRef.current) {
+          try {
+            await api.post('/api/interviews/finalize-recording', {
+              recordingId: recordingIdRef.current,
+            })
+          } catch (err) {
+            console.error('Failed to finalize recording:', err)
+          }
+        }
       }
 
       recorder.start(CHUNK_INTERVAL_MS)

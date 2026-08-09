@@ -238,6 +238,11 @@ async function deleteProgram(req, res) {
         await AssessmentSubmission.destroy({ where: { assessmentId: { [Op.in]: assessmentIds } } });
       }
       if (lessonIds.length > 0) {
+        const lessonQuizzes = await LessonQuiz.findAll({ where: { lessonId: { [Op.in]: lessonIds } }, attributes: ['id'] });
+        const lessonQuizIds = lessonQuizzes.map(lq => lq.id);
+        if (lessonQuizIds.length > 0) {
+          await QuizProgress.destroy({ where: { lessonQuizId: { [Op.in]: lessonQuizIds } } });
+        }
         await Promise.all([
           LessonMaterial.destroy({   where: { lessonId: { [Op.in]: lessonIds } } }),
           LessonAssessment.destroy({ where: { lessonId: { [Op.in]: lessonIds } } }),
@@ -524,6 +529,11 @@ async function deleteCourse(req, res) {
       await AssessmentSubmission.destroy({ where: { assessmentId: { [Op.in]: assessmentIds } } });
     }
     if (lessonIds.length > 0) {
+      const lessonQuizzes = await LessonQuiz.findAll({ where: { lessonId: { [Op.in]: lessonIds } }, attributes: ['id'] });
+      const lessonQuizIds = lessonQuizzes.map(lq => lq.id);
+      if (lessonQuizIds.length > 0) {
+        await QuizProgress.destroy({ where: { lessonQuizId: { [Op.in]: lessonQuizIds } } });
+      }
       await Promise.all([
         LessonMaterial.destroy({   where: { lessonId:   { [Op.in]: lessonIds } } }),
         LessonAssessment.destroy({ where: { lessonId:   { [Op.in]: lessonIds } } }),
@@ -583,7 +593,6 @@ async function deleteCourse(req, res) {
       if (attemptIds.length > 0) {
         await QuizAnswer.destroy({ where: { attemptId: { [Op.in]: attemptIds } } });
         await QuizResult.destroy({ where: { attemptId: { [Op.in]: attemptIds } } });
-        await QuizProgress.destroy({ where: { lessonQuizId: { [Op.in]: attemptIds } } }).catch(() => {});
       }
       await Promise.all([
         QuizAttempt.destroy({ where: { quizId: { [Op.in]: quizIds } } }),

@@ -18,6 +18,7 @@ export function InterviewSessionProvider({ children }) {
   const [consentGiven, setConsentGiven] = useState(false)
   const [localStreams, setLocalStreams] = useState({ laptop: null, mobile: null })
   const [remoteStreams, setRemoteStreams] = useState({})
+  const [connectionState, setConnectionState] = useState('disconnected')
   const [screenSharing, setScreenSharing] = useState(false)
   const [timer, setTimer] = useState({ remaining: 0, total: 0 })
 
@@ -45,6 +46,7 @@ export function InterviewSessionProvider({ children }) {
     consentGiven, setConsentGiven,
     localStreams, setLocalStreams,
     remoteStreams, setRemoteStreams,
+    connectionState, setConnectionState,
     screenSharing, setScreenSharing,
     timer, setTimer,
   }

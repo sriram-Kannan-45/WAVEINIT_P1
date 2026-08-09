@@ -72,6 +72,10 @@ router.get('/applications', authenticateToken, roleMiddleware('ADMIN'), (req, re
   registrationController.getApplications(req, res)
 );
 
+router.get('/applications/:id', authenticateToken, roleMiddleware('ADMIN'), (req, res) =>
+  registrationController.getApplication(req, res)
+);
+
 router.get('/applications/stats', authenticateToken, roleMiddleware('ADMIN'), (req, res) =>
   registrationController.getApplicationStats(req, res)
 );
@@ -90,6 +94,14 @@ router.patch('/applications/:id/approve', authenticateToken, roleMiddleware('ADM
 
 router.patch('/applications/:id/reject', authenticateToken, roleMiddleware('ADMIN'), (req, res) =>
   registrationController.rejectApplication(req, res)
+);
+
+router.patch('/applications/:id', authenticateToken, roleMiddleware('ADMIN'), (req, res) =>
+  registrationController.updateApplication(req, res)
+);
+
+router.delete('/applications/:id', authenticateToken, roleMiddleware('ADMIN'), (req, res) =>
+  registrationController.deleteApplication(req, res)
 );
 
 router.patch('/applications/:id/assign-trainer', authenticateToken, roleMiddleware('ADMIN'), (req, res) =>

@@ -329,30 +329,46 @@ async function approveApplication(req, res) {
 
     // Check email not taken
     const existingUser = await User.findOne({ where: { email: application.email }, transaction: t });
-    if (existingUser) {
+    if (existingUser && existingUser.id !== application.userId) {
       await t.rollback();
       return res.status(409).json({ error: 'A user with this email already exists.' });
     }
 
-    // Generate credentials
-    const plainPassword = generateSecurePassword();
-    const hashedPassword = await bcrypt.hash(plainPassword, BCRYPT_COST);
-    const username = application.email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    // Self-registered participants already have an account — reuse it.
+    let user = application.userId
+      ? await User.findOne({ where: { id: application.userId, role: 'PARTICIPANT' }, transaction: t })
+      : null;
 
-    // Create user
-    const user = await User.create({
-      name: `${application.firstName} ${application.lastName}`,
-      email: application.email,
-      password: hashedPassword,
-      phone: application.phone,
-      dob: application.dob,
-      profilePic: application.profilePhotoUrl,
-      username,
-      role: 'PARTICIPANT',
-      status: 'APPROVED',
-      passwordVersion: 1, // Force password change on first login
-    }, { transaction: t });
+    let plainPassword = null;
+    let hashedPassword = null;
 
+    if (user) {
+      if (user.status !== 'PENDING') {
+        await t.rollback();
+        return res.status(409).json({ error: 'Participant status has already been updated.' });
+      }
+    } else {
+      // Generate credentials for applications without a pre-existing account
+      plainPassword = generateSecurePassword();
+      hashedPassword = await bcrypt.hash(plainPassword, BCRYPT_COST);
+      const username = application.email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
+      // Create user
+      user = await User.create({
+        name: `${application.firstName} ${application.lastName}`,
+        email: application.email,
+        password: hashedPassword,
+        phone: application.phone,
+        dob: application.dob,
+        profilePic: application.profilePhotoUrl,
+        username,
+        role: 'PARTICIPANT',
+        status: 'APPROVED',
+        passwordVersion: 1, // Force password change on first login
+      }, { transaction: t });
+    }
+
+    await user.update({ status: 'APPROVED' }, { transaction: t });
     const participantId = `WI${user.id}`;
 
     // Validate trainer if provided
@@ -418,7 +434,9 @@ async function approveApplication(req, res) {
     // Notify participant
     await Notification.create({
       userId: user.id,
-      message: 'Your registration has been approved! Check your email for login credentials.',
+      message: hashedPassword
+        ? 'Your registration has been approved! Check your email for login credentials.'
+        : 'Your participant application has been approved.',
       type: 'APPROVAL',
       isRead: false,
     }, { transaction: t });
@@ -472,6 +490,20 @@ async function rejectApplication(req, res) {
       reviewerId: req.user.id,
       reviewedAt: new Date(),
     });
+
+    // Keep the linked participant (self-registered) in sync.
+    if (application.userId) {
+      await User.update(
+        { status: 'REJECTED' },
+        { where: { id: application.userId, role: 'PARTICIPANT', status: 'PENDING' } }
+      );
+      await Notification.create({
+        userId: application.userId,
+        message: 'Your participant application has been rejected.',
+        type: 'APPROVAL',
+        isRead: false,
+      });
+    }
 
     // Log activity
     try {
@@ -538,6 +570,114 @@ async function assignTrainer(req, res) {
   } catch (error) {
     console.error('Assign trainer error:', error.message);
     res.status(500).json({ error: 'Server error assigning trainer.' });
+  }
+}
+
+// ─── Get single application ─────────────────────────────────────────────────
+async function getApplication(req, res) {
+  try {
+    const { id } = req.params;
+    const application = await RegistrationApplication.findOne({
+      where: { id },
+      include: [
+        { model: Training, as: 'training', attributes: ['id', 'title'] },
+        { model: User, as: 'reviewer', attributes: ['id', 'name'] },
+        { model: User, as: 'trainer', attributes: ['id', 'name'] },
+      ],
+    });
+    if (!application) return res.status(404).json({ error: 'Application not found.' });
+
+    const a = application;
+    res.json({
+      id: a.id,
+      applicationNumber: a.applicationNumber,
+      firstName: a.firstName,
+      lastName: a.lastName,
+      fullName: `${a.firstName} ${a.lastName}`,
+      email: a.email,
+      phone: a.phone,
+      gender: a.gender,
+      dob: a.dob,
+      qualification: a.qualification,
+      experience: a.experience,
+      address: a.address,
+      city: a.city,
+      state: a.state,
+      country: a.country,
+      trainingId: a.trainingId,
+      trainingTitle: a.training?.title || 'Unknown',
+      batch: a.batch,
+      resumeUrl: a.resumeUrl,
+      profilePhotoUrl: a.profilePhotoUrl,
+      aiScore: a.aiScore,
+      aiRecommendations: a.aiRecommendations,
+      dropoutRisk: a.dropoutRisk,
+      recommendedBatch: a.recommendedBatch,
+      status: a.status,
+      reviewerName: a.reviewer?.name || null,
+      trainerName: a.trainer?.name || null,
+      trainerId: a.trainerId,
+      participantId: a.participantId,
+      credentialsSentAt: a.credentialsSentAt,
+      rejectionReason: a.rejectionReason,
+      createdAt: a.created_at,
+      reviewedAt: a.reviewedAt,
+    });
+  } catch (error) {
+    console.error('Get application error:', error.message);
+    res.status(500).json({ error: 'Server error fetching application.' });
+  }
+}
+
+// ─── Update application (admin editable fields) ───────────────────────────
+async function updateApplication(req, res) {
+  try {
+    const { id } = req.params;
+    const allowed = ['firstName','lastName','email','phone','trainingId','batch','aiScore','aiRecommendations','recommendedBatch','profilePhotoUrl','resumeUrl','qualification','experience','address','city','state','country'];
+    const payload = {};
+    for (const k of allowed) if (Object.prototype.hasOwnProperty.call(req.body, k)) payload[k] = req.body[k];
+
+    const application = await RegistrationApplication.findByPk(id);
+    if (!application) return res.status(404).json({ error: 'Application not found.' });
+
+    // Do not implicitly approve/reject via update
+    await application.update(payload);
+
+    // Return updated representation
+    res.json({ success: true, message: 'Application updated.', application: { id: application.id, ...payload } });
+  } catch (error) {
+    console.error('Update application error:', error.message);
+    res.status(500).json({ error: 'Server error updating application.' });
+  }
+}
+
+// ─── Delete application ───────────────────────────────────────────────────
+async function deleteApplication(req, res) {
+  try {
+    const { id } = req.params;
+    const application = await RegistrationApplication.findByPk(id);
+    if (!application) return res.status(404).json({ error: 'Application not found.' });
+
+    // Do not delete linked User records. Only remove application record.
+    await RegistrationApplication.destroy({ where: { id } });
+
+    // Update stats or emit events if needed (non-blocking)
+    try {
+      const ActivityService = require('../services/activityService');
+      await ActivityService.logActivity({
+        userId: req.user.id,
+        userName: req.user.name || 'Admin',
+        action: 'APPLICATION_DELETED',
+        entityType: 'RegistrationApplication',
+        entityId: id,
+        details: { id }
+      }, req.app.get('io'));
+    } catch (e) { /* non-critical */ }
+
+    res.json({ success: true, message: 'Application deleted successfully.' });
+  } catch (error) {
+    console.error('Delete application error:', error.message);
+    res.status(500).json({ error: 'Server error deleting application.' });
   }
 }
 
@@ -829,6 +969,10 @@ async function getTrainerCredentials(req, res) {
 module.exports = {
   submitApplication,
   getApplications,
+  getApplication,
+  getApplications,
+  updateApplication,
+  deleteApplication,
   approveApplication,
   rejectApplication,
   assignTrainer,

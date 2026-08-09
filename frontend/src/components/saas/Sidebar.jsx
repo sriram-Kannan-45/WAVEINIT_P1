@@ -1,14 +1,24 @@
-import { useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  LayoutDashboard, BookOpen, ClipboardList, FileText, GraduationCap,
-  MessageSquare, Trophy, User, Users, X,
-  BarChart3, Calendar, Award, Video,
-  Menu, AppWindow, CircleCheck,
-  UserCheck, ClipboardCheck, NotebookPen,
-  UserCog, ShieldCheck
+    Award,
+    BarChart3,
+    BookOpen,
+    Calendar,
+    ClipboardCheck,
+    ClipboardList, FileText, GraduationCap,
+    LayoutDashboard,
+    Menu,
+    MessageSquare,
+    NotebookPen,
+    ShieldCheck,
+    Trophy, User,
+    UserCheck,
+    UserCog,
+    Users,
+    Video,
+    X
 } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import ProfileDropdown from './ProfileDropdown'
 
 const ROLE_HOME = {
@@ -31,7 +41,6 @@ const navGroups = {
     {
       title: 'Management',
       items: [
-        { key: 'applications', label: 'Applications', icon: AppWindow },
         { key: 'trainings', label: 'Training Programs', icon: BookOpen },
         { key: 'trainers', label: 'Trainers', icon: UserCheck },
         { key: 'participants', label: 'Participants', icon: Users },
@@ -85,7 +94,6 @@ const navGroups = {
 
 const pageDescriptions = {
   overview: 'Monitor your platform activity and key metrics',
-  applications: 'Review and manage registration applications',
   trainings: 'Manage all training programs',
   trainers: 'Manage trainer accounts and assignments',
   participants: 'View and manage learner accounts',
@@ -107,8 +115,7 @@ const pageDescriptions = {
   interviews: 'Schedule and manage interviews',
 }
 
-export { pageDescriptions }
-export { navGroups }
+export { navGroups, pageDescriptions }
 
 export default function Sidebar({ user, activeTab, onTabChange, onLogout, onCloseSidebar, sidebarOpen, onOpenSidebar }) {
   const navigate = useNavigate()

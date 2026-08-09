@@ -21,7 +21,7 @@ function getStrength(pw) {
   return { score: 4, label: 'Strong', color: '#16a34a' };
 }
 
-export default function Register({ onLogin }) {
+export default function Register() {
   const navigate = useNavigate();
   const [form, setForm] = useState({ name: '', email: '', password: '', confirmPassword: '', phone: '' });
   const [error, setError] = useState('');
@@ -63,15 +63,12 @@ export default function Register({ onLogin }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Registration failed');
 
-      localStorage.setItem('user', JSON.stringify(data));
-      localStorage.setItem('lastRole', 'PARTICIPANT');
-      if (onLogin) onLogin(data);
-
-      setSuccess('Registration successful! Redirecting to dashboard...');
+      setSuccess(data.message || 'Your registration has been submitted. Please wait for admin approval.');
       setForm({ name: '', email: '', password: '', confirmPassword: '', phone: '' });
+      setAgreed(false);
       setTimeout(() => {
-        navigate('/participant', { replace: true });
-      }, 2000);
+        navigate('/login', { replace: true });
+      }, 3000);
     } catch (err) {
       setError(err.message === 'Failed to fetch' ? 'Cannot connect to server.' : err.message);
     } finally {
@@ -273,7 +270,7 @@ export default function Register({ onLogin }) {
           </form>
         ) : (
           <div style={{ textAlign: 'center', padding: '24px 0', color: '#64748b', fontSize: 13.5 }}>
-            Redirecting to dashboard...
+            Redirecting to login...
           </div>
         )}
 

@@ -3,10 +3,11 @@
  * Form for creating/scheduling a new interview — matches admin portal design system.
  */
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Calendar, ArrowLeft, Loader2 } from 'lucide-react'
 import interviewService from '../../services/interviewService'
+import { useToast } from '../../components/Toast'
 
 const itemVariants = {
   hidden: { opacity: 0, y: 12 },
@@ -19,6 +20,9 @@ const selectStyle = { ...inputStyle, appearance: 'none', background: '#fff url("
 
 export default function ScheduleInterview({ user }) {
   const navigate = useNavigate()
+  const { success, error: showError } = useToast()
+  const [searchParams] = useSearchParams()
+  const editingId = searchParams.get('edit') || searchParams.get('reschedule')
   const [loading, setLoading] = useState(false)
   const [candidates, setCandidates] = useState([])
   const [interviewers, setInterviewers] = useState([])
@@ -48,6 +52,30 @@ export default function ScheduleInterview({ user }) {
         ])
         setCandidates(candRes.candidates || [])
         setInterviewers(intRes.interviewers || [])
+
+        if (editingId) {
+          const res = await interviewService.get(editingId)
+          const iv = res.interview
+          if (iv) {
+            const d = new Date(iv.scheduled_at)
+            const pad = n => String(n).padStart(2, '0')
+            setForm(f => ({
+              ...f,
+              title: iv.title || '',
+              candidateId: iv.candidate_id ? String(iv.candidate_id) : '',
+              interviewerId: iv.interviewer_id ? String(iv.interviewer_id) : '',
+              type: iv.type || 'TECHNICAL',
+              date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+              time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+              durationMinutes: iv.duration_minutes || 60,
+              meetingType: iv.meeting_type || 'IN_PLATFORM',
+              meetingLink: iv.meeting_link || '',
+              description: iv.description || '',
+              requireMobilePairing: iv.require_mobile_pairing !== false,
+              recordInterview: !!iv.record_interview,
+            }))
+          }
+        }
       } catch (err) {
         console.error('Failed to load scheduling data:', err)
         const msg = err?.message || 'Failed to load scheduling data'
@@ -61,7 +89,8 @@ export default function ScheduleInterview({ user }) {
       }
     }
     load()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingId])
 
   const handleChange = (field, value) => setForm(f => ({ ...f, [field]: value }))
 
@@ -71,7 +100,7 @@ export default function ScheduleInterview({ user }) {
     try {
       setLoading(true)
       const scheduledAt = new Date(`${form.date}T${form.time}`).toISOString()
-      await interviewService.create({
+      const payload = {
         candidateId: parseInt(form.candidateId),
         interviewerId: parseInt(form.interviewerId),
         scheduledAt,
@@ -83,11 +112,16 @@ export default function ScheduleInterview({ user }) {
         meetingType: form.meetingType,
         meetingLink: form.meetingLink || undefined,
         recordInterview: form.recordInterview,
-      })
-      navigate('/interviews')
+      }
+      if (editingId) {
+        await interviewService.update(editingId, payload)
+      } else {
+        await interviewService.create(payload)
+      }
+      navigate('/interviews', { state: { toast: editingId ? 'Interview updated successfully' : 'Interview scheduled successfully' } })
     } catch (err) {
-      console.error('Failed to create interview:', err)
-      alert(err?.response?.data?.error || 'Failed to schedule interview')
+      console.error('Failed to save interview:', err)
+      showError(err?.response?.data?.error || err?.message || 'Failed to save interview')
     } finally {
       setLoading(false)
     }
@@ -107,8 +141,8 @@ export default function ScheduleInterview({ user }) {
           <Calendar size={22} color="#fff" />
         </div>
         <div>
-          <h2 className="reg-admin-title">Schedule Interview</h2>
-          <p className="reg-admin-subtitle">Create a new interview session for a candidate</p>
+          <h2 className="reg-admin-title">{editingId ? 'Edit Interview' : 'Schedule Interview'}</h2>
+          <p className="reg-admin-subtitle">{editingId ? 'Update the interview details and save your changes' : 'Create a new interview session for a candidate'}</p>
         </div>
         <div style={{ flex: 1 }} />
         <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => navigate('/interviews')}>
@@ -332,7 +366,7 @@ export default function ScheduleInterview({ user }) {
                   className="reg-admin-btn reg-admin-btn--primary"
                   disabled={loading || !form.candidateId || !form.interviewerId || !form.date || !form.time}
                 >
-                  {loading ? 'Scheduling...' : 'Schedule Interview'}
+                  {loading ? 'Saving...' : editingId ? 'Save Changes' : 'Schedule Interview'}
                 </button>
               </div>
             </form>

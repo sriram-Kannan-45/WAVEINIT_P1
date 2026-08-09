@@ -68,6 +68,7 @@ const TrainerProfile = sequelize.define('TrainerProfile', {
     type: DataTypes.JSON,
     allowNull: true,
     defaultValue: {},
+    field: 'social_links',
     comment: 'JSON object with linkedin, github, website, twitter keys'
   }
 }, {

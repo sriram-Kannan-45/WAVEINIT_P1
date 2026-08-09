@@ -13,10 +13,11 @@
  */
 
 const bcrypt = require('bcryptjs');
-const { User } = require('../models');
+const { User, TrainerProfile } = require('../models');
 const tokenService = require('../security/tokenService');
 const sessionManager = require('../security/sessionManager');
 const { logAudit, ACTIONS } = require('../security/auditLogger');
+const logger = require('../utils/logger');
 require('dotenv').config();
 
 const BCRYPT_COST = 12;
@@ -90,6 +91,10 @@ const login = async (req, res) => {
 
     if (user.role === 'PARTICIPANT' && user.status === 'PENDING') {
       return res.status(403).json({ error: 'Your account is pending approval.' });
+    }
+
+    if (user.status === 'REJECTED') {
+      return res.status(403).json({ error: 'Your registration was rejected. Please contact support.' });
     }
 
     if (user.status === 'INACTIVE') {
@@ -339,28 +344,37 @@ const register = async (req, res) => {
       password: hashedPassword,
       phone,
       role: 'PARTICIPANT',
-      status: 'APPROVED',
+      status: 'PENDING',
       passwordVersion: 2
     });
+
+    // Create a linked registration application so the admin
+    // Applications page reflects self-registered participants too.
+    try {
+      const { RegistrationApplication } = require('../models');
+      const nameParts = (name || '').trim().split(/\s+/);
+      const firstName = nameParts[0] || name || 'Participant';
+      const lastName = nameParts.slice(1).join(' ') || '-';
+      await RegistrationApplication.create({
+        applicationNumber: `APP${new Date().getFullYear()}${String(user.id).padStart(4, '0')}`,
+        firstName,
+        lastName,
+        email,
+        phone: phone || null,
+        trainingId: null,
+        status: 'PENDING',
+        userId: user.id,
+        createdAt: new Date(),
+      });
+    } catch (appErr) {
+      logger.warn('Could not create registration application for self-registration:', { error: appErr.message });
+    }
 
     await logAudit({
       userId: user.id,
       action: ACTIONS.REGISTER,
       category: 'AUTH',
       severity: 'INFO',
-      req,
-    });
-
-    const { accessToken, refreshToken, tokenFamily } = await tokenService.generateTokenPair(user, req);
-    const session = await sessionManager.createSession(user, req, tokenFamily);
-    tokenService.setRefreshTokenCookie(res, refreshToken);
-
-    await logAudit({
-      userId: user.id,
-      action: ACTIONS.LOGIN_SUCCESS,
-      category: 'AUTH',
-      severity: 'INFO',
-      details: { sessionId: session.sessionId, autoLogin: true },
       req,
     });
 
@@ -371,11 +385,7 @@ const register = async (req, res) => {
       username: user.username,
       role: user.role,
       status: user.status,
-      token: accessToken,
-      accessToken,
-      refreshToken,
-      sessionId: session.sessionId,
-      message: 'Registration successful'
+      message: 'Registration submitted successfully. Your account is pending admin approval.'
     });
   } catch (error) {
     res.status(500).json({ error: 'Server error during registration' });
@@ -385,7 +395,10 @@ const register = async (req, res) => {
 // ── CREATE TRAINER ─────────────────────────────────────────────────────────
 const createTrainer = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const {
+      name, email, password, phone, employeeId, department, designation,
+      experience, status, profilePic
+    } = req.body;
 
     if (!name || !email || !password) {
       return res.status(422).json({ error: 'Name, email, and password are required' });
@@ -403,16 +416,29 @@ const createTrainer = async (req, res) => {
     const username = await generateUsername(name);
     const hashedPassword = await bcrypt.hash(password, BCRYPT_COST);
 
+    const validStatus = ['APPROVED', 'INACTIVE'].includes(status) ? status : 'APPROVED';
+
     const trainer = await User.create({
       name,
       email,
       username,
       password: hashedPassword,
-      phone: null,
+      phone: phone || null,
+      employeeId: employeeId || null,
+      department: department || null,
+      designation: designation || null,
       role: 'TRAINER',
-      status: 'APPROVED',
+      status: validStatus,
       passwordVersion: 2
     });
+
+    if (experience || profilePic) {
+      await TrainerProfile.create({
+        userId: trainer.id,
+        experience: experience || null,
+        imagePath: profilePic || null
+      });
+    }
 
     await logAudit({
       userId: req.user.id,
@@ -421,7 +447,7 @@ const createTrainer = async (req, res) => {
       severity: 'INFO',
       resourceId: trainer.id,
       resourceType: 'User',
-      details: { role: 'TRAINER', email },
+      details: { role: 'TRAINER', email, status: validStatus },
       req,
     });
 
@@ -434,6 +460,7 @@ const createTrainer = async (req, res) => {
       message: 'Trainer created successfully'
     });
   } catch (error) {
+    logger.error('createTrainer error:', { message: error.message, stack: error.stack });
     res.status(500).json({ error: 'Server error creating trainer' });
   }
 };

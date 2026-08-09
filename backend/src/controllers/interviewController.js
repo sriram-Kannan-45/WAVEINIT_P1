@@ -7,7 +7,7 @@ const { Op } = require('sequelize');
 const {
   Interview, InterviewSession, InterviewDevice, InterviewRecording,
   InterviewLog, InterviewAlert, InterviewFeedback, InterviewResult, User,
-  RegistrationApplication, Training,
+  RegistrationApplication, Training, Enrollment,
 } = require('../models');
 const tokenService = require('../services/interviewTokenService');
 const recordingService = require('../services/interviewRecordingService');
@@ -15,6 +15,63 @@ const notificationService = require('../services/interviewNotificationService');
 const qrGenerator = require('../utils/interviewQrGenerator');
 const aiMonitorService = require('../services/interviewAiMonitorService');
 const logger = require('../utils/logger');
+
+const INTERVIEW_TYPES = ['TECHNICAL', 'HR', 'MANAGERIAL', 'CUSTOM'];
+const MEETING_TYPES = ['ONLINE', 'IN_PERSON', 'HYBRID', 'IN_PLATFORM'];
+const ALLOWED_STATUSES = ['SCHEDULED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'];
+
+/**
+ * Valid status transitions for the interview lifecycle.
+ * Terminal statuses (COMPLETED / CANCELLED) cannot transition further.
+ */
+const STATUS_TRANSITIONS = {
+  SCHEDULED: ['IN_PROGRESS', 'COMPLETED', 'CANCELLED'],
+  IN_PROGRESS: ['COMPLETED', 'CANCELLED'],
+  COMPLETED: [],
+  CANCELLED: [],
+};
+
+function isValidDate(value) {
+  if (value === null || value === undefined || value === '') return false;
+  const d = new Date(value);
+  return !isNaN(d.getTime());
+}
+
+function parseInterviewId(raw) {
+  const id = parseInt(raw, 10);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function isTimeOverlap(startA, endA, startB, endB) {
+  return startA < endB && startB < endA;
+}
+
+/**
+ * Find any interview that overlaps the given window for the candidate OR interviewer.
+ * Compares full [start, end] windows so edge overlaps are never missed.
+ */
+async function findSchedulingConflict(candidateId, interviewerId, start, end, excludeId = null) {
+  const candidate = parseInt(candidateId, 10);
+  const interviewer = parseInt(interviewerId, 10);
+
+  const where = {
+    [Op.or]: [
+      ...(candidate ? [{ candidate_id: candidate }] : []),
+      ...(interviewer ? [{ interviewer_id: interviewer }] : []),
+    ],
+    status: { [Op.in]: ['SCHEDULED', 'IN_PROGRESS'] },
+    scheduled_at: { [Op.lt]: end },
+  };
+  if (excludeId) where.id = { [Op.ne]: excludeId };
+
+  const interviews = await Interview.findAll({ where });
+  for (const iv of interviews) {
+    const ivStart = new Date(iv.scheduled_at);
+    const ivEnd = new Date(ivStart.getTime() + (iv.duration_minutes || 60) * 60 * 1000);
+    if (isTimeOverlap(start, end, ivStart, ivEnd)) return iv;
+  }
+  return null;
+}
 
 class InterviewController {
   /**
@@ -31,6 +88,21 @@ class InterviewController {
         return res.status(400).json({ error: 'candidateId, interviewerId, and scheduledAt are required' });
       }
 
+      if (!isValidDate(scheduledAt)) {
+        return res.status(400).json({ error: 'Invalid date/time provided for the interview' });
+      }
+
+      const dur = parseInt(durationMinutes, 10);
+      if (!Number.isInteger(dur) || dur <= 0 || dur > 600) {
+        return res.status(400).json({ error: 'durationMinutes must be a positive number of minutes (max 600)' });
+      }
+      if (type && !INTERVIEW_TYPES.includes(type)) {
+        return res.status(400).json({ error: `Interview type must be one of: ${INTERVIEW_TYPES.join(', ')}` });
+      }
+      if (meetingType && !MEETING_TYPES.includes(meetingType)) {
+        return res.status(400).json({ error: `Meeting type must be one of: ${MEETING_TYPES.join(', ')}` });
+      }
+
       const [candidate, interviewer] = await Promise.all([
         User.findByPk(candidateId),
         User.findByPk(interviewerId),
@@ -38,31 +110,22 @@ class InterviewController {
 
       if (!candidate) return res.status(404).json({ error: 'Candidate not found' });
       if (!interviewer) return res.status(404).json({ error: 'Interviewer not found' });
+      if (candidate.role !== 'PARTICIPANT') {
+        return res.status(400).json({ error: 'Selected candidate is not an eligible participant' });
+      }
+      if (!['TRAINER', 'ADMIN'].includes(interviewer.role)) {
+        return res.status(400).json({ error: 'Selected interviewer is not an eligible interviewer (Trainer/HR)' });
+      }
 
-      const dur = parseInt(durationMinutes) || 60;
       const start = new Date(scheduledAt);
       const end = new Date(start.getTime() + dur * 60 * 1000);
 
-      const conflict = await Interview.findOne({
-        where: {
-          [Op.or]: [
-            { candidate_id: candidateId },
-            { interviewer_id: interviewerId },
-          ],
-          status: { [Op.in]: ['SCHEDULED', 'IN_PROGRESS'] },
-          scheduled_at: { [Op.lt]: end },
-        },
-      });
+      const conflict = await findSchedulingConflict(candidateId, interviewerId, start, end);
       if (conflict) {
-        const endOfConflict = new Date(
-          new Date(conflict.scheduled_at).getTime() + conflict.duration_minutes * 60 * 1000
-        );
-        if (start < endOfConflict) {
-          return res.status(409).json({
-            error: 'Time conflict — the candidate or interviewer already has an interview in this window',
-            conflictId: conflict.id,
-          });
-        }
+        return res.status(409).json({
+          error: 'Time conflict — the candidate or interviewer already has an interview in this window',
+          conflictId: conflict.id,
+        });
       }
 
       const interview = await Interview.create({
@@ -107,13 +170,11 @@ class InterviewController {
       const where = {};
       const userRole = req.user.role;
 
+      const roleScope = [];
       if (userRole === 'PARTICIPANT') {
         where.candidate_id = req.user.id;
       } else if (userRole === 'TRAINER') {
-        where[Op.or] = [
-          { interviewer_id: req.user.id },
-          { candidate_id: req.user.id },
-        ];
+        roleScope.push({ interviewer_id: req.user.id }, { candidate_id: req.user.id });
       }
 
       if (status) where.status = status;
@@ -121,30 +182,44 @@ class InterviewController {
       if (interviewerId) where.interviewer_id = interviewerId;
       if (candidateId) where.candidate_id = candidateId;
 
+      // Search across candidate name/email/phone, interviewer name/email,
+      // interview title and interview type.
+      const searchScope = [];
       if (search) {
         const term = `%${search}%`;
-        const candidateWhere = { [Op.or]: [
-          { name: { [Op.like]: term } },
-          { email: { [Op.like]: term } },
-        ]};
-        var candidateSearch = candidateWhere;
+        searchScope.push(
+          { title: { [Op.like]: term } },
+          { type: { [Op.like]: term } },
+          { '$candidate.name$': { [Op.like]: term } },
+          { '$candidate.email$': { [Op.like]: term } },
+          { '$candidate.phone$': { [Op.like]: term } },
+          { '$interviewer.name$': { [Op.like]: term } },
+          { '$interviewer.email$': { [Op.like]: term } }
+        );
       }
 
-      const offset = (parseInt(page) - 1) * parseInt(limit);
+      if (roleScope.length && searchScope.length) {
+        where[Op.and] = [{ [Op.or]: roleScope }, { [Op.or]: searchScope }];
+      } else if (roleScope.length) {
+        where[Op.or] = roleScope;
+      } else if (searchScope.length) {
+        where[Op.or] = searchScope;
+      }
+
+      const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
       const { rows: interviews, count } = await Interview.findAndCountAll({
         where,
         include: [
           {
             model: User, as: 'candidate',
             attributes: ['id', 'name', 'email', 'phone'],
-            ...(candidateSearch ? { where: candidateSearch } : {}),
           },
-          { model: User, as: 'interviewer', attributes: ['id', 'name', 'email'] },
+          { model: User, as: 'interviewer', attributes: ['id', 'name', 'email', 'phone'] },
           { model: InterviewSession, as: 'sessions', attributes: ['id', 'status', 'started_at', 'ended_at'] },
           { model: InterviewResult, as: 'result', attributes: ['id', 'decision', 'decided_at'] },
         ],
         order: [['scheduled_at', 'DESC']],
-        limit: parseInt(limit),
+        limit: parseInt(limit, 10),
         offset,
       });
 
@@ -152,9 +227,9 @@ class InterviewController {
         interviews,
         pagination: {
           total: count,
-          page: parseInt(page),
-          limit: parseInt(limit),
-          pages: Math.ceil(count / parseInt(limit)),
+          page: parseInt(page, 10),
+          limit: parseInt(limit, 10),
+          pages: Math.ceil(count / parseInt(limit, 10)),
         },
       });
     } catch (error) {
@@ -267,18 +342,35 @@ class InterviewController {
       let qrPayload = null;
       if (role === 'PARTICIPANT' && interview.require_mobile_pairing) {
         const tokenResult = await tokenService.generatePairingToken(session.id, userId, 'MOBILE');
-        qrPayload = qrGenerator.generatePairingPayload({
-          interviewId: interview.id,
-          sessionId: session.id,
-          token: tokenResult.token,
-          socketUrl: process.env.SOCKET_URL || 'http://localhost:3001',
-        });
+        qrPayload = {
+          ...qrGenerator.generatePairingPayload({
+            interviewId: interview.id,
+            sessionId: session.id,
+            token: tokenResult.token,
+            socketUrl: process.env.SOCKET_URL || 'http://localhost:3001',
+          }),
+          expiresAt: tokenResult.expiresAt,
+        };
       }
 
       // Get current device status
       const devices = await tokenService.getSessionDevices(session.id);
+      const interviewPayload = {
+        id: interview.id,
+        title: interview.title,
+        description: interview.description,
+        type: interview.type,
+        meetingType: interview.meeting_type,
+        meetingLink: interview.meeting_link,
+        recordInterview: interview.record_interview,
+        requireMobilePairing: interview.require_mobile_pairing,
+        status: interview.status,
+        scheduledAt: interview.scheduled_at,
+        durationMinutes: interview.duration_minutes,
+      };
 
       res.json({
+        interview: interviewPayload,
         session,
         device,
         qrPayload,
@@ -347,6 +439,59 @@ class InterviewController {
     } catch (error) {
       logger.error('Error pairing mobile', { error: error.message });
       res.status(500).json({ error: 'Failed to pair mobile device' });
+    }
+  }
+
+  /**
+   * POST /interviews/pair-validate
+   * Public (no auth) — the phone validates its pairing QR token and receives a
+   * short-lived socket token so it can join the WebRTC room as a camera device.
+   */
+  async validatePairing(req, res) {
+    try {
+      const { token } = req.body;
+      const result = await tokenService.validatePairingToken(token);
+      if (!result.success) {
+        return res.status(result.status || 400).json({ error: result.message });
+      }
+
+      const device = result.device;
+      const session = await InterviewSession.findByPk(device.session_id);
+      if (!session || session.status === 'ENDED') {
+        return res.status(400).json({ error: 'Session is no longer active' });
+      }
+
+      const interview = await Interview.findByPk(session.interview_id, {
+        include: [
+          { model: User, as: 'candidate', attributes: ['id', 'name'] },
+          { model: User, as: 'interviewer', attributes: ['id', 'name'] },
+        ],
+      });
+      if (!interview) return res.status(404).json({ error: 'Interview not found' });
+
+      const socketToken = await tokenService.issueSocketToken(device, interview.id);
+      const devices = await tokenService.getSessionDevices(session.id);
+
+      res.json({
+        success: true,
+        interviewId: interview.id,
+        sessionId: session.id,
+        interviewType: interview.type,
+        interviewTitle: interview.title,
+        candidateName: interview.candidate?.name || null,
+        interviewerName: interview.interviewer?.name || null,
+        socketToken,
+        socketUrl: process.env.SOCKET_URL || null,
+        expiresAt: device.token_expires_at,
+        devices: devices.map(d => ({
+          deviceType: d.device_type,
+          status: d.status,
+          connectedAt: d.connected_at,
+        })),
+      });
+    } catch (error) {
+      logger.error('Error validating pairing', { error: error.message });
+      res.status(500).json({ error: 'Failed to validate pairing token' });
     }
   }
 
@@ -663,12 +808,15 @@ class InterviewController {
       if (!session) return res.status(404).json({ error: 'No active session' });
 
       const tokenResult = await tokenService.generatePairingToken(session.id, req.user.id, 'MOBILE');
-      const qrPayload = qrGenerator.generatePairingPayload({
-        interviewId: interview.id,
-        sessionId: session.id,
-        token: tokenResult.token,
-        socketUrl: process.env.SOCKET_URL || 'http://localhost:3001',
-      });
+      const qrPayload = {
+        ...qrGenerator.generatePairingPayload({
+          interviewId: interview.id,
+          sessionId: session.id,
+          token: tokenResult.token,
+          socketUrl: process.env.SOCKET_URL || 'http://localhost:3001',
+        }),
+        expiresAt: tokenResult.expiresAt,
+      };
 
       res.json({ qrPayload });
     } catch (error) {
@@ -681,21 +829,83 @@ class InterviewController {
   }
 
   /**
+   * POST /interviews/upload-chunk
+   * Accepts a MediaRecorder chunk for an interview recording.
+   */
+  async uploadChunk(req, res) {
+    try {
+      const { sessionId, deviceType = 'LAPTOP', chunkIndex } = req.body;
+      if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
+      if (!req.file || !req.file.buffer) {
+        return res.status(400).json({ error: 'Chunk file is required' });
+      }
+
+      const session = await InterviewSession.findByPk(sessionId);
+      if (!session) return res.status(404).json({ error: 'Session not found' });
+
+      // Reuse the active RECORDING row for this session+device, creating one
+      // lazily on the first chunk.
+      let recording = await InterviewRecording.findOne({
+        where: { session_id: sessionId, device_type: deviceType, status: 'RECORDING' },
+      });
+      if (!recording) {
+        recording = await recordingService.startRecording(sessionId, deviceType, req.user.id);
+      }
+
+      const result = await recordingService.uploadChunk(
+        recording.id,
+        req.file.buffer,
+        parseInt(chunkIndex, 10) || 0
+      );
+
+      res.json({ success: true, recordingId: recording.id, ...result });
+    } catch (error) {
+      logger.error('Error uploading recording chunk', { error: error.message });
+      res.status(500).json({ error: 'Failed to upload chunk' });
+    }
+  }
+
+  /**
+   * POST /interviews/finalize-recording
+   * Merges uploaded chunks into the final recording file.
+   */
+  async finalizeRecording(req, res) {
+    try {
+      const { recordingId } = req.body;
+      if (!recordingId) return res.status(400).json({ error: 'recordingId is required' });
+
+      const recording = await recordingService.finalizeRecording(recordingId);
+      res.json({ success: true, recording });
+    } catch (error) {
+      logger.error('Error finalizing recording', { error: error.message });
+      res.status(500).json({ error: 'Failed to finalize recording' });
+    }
+  }
+
+  /**
    * GET /interviews/candidates
    * Returns approved participants eligible for interview scheduling.
+   * Sources from the same User table as Admin → Participants so every
+   * participant with an APPROVED status appears in the candidate dropdown.
    */
   async getCandidates(req, res) {
     try {
-      const apps = await RegistrationApplication.findAll({
-        where: { status: 'APPROVED', userId: { [Op.ne]: null } },
+      const participants = await User.findAll({
+        where: { role: 'PARTICIPANT', status: 'APPROVED' },
+        attributes: ['id', 'name', 'email', 'phone'],
         include: [
-          { model: User, as: 'user', attributes: ['id', 'name', 'email', 'phone'] },
-          { model: Training, as: 'training', attributes: ['id', 'title'], required: false },
+          {
+            model: Enrollment,
+            as: 'enrollments',
+            attributes: [],
+            required: false,
+            include: [{ model: Training, as: 'training', attributes: ['id', 'title'], required: false }],
+          },
         ],
-        order: [['created_at', 'DESC']],
+        order: [['name', 'ASC']],
       });
 
-      const candidateIds = apps.map(a => a.userId).filter(Boolean);
+      const candidateIds = participants.map(p => p.id);
       const scheduledInterviews = await Interview.findAll({
         where: {
           candidate_id: { [Op.in]: candidateIds },
@@ -705,18 +915,19 @@ class InterviewController {
       });
       const busyIds = new Set(scheduledInterviews.map(i => i.candidate_id));
 
-      const candidates = apps
-        .filter(a => a.user)
-        .map(a => ({
-          id: a.user.id,
-          name: a.user.name,
-          email: a.user.email,
-          phone: a.user.phone,
-          applicationId: a.id,
-          applicationNumber: a.applicationNumber,
-          training: a.training ? { id: a.training.id, title: a.training.title } : null,
-          alreadyScheduled: busyIds.has(a.userId),
-        }));
+      const candidates = participants.map(p => {
+        const enrollment = p.enrollments && p.enrollments.find(e => e.training);
+        return {
+          id: p.id,
+          name: p.name,
+          email: p.email,
+          phone: p.phone,
+          applicationId: null,
+          applicationNumber: null,
+          training: enrollment ? { id: enrollment.training.id, title: enrollment.training.title } : null,
+          alreadyScheduled: busyIds.has(p.id),
+        };
+      });
 
       res.json({ candidates });
     } catch (error) {
@@ -818,7 +1029,10 @@ class InterviewController {
    */
   async updateInterview(req, res) {
     try {
-      const interview = await Interview.findByPk(req.params.id);
+      const interviewId = parseInterviewId(req.params.id);
+      if (!interviewId) return res.status(400).json({ error: 'Invalid interview id' });
+
+      const interview = await Interview.findByPk(interviewId);
       if (!interview) return res.status(404).json({ error: 'Interview not found' });
 
       if (req.user.role === 'PARTICIPANT') {
@@ -831,16 +1045,19 @@ class InterviewController {
       const oldDate = interview.scheduled_at;
       const {
         title, description, type, scheduledAt, durationMinutes,
-        interviewerId, meetingType, meetingLink, recordInterview, requireMobilePairing,
+        candidateId, interviewerId, meetingType, meetingLink, recordInterview, requireMobilePairing,
       } = req.body;
 
+      // Status is never updated through the edit endpoint — protects the
+      // SCHEDULED / IN_PROGRESS / COMPLETED / CANCELLED lifecycle. Use PATCH /:id/status instead.
       const updates = {};
       if (title !== undefined) updates.title = title;
       if (description !== undefined) updates.description = description;
       if (type !== undefined) updates.type = type;
       if (scheduledAt !== undefined) updates.scheduled_at = scheduledAt;
-      if (durationMinutes !== undefined) updates.duration_minutes = parseInt(durationMinutes);
-      if (interviewerId !== undefined) updates.interviewer_id = parseInt(interviewerId);
+      if (durationMinutes !== undefined) updates.duration_minutes = parseInt(durationMinutes, 10);
+      if (candidateId !== undefined && candidateId !== '') updates.candidate_id = parseInt(candidateId, 10);
+      if (interviewerId !== undefined && interviewerId !== '') updates.interviewer_id = parseInt(interviewerId, 10);
       if (meetingType !== undefined) updates.meeting_type = meetingType;
       if (meetingLink !== undefined) updates.meeting_link = meetingLink;
       if (recordInterview !== undefined) updates.record_interview = recordInterview;
@@ -848,6 +1065,50 @@ class InterviewController {
 
       if (Object.keys(updates).length === 0) {
         return res.status(400).json({ error: 'No fields to update' });
+      }
+
+      if (updates.type !== undefined && !INTERVIEW_TYPES.includes(updates.type)) {
+        return res.status(400).json({ error: `Interview type must be one of: ${INTERVIEW_TYPES.join(', ')}` });
+      }
+      if (updates.meeting_type !== undefined && !MEETING_TYPES.includes(updates.meeting_type)) {
+        return res.status(400).json({ error: `Meeting type must be one of: ${MEETING_TYPES.join(', ')}` });
+      }
+      if (updates.scheduled_at !== undefined && !isValidDate(updates.scheduled_at)) {
+        return res.status(400).json({ error: 'Invalid date/time provided for the interview' });
+      }
+      if (updates.duration_minutes !== undefined && (!Number.isInteger(updates.duration_minutes) || updates.duration_minutes <= 0 || updates.duration_minutes > 600)) {
+        return res.status(400).json({ error: 'durationMinutes must be a positive number of minutes (max 600)' });
+      }
+
+      // Validate the (possibly new) candidate / interviewer exist and are eligible.
+      const finalCandidateId = updates.candidate_id !== undefined ? updates.candidate_id : interview.candidate_id;
+      const finalInterviewerId = updates.interviewer_id !== undefined ? updates.interviewer_id : interview.interviewer_id;
+      if (updates.candidate_id !== undefined) {
+        const candidate = await User.findByPk(updates.candidate_id);
+        if (!candidate) return res.status(404).json({ error: 'Candidate not found' });
+        if (candidate.role !== 'PARTICIPANT') {
+          return res.status(400).json({ error: 'Selected candidate is not an eligible participant' });
+        }
+      }
+      if (updates.interviewer_id !== undefined) {
+        const interviewer = await User.findByPk(updates.interviewer_id);
+        if (!interviewer) return res.status(404).json({ error: 'Interviewer not found' });
+        if (!['TRAINER', 'ADMIN'].includes(interviewer.role)) {
+          return res.status(400).json({ error: 'Selected interviewer is not an eligible interviewer (Trainer/HR)' });
+        }
+      }
+
+      // Time-conflict check against OTHER interviews using the final values.
+      const finalStart = updates.scheduled_at !== undefined ? new Date(updates.scheduled_at) : new Date(interview.scheduled_at);
+      const finalDur = updates.duration_minutes !== undefined ? updates.duration_minutes : interview.duration_minutes;
+      const finalEnd = new Date(finalStart.getTime() + finalDur * 60 * 1000);
+
+      const conflict = await findSchedulingConflict(finalCandidateId, finalInterviewerId, finalStart, finalEnd, interview.id);
+      if (conflict) {
+        return res.status(409).json({
+          error: 'Time conflict — the candidate or interviewer already has an interview in this window',
+          conflictId: conflict.id,
+        });
       }
 
       await interview.update(updates);
@@ -862,8 +1123,15 @@ class InterviewController {
         await notificationService.notifyRescheduled(interview, oldDate);
       }
 
+      const fresh = await Interview.findByPk(interview.id, {
+        include: [
+          { model: User, as: 'candidate', attributes: ['id', 'name', 'email', 'phone'] },
+          { model: User, as: 'interviewer', attributes: ['id', 'name', 'email', 'phone'] },
+        ],
+      });
+
       logger.info('Interview updated', { interviewId: interview.id, updatedBy: req.user.id });
-      res.json({ interview });
+      res.json({ interview: fresh });
     } catch (error) {
       logger.error('Error updating interview', { error: error.message });
       res.status(500).json({ error: 'Failed to update interview' });
@@ -871,12 +1139,79 @@ class InterviewController {
   }
 
   /**
+   * PATCH /interviews/:id/status
+   * Change the interview status with lifecycle transition validation.
+   * ADMIN can change any interview; TRAINER can change their own assigned interviews.
+   */
+  async updateInterviewStatus(req, res) {
+    try {
+      const interviewId = parseInterviewId(req.params.id);
+      if (!interviewId) return res.status(400).json({ error: 'Invalid interview id' });
+
+      const interview = await Interview.findByPk(interviewId);
+      if (!interview) return res.status(404).json({ error: 'Interview not found' });
+
+      const isAdmin = req.user.role === 'ADMIN';
+      const isAssignedTrainer = req.user.role === 'TRAINER' && interview.interviewer_id === req.user.id;
+      if (!isAdmin && !isAssignedTrainer) {
+        return res.status(403).json({ error: 'Not authorized to change this interview status' });
+      }
+
+      const { status: nextStatus } = req.body;
+      if (!nextStatus || !ALLOWED_STATUSES.includes(nextStatus)) {
+        return res.status(400).json({ error: `Status must be one of: ${ALLOWED_STATUSES.join(', ')}` });
+      }
+
+      const allowedNext = STATUS_TRANSITIONS[interview.status] || [];
+      if (!allowedNext.includes(nextStatus)) {
+        return res.status(400).json({
+          error: `Cannot change interview from ${interview.status} to ${nextStatus}. Allowed transitions: ${allowedNext.length ? allowedNext.join(', ') : 'none'}`,
+        });
+      }
+
+      await interview.update({ status: nextStatus });
+
+      if (nextStatus === 'CANCELLED') {
+        await notificationService.notifyCancelled(interview);
+      }
+
+      const fresh = await Interview.findByPk(interview.id, {
+        include: [
+          { model: User, as: 'candidate', attributes: ['id', 'name', 'email', 'phone'] },
+          { model: User, as: 'interviewer', attributes: ['id', 'name', 'email', 'phone'] },
+          { model: User, as: 'creator', attributes: ['id', 'name'] },
+          { model: InterviewSession, as: 'sessions', attributes: ['id', 'status', 'started_at', 'ended_at'] },
+          { model: InterviewResult, as: 'result', attributes: ['id', 'decision', 'decided_at'] },
+          { model: InterviewFeedback, as: 'feedbacks' },
+        ],
+      });
+
+      logger.info('Interview status changed', { interviewId: interview.id, from: interview.status, to: nextStatus, by: req.user.id });
+      res.json({ interview: fresh });
+    } catch (error) {
+      logger.error('Error changing interview status', { error: error.message });
+      res.status(500).json({ error: 'Failed to change interview status' });
+    }
+  }
+
+  /**
    * DELETE /interviews/:id
-   * Cancel an interview. Only ADMIN can delete. Sends cancellation notification.
+   * Permanently delete an interview. Only ADMIN can delete.
+   * Related rows (sessions, devices, recordings, logs, alerts, feedback,
+   * results, notes) are removed via ON DELETE CASCADE FK constraints.
    */
   async deleteInterview(req, res) {
     try {
-      const interview = await Interview.findByPk(req.params.id);
+      const interviewId = parseInterviewId(req.params.id);
+      if (!interviewId) return res.status(400).json({ error: 'Invalid interview id' });
+
+      logger.info('[deleteInterview] DELETE request received', {
+        interviewId,
+        requestedBy: req.user.id,
+        role: req.user.role,
+      });
+
+      const interview = await Interview.findByPk(interviewId);
       if (!interview) return res.status(404).json({ error: 'Interview not found' });
 
       if (req.user.role !== 'ADMIN') {
@@ -886,13 +1221,45 @@ class InterviewController {
         return res.status(400).json({ error: 'Cannot delete a completed interview' });
       }
 
-      await interview.update({ status: 'CANCELLED' });
-      await notificationService.notifyCancelled(interview);
+      const candidateId = interview.candidate_id;
+      const interviewerId = interview.interviewer_id;
+      const scheduledAt = interview.scheduled_at;
+      const title = interview.title;
 
-      logger.info('Interview cancelled', { interviewId: interview.id, deletedBy: req.user.id });
-      res.json({ success: true, message: 'Interview cancelled successfully' });
+      // Hard-delete: DELETE FROM interviews WHERE id = interviewId.
+      // Related rows (sessions, devices, recordings, logs, alerts, feedback,
+      // results, notes) are removed via ON DELETE CASCADE FK constraints.
+      const affectedRows = await Interview.destroy({ where: { id: interviewId } });
+      logger.info('[deleteInterview] DB destroy result', { interviewId, affectedRows });
+
+      if (affectedRows === 0) {
+        logger.warn('[deleteInterview] No rows affected — interview was not deleted', { interviewId });
+        return res.status(404).json({ error: 'Interview no longer exists' });
+      }
+
+      // Best-effort cancellation notifications — must never fail the delete.
+      try {
+        await notificationService.notifyCancelled(interview);
+      } catch (notifErr) {
+        logger.warn('[deleteInterview] Cancellation notification failed (ignored)', {
+          interviewId,
+          error: notifErr.message,
+        });
+      }
+
+      logger.info('Interview deleted', { interviewId, deletedBy: req.user.id, affectedRows });
+      const response = {
+        success: true,
+        message: 'Interview deleted successfully',
+        deleted: { id: interviewId, title, scheduledAt, candidateId, interviewerId },
+      };
+      logger.info('[deleteInterview] Final response', response);
+      res.json(response);
     } catch (error) {
-      logger.error('Error deleting interview', { error: error.message });
+      logger.error('Error deleting interview', {
+        error: error.message,
+        code: error.original && error.original.code,
+      });
       res.status(500).json({ error: 'Failed to delete interview' });
     }
   }

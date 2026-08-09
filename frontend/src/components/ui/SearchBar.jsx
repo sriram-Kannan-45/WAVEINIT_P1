@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { Search } from 'lucide-react'
-import { colors, typography, radius, transitions } from '../../theme/tokens'
+import { colors, shadows, typography, radius, transitions } from '../../theme/tokens'
 
 export default function SearchBar({ value, onChange, placeholder = 'Search...', icon, style = {}, className = '' }) {
   const [focused, setFocused] = useState(false)

@@ -1,4 +1,4 @@
-import { colors, typography, radius, shadows } from '../../theme/tokens'
+import { colors, typography, radius, shadows, zIndex } from '../../theme/tokens'
 
 export default function Tooltip({ children, content, position = 'top', style = {} }) {
   if (!content) return children

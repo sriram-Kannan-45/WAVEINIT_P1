@@ -62,10 +62,41 @@ function registerInterviewEvents(io, socket) {
         return;
       }
 
+      const deviceType = data.deviceType === 'MOBILE' ? 'MOBILE' : 'LAPTOP';
+
       const { allowed, interview, error } = await validateRoomAccess(socket, interviewId);
       if (!allowed) {
         if (callback) callback({ success: false, error });
         return;
+      }
+
+      // Mobile pairing sockets must carry a PENDING pairing token; consume it
+      // atomically right here so a QR code can only ever pair one socket.
+      if (deviceType === 'MOBILE') {
+        if (!socket.pairingToken) {
+          if (callback) callback({ success: false, error: 'Missing pairing token' });
+          return;
+        }
+        const consume = await tokenService.consumePairingToken(socket.pairingToken, socket.userId);
+        if (!consume.success) {
+          if (callback) callback({ success: false, error: consume.message });
+          return;
+        }
+        await tokenService.markConnected(consume.device.id);
+        await InterviewLog.create({
+          session_id: consume.device.session_id,
+          actor_id: socket.userId,
+          event_type: 'MOBILE_PAIRED',
+          payload_json: { deviceId: consume.device.id },
+        }).catch(() => {});
+
+        // Tell the laptop side that the mobile camera is now connected.
+        socket.to(`interview_${interviewId}`).emit('device-status', {
+          fromUserId: socket.userId,
+          deviceType: 'MOBILE',
+          connected: true,
+          timestamp: new Date().toISOString(),
+        });
       }
 
       // Find or create session
@@ -89,6 +120,7 @@ function registerInterviewEvents(io, socket) {
             userId: socket.userId,
             role: socket.userRole,
             userName: socket.userName,
+            deviceType,
           });
         }
       }
@@ -99,6 +131,7 @@ function registerInterviewEvents(io, socket) {
         userId: socket.userId,
         role: socket.userRole,
         userName: socket.userName,
+        deviceType,
       });
 
       // Store interviewId on socket for cleanup
@@ -113,6 +146,7 @@ function registerInterviewEvents(io, socket) {
             userId: peerInfo.userId,
             role: peerInfo.role,
             userName: peerInfo.userName,
+            deviceType: peerInfo.deviceType || 'LAPTOP',
           });
         }
       }
@@ -122,7 +156,7 @@ function registerInterviewEvents(io, socket) {
         session_id: session.id,
         actor_id: socket.userId,
         event_type: 'SOCKET_JOINED',
-        payload_json: { socketId: socket.id, role: socket.userRole },
+        payload_json: { socketId: socket.id, role: socket.userRole, deviceType },
       }).catch(() => {});
 
       if (callback) callback({
@@ -150,6 +184,62 @@ function registerInterviewEvents(io, socket) {
     if (!interviewId) return;
 
     await handleLeaveRoom(io, socket, interviewId);
+  });
+
+  /**
+   * interview-started: Trainer/Admin announces the interview has officially
+   * started so participants leave the waiting state.
+   */
+  socket.on('interview-started', (data) => {
+    const { interviewId } = data || {};
+    if (!interviewId) return;
+
+    io.to(`interview_${interviewId}`).emit('interview-started', {
+      startedBy: socket.userId,
+      startedByName: socket.userName,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  /**
+   * end-interview: Trainer/Admin ends the interview.
+   * Marks the session ENDED and notifies all peers so they leave the room.
+   */
+  socket.on('end-interview', async (data, callback) => {
+    const { interviewId } = data || {};
+    if (!interviewId) {
+      if (callback) callback({ success: false, error: 'interviewId required' });
+      return;
+    }
+
+    const role = socket.userRole;
+    if (role !== 'TRAINER' && role !== 'ADMIN') {
+      if (callback) callback({ success: false, error: 'Only the interviewer can end the interview' });
+      return;
+    }
+
+    try {
+      const session = await InterviewSession.findOne({
+        where: { interview_id: interviewId, status: { [Op.in]: ['WAITING', 'ACTIVE'] } },
+      });
+      if (session) {
+        session.status = 'ENDED';
+        session.ended_at = new Date();
+        await session.save();
+      }
+
+      // Notify everyone in the room (including the trainer)
+      io.to(`interview_${interviewId}`).emit('interview-ended', {
+        endedBy: socket.userId,
+        endedByName: socket.userName,
+        timestamp: new Date().toISOString(),
+      });
+
+      if (callback) callback({ success: true });
+    } catch (error) {
+      logger.error('Error ending interview', { error: error.message });
+      if (callback) callback({ success: false, error: 'Server error' });
+    }
   });
 
   /**
@@ -347,6 +437,9 @@ async function handleLeaveRoom(io, socket, interviewId) {
   const room = rooms.get(interviewId);
   if (!room) return;
 
+  const peerInfo = room.peers.get(socket.id) || {};
+  const deviceType = peerInfo.deviceType || 'LAPTOP';
+
   room.peers.delete(socket.id);
   socket.leave(`interview_${interviewId}`);
 
@@ -356,6 +449,7 @@ async function handleLeaveRoom(io, socket, interviewId) {
       socketId: socket.id,
       userId: socket.userId,
       userName: socket.userName,
+      deviceType,
     });
   }
 
@@ -365,23 +459,35 @@ async function handleLeaveRoom(io, socket, interviewId) {
       where: { interview_id: interviewId, status: { [Op.in]: ['WAITING', 'ACTIVE'] } },
     });
     if (session) {
+      const where = {
+        session_id: session.id,
+        user_id: socket.userId,
+        status: 'CONNECTED',
+      };
+      if (deviceType) where.device_type = deviceType;
       await InterviewDevice.update(
         { status: 'DISCONNECTED', disconnected_at: new Date() },
-        {
-          where: {
-            session_id: session.id,
-            user_id: socket.userId,
-            status: 'CONNECTED',
-          },
-        }
+        { where }
       );
 
       await InterviewLog.create({
         session_id: session.id,
         actor_id: socket.userId,
         event_type: 'SOCKET_LEFT',
-        payload_json: { socketId: socket.id },
+        payload_json: { socketId: socket.id, deviceType },
       }).catch(() => {});
+
+      // Tell the laptop side when the mobile camera goes away.
+      if (deviceType === 'MOBILE') {
+        for (const [peerSocketId] of room.peers) {
+          io.to(peerSocketId).emit('device-status', {
+            fromUserId: socket.userId,
+            deviceType: 'MOBILE',
+            connected: false,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
     }
   } catch (err) {
     logger.error('Error handling leave room cleanup', { error: err.message });

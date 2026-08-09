@@ -194,11 +194,14 @@ function waitForEvent(socket, eventName, timeoutMs = 4000) {
     body: JSON.stringify({ name: 'Proctor Student', email: pEmail, phone: '2222222222', password: pPassword })
   }).catch(e => fail('Participant registration HTTP call failed', e));
 
-  const pending = await call('GET', '/api/admin/pending-participants', { token: adminToken });
-  const freshStudent = (pending.participants || []).find(p => p.email === pEmail);
-  if (!freshStudent) fail('Approve student', new Error('Student registration failed'));
-  await call('POST', `/api/admin/approve-participant/${freshStudent.id}`, { token: adminToken });
-  ok(`Participant approved (ID: ${freshStudent.id})`);
+  const apps = await call('GET', '/api/registration/applications', {
+    token: adminToken,
+    query: { status: 'PENDING', search: pEmail }
+  });
+  const freshApplication = (apps.applications || []).find(a => a.email === pEmail);
+  if (!freshApplication) fail('Approve student', new Error('Student application not found'));
+  await call('PATCH', `/api/registration/applications/${freshApplication.id}/approve`, { token: adminToken, body: {} });
+  ok(`Participant application approved (ID: ${freshApplication.id})`);
 
   // Log in student
   const studentLogin = await call('POST', '/api/auth/login', {

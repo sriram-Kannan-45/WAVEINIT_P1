@@ -23,10 +23,10 @@ export async function apiClient(endpoint, options = {}) {
   } = options
 
   // Build headers
-  const requestHeaders = {
-    'Content-Type': 'application/json',
-    ...headers,
-  }
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData
+  const requestHeaders = isFormData
+    ? { ...headers }
+    : { 'Content-Type': 'application/json', ...headers }
 
   if (requireAuth) {
     const authHeaders = getAuthHeaders()
@@ -40,7 +40,9 @@ export async function apiClient(endpoint, options = {}) {
     ...rest,
   }
 
-  if (body && typeof body === 'object') {
+  if (body && isFormData) {
+    config.body = body
+  } else if (body && typeof body === 'object') {
     config.body = JSON.stringify(body)
   } else if (body) {
     config.body = body

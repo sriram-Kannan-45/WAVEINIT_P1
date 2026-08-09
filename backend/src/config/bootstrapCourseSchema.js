@@ -91,12 +91,39 @@ async function bootstrapCourseSchema(logger = console) {
       'Manual reconciliation required — leaving as-is.'
     );
     await ensureAiQuizColumns(logger);
+    await ensureTrainerAdminColumns(logger);
     return { conflict: true };
   }
 
   // Only `training_programs` exists, or neither — sync will handle creation.
   await ensureAiQuizColumns(logger);
+  await ensureTrainerAdminColumns(logger);
   return { noop: true };
+}
+
+async function ensureTrainerAdminColumns(logger = console) {
+  try {
+    if (!(await tableExists('users'))) {
+      logger.info('[course-schema] users table does not exist yet. Skipping column check.');
+      return;
+    }
+
+    const colsToAdd = [
+      { table: 'users', name: 'employee_id', type: 'VARCHAR(100) NULL' },
+      { table: 'users', name: 'department', type: 'VARCHAR(100) NULL' },
+      { table: 'users', name: 'designation', type: 'VARCHAR(100) NULL' }
+    ];
+
+    for (const col of colsToAdd) {
+      const exists = await columnExists(col.table, col.name);
+      if (!exists) {
+        logger.info(`[course-schema] Adding missing column ${col.table}.${col.name}`);
+        await sequelize.query(`ALTER TABLE \`${col.table}\` ADD COLUMN \`${col.name}\` ${col.type}`);
+      }
+    }
+  } catch (err) {
+    logger.error(`[course-schema] Error ensuring trainer columns: ${err.message}`);
+  }
 }
 
 async function ensureAiQuizColumns(logger = console) {

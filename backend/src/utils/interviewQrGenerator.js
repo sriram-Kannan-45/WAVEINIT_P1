@@ -21,7 +21,7 @@ class InterviewQrGenerator {
       ts: Date.now(),
     });
 
-    const shortUrl = `/mobile-join/${token}`;
+    const shortUrl = `/interview/mobile/${token}`;
 
     return { payload, shortUrl };
   }

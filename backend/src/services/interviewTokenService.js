@@ -5,6 +5,7 @@
  */
 
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 const { Op } = require('sequelize');
 const { InterviewDevice } = require('../models');
 const logger = require('../utils/logger');
@@ -36,31 +37,38 @@ class InterviewTokenService {
       });
     }
 
-    // Invalidate any existing PENDING tokens for this session+user+device
-    await InterviewDevice.update(
-      { token_status: 'EXPIRED' },
-      {
-        where: {
-          session_id: sessionId,
-          user_id: userId,
-          device_type: deviceType,
-          token_status: 'PENDING',
-        },
-      }
-    );
-
     const token = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + TOKEN_EXPIRY_MINUTES * 60_000);
 
-    const device = await InterviewDevice.create({
-      session_id: sessionId,
-      user_id: userId,
-      device_type: deviceType,
-      pairing_token: token,
-      token_status: 'PENDING',
-      token_expires_at: expiresAt,
-      status: 'PAIRED',
+    // Reuse an existing PENDING device row for this session+user+device so
+    // refreshes don't grow the table unboundedly (the QR refresh path).
+    const existing = await InterviewDevice.findOne({
+      where: {
+        session_id: sessionId,
+        user_id: userId,
+        device_type: deviceType,
+        token_status: 'PENDING',
+      },
     });
+
+    const device = existing
+      ? await existing.update({
+          pairing_token: token,
+          token_status: 'PENDING',
+          token_expires_at: expiresAt,
+          status: 'PAIRED',
+          connected_at: null,
+          disconnected_at: null,
+        })
+      : await InterviewDevice.create({
+          session_id: sessionId,
+          user_id: userId,
+          device_type: deviceType,
+          pairing_token: token,
+          token_status: 'PENDING',
+          token_expires_at: expiresAt,
+          status: 'PAIRED',
+        });
 
     logger.info('Pairing token generated', { sessionId, userId, deviceType, expiresAt });
     return { token, expiresAt, deviceId: device.id };
@@ -117,6 +125,62 @@ class InterviewTokenService {
 
     logger.info('Pairing token consumed', { deviceId: device.id, sessionId: device.session_id });
     return { success: true, device };
+  }
+
+  /**
+   * Validate a pairing token is still PENDING and not expired.
+   * Non-destructive — used to authorize a mobile socket connection before the
+   * token is consumed atomically on join-room.
+   */
+  async validatePairingToken(token) {
+    if (!token) {
+      return { success: false, status: 400, message: 'Pairing token is required' };
+    }
+
+    const device = await InterviewDevice.findOne({ where: { pairing_token: token } });
+    if (!device) {
+      return { success: false, status: 404, message: 'Invalid pairing token' };
+    }
+
+    if (device.token_expires_at && new Date(device.token_expires_at) < new Date()) {
+      await device.update({ token_status: 'EXPIRED' });
+      return { success: false, status: 410, message: 'Pairing code has expired. Please scan a new QR code.' };
+    }
+
+    if (device.token_status !== 'PENDING') {
+      if (device.token_status === 'CONSUMED') {
+        return { success: false, status: 410, message: 'This QR code has already been used. Please scan a new one.' };
+      }
+      return { success: false, status: 410, message: 'This QR code is no longer valid. Please scan a new one.' };
+    }
+
+    return { success: true, device };
+  }
+
+  /**
+   * Issue a short-lived JWT that lets a mobile device open a Socket.IO
+   * connection as its paired interview device. The token embeds the one-time
+   * pairing token, which the socket middleware re-validates on connect and
+   * which is consumed when the device joins the room.
+   */
+  async issueSocketToken(device, interviewId) {
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      throw new Error('JWT_SECRET not configured');
+    }
+
+    return jwt.sign(
+      {
+        id: device.user_id,
+        role: 'PARTICIPANT',
+        deviceType: 'MOBILE',
+        pairingToken: device.pairing_token,
+        sessionId: device.session_id,
+        interviewId,
+      },
+      secret,
+      { expiresIn: '15m' }
+    );
   }
 
   /**
