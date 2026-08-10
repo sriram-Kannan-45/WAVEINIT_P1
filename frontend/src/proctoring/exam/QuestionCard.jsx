@@ -15,7 +15,6 @@ export default function QuestionCard({
   onNext,
   autosaveSeconds = 8,
 }) {
-  if (!question) return null;
   const isMCQ = question.questionType === 'MCQ';
   const isTrueFalse = question.questionType === 'TRUE_FALSE';
   const isFillBlank = question.questionType === 'FILL_BLANK';
@@ -40,7 +39,9 @@ export default function QuestionCard({
     if (question?.questionType !== 'MATCHING') return [];
     const uniqueRights = [...new Set(pairsList.map(p => p.right).filter(Boolean))];
     return uniqueRights.sort();
-  }, [question?.id, question?.questionType, pairsList]);
+  }, [question?.questionType, pairsList]);
+
+  if (!question) return null;
   const progress = total > 0 ? ((index + 1) / total) * 100 : 0;
   const atStart = index === 0;
   const atEnd = index >= total - 1;

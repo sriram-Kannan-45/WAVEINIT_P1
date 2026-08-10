@@ -566,7 +566,17 @@ function AppRoutes({ user, onLogin, onLogout }) {
         path="/interview/:id/room"
         element={
           user ? (
-            <DashboardWrapper component={InterviewRoom} user={user} onLogout={onLogout} />
+            <InterviewRoom user={user} />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+      <Route
+        path="/interview/:id/join"
+        element={
+          user ? (
+            <InterviewRoom user={user} />
           ) : (
             <Navigate to="/login" replace />
           )
@@ -584,6 +594,10 @@ function AppRoutes({ user, onLogin, onLogout }) {
       />
       <Route
         path="/mobile-join/:token"
+        element={<MobileJoin />}
+      />
+      <Route
+        path="/interview/mobile/:token"
         element={<MobileJoin />}
       />
 

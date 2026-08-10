@@ -17,8 +17,8 @@ const getDiscussionPosts = async (req, res) => {
       ],
       order: [
         ['isPinned', 'DESC'],
-        ['createdAt', 'DESC'],
-        [{ model: DiscussionPost, as: 'replies' }, 'createdAt', 'ASC']
+        ['created_at', 'DESC'],
+        [{ model: DiscussionPost, as: 'replies' }, 'created_at', 'ASC']
       ]
     });
 

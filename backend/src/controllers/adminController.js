@@ -376,7 +376,13 @@ const deleteTrainer = async (req, res) => {
   console.log('[deleteTrainer] Incoming trainer id:', id);
 
   const { sequelize } = require('../config/db');
-  const t = await sequelize.transaction();
+  let t;
+  try {
+    t = await sequelize.transaction();
+  } catch (err) {
+    console.error('[deleteTrainer] Transaction error:', err.message);
+    return res.status(500).json({ error: 'Server error deleting trainer' });
+  }
 
   try {
     const trainer = await User.findOne({ 
@@ -753,7 +759,13 @@ const sendReminders = async (req, res) => {
 const deleteParticipant = async (req, res) => {
   const { id } = req.params;
   const { sequelize } = require('../config/db');
-  const t = await sequelize.transaction();
+  let t;
+  try {
+    t = await sequelize.transaction();
+  } catch (err) {
+    console.error('Delete participant transaction error:', err.message);
+    return res.status(500).json({ error: 'Server error deleting participant' });
+  }
 
   try {
     const participant = await User.findOne({ where: { id, role: 'PARTICIPANT' }, transaction: t });
@@ -989,9 +1001,9 @@ const getPendingParticipants = async (req, res) => {
       email: p.email,
       phone: p.phone,
       username: p.username,
-      appliedAt: p.createdAt,
-      created_at: p.createdAt,
-      createdAt: p.createdAt
+      appliedAt: p.created_at,
+      created_at: p.created_at,
+      createdAt: p.created_at
     }));
 
     res.json({ participants: formattedParticipants, total: formattedParticipants.length });

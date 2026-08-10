@@ -230,7 +230,6 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
     // fullscreenchange listener below is forgiving — it never punishes the
     // user for the initial state, only for EXITING after they're in.
     Promise.resolve(fsApi.request()).catch(() => { /* user gesture missing */ })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   /* ── Hide LMS chrome (sidebar + top header) while exam is mounted ───── */

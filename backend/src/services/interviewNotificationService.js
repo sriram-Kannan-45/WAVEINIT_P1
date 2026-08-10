@@ -115,7 +115,7 @@ class InterviewNotificationService {
           title,
           message,
           data,
-          createdAt: notification.createdAt,
+          createdAt: notification.created_at,
         });
       } catch (_) {
         // Socket emission failed — notification is still in DB

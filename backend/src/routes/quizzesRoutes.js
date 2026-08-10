@@ -1055,7 +1055,7 @@ router.get('/:id/participants', roleMiddleware('TRAINER', 'ADMIN'), async (req, 
 
     const attemptByUser = {};
     attempts.forEach(a => {
-      if (!attemptByUser[a.participantId] || new Date(a.createdAt) > new Date(attemptByUser[a.participantId].createdAt)) {
+      if (!attemptByUser[a.participantId] || new Date(a.created_at) > new Date(attemptByUser[a.participantId].created_at)) {
         attemptByUser[a.participantId] = a;
       }
     });
@@ -1461,7 +1461,7 @@ router.post('/:quizId/attempts/:attemptId/submit', async (req, res) => {
       console.log(`[submit] Attempt #${attemptId} not found. Attempting recovery for participant #${participantId}, quiz #${quizId}`);
       attempt = await QuizAttempt.findOne({
         where: { quizId, participantId, status: 'IN_PROGRESS' },
-        order: [['createdAt', 'DESC']]
+        order: [['created_at', 'DESC']]
       });
       if (!attempt) {
         console.log(`[submit] Recovery failed. No IN_PROGRESS attempt found for participant #${participantId}, quiz #${quizId}`);

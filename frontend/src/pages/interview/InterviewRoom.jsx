@@ -45,7 +45,7 @@ function FullScreenLoader({ message = 'Loading interview...' }) {
   return (
     <InterviewShell>
       <div className="bg-white/5 border border-white/10 rounded-2xl p-10 text-center">
-        <div className="w-10 h-10 mx-auto mb-4 border-3 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+        <div className="w-10 h-10 mx-auto mb-4 border-4 border-indigo-400 border-t-transparent rounded-full animate-spin" />
         <p className="text-slate-200 text-sm">{message}</p>
       </div>
     </InterviewShell>
@@ -291,7 +291,10 @@ function InterviewRoomInner({ user }) {
     const isMobilePeer = data.deviceType === 'MOBILE'
     if (isMobilePeer) {
       // Only the interviewer receives the participant's mobile camera feed.
-      if (isInterviewer) createOffer(data.socketId)
+      if (isInterviewer) {
+        createOffer(data.socketId)
+        if (!started) attemptStart()
+      }
     } else {
       createOffer(data.socketId)
       if (isInterviewer && !started) attemptStart()

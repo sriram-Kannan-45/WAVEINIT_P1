@@ -123,7 +123,7 @@ class ActivityService {
 
       const { rows, count } = await ActivityLog.findAndCountAll({
         where,
-        order: [['createdAt', 'DESC']],
+        order: [['created_at', 'DESC']],
         limit,
         offset,
       });
@@ -200,7 +200,7 @@ class ActivityService {
     try {
       const { rows, count } = await ActivityLog.findAndCountAll({
         where: { userId },
-        order: [['createdAt', 'DESC']],
+        order: [['created_at', 'DESC']],
         limit,
         offset,
       });
@@ -226,7 +226,7 @@ class ActivityService {
     try {
       const activities = await ActivityLog.findAll({
         where: { entityId: trainingId, entityType: 'Training' },
-        order: [['createdAt', 'DESC']],
+        order: [['created_at', 'DESC']],
         limit,
       });
 
@@ -251,7 +251,7 @@ class ActivityService {
 
       const count = await ActivityLog.destroy({
         where: {
-          createdAt: { [require('sequelize').Op.lt]: dateLimit },
+          created_at: { [require('sequelize').Op.lt]: dateLimit },
         },
       });
 
@@ -284,7 +284,7 @@ class ActivityService {
           [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
         ],
         where: {
-          createdAt: { [Op.gte]: dateLimit },
+          created_at: { [Op.gte]: dateLimit },
         },
         group: ['action'],
         raw: true,

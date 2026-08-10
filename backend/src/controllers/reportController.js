@@ -226,7 +226,7 @@ const getTrainerReport = async (req, res) => {
           }
         }
       ],
-      order: [['createdAt', 'DESC']],
+      order: [['created_at', 'DESC']],
       limit: 100
     });
 
@@ -254,7 +254,7 @@ const getTrainerReport = async (req, res) => {
       where: {
         status: ['REVIEWED', 'PUBLISHED']
       },
-      order: [['updatedAt', 'DESC']],
+      order: [['updated_at', 'DESC']],
       limit: 100
     });
 
@@ -282,7 +282,7 @@ const getTrainerReport = async (req, res) => {
       where: {
         status: 'SUBMITTED'
       },
-      order: [['createdAt', 'ASC']]
+      order: [['created_at', 'ASC']]
     });
 
     // 5. Average Completion
@@ -298,7 +298,7 @@ const getTrainerReport = async (req, res) => {
           participantName: qs.participant?.name || 'Unknown',
           quizTitle: qs.quiz?.title || 'Quiz',
           score: Number(Number(qs.percentage).toFixed(1)),
-          date: qs.createdAt
+          date: qs.created_at
         })),
         assessmentScores: assessmentScores.map(as => ({
           participantName: as.participant?.name || 'Unknown',
@@ -306,14 +306,14 @@ const getTrainerReport = async (req, res) => {
           score: as.score,
           maxScore: as.assessment?.maxScore || 100,
           status: as.status,
-          date: as.updatedAt
+          date: as.updated_at
         })),
         pendingReviews: pendingReviews.map(pr => ({
           submissionId: pr.id,
           participantName: pr.participant?.name || 'Unknown',
           assessmentTitle: pr.assessment?.title || 'Assessment',
           maxScore: pr.assessment?.maxScore || 100,
-          date: pr.createdAt
+          date: pr.created_at
         })),
         averageCompletion: Number(Number(avgCompletion).toFixed(1))
       }
@@ -406,7 +406,7 @@ const getParticipantReport = async (req, res) => {
       include: [
         { model: AIQuiz, as: 'quiz', attributes: ['id', 'title'] }
       ],
-      order: [['createdAt', 'DESC']]
+      order: [['created_at', 'DESC']]
     });
 
     const quizHistory = await Promise.all(quizResults.map(async qr => {
@@ -422,7 +422,7 @@ const getParticipantReport = async (req, res) => {
         quizTitle: qr.quiz?.title || 'Quiz',
         score: isPublished ? Number(Number(qr.percentage).toFixed(1)) : null,
         isPublished,
-        date: qr.createdAt
+        date: qr.created_at
       };
     }));
 
@@ -432,7 +432,7 @@ const getParticipantReport = async (req, res) => {
       include: [
         { model: LessonAssessment, as: 'assessment', attributes: ['id', 'title', 'maxScore'] }
       ],
-      order: [['createdAt', 'DESC']]
+      order: [['created_at', 'DESC']]
     });
 
     res.json({
@@ -451,7 +451,7 @@ const getParticipantReport = async (req, res) => {
           maxScore: ah.assessment?.maxScore || 100,
           status: ah.status,
           feedback: ah.status === 'PUBLISHED' ? ah.feedback : null,
-          date: ah.updatedAt
+          date: ah.updated_at
         }))
       }
     });

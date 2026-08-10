@@ -34,7 +34,7 @@ class NotificationService {
           message: notification.message,
           type: notification.type,
           isRead: notification.isRead,
-          createdAt: notification.createdAt,
+          createdAt: notification.created_at,
           actionUrl: notification.actionUrl,
         });
 
@@ -44,7 +44,7 @@ class NotificationService {
             id: notification.id,
             message: notification.message,
             type: notification.type,
-            createdAt: notification.createdAt,
+            createdAt: notification.created_at,
           });
         }
       }
@@ -97,7 +97,7 @@ class NotificationService {
     try {
       const notifications = await Notification.findAll({
         where: { userId, isRead: false },
-        order: [['createdAt', 'DESC']],
+        order: [['created_at', 'DESC']],
         limit: 20,
       });
       return notifications;
@@ -118,7 +118,7 @@ class NotificationService {
     try {
       const { rows, count } = await Notification.findAndCountAll({
         where: { userId },
-        order: [['createdAt', 'DESC']],
+        order: [['created_at', 'DESC']],
         limit,
         offset,
       });

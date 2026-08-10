@@ -86,7 +86,7 @@ class AnalyticsService {
           [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
         ],
         where: {
-          createdAt: {
+          enrolled_at: {
             [Op.between]: [dateRange.start, dateRange.end],
           },
         },
@@ -183,7 +183,7 @@ class AnalyticsService {
 
       const recentSignups = await User.count({
         where: {
-          createdAt: {
+          created_at: {
             [Op.between]: [dateRange.start, dateRange.end],
           },
         },
@@ -241,7 +241,7 @@ class AnalyticsService {
 
       const newEnrollments = await Enrollment.count({
         where: {
-          createdAt: {
+          enrolled_at: {
             [Op.between]: [dateRange.start, dateRange.end],
           },
         },
@@ -311,7 +311,7 @@ class AnalyticsService {
   static async getRecentActivities(limit = 10) {
     try {
       const activities = await ActivityLog.findAll({
-        order: [['createdAt', 'DESC']],
+        order: [['created_at', 'DESC']],
         limit,
         raw: true,
       });

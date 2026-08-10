@@ -163,8 +163,8 @@ async function listMyCourses(req, res) {
       lessonCount:   lc[String(c.id)] || 0,
       quizCount:     qc[String(c.id)] || 0,
       enrolledCount: ec[String(c.id)] || 0,
-      createdAt: c.createdAt,
-      updatedAt: c.updatedAt,
+      createdAt: c.created_at,
+      updatedAt: c.updated_at,
     }));
     res.json({ success: true, courses: out });
   } catch (e) {
@@ -246,8 +246,8 @@ async function getCourseDetail(req, res) {
         lessonCount,
         quizCount,
         enrolledCount,
-        createdAt: course.createdAt,
-        updatedAt: course.updatedAt,
+        createdAt: course.created_at,
+        updatedAt: course.updated_at,
       },
     });
   } catch (e) {
@@ -335,7 +335,7 @@ async function listLessons(req, res) {
         orderIndex: l.orderIndex,
         materialCounts: tally,
         hasAssessment: (l.assessments || []).length > 0,
-        createdAt: l.createdAt,
+        createdAt: l.created_at,
       };
     });
     res.json({ success: true, lessons: out });
@@ -689,7 +689,7 @@ async function listCourseQuizzes(req, res) {
       status: q.status,
       resultStatus: q.resultStatus,
       isMandatory: q.isMandatory,
-      createdAt: q.createdAt,
+      createdAt: q.created_at,
     }));
     res.json({ success: true, quizzes: out });
   } catch (e) {

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import AssessmentConsentGate from '../components/ai-quizzes/AssessmentConsentGate'
-import { API_BASE } from '../api/api'
+import { API_BASE, BACKEND_ORIGIN } from '../api/api'
 import { useToast } from '../components/Toast'
 import { ProctorProvider, useProctor } from '../proctoring/ProctorContext'
 import useDeviceFingerprint from '../proctoring/hooks/useDeviceFingerprint'
@@ -15,7 +15,7 @@ import { io as socketIO } from 'socket.io-client'
 const STORAGE_PREFIX = 'coding_attempt_'
 const AUTO_SAVE_INTERVAL = 10000
 const SERVER_SAVE_INTERVAL = 30000
-const WS_URL = import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:3001'
+const WS_URL = BACKEND_ORIGIN
 
 const authHeaders = (token) => ({
   'Content-Type': 'application/json',

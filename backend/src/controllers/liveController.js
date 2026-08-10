@@ -42,7 +42,7 @@ const getTrainerSessions = async (req, res) => {
     const sessions = await LiveSession.findAll({
       where: { trainerId: req.user.id },
       include: [{ model: Training, as: 'training', attributes: ['title'] }],
-      order: [['createdAt', 'DESC']]
+      order: [['created_at', 'DESC']]
     });
 
     res.status(200).json({ success: true, data: sessions });
@@ -61,7 +61,7 @@ const getParticipantSessions = async (req, res) => {
         { model: User, as: 'trainer', attributes: ['name'] },
         { model: Training, as: 'training', attributes: ['title'] }
       ],
-      order: [['createdAt', 'DESC']]
+      order: [['created_at', 'DESC']]
     });
 
     res.status(200).json({ success: true, data: sessions });

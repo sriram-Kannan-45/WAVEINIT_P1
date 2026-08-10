@@ -89,7 +89,6 @@ export default function ScheduleInterview({ user }) {
       }
     }
     load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingId])
 
   const handleChange = (field, value) => setForm(f => ({ ...f, [field]: value }))

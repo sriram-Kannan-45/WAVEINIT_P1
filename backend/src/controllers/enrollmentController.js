@@ -1,4 +1,4 @@
-const { Enrollment, Training, User, Feedback, Notification, Course } = require('../models');
+const { Enrollment, Training, User, Feedback, Notification, Course, TrainingTrainerAssignment } = require('../models');
 const ActivityService = require('../services/activityService');
 
 const enrollInTraining = async (req, res) => {
@@ -38,9 +38,18 @@ const enrollInTraining = async (req, res) => {
     // Find corresponding Course for the training (or create if missing)
     let course = await Course.findOne({ where: { trainingProgramId: trainingId } });
     if (!course) {
+      let trainerId = training.trainerId;
+      if (!trainerId) {
+        const assignment = await TrainingTrainerAssignment.findOne({ where: { trainingId } });
+        trainerId = assignment ? assignment.trainerId : null;
+      }
+      if (!trainerId) {
+        const anyTrainer = await User.findOne({ where: { role: 'TRAINER' }, order: [['id', 'ASC']] });
+        trainerId = anyTrainer ? anyTrainer.id : 0;
+      }
       course = await Course.create({
         trainingProgramId: trainingId,
-        trainerId: training.trainerId || 0,
+        trainerId,
         title: training.title,
         description: training.description || null,
         status: 'PUBLISHED'

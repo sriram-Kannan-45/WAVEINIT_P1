@@ -7,7 +7,7 @@ import {
   ClipboardCheck, Sparkles, RefreshCw, Clock, GraduationCap, BadgeCheck,
   ChevronRight, ChevronLeft, Upload, X, HelpCircle, Save, Inbox
 } from 'lucide-react'
-import { API } from '../api/api'
+import { API, API_BASE } from '../api/api'
 
 const ease = [0.22, 1, 0.36, 1]
 
@@ -100,10 +100,6 @@ function RegistrationPage() {
     trainingId: '', batch: '', agreeTerms: false,
   })
 
-  const API_BASE = import.meta.env.VITE_API_URL
-    ? import.meta.env.VITE_API_URL.replace(/\/api$/, '')
-    : 'http://localhost:3001'
-
   useEffect(() => { fetchTrainings() }, [])
 
   useEffect(() => {
@@ -113,7 +109,7 @@ function RegistrationPage() {
 
   const fetchTrainings = async () => {
     try {
-      const r = await fetch(`${API_BASE}/api/trainings`)
+      const r = await fetch(`${API_BASE}/trainings`)
       const d = await r.json()
       if (r.ok) {
         const list = (d.trainings || d || []).filter(t => t.status !== 'DELETED')
