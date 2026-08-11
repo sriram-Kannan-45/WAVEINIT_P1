@@ -38,6 +38,8 @@ export const interviewService = {
 
   submitResult: (id, data) => api.post(`${INTERVIEW_BASE}/${id}/result`, data),
 
+  publishResult: (id) => api.post(`${INTERVIEW_BASE}/${id}/publish-result`),
+
   getStatus: (id) => api.get(`${INTERVIEW_BASE}/${id}/status`),
 
   getRecordings: (id) => api.get(`${INTERVIEW_BASE}/${id}/recordings`),

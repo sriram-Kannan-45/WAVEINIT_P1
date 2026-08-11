@@ -2,8 +2,10 @@
  * DeviceCheckScreen
  * Step 2 of the interview room flow. Runs a readiness checklist (secure
  * context, browser media support, camera + microphone) with a live preview.
+ * Now includes device selection dropdowns for camera and microphone.
  * The parent owns media acquisition; this screen renders its state.
  */
+import { useEffect } from 'react'
 import InterviewShell from './InterviewShell'
 
 function CheckItem({ label, detail, state }) {
@@ -23,6 +25,32 @@ function CheckItem({ label, detail, state }) {
   )
 }
 
+function DeviceSelector({ label, devices, selectedDevice, onDeviceChange, disabled }) {
+  return (
+    <div className="space-y-2">
+      <label className="block text-xs font-semibold text-surface-700 uppercase tracking-wide">
+        {label}
+      </label>
+      <select
+        value={selectedDevice || ''}
+        onChange={(e) => onDeviceChange(e.target.value)}
+        disabled={disabled || devices.length === 0}
+        className="w-full px-3 py-2 bg-white border border-surface-300 rounded-lg text-sm text-surface-900 focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {devices.length === 0 ? (
+          <option value="">No devices found</option>
+        ) : (
+          devices.map((device) => (
+            <option key={device.deviceId} value={device.deviceId}>
+              {device.label || `${label} ${device.deviceId.slice(0, 8)}...`}
+            </option>
+          ))
+        )}
+      </select>
+    </div>
+  )
+}
+
 export default function DeviceCheckScreen({
   mediaState,
   mediaError,
@@ -33,9 +61,23 @@ export default function DeviceCheckScreen({
   onContinue,
   onBack,
   isBusy,
+  // New device selection props
+  devices = { cameras: [], microphones: [] },
+  selectedCamera,
+  selectedMicrophone,
+  onCameraChange,
+  onMicrophoneChange,
+  onEnumerateDevices,
 }) {
   const mediaReady = mediaState === 'ready'
   const mediaFailed = mediaState === 'error'
+
+  // Enumerate devices on mount
+  useEffect(() => {
+    if (onEnumerateDevices && devices.cameras.length === 0 && devices.microphones.length === 0) {
+      onEnumerateDevices()
+    }
+  }, [onEnumerateDevices, devices])
 
   const checks = [
     {
@@ -78,19 +120,49 @@ export default function DeviceCheckScreen({
             Device Check
           </h1>
           <p className="text-surface-500 text-sm">
-            We need your camera and microphone for the interview. Nothing is shared until you continue.
+            We need your camera and microphone for the interview. Select your preferred devices below.
           </p>
         </div>
 
         <div className="px-8 py-6 grid md:grid-cols-2 gap-6">
-          {/* Checklist */}
-          <div className="bg-surface-50 rounded-xl px-5 py-2 border border-surface-200 self-start">
-            {checks.map((c) => (
-              <CheckItem key={c.label} {...c} />
-            ))}
+          {/* Left column - Checklist and Device Selection */}
+          <div className="space-y-4">
+            {/* Checklist */}
+            <div className="bg-surface-50 rounded-xl px-5 py-2 border border-surface-200">
+              {checks.map((c) => (
+                <CheckItem key={c.label} {...c} />
+              ))}
+            </div>
+
+            {/* Device Selection */}
+            <div className="bg-surface-50 rounded-xl p-4 border border-surface-200 space-y-4">
+              <h3 className="text-sm font-semibold text-surface-900">Device Selection</h3>
+              
+              <DeviceSelector
+                label="Camera"
+                devices={devices.cameras}
+                selectedDevice={selectedCamera}
+                onDeviceChange={onCameraChange}
+                disabled={mediaState === 'requesting'}
+              />
+              
+              <DeviceSelector
+                label="Microphone"
+                devices={devices.microphones}
+                selectedDevice={selectedMicrophone}
+                onDeviceChange={onMicrophoneChange}
+                disabled={mediaState === 'requesting'}
+              />
+              
+              {(devices.cameras.length === 0 || devices.microphones.length === 0) && (
+                <p className="text-xs text-amber-600 bg-amber-50 p-2 rounded border border-amber-200">
+                  📋 Device labels appear after granting camera/microphone permission
+                </p>
+              )}
+            </div>
           </div>
 
-          {/* Preview */}
+          {/* Right column - Preview */}
           <div>
             <div className="relative rounded-2xl overflow-hidden bg-slate-900 border border-surface-200 shadow-card aspect-video">
               <video

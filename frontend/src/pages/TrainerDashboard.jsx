@@ -5,6 +5,7 @@ import {
   Calendar, Users, Star, FileText, CheckCircle, Clock, MessageSquare,
   TrendingUp, BookOpen, Award, ArrowRight, Activity, Video, Plus, Code, Layers, Sparkles, Coffee
 } from 'lucide-react'
+import interviewService from '../services/interviewService'
 import { LineAreaChart } from '../components/ui/ChartWrappers'
 import NotesSection from '../components/trainer/notes/NotesSection'
 import ParticipantProfileView from '../components/shared/ParticipantProfileView'
@@ -44,6 +45,7 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
   const [replyText, setReplyText] = useState('')
   const [viewingParticipant, setViewingParticipant] = useState(null)
   const [trainerReport, setTrainerReport] = useState(null)
+  const [upcomingInterviews, setUpcomingInterviews] = useState([])
 
   const auth = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${user.token}` })
 
@@ -53,6 +55,13 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
       const d = await r.json()
       if (r.ok && d.success) setTrainerReport(d.data)
     } catch (e) { console.error('fetchTrainerReport error:', e.message) }
+  }
+
+  const fetchInterviews = async () => {
+    try {
+      const res = await interviewService.list({ status: 'SCHEDULED', limit: 3 })
+      setUpcomingInterviews(res?.interviews || [])
+    } catch (e) { console.error('fetchInterviews error:', e.message) }
   }
 
   const handleRegenerateCertificate = async () => {
@@ -65,7 +74,7 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
     } catch (e) { showError(e.message) }
   }
 
-  useEffect(() => { fetchTrainings(); fetchFeedbacks() }, [])
+  useEffect(() => { fetchTrainings(); fetchFeedbacks(); fetchInterviews() }, [])
   useEffect(() => { if (tab === 'reports') fetchTrainerReport() }, [tab])
 
   const fetchTrainings = async () => {
@@ -315,6 +324,41 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
           {/* Right Column */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             
+            {/* Upcoming Interviews */}
+            <motion.div variants={item} className="wl-dash-card">
+              <div className="wl-dash-card-header">
+                <h3 className="wl-dash-card-title">Upcoming Interviews</h3>
+                <button className="wl-dash-card-link" onClick={() => navigate('/interviews')}>View All</button>
+              </div>
+              <div className="wl-dash-card-body" style={{ padding: '8px 16px 16px' }}>
+                {upcomingInterviews.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '16px 0', color: '#9ca3af', fontSize: 13 }}>
+                    No upcoming interviews assigned
+                  </div>
+                ) : (
+                  upcomingInterviews.map((iv) => {
+                    const d = new Date(iv.scheduled_at)
+                    const month = d.toLocaleString('en-US', { month: 'short' }).toUpperCase()
+                    const date = d.getDate()
+                    const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+                    return (
+                      <div key={iv.id} className="wl-session-card" style={{ cursor: 'pointer' }} onClick={() => navigate(`/interview/${iv.id}/room`)}>
+                        <div className="wl-session-date" style={{ background: '#f0fdf4', color: '#16a34a' }}>
+                          <span className="wl-session-date-month">{month}</span>
+                          <span className="wl-session-date-day">{date}</span>
+                        </div>
+                        <div className="wl-session-info">
+                          <div className="wl-session-title">{iv.title || `${iv.type || 'Technical'} Interview`}</div>
+                          <div className="wl-session-time">{time} · Candidate: {iv.candidate?.name || 'Candidate'}</div>
+                        </div>
+                        <span className="wl-session-badge" style={{ background: '#16a34a', color: '#fff' }}>Start</span>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            </motion.div>
+
             {/* Upcoming Sessions */}
             <motion.div variants={item} className="wl-dash-card">
               <div className="wl-dash-card-header">

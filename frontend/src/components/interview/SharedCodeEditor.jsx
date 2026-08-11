@@ -1,6 +1,7 @@
 /**
  * SharedCodeEditor Component
  * Collaborative code editor using Monaco Editor with real-time sync via Socket.IO.
+ * Dark theme integrated with interview UI.
  */
 import { useState, useCallback, useRef, useEffect } from 'react'
 import Editor from '@monaco-editor/react'
@@ -94,14 +95,19 @@ export default function SharedCodeEditor({
   }, [])
 
   return (
-    <div className={`flex flex-col bg-gray-900 rounded-2xl overflow-hidden border border-gray-700/50 ${className}`}>
+    <div className={`flex flex-col bg-slate-900 rounded-xl overflow-hidden border border-slate-700/50 shadow-lg h-full ${className}`}>
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 bg-gray-800/80 border-b border-gray-700/50">
-        <span className="text-gray-300 text-xs font-medium">Shared Code Editor</span>
+      <div className="flex items-center justify-between px-4 py-2.5 bg-slate-800/90 border-b border-slate-700/50">
+        <div className="flex items-center gap-2">
+          <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+          </svg>
+          <span className="text-slate-300 text-xs font-medium">Shared Code Editor</span>
+        </div>
         <select
           value={language}
           onChange={handleLanguageChange}
-          className="bg-gray-700 border border-gray-600 text-white text-xs rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-500"
+          className="bg-slate-700 border border-slate-600 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 cursor-pointer transition-all"
         >
           {LANGUAGES.map(lang => (
             <option key={lang.value} value={lang.value}>{lang.label}</option>
@@ -110,7 +116,7 @@ export default function SharedCodeEditor({
       </div>
 
       {/* Editor */}
-      <div className="flex-1 min-h-[300px]">
+      <div className="flex-1 min-h-0">
         <Editor
           height="100%"
           language={language}
@@ -121,20 +127,35 @@ export default function SharedCodeEditor({
           options={{
             readOnly,
             fontSize: 14,
-            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+            fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
             minimap: { enabled: false },
             scrollBeyondLastLine: false,
             wordWrap: 'on',
             automaticLayout: true,
-            padding: { top: 12 },
+            padding: { top: 16, bottom: 16 },
             renderLineHighlight: 'all',
             smoothScrolling: true,
             cursorBlinking: 'smooth',
             cursorSmoothCaretAnimation: 'on',
+            lineNumbers: 'on',
+            glyphMargin: false,
+            folding: true,
+            lineDecorationsWidth: 10,
+            lineNumbersMinChars: 3,
+            scrollbar: {
+              vertical: 'visible',
+              horizontal: 'visible',
+              useShadows: false,
+              verticalScrollbarSize: 10,
+              horizontalScrollbarSize: 10,
+            },
           }}
           loading={
-            <div className="flex items-center justify-center h-full bg-gray-900 text-gray-400 text-sm">
-              Loading editor...
+            <div className="flex items-center justify-center h-full bg-slate-900">
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-8 h-8 border-2 border-slate-700 border-t-violet-500 rounded-full animate-spin" />
+                <span className="text-slate-500 text-sm">Loading editor...</span>
+              </div>
             </div>
           }
         />

@@ -1,5 +1,8 @@
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { BookOpen, TrendingUp, Award, Clock, ArrowRight, Sparkles, BarChart3, ChevronRight, Trophy, Target } from 'lucide-react'
+import { BookOpen, TrendingUp, Award, Clock, ArrowRight, Sparkles, BarChart3, ChevronRight, Trophy, Target, Video } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import interviewService from '../../../services/interviewService'
 import { useStudentStats } from '../../../hooks/useStudentStats'
 import { useContinueLearning } from '../../../hooks/useContinueLearning'
 import { LineAreaChart } from '../../ui/ChartWrappers'
@@ -24,7 +27,19 @@ export default function OverviewSection({
   onClickCourse,
   onClickQuiz,
 }) {
+  const navigate = useNavigate()
   const { stats, loading } = useStudentStats()
+  const [upcomingInterviews, setUpcomingInterviews] = useState([])
+
+  useEffect(() => {
+    let active = true
+    interviewService.list({ status: 'SCHEDULED', limit: 3 })
+      .then(res => {
+        if (active) setUpcomingInterviews(res?.interviews || [])
+      })
+      .catch(() => {})
+    return () => { active = false }
+  }, [])
 
   const enrolledCount = enrollments.length
   const completedCount = enrollments.filter(e => e.status === 'COMPLETED').length
@@ -206,6 +221,43 @@ export default function OverviewSection({
                     </div>
                   ))}
                 </div>
+              )}
+            </div>
+          </motion.div>
+
+          {/* Upcoming Interviews */}
+          <motion.div variants={itemVariants} initial="hidden" animate="visible" className="wl-dash-card">
+            <div className="wl-dash-card-header">
+              <h3 className="wl-dash-card-title">Upcoming Interviews</h3>
+              <button className="wl-dash-card-link" onClick={() => navigate('/interviews')}>
+                View all <ArrowRight size={12} />
+              </button>
+            </div>
+            <div className="wl-dash-card-body" style={{ padding: '8px 16px 16px' }}>
+              {upcomingInterviews.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '16px 0', color: '#9ca3af', fontSize: 13 }}>
+                  No upcoming interviews scheduled
+                </div>
+              ) : (
+                upcomingInterviews.map((iv) => {
+                  const d = new Date(iv.scheduled_at)
+                  const month = d.toLocaleString('en-US', { month: 'short' }).toUpperCase()
+                  const date = d.getDate()
+                  const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+                  return (
+                    <div key={iv.id} className="wl-session-card" style={{ cursor: 'pointer' }} onClick={() => navigate(`/interview/${iv.id}/room`)}>
+                      <div className="wl-session-date" style={{ background: '#f0fdf4', color: '#16a34a' }}>
+                        <span className="wl-session-date-month">{month}</span>
+                        <span className="wl-session-date-day">{date}</span>
+                      </div>
+                      <div className="wl-session-info">
+                        <div className="wl-session-title">{iv.title || `${iv.type || 'Technical'} Interview`}</div>
+                        <div className="wl-session-time">{time} · {iv.interviewer?.name || 'Interviewer'}</div>
+                      </div>
+                      <span className="wl-session-badge" style={{ background: '#16a34a', color: '#fff' }}>Join</span>
+                    </div>
+                  )
+                })
               )}
             </div>
           </motion.div>

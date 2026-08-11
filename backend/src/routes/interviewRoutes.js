@@ -105,6 +105,7 @@ router.post('/:id/end', roleMiddleware('ADMIN', 'TRAINER'), interviewController.
 router.post('/:id/feedback', roleMiddleware('ADMIN', 'TRAINER'), interviewController.submitFeedback);
 router.get('/:id/feedback', interviewController.getFeedback);
 router.post('/:id/result', roleMiddleware('ADMIN', 'TRAINER'), interviewController.submitResult);
+router.post('/:id/publish-result', roleMiddleware('ADMIN', 'TRAINER'), interviewController.publishResult);
 
 // Status & Recordings
 router.get('/:id/status', interviewController.getInterviewStatus);

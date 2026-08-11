@@ -37,6 +37,11 @@ const InterviewResult = sequelize.define('InterviewResult', {
     type: DataTypes.TEXT,
     allowNull: true,
   },
+  is_published: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
 }, {
   tableName: 'interview_results',
   timestamps: true,

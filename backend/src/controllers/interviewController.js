@@ -266,7 +266,17 @@ class InterviewController {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      res.json({ interview });
+      const interviewData = interview.toJSON();
+      if (role === 'PARTICIPANT') {
+        // Participants must not see raw internal feedback notes
+        delete interviewData.feedbacks;
+        // Participants only see result if published
+        if (interviewData.result && !interviewData.result.is_published) {
+          delete interviewData.result;
+        }
+      }
+
+      res.json({ interview: interviewData });
     } catch (error) {
       logger.error('Error getting interview', { error: error.message });
       res.status(500).json({ error: 'Failed to get interview' });
@@ -630,6 +640,16 @@ class InterviewController {
       const interview = await Interview.findByPk(req.params.id);
       if (!interview) return res.status(404).json({ error: 'Interview not found' });
 
+      // Access check
+      const userId = req.user.id;
+      const role = req.user.role;
+      if (role === 'PARTICIPANT' && interview.candidate_id !== userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+      if (role === 'TRAINER' && interview.interviewer_id !== userId && interview.candidate_id !== userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
       const session = await InterviewSession.findOne({
         where: { interview_id: interview.id },
         order: [['created_at', 'DESC']],
@@ -677,6 +697,9 @@ class InterviewController {
       if (role === 'PARTICIPANT' && interview.candidate_id !== userId) {
         return res.status(403).json({ error: 'Access denied' });
       }
+      if (role === 'TRAINER' && interview.interviewer_id !== userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
 
       const sessions = await InterviewSession.findAll({ where: { interview_id: interview.id } });
       const sessionIds = sessions.map(s => s.id);
@@ -712,6 +735,18 @@ class InterviewController {
         return res.status(400).json({ error: 'sessionId and alertType are required' });
       }
 
+      const interview = await Interview.findByPk(req.params.id);
+      if (!interview) return res.status(404).json({ error: 'Interview not found' });
+
+      const userId = req.user.id;
+      const role = req.user.role;
+      if (role === 'PARTICIPANT' && interview.candidate_id !== userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+      if (role === 'TRAINER' && interview.interviewer_id !== userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
       const alert = await aiMonitorService.processAlert(sessionId, {
         alertType, severity, sourceDevice, message, metadata,
       });
@@ -728,6 +763,22 @@ class InterviewController {
    */
   async getFeedback(req, res) {
     try {
+      const interview = await Interview.findByPk(req.params.id);
+      if (!interview) return res.status(404).json({ error: 'Interview not found' });
+
+      const userId = req.user.id;
+      const role = req.user.role;
+      if (role === 'PARTICIPANT') {
+        if (interview.candidate_id !== userId) {
+          return res.status(403).json({ error: 'Access denied' });
+        }
+        // Participants cannot view raw internal interviewer feedback
+        return res.json({ feedbacks: [] });
+      }
+      if (role === 'TRAINER' && interview.interviewer_id !== userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
       const feedbacks = await InterviewFeedback.findAll({
         where: { interview_id: req.params.id },
         include: [{ model: User, as: 'interviewer', attributes: ['id', 'name'] }],
@@ -745,7 +796,7 @@ class InterviewController {
    */
   async submitResult(req, res) {
     try {
-      const { decision, notes } = req.body;
+      const { decision, notes, isPublished } = req.body;
       if (!decision || !['SELECTED', 'REJECTED', 'ON_HOLD'].includes(decision)) {
         return res.status(400).json({ error: 'Decision must be SELECTED, REJECTED, or ON_HOLD' });
       }
@@ -762,6 +813,8 @@ class InterviewController {
         order: [['created_at', 'DESC']],
       });
 
+      const shouldPublish = isPublished === true;
+
       const [result, created] = await InterviewResult.findOrCreate({
         where: { interview_id: interview.id },
         defaults: {
@@ -769,6 +822,7 @@ class InterviewController {
           decision,
           decided_by: req.user.id,
           notes,
+          is_published: shouldPublish,
         },
       });
 
@@ -778,14 +832,48 @@ class InterviewController {
           decided_by: req.user.id,
           decided_at: new Date(),
           notes,
+          ...(isPublished !== undefined ? { is_published: shouldPublish } : {}),
         });
       }
 
-      logger.info('Interview result submitted', { interviewId: interview.id, decision });
+      if (result.is_published) {
+        await notificationService.notifyResultPublished(interview, result.decision);
+      }
+
+      logger.info('Interview result submitted', { interviewId: interview.id, decision, isPublished: result.is_published });
       res.json({ result });
     } catch (error) {
       logger.error('Error submitting result', { error: error.message });
       res.status(500).json({ error: 'Failed to submit result' });
+    }
+  }
+
+  /**
+   * POST /interviews/:id/publish-result
+   * Publish evaluation result to candidate.
+   */
+  async publishResult(req, res) {
+    try {
+      const interview = await Interview.findByPk(req.params.id);
+      if (!interview) return res.status(404).json({ error: 'Interview not found' });
+
+      if (interview.interviewer_id !== req.user.id && req.user.role !== 'ADMIN') {
+        return res.status(403).json({ error: 'Not authorized to publish result' });
+      }
+
+      const result = await InterviewResult.findOne({ where: { interview_id: interview.id } });
+      if (!result) {
+        return res.status(400).json({ error: 'No interview result found to publish. Please submit evaluation decision first.' });
+      }
+
+      await result.update({ is_published: true });
+      await notificationService.notifyResultPublished(interview, result.decision);
+
+      logger.info('Interview result published', { interviewId: interview.id, candidateId: interview.candidate_id });
+      res.json({ success: true, result });
+    } catch (error) {
+      logger.error('Error publishing result', { error: error.message });
+      res.status(500).json({ error: 'Failed to publish result' });
     }
   }
 
@@ -798,8 +886,11 @@ class InterviewController {
       const interview = await Interview.findByPk(req.params.id);
       if (!interview) return res.status(404).json({ error: 'Interview not found' });
 
-      if (req.user.id !== interview.candidate_id) {
-        return res.status(403).json({ error: 'Only the candidate can refresh QR' });
+      const isCandidate = req.user.id === interview.candidate_id;
+      const isInterviewer = req.user.id === interview.interviewer_id;
+      const isAdmin = req.user.role === 'ADMIN';
+      if (!isCandidate && !isInterviewer && !isAdmin) {
+        return res.status(403).json({ error: 'Not authorized to refresh QR' });
       }
 
       const session = await InterviewSession.findOne({
@@ -807,7 +898,7 @@ class InterviewController {
       });
       if (!session) return res.status(404).json({ error: 'No active session' });
 
-      const tokenResult = await tokenService.generatePairingToken(session.id, req.user.id, 'MOBILE');
+      const tokenResult = await tokenService.generatePairingToken(session.id, interview.candidate_id, 'MOBILE');
       const qrPayload = {
         ...qrGenerator.generatePairingPayload({
           interviewId: interview.id,

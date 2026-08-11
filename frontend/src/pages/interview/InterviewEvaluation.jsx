@@ -73,12 +73,29 @@ export default function InterviewEvaluation({ user }) {
     }
   }
 
+  const [publishImmediately, setPublishImmediately] = useState(true)
+  const [publishing, setPublishing] = useState(false)
+
+  const handlePublishResult = async () => {
+    try {
+      setPublishing(true)
+      await interviewService.publishResult(interviewId)
+      const res = await interviewService.get(interviewId)
+      setInterview(res.interview)
+    } catch (err) {
+      console.error('Failed to publish result:', err)
+    } finally {
+      setPublishing(false)
+    }
+  }
+
   const handleSubmitResult = async () => {
     if (!decision) return
     try {
       setSubmitting(true)
-      await interviewService.submitResult(interviewId, { decision, notes })
-      navigate('/interviews')
+      await interviewService.submitResult(interviewId, { decision, notes, isPublished: publishImmediately })
+      const res = await interviewService.get(interviewId)
+      setInterview(res.interview)
     } catch (err) {
       console.error('Failed to submit result:', err)
     } finally {
@@ -237,6 +254,18 @@ export default function InterviewEvaluation({ user }) {
                     )
                   })}
                 </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: spacing[2], marginBottom: spacing[4] }}>
+                  <input
+                    type="checkbox"
+                    id="publish-toggle"
+                    checked={publishImmediately}
+                    onChange={(e) => setPublishImmediately(e.target.checked)}
+                    style={{ accentColor: colors.primary[600], width: 16, height: 16, cursor: 'pointer' }}
+                  />
+                  <label htmlFor="publish-toggle" style={{ fontSize: '0.8125rem', color: colors.text.secondary, cursor: 'pointer', fontFamily: typography.fontFamily }}>
+                    Publish result to candidate immediately upon submission
+                  </label>
+                </div>
                 <Button
                   variant="primary"
                   onClick={handleSubmitResult}
@@ -251,14 +280,40 @@ export default function InterviewEvaluation({ user }) {
           </motion.div>
         )}
 
+        {/* Candidate View: Result Pending when not published */}
+        {!isInterviewer && !interview.result && (
+          <motion.div variants={itemVariants}>
+            <Card>
+              <CardBody>
+                <div style={{ textAlignment: 'center', padding: spacing[4], textAlign: 'center' }}>
+                  <Clock size={32} color={colors.warning[500]} style={{ margin: '0 auto 12px' }} />
+                  <h3 style={{ fontSize: '0.9375rem', fontWeight: 600, color: colors.text.primary, marginBottom: spacing[1] }}>
+                    Evaluation in Progress
+                  </h3>
+                  <p style={{ fontSize: '0.8125rem', color: colors.text.muted, margin: 0 }}>
+                    Your interview evaluation is being processed. The published decision will be visible here once released.
+                  </p>
+                </div>
+              </CardBody>
+            </Card>
+          </motion.div>
+        )}
+
         {/* Existing Result */}
         {interview.result && (
           <motion.div variants={itemVariants}>
             <Card>
               <CardBody>
-                <h3 style={{ fontSize: '0.875rem', fontWeight: 600, color: colors.text.primary, marginBottom: spacing[3], fontFamily: typography.fontFamily }}>
-                  Final Decision
-                </h3>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing[3] }}>
+                  <h3 style={{ fontSize: '0.875rem', fontWeight: 600, color: colors.text.primary, margin: 0, fontFamily: typography.fontFamily }}>
+                    Final Decision
+                  </h3>
+                  {isInterviewer && (
+                    <Badge variant={interview.result.is_published ? 'success' : 'warning'}>
+                      {interview.result.is_published ? 'Published to Candidate' : 'Draft / Unpublished'}
+                    </Badge>
+                  )}
+                </div>
                 <div style={{
                   display: 'inline-flex', alignItems: 'center', gap: spacing[2],
                   padding: `${spacing[2]} ${spacing[4]}`, borderRadius: radius.md,
@@ -269,9 +324,21 @@ export default function InterviewEvaluation({ user }) {
                   {interview.result.decision === 'SELECTED' ? <CheckCircle size={18} /> : interview.result.decision === 'REJECTED' ? <XCircle size={18} /> : <Clock size={18} />}
                   {interview.result.decision}
                 </div>
+                {interview.result.notes && (
+                  <p style={{ fontSize: '0.8125rem', color: colors.text.secondary, marginTop: spacing[3], lineHeight: 1.6 }}>
+                    {interview.result.notes}
+                  </p>
+                )}
                 <p style={{ fontSize: '0.75rem', color: colors.text.muted, marginTop: spacing[2] }}>
                   Decided on {new Date(interview.result.decided_at).toLocaleString('en-IN')}
                 </p>
+                {isInterviewer && !interview.result.is_published && (
+                  <div style={{ marginTop: spacing[4], paddingTop: spacing[3], borderTop: `1px solid ${colors.border.light}` }}>
+                    <Button variant="primary" onClick={handlePublishResult} loading={publishing}>
+                      Publish Result to Candidate
+                    </Button>
+                  </div>
+                )}
               </CardBody>
             </Card>
           </motion.div>

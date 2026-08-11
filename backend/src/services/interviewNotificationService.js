@@ -76,6 +76,23 @@ class InterviewNotificationService {
   }
 
   /**
+   * Notify candidate when their interview result is published.
+   */
+  async notifyResultPublished(interview, decision) {
+    const msg = `Your interview result for ${interview.type || 'Interview'} has been published: ${decision}.`;
+
+    await this._createNotification(
+      interview.candidate_id,
+      'INTERVIEW_RESULT_PUBLISHED',
+      'Interview Result Published',
+      msg,
+      { interviewId: interview.id, decision }
+    );
+
+    logger.info('Interview result published notification sent', { interviewId: interview.id, candidateId: interview.candidate_id });
+  }
+
+  /**
    * Schedule a reminder for T-30 min before the interview.
    */
   scheduleReminder(interview) {
