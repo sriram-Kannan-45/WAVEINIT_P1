@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
+import { Camera, Loader2, MonitorPlay, Users } from 'lucide-react';
 import { API_BASE } from '../api/api';
 import { useSocket } from '../hooks/useSocket';
 import ParticipantCard from '../components/ParticipantCard';
 import ParticipantDetailModal from '../components/ParticipantDetailModal';
-import { colors } from '../theme/tokens';
 
 const authHeaders = (token) => ({
   'Content-Type': 'application/json',
@@ -170,18 +170,22 @@ export default function TrainerMonitoringDashboard({ user }) {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
-      <div className="mx-auto max-w-7xl">
-        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">Live Monitoring</h1>
-            <p className="text-sm text-slate-500">Select a session to monitor participants in real time.</p>
+    <div style={{ minHeight: '100vh', background: '#f8fafc', padding: '28px 20px' }}>
+      <div className="reg-admin">
+        {/* Header */}
+        <div className="reg-admin-header">
+          <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}>
+            <MonitorPlay size={20} />
           </div>
-
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h1 className="reg-admin-title">Live Monitoring</h1>
+            <p className="reg-admin-subtitle">Select a session to monitor participants in real time.</p>
+          </div>
           <select
             value={selectedSessionId || ''}
             onChange={(e) => setSelectedSessionId(Number(e.target.value))}
-            className="rounded-lg border bg-white px-4 py-2 text-sm text-slate-700 focus:border-primary-500 focus:outline-none"
+            className="reg-select"
+            style={{ width: 'auto', minWidth: 240, cursor: 'pointer' }}
           >
             <option value="">Select a session</option>
             {sessions.map((s) => (
@@ -192,27 +196,41 @@ export default function TrainerMonitoringDashboard({ user }) {
           </select>
         </div>
 
+        {/* Session summary */}
         {selectedSession && (
-          <div className="mb-6 rounded-xl bg-white p-4 shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-800">{selectedSession.title}</h2>
-            <p className="text-sm text-slate-500">
-              {participants.length} participant{participants.length === 1 ? '' : 's'}
-            </p>
+          <div className="reg-admin-table-wrap" style={{ padding: '16px 20px', marginBottom: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 40, height: 40, borderRadius: 10, background: '#f0f9ff', color: '#0284c7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Camera size={18} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h2 style={{ fontSize: 15, fontWeight: 700, color: '#111827', margin: 0 }}>{selectedSession.title}</h2>
+                <p style={{ fontSize: 12.5, color: '#64748b', marginTop: 2 }}>
+                  {participants.length} participant{participants.length === 1 ? '' : 's'}
+                </p>
+              </div>
+            </div>
           </div>
         )}
 
+        {/* Body */}
         {loading ? (
-          <div className="flex h-64 items-center justify-center text-slate-500">Loading participants…</div>
+          <div className="reg-admin-loading">
+            <Loader2 size={20} className="reg-spin" />
+            <span>Loading participants…</span>
+          </div>
         ) : !selectedSessionId ? (
-          <div className="flex h-64 items-center justify-center rounded-2xl bg-white text-slate-400 shadow-sm">
-            Select a session to begin monitoring
+          <div className="reg-admin-empty">
+            <MonitorPlay size={28} />
+            <p>Select a session to begin monitoring</p>
           </div>
         ) : participants.length === 0 ? (
-          <div className="flex h-64 items-center justify-center rounded-2xl bg-white text-slate-400 shadow-sm">
-            No participants in this session yet
+          <div className="reg-admin-empty">
+            <Users size={28} />
+            <p>No participants in this session yet</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 20 }}>
             {participants.map((p) => (
               <ParticipantCard
                 key={p.id}

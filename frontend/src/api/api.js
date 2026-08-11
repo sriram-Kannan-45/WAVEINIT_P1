@@ -16,11 +16,22 @@ export { getAuthHeaders };
  */
 
 /** Base origin of the Node backend — no trailing slash, no /api */
-const BACKEND_ORIGIN = import.meta.env.VITE_API_URL
-  ? import.meta.env.VITE_API_URL.replace(/\/api$/, '')   // strip /api if accidentally included
-  : 'http://localhost:3001';
+const getBackendOrigin = () => {
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (envUrl && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
+    return envUrl.replace(/\/api$/, '');
+  }
+  if (typeof window !== 'undefined' && window.location && window.location.hostname) {
+    const protocol = window.location.protocol || 'http:';
+    const hostname = window.location.hostname;
+    return `${protocol}//${hostname}:3001`;
+  }
+  return 'http://localhost:3001';
+};
 
-/** Base for all REST API calls: http://localhost:3001/api */
+const BACKEND_ORIGIN = getBackendOrigin();
+
+/** Base for all REST API calls: http://<server_ip>:3001/api */
 const API_BASE = `${BACKEND_ORIGIN}/api`;
 
 /**

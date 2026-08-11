@@ -1,8 +1,7 @@
 import { getAuthHeaders, getStoredToken, clearStoredUser } from './auth'
+import { BACKEND_ORIGIN } from '../api/api'
 
-const API_BASE = import.meta.env.VITE_API_URL
-  ? import.meta.env.VITE_API_URL.replace(/\/api$/, '')
-  : 'http://localhost:3001'
+const API_BASE = BACKEND_ORIGIN
 
 /**
  * Unified API client with:

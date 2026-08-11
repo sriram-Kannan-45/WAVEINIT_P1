@@ -54,6 +54,7 @@ const PORT = process.env.PORT || 3001;
 // In development any origin is allowed so a phone on the same LAN can open
 // the interview room via QR / mobile web page.
 const isDev = process.env.NODE_ENV !== 'production';
+const isLanOrigin = (origin) => /^https?:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$/.test(origin);
 const allowedOrigins = new Set([
   'http://localhost:5173',
   'http://localhost:5174',
@@ -69,7 +70,7 @@ app.use(cors({
   origin: (origin, cb) => {
     // Allow same-origin / curl / server-to-server (no Origin header)
     if (!origin) return cb(null, true);
-    if (isDev) return cb(null, true);
+    if (isDev || isLanOrigin(origin)) return cb(null, true);
     if (allowedOrigins.has(origin)) return cb(null, true);
     return cb(new Error(`CORS: origin ${origin} not allowed`));
   },
@@ -684,7 +685,7 @@ const startServer = async () => {
       throw err;
     });
 
-    server.listen(PORT, () => {
+    server.listen(PORT, '0.0.0.0', () => {
       logger.logAlways(`🚀 WAVE INIT LMS Server running on http://localhost:${PORT}`);
       logger.info(`📋 Mounted routes:
    /api/auth      → auth routes

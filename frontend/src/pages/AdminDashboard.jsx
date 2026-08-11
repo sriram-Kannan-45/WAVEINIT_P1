@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { AlertCircle, BookOpen, CheckCircle2, ClipboardList, Clock, Eye, Loader2, MessageSquare, Search, Star, Trash2, TrendingUp, User, UserPlus, Users, X, XCircle } from 'lucide-react'
+import { AlertCircle, BookOpen, CheckCircle2, ClipboardList, Clock, Eye, Loader2, MessageSquare, RefreshCw, Search, Star, Trash2, TrendingUp, User, UserPlus, Users, X, XCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { API, API_BASE } from '../api/api'
 import AssessmentSessionsPanel from '../components/admin/AssessmentSessionsPanel'
@@ -7,12 +7,9 @@ import BulkImportParticipants from '../components/admin/BulkImportParticipants'
 import CreateTrainerModule from '../components/admin/CreateTrainerModule'
 import CreateTrainingModule from '../components/admin/CreateTrainingModule'
 import AdminOverviewTab from '../components/admin/tabs/AdminOverviewTab'
-import AnimatedDropdown from '../components/AnimatedDropdown'
 import ParticipantProfileView from '../components/shared/ParticipantProfileView'
-import { SkeletonTable } from '../components/Skeleton'
 import { useToast } from '../components/Toast'
 import TrainerDetails from '../components/TrainerDetails'
-import { Button, EmptyState, PageHeader, StatCard, Table } from '../components/ui'
 
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'
@@ -565,57 +562,47 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
       {/* ── PENDING APPROVAL ── */}
       {tab === 'pending' && (
-        <motion.div variants={itemVariants}>
-          <PageHeader
-            title="Pending Approval"
-            subtitle="Review pending participant registrations and approve or reject participant accounts."
-          />
-          {initialLoading ? (
-            <div className="enterprise-card"><div className="enterprise-card__body"><SkeletonTable rows={3} /></div></div>
-          ) : pendingParticipants.length === 0 ? (
-            <div className="enterprise-card">
-              <EmptyState
-                icon={User}
-                title="All Approved"
-                description="No participants are currently waiting for registration approval."
-              />
+        <motion.div variants={itemVariants} className="reg-admin">
+          <div className="reg-admin-header">
+            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)' }}>
+              <User size={22} color="#fff" />
             </div>
+            <div>
+              <h2 className="reg-admin-title">Pending Approval</h2>
+              <p className="reg-admin-subtitle">Review pending participant registrations and approve or reject participant accounts.</p>
+            </div>
+          </div>
+          {initialLoading ? (
+            <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading pending registrations...</p></div>
+          ) : pendingParticipants.length === 0 ? (
+            <div className="reg-admin-empty"><User size={40} /><h3>All Approved</h3><p>No participants are currently waiting for registration approval.</p></div>
           ) : (
-            <div className="enterprise-table-wrapper">
-              <Table
-                columns={[
-                  { key: 'name', header: 'Name', className: 'font-semibold', style: { color: 'var(--neutral-900)' } },
-                  { key: 'email', header: 'Email' },
-                  { key: 'phone', header: 'Phone', render: (row) => row.phone || '-' },
-                  { key: 'created_at', header: 'Registered', render: (row) => fmtDate(row.appliedAt || row.created_at || row.createdAt) },
-                  {
-                    key: 'actions',
-                    header: 'Actions',
-                    className: 'text-right',
-                    render: (row) => (
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                        <button
-                          type="button"
-                          className="reg-admin-action"
-                          title="Approve"
-                          onClick={() => handleApproveParticipant(row.id)}
-                        >
-                          <CheckCircle2 size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="reg-admin-action reg-admin-action--reject"
-                          title="Reject"
-                          onClick={() => handleRejectParticipant(row.id)}
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                    ),
-                  },
-                ]}
-                data={pendingParticipants}
-              />
+            <div className="reg-admin-table-wrap">
+              <table className="reg-admin-table">
+                <thead>
+                  <tr><th>Name</th><th>Email</th><th>Phone</th><th>Registered</th><th>Actions</th></tr>
+                </thead>
+                <tbody>
+                  {pendingParticipants.map(p => (
+                    <tr key={p.id}>
+                      <td><span className="reg-admin-name">{p.name}</span></td>
+                      <td className="reg-admin-email">{p.email}</td>
+                      <td className="reg-admin-date">{p.phone || '-'}</td>
+                      <td className="reg-admin-date">{fmtDate(p.appliedAt || p.created_at || p.createdAt)}</td>
+                      <td>
+                        <div className="reg-admin-actions">
+                          <button type="button" className="reg-admin-action" title="Approve" onClick={() => handleApproveParticipant(p.id)}>
+                            <CheckCircle2 size={14} />
+                          </button>
+                          <button type="button" className="reg-admin-action reg-admin-action--reject" title="Reject" onClick={() => handleRejectParticipant(p.id)}>
+                            <X size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </motion.div>
@@ -840,10 +827,6 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
               <Search size={16} />
               <input value={trainerSearch} onChange={e => setTrainerSearch(e.target.value)} placeholder="Search trainers..." />
             </div>
-            <div style={{ flex: 1 }} />
-            <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => handleTabChange('createTrainer')}>
-              <UserPlus size={15} /> Add Trainer
-            </button>
           </div>
           {/* Trainers Table */}
           {initialLoading ? (
@@ -1047,101 +1030,121 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
       {/* ── SURVEYS ── */}
       {tab === 'surveys' && (
-        <motion.div variants={itemVariants}>
-          <PageHeader
-            title="Survey Questions"
-            subtitle="Configure feedback survey questions for training sessions."
-          />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-6)' }}>
-            <div className="enterprise-card">
-              <div className="enterprise-card__header">
-                <h3 className="enterprise-card__title">Add Question</h3>
+        <motion.div variants={itemVariants} className="reg-admin">
+          <div className="reg-admin-header">
+            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #0d9488, #0f766e)' }}>
+              <MessageSquare size={22} color="#fff" />
+            </div>
+            <div>
+              <h2 className="reg-admin-title">Survey Questions</h2>
+              <p className="reg-admin-subtitle">Configure feedback survey questions for training sessions.</p>
+            </div>
+          </div>
+          <div className="reg-form-grid" style={{ alignItems: 'start' }}>
+            <div className="reg-admin-table-wrap">
+              <div className="reg-card-header">
+                <div>
+                  <div className="reg-card-title">Add Question</div>
+                  <div className="reg-card-subtitle">Create a new feedback question</div>
+                </div>
               </div>
-              <div className="enterprise-card__body">
+              <div className="reg-card-body">
                 <form onSubmit={handleCreateQuestion}>
-                  <div className="field-group">
-                    <label className="field-label">Training (Optional)</label>
-                    <AnimatedDropdown
-                      options={[
-                        { value: '', label: 'Apply to ALL Trainings' },
-                        ...trainings.map(t => ({ value: t.id, label: t.title }))
-                      ]}
-                      value={questionForm.trainingId}
-                      onChange={(val) => setQuestionForm(p => ({ ...p, trainingId: val }))}
-                    />
-                  </div>
-                  <div className="field-group">
-                    <label className="field-label">Question Type</label>
-                    <AnimatedDropdown
-                      options={[
-                        { value: 'TEXT', label: 'Text Answer' },
-                        { value: 'RATING', label: 'Rating (1-5)' },
-                        { value: 'MULTIPLE_CHOICE', label: 'Multiple Choice' }
-                      ]}
-                      value={questionForm.questionType}
-                      onChange={(val) => setQuestionForm(p => ({ ...p, questionType: val }))}
-                    />
-                  </div>
-                  <div className="field-group">
-                    <label className="field-label">Question Text</label>
-                    <input
-                      className="field-input"
-                      style={{ paddingLeft: 14 }}
-                      type="text"
-                      value={questionForm.questionText}
-                      required
-                      onChange={e => setQuestionForm(p => ({ ...p, questionText: e.target.value }))}
-                      placeholder="Enter survey question"
-                    />
-                  </div>
-                  {questionForm.questionType === 'MULTIPLE_CHOICE' && (
-                    <div className="field-group">
-                      <label className="field-label">Options (comma separated)</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                    <div>
+                      <label className="reg-field-label">Training (Optional)</label>
+                      <select
+                        className="reg-select"
+                        value={questionForm.trainingId}
+                        onChange={(e) => setQuestionForm(p => ({ ...p, trainingId: e.target.value }))}
+                      >
+                        <option value="">Apply to ALL Trainings</option>
+                        {trainings.map(t => <option key={t.id} value={t.id}>{t.title}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="reg-field-label">Question Type</label>
+                      <select
+                        className="reg-select"
+                        value={questionForm.questionType}
+                        onChange={(e) => setQuestionForm(p => ({ ...p, questionType: e.target.value }))}
+                      >
+                        <option value="TEXT">Text Answer</option>
+                        <option value="RATING">Rating (1-5)</option>
+                        <option value="MULTIPLE_CHOICE">Multiple Choice</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="reg-field-label">Question Text<span className="reg-req"> *</span></label>
                       <input
-                        className="field-input"
-                        style={{ paddingLeft: 14 }}
+                        className="reg-input"
                         type="text"
-                        value={questionForm.options}
-                        placeholder="Option A, Option B, Option C"
+                        value={questionForm.questionText}
                         required
-                        onChange={e => setQuestionForm(p => ({ ...p, options: e.target.value }))}
+                        onChange={e => setQuestionForm(p => ({ ...p, questionText: e.target.value }))}
+                        placeholder="Enter survey question"
                       />
                     </div>
-                  )}
-                  <Button type="submit" variant="primary" disabled={loading}>Add Question</Button>
+                    {questionForm.questionType === 'MULTIPLE_CHOICE' && (
+                      <div>
+                        <label className="reg-field-label">Options (comma separated)<span className="reg-req"> *</span></label>
+                        <input
+                          className="reg-input"
+                          type="text"
+                          value={questionForm.options}
+                          placeholder="Option A, Option B, Option C"
+                          required
+                          onChange={e => setQuestionForm(p => ({ ...p, options: e.target.value }))}
+                        />
+                      </div>
+                    )}
+                    <div className="reg-form-actions">
+                      <div style={{ flex: 1 }} />
+                      <button type="submit" className="reg-admin-btn reg-admin-btn--primary" disabled={loading}>Add Question</button>
+                    </div>
+                  </div>
                 </form>
               </div>
             </div>
-            <div className="enterprise-card">
-              <div className="enterprise-card__header">
-                <h3 className="enterprise-card__title">Questions ({questions.length})</h3>
+            <div className="reg-admin-table-wrap">
+              <div className="reg-card-header">
+                <div>
+                  <div className="reg-card-title">Questions ({questions.length})</div>
+                  <div className="reg-card-subtitle">Existing survey questions</div>
+                </div>
               </div>
               {questions.length === 0 ? (
-                <div className="enterprise-card__body" style={{ textAlign: 'center', padding: 'var(--space-12)' }}>
-                  <p style={{ color: 'var(--neutral-400)', fontSize: 14 }}>No custom questions added.</p>
-                </div>
+                <div className="reg-admin-empty"><MessageSquare size={32} /><p>No custom questions added.</p></div>
               ) : (
-                <div style={{ overflow: 'auto' }}>
-                  <table className="enterprise-table">
-                    <thead>
-                      <tr><th>Target</th><th>Question</th><th>Type</th><th>Options</th><th></th></tr>
-                    </thead>
-                    <tbody>
-                      {questions.map(q => {
-                        const trg = q.trainingId ? trainings.find(t => t.id === q.trainingId)?.title || 'Specific' : 'Global'
-                        return (
-                          <tr key={q.id}>
-                            <td><span className={q.trainingId ? "badge badge--info" : "badge badge--neutral"}>{trg}</span></td>
-                            <td style={{ color: 'var(--neutral-800)' }}>{q.questionText}</td>
-                            <td style={{ color: 'var(--neutral-500)' }}>{q.questionType}</td>
-                            <td style={{ color: 'var(--neutral-500)' }}>{q.options ? q.options.join(', ') : '-'}</td>
-                            <td><Button size="sm" variant="danger" onClick={() => handleDeleteQuestion(q.id)}>Delete</Button></td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                <table className="reg-admin-table">
+                  <thead>
+                    <tr><th>Target</th><th>Question</th><th>Type</th><th>Options</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                    {questions.map(q => {
+                      const trg = q.trainingId ? trainings.find(t => t.id === q.trainingId)?.title || 'Specific' : 'Global'
+                      return (
+                        <tr key={q.id}>
+                          <td>
+                            <span className="reg-admin-status" style={{
+                              background: q.trainingId ? '#dbeafe' : '#f1f5f9',
+                              color: q.trainingId ? '#1e40af' : '#64748b',
+                              borderColor: q.trainingId ? '#93c5fd' : '#e2e8f0',
+                            }}>{trg}</span>
+                          </td>
+                          <td style={{ color: '#334155' }}>{q.questionText}</td>
+                          <td className="reg-admin-date">{q.questionType}</td>
+                          <td className="reg-admin-date">{q.options ? q.options.join(', ') : '-'}</td>
+                          <td>
+                            <div className="reg-admin-actions">
+                              <button type="button" className="reg-admin-action reg-admin-action--reject" title="Delete Question" onClick={() => handleDeleteQuestion(q.id)}><Trash2 size={14} /></button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
               )}
             </div>
           </div>
@@ -1150,67 +1153,68 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
       {/* ── NOTES MANAGEMENT ── */}
       {tab === 'notes' && (
-        <motion.div variants={itemVariants}>
-          <PageHeader
-            title="Notes Management"
-            subtitle="Review and manage study resources uploaded by trainers."
-            action={
-              <div style={{ display: 'flex', gap: 8 }}>
-                {[
-                  { key: '', label: 'All', count: notes.length },
-                  { key: 'pending', label: 'Pending', count: notes.filter(n => n.status?.toLowerCase() === 'pending').length },
-                  { key: 'approved', label: 'Approved', count: notes.filter(n => n.status?.toLowerCase() === 'approved').length }
-                ].map(btn => (
-                  <Button
-                    key={btn.key}
-                    onClick={() => { setNoteFilter(btn.key); fetchNotes(btn.key) }}
-                    variant={noteFilter === btn.key ? 'primary' : 'secondary'}
-                    size="sm"
-                  >
-                    {btn.label} ({btn.count})
-                  </Button>
-                ))}
-              </div>
-            }
-          />
+        <motion.div variants={itemVariants} className="reg-admin">
+          <div className="reg-admin-header">
+            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
+              <ClipboardList size={22} color="#fff" />
+            </div>
+            <div>
+              <h2 className="reg-admin-title">Notes Management</h2>
+              <p className="reg-admin-subtitle">Review and manage study resources uploaded by trainers.</p>
+            </div>
+            <div style={{ flex: 1 }} />
+            <div className="reg-admin-filter-tabs">
+              {[
+                { key: '', label: 'All', count: notes.length },
+                { key: 'pending', label: 'Pending', count: notes.filter(n => n.status?.toLowerCase() === 'pending').length },
+                { key: 'approved', label: 'Approved', count: notes.filter(n => n.status?.toLowerCase() === 'approved').length }
+              ].map(btn => (
+                <button
+                  key={btn.key}
+                  className={`reg-admin-filter-tab ${noteFilter === btn.key ? 'reg-admin-filter-tab--active' : ''}`}
+                  onClick={() => { setNoteFilter(btn.key); fetchNotes(btn.key) }}
+                >
+                  {btn.label} {btn.count > 0 && <span className="reg-admin-badge">{btn.count}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
           {notes.length === 0 ? (
-            <div className="enterprise-card">
-              <EmptyState
-                icon={ClipboardList}
-                title="No Notes Found"
-                description={
-                  noteFilter === 'pending' ? 'All pending notes have been reviewed.' : 
-                  noteFilter === 'approved' ? 'No approved notes yet.' : 
-                  'Notes will appear here when trainers upload them.'
-                }
-              />
+            <div className="reg-admin-empty">
+              <ClipboardList size={40} />
+              <h3>No Notes Found</h3>
+              <p>
+                {noteFilter === 'pending' ? 'All pending notes have been reviewed.' : 
+                noteFilter === 'approved' ? 'No approved notes yet.' : 
+                'Notes will appear here when trainers upload them.'}
+              </p>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+            <div className="reg-admin-table-wrap">
               {notes.map((note, idx) => {
                 const isPending = note.status?.toUpperCase() === 'PENDING'
                 const isApproved = note.status?.toUpperCase() === 'APPROVED'
                 return (
-                  <div key={note.id || idx} className="enterprise-card">
-                    <div className="enterprise-card__body">
-                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--space-4)' }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
-                            <span className={`badge ${isApproved ? 'badge--success' : isPending ? 'badge--warning' : 'badge--error'}`}>{note.status}</span>
-                            <span style={{ fontSize: 12, color: 'var(--neutral-400)' }}>{fmtDate(note.created_at)}</span>
-                          </div>
-                          <h4 style={{ fontSize: 15, fontWeight: 600, color: 'var(--neutral-900)', marginBottom: 4 }}>{note.title}</h4>
-                          <p style={{ fontSize: 12, color: 'var(--neutral-400)', marginBottom: 'var(--space-3)' }}>Uploaded by: {note.trainer?.name || 'Unknown'}</p>
-                          <p style={{ fontSize: 14, color: 'var(--neutral-600)', lineHeight: 1.6 }}>{note.content}</p>
-                        </div>
-                        {isPending && (
-                          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                            <Button size="sm" variant="danger" onClick={() => handleRejectNote(note.id)} disabled={loading}>Reject</Button>
-                            <Button size="sm" variant="primary" onClick={() => handleApproveNote(note.id)} disabled={loading}>Approve</Button>
-                          </div>
-                        )}
+                  <div key={note.id || idx} style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                        <span className="reg-admin-status" style={{
+                          background: isApproved ? '#d1fae5' : isPending ? '#fef3c7' : '#fee2e2',
+                          color: isApproved ? '#065f46' : isPending ? '#92400e' : '#b91c1c',
+                          borderColor: isApproved ? '#6ee7b7' : isPending ? '#fcd34d' : '#fecaca',
+                        }}>{note.status}</span>
+                        <span className="reg-admin-date">{fmtDate(note.created_at)}</span>
                       </div>
+                      <h4 style={{ fontSize: 15, fontWeight: 600, color: '#111827', marginBottom: 4 }}>{note.title}</h4>
+                      <p style={{ fontSize: 12, color: '#94a3b8', marginBottom: 10 }}>Uploaded by: {note.trainer?.name || 'Unknown'}</p>
+                      <p style={{ fontSize: 14, color: '#475569', lineHeight: 1.6 }}>{note.content}</p>
                     </div>
+                    {isPending && (
+                      <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                        <button type="button" className="reg-admin-btn reg-admin-btn--danger" onClick={() => handleRejectNote(note.id)} disabled={loading}>Reject</button>
+                        <button type="button" className="reg-admin-btn reg-admin-btn--primary" onClick={() => handleApproveNote(note.id)} disabled={loading}>Approve</button>
+                      </div>
+                    )}
                   </div>
                 )
               })}
@@ -1221,39 +1225,42 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
       {/* ── FEEDBACK REPORTS ── */}
       {tab === 'feedback' && (
-        <motion.div variants={itemVariants}>
-          <PageHeader
-            title="Feedback Reports"
-            subtitle="View all participant feedback across training sessions."
-          />
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-6)', marginBottom: 'var(--space-6)' }}>
-            <StatCard label="Total Responses" value={feedbacks.length} icon={MessageSquare} variant="primary" />
-            <StatCard label="Avg Trainer Rating" value={stats.avgTrainerRating ?? '0.0'} icon={Star} variant="amber" />
-            <StatCard label="Avg Subject Rating" value={stats.avgSubjectRating ?? '0.0'} icon={TrendingUp} variant="emerald" />
+        <motion.div variants={itemVariants} className="reg-admin">
+          <div className="reg-admin-header">
+            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
+              <MessageSquare size={22} color="#fff" />
+            </div>
+            <div>
+              <h2 className="reg-admin-title">Feedback Reports</h2>
+              <p className="reg-admin-subtitle">View all participant feedback across training sessions.</p>
+            </div>
           </div>
-          <div className="enterprise-table-wrapper">
+          <div className="reg-admin-stats">
+            <div className="reg-admin-stat"><MessageSquare size={20} style={{ color: '#16A34A' }} /><div><span className="reg-admin-stat-num">{feedbacks.length}</span><span className="reg-admin-stat-label">Total Responses</span></div></div>
+            <div className="reg-admin-stat"><Star size={20} style={{ color: '#F59E0B' }} /><div><span className="reg-admin-stat-num">{stats.avgTrainerRating ?? '0.0'}</span><span className="reg-admin-stat-label">Avg Trainer Rating</span></div></div>
+            <div className="reg-admin-stat"><TrendingUp size={20} style={{ color: '#2563eb' }} /><div><span className="reg-admin-stat-num">{stats.avgSubjectRating ?? '0.0'}</span><span className="reg-admin-stat-label">Avg Subject Rating</span></div></div>
+          </div>
+          <div className="reg-admin-table-wrap">
             {initialLoading ? (
-              <div className="enterprise-card__body"><SkeletonTable rows={5} /></div>
+              <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading feedback...</p></div>
             ) : feedbacks.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 'var(--space-12)' }}>
-                <p style={{ color: 'var(--neutral-400)', fontSize: 14 }}>No feedback submitted yet.</p>
-              </div>
+              <div className="reg-admin-empty"><MessageSquare size={40} /><h3>No Feedback Yet</h3><p>No feedback submitted yet.</p></div>
             ) : (
-              <table className="enterprise-table">
+              <table className="reg-admin-table">
                 <thead>
                   <tr><th>#</th><th>Training</th><th>Trainer</th><th>Participant</th><th>Trainer Rating</th><th>Subject Rating</th><th>Comments</th><th>Date</th></tr>
                 </thead>
                 <tbody>
                   {feedbacks.map((f, i) => (
                     <tr key={f.id}>
-                      <td style={{ color: 'var(--neutral-400)' }}>{i + 1}</td>
-                      <td className="font-semibold" style={{ color: 'var(--neutral-900)' }}>{f.trainingTitle}</td>
-                      <td style={{ color: 'var(--neutral-500)' }}>{f.trainerName}</td>
-                      <td>{f.anonymous ? <span className="badge badge--neutral">Anonymous</span> : f.participantName}</td>
-                      <td><Stars v={f.trainerRating} /> <span style={{ fontSize: 12, color: 'var(--neutral-400)', marginLeft: 4 }}>{f.trainerRating}/5</span></td>
-                      <td><Stars v={f.subjectRating} /> <span style={{ fontSize: 12, color: 'var(--neutral-400)', marginLeft: 4 }}>{f.subjectRating}/5</span></td>
-                      <td style={{ maxWidth: 150, color: 'var(--neutral-500)', fontSize: 13 }}>{f.comments || '-'}</td>
-                      <td style={{ whiteSpace: 'nowrap', color: 'var(--neutral-500)' }}>{fmtDate(f.submittedAt)}</td>
+                      <td className="reg-admin-date">{i + 1}</td>
+                      <td><span className="reg-admin-name">{f.trainingTitle}</span></td>
+                      <td className="reg-admin-date">{f.trainerName}</td>
+                      <td>{f.anonymous ? <span className="reg-admin-status" style={{ background: '#f1f5f9', color: '#64748b', borderColor: '#e2e8f0' }}>Anonymous</span> : f.participantName}</td>
+                      <td><Stars v={f.trainerRating} /> <span className="reg-admin-date" style={{ marginLeft: 4 }}>{f.trainerRating}/5</span></td>
+                      <td><Stars v={f.subjectRating} /> <span className="reg-admin-date" style={{ marginLeft: 4 }}>{f.subjectRating}/5</span></td>
+                      <td className="reg-admin-date" style={{ maxWidth: 150 }}>{f.comments || '-'}</td>
+                      <td className="reg-admin-date" style={{ whiteSpace: 'nowrap' }}>{fmtDate(f.submittedAt)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1393,63 +1400,82 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
             )}
           </div>
           {/* Create Forms */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-6)' }}>
-            <div id="create-program-form" className="enterprise-card">
-              <div className="enterprise-card__header">
-                <h3 className="enterprise-card__title">Create Program</h3>
+          <div className="reg-form-grid" style={{ alignItems: 'start' }}>
+            <div id="create-program-form" className="reg-admin-table-wrap">
+              <div className="reg-card-header">
+                <div>
+                  <div className="reg-card-title">Create Program</div>
+                  <div className="reg-card-subtitle">Add a new training program</div>
+                </div>
               </div>
-              <div className="enterprise-card__body">
+              <div className="reg-card-body">
                 <form onSubmit={handleCreateProgram}>
-                  <div className="field-group">
-                    <label className="field-label">Program Title</label>
-                    <input className="field-input" style={{ paddingLeft: 14 }} type="text" value={programForm.title}
-                      onChange={e => setProgramForm(p => ({ ...p, title: e.target.value }))} required placeholder="e.g. Full Stack Development" />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                    <div>
+                      <label className="reg-field-label">Program Title<span className="reg-req"> *</span></label>
+                      <input className="reg-input" type="text" value={programForm.title}
+                        onChange={e => setProgramForm(p => ({ ...p, title: e.target.value }))} required placeholder="e.g. Full Stack Development" />
+                    </div>
+                    <div>
+                      <label className="reg-field-label">Description</label>
+                      <textarea className="reg-textarea" value={programForm.description}
+                        onChange={e => setProgramForm(p => ({ ...p, description: e.target.value }))} placeholder="Program overview..." />
+                    </div>
+                    <div className="reg-form-actions">
+                      <div style={{ flex: 1 }} />
+                      <button type="submit" className="reg-admin-btn reg-admin-btn--primary" disabled={loading}>Create Program</button>
+                    </div>
                   </div>
-                  <div className="field-group">
-                    <label className="field-label">Description</label>
-                    <textarea className="field-input" style={{ paddingLeft: 14, minHeight: 80, resize: 'vertical' }} value={programForm.description}
-                      onChange={e => setProgramForm(p => ({ ...p, description: e.target.value }))} placeholder="Program overview..." />
-                  </div>
-                  <Button type="submit" variant="primary" disabled={loading}>Create Program</Button>
                 </form>
               </div>
             </div>
-            <div id="create-course-form" className="enterprise-card">
-              <div className="enterprise-card__header">
-                <h3 className="enterprise-card__title">Create Course</h3>
+            <div id="create-course-form" className="reg-admin-table-wrap">
+              <div className="reg-card-header">
+                <div>
+                  <div className="reg-card-title">Create Course</div>
+                  <div className="reg-card-subtitle">Add a new course to a program</div>
+                </div>
               </div>
-              <div className="enterprise-card__body">
+              <div className="reg-card-body">
                 <form onSubmit={handleCreateCourse}>
-                  <div className="field-group">
-                    <label className="field-label">Course Title</label>
-                    <input className="field-input" style={{ paddingLeft: 14 }} type="text" value={courseForm.title}
-                      onChange={e => setCourseForm(p => ({ ...p, title: e.target.value }))} required placeholder="e.g. React for Beginners" />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                    <div>
+                      <label className="reg-field-label">Course Title<span className="reg-req"> *</span></label>
+                      <input className="reg-input" type="text" value={courseForm.title}
+                        onChange={e => setCourseForm(p => ({ ...p, title: e.target.value }))} required placeholder="e.g. React for Beginners" />
+                    </div>
+                    <div>
+                      <label className="reg-field-label">Description</label>
+                      <textarea className="reg-textarea" value={courseForm.description}
+                        onChange={e => setCourseForm(p => ({ ...p, description: e.target.value }))} placeholder="Course description..." />
+                    </div>
+                    <div>
+                      <label className="reg-field-label">Program</label>
+                      <select
+                        className="reg-select"
+                        value={courseForm.programId}
+                        onChange={(e) => setCourseForm(p => ({ ...p, programId: e.target.value }))}
+                      >
+                        <option value="">Select a program</option>
+                        {programs.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="reg-field-label">Assign Trainer</label>
+                      <select
+                        className="reg-select"
+                        value={courseForm.trainerId}
+                        onChange={(e) => setCourseForm(p => ({ ...p, trainerId: e.target.value }))}
+                      >
+                        <option value="">Select a trainer</option>
+                        {trainers.map(t => <option key={t.id} value={t.id}>{t.name} ({t.email})</option>)}
+                      </select>
+                    </div>
+                    <div className="reg-form-actions">
+                      <div style={{ flex: 1 }} />
+                      <button type="submit" className="reg-admin-btn reg-admin-btn--primary" disabled={loading}>Create Course</button>
+                    </div>
                   </div>
-                  <div className="field-group">
-                    <label className="field-label">Description</label>
-                    <textarea className="field-input" style={{ paddingLeft: 14, minHeight: 80, resize: 'vertical' }} value={courseForm.description}
-                      onChange={e => setCourseForm(p => ({ ...p, description: e.target.value }))} placeholder="Course description..." />
-                  </div>
-                  <div className="field-group">
-                    <label className="field-label">Program</label>
-                    <AnimatedDropdown
-                      options={programs.map(p => ({ value: p.id, label: p.title }))}
-                      value={courseForm.programId}
-                      onChange={(val) => setCourseForm(p => ({ ...p, programId: val }))}
-                    />
-                  </div>
-                  <div className="field-group">
-                    <label className="field-label">Assign Trainer</label>
-                    <AnimatedDropdown
-                      options={[
-                        { value: '', label: 'Select a trainer' },
-                        ...trainers.map(t => ({ value: t.id, label: `${t.name} (${t.email})` }))
-                      ]}
-                      value={courseForm.trainerId}
-                      onChange={(val) => setCourseForm(p => ({ ...p, trainerId: val }))}
-                    />
-                  </div>
-                  <Button type="submit" variant="primary" disabled={loading}>Create Course</Button>
                 </form>
               </div>
             </div>
@@ -1459,93 +1485,104 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
       {/* ── REPORTS & ANALYTICS ── */}
       {tab === 'reports' && (
-        <motion.div variants={itemVariants}>
-          <PageHeader
-            title="Reports & Analytics"
-            subtitle="Platform-wide metrics, performance insights, and engagement data."
-            action={
-              <Button variant="secondary" onClick={fetchAdminReport}>Refresh Report</Button>
-            }
-          />
+        <motion.div variants={itemVariants} className="reg-admin">
+          <div className="reg-admin-header">
+            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}>
+              <TrendingUp size={22} color="#fff" />
+            </div>
+            <div>
+              <h2 className="reg-admin-title">Reports & Analytics</h2>
+              <p className="reg-admin-subtitle">Platform-wide metrics, performance insights, and engagement data.</p>
+            </div>
+            <div style={{ flex: 1 }} />
+            <button className="reg-admin-btn reg-admin-btn--secondary" onClick={fetchAdminReport}>
+              <RefreshCw size={14} /> Refresh Report
+            </button>
+          </div>
 
           {!adminReport ? (
-            <div className="enterprise-card">
-              <div className="enterprise-card__body" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 200 }}>
-                <span style={{ fontSize: 14, color: 'var(--neutral-400)' }}>Loading reports data...</span>
-              </div>
-            </div>
+            <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading reports data...</p></div>
           ) : (
             <div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 'var(--space-6)', marginBottom: 'var(--space-6)' }}>
-                <div className="stat-card">
-                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--neutral-500)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 8 }}>Total Users</span>
-                  <span style={{ fontSize: 32, fontWeight: 800, color: 'var(--neutral-900)', fontFamily: 'var(--font-display)', letterSpacing: '-0.03em', lineHeight: 1, display: 'block', marginBottom: 8 }}>{adminReport.totalUsers}</span>
-                  <span style={{ fontSize: 12, color: 'var(--neutral-500)' }}>
-                    Admins: {adminReport.usersByRole?.admin || 0} | Trainers: {adminReport.usersByRole?.trainer || 0} | Participants: {adminReport.usersByRole?.participant || 0}
-                  </span>
-                </div>
-                <div className="stat-card">
-                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--neutral-500)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 8 }}>Trainings & Lessons</span>
-                  <span style={{ fontSize: 32, fontWeight: 800, color: 'var(--neutral-900)', fontFamily: 'var(--font-display)', letterSpacing: '-0.03em', lineHeight: 1, display: 'block', marginBottom: 8 }}>
-                    {adminReport.totalTrainings} <span style={{ fontSize: 16, fontWeight: 500, color: 'var(--neutral-400)' }}>Trainings</span>
-                  </span>
-                  <span style={{ fontSize: 12, color: 'var(--neutral-500)' }}>Total Lessons: {adminReport.totalLessons || 0}</span>
-                </div>
-                <div className="stat-card">
-                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--neutral-500)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 8 }}>Completion Rate</span>
-                  <span style={{ fontSize: 32, fontWeight: 800, color: 'var(--brand-admin)', fontFamily: 'var(--font-display)', letterSpacing: '-0.03em', lineHeight: 1, display: 'block', marginBottom: 8 }}>{adminReport.completionRate}%</span>
-                  <div style={{ width: '100%', height: 6, background: 'var(--neutral-100)', borderRadius: 3, overflow: 'hidden' }}>
-                    <div style={{ width: `${adminReport.completionRate}%`, height: '100%', background: 'var(--brand-admin)', borderRadius: 3 }}></div>
+              <div className="reg-admin-stats">
+                <div className="reg-admin-stat">
+                  <Users size={20} style={{ color: '#2563eb' }} />
+                  <div style={{ flex: 1 }}>
+                    <span className="reg-admin-stat-num">{adminReport.totalUsers}</span>
+                    <span className="reg-admin-stat-label">Total Users</span>
+                    <span style={{ display: 'block', fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                      Admins: {adminReport.usersByRole?.admin || 0} | Trainers: {adminReport.usersByRole?.trainer || 0} | Participants: {adminReport.usersByRole?.participant || 0}
+                    </span>
                   </div>
                 </div>
-                <div className="stat-card">
-                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--neutral-500)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 8 }}>Active Users (30 Days)</span>
-                  <span style={{ fontSize: 32, fontWeight: 800, color: 'var(--neutral-900)', fontFamily: 'var(--font-display)', letterSpacing: '-0.03em', lineHeight: 1, display: 'block', marginBottom: 8 }}>{adminReport.activeUsers}</span>
-                  <span style={{ fontSize: 12, color: 'var(--neutral-500)' }}>Enrollment Rate: {adminReport.enrollmentRate}%</span>
+                <div className="reg-admin-stat">
+                  <BookOpen size={20} style={{ color: '#0d9488' }} />
+                  <div style={{ flex: 1 }}>
+                    <span className="reg-admin-stat-num">{adminReport.totalTrainings}</span>
+                    <span className="reg-admin-stat-label">Trainings & Lessons</span>
+                    <span style={{ display: 'block', fontSize: 11, color: '#94a3b8', marginTop: 2 }}>Total Lessons: {adminReport.totalLessons || 0}</span>
+                  </div>
+                </div>
+                <div className="reg-admin-stat">
+                  <TrendingUp size={20} style={{ color: '#16A34A' }} />
+                  <div style={{ flex: 1 }}>
+                    <span className="reg-admin-stat-num">{adminReport.completionRate}%</span>
+                    <span className="reg-admin-stat-label">Completion Rate</span>
+                    <div style={{ width: '100%', height: 6, background: '#f1f5f9', borderRadius: 3, overflow: 'hidden', marginTop: 4 }}>
+                      <div style={{ width: `${adminReport.completionRate}%`, height: '100%', background: '#16A34A', borderRadius: 3 }}></div>
+                    </div>
+                  </div>
+                </div>
+                <div className="reg-admin-stat">
+                  <Clock size={20} style={{ color: '#8b5cf6' }} />
+                  <div style={{ flex: 1 }}>
+                    <span className="reg-admin-stat-num">{adminReport.activeUsers}</span>
+                    <span className="reg-admin-stat-label">Active Users (30 Days)</span>
+                    <span style={{ display: 'block', fontSize: 11, color: '#94a3b8', marginTop: 2 }}>Enrollment Rate: {adminReport.enrollmentRate}%</span>
+                  </div>
                 </div>
               </div>
 
-              <div className="enterprise-card">
-                <div className="enterprise-card__header">
-                  <h3 className="enterprise-card__title">Trainer Performance & Feedback</h3>
+              <div className="reg-admin-table-wrap">
+                <div className="reg-card-header">
+                  <div>
+                    <div className="reg-card-title">Trainer Performance & Feedback</div>
+                    <div className="reg-card-subtitle">Average ratings and feedback counts per trainer</div>
+                  </div>
                 </div>
                 {(!adminReport.trainerPerformance || adminReport.trainerPerformance.length === 0) ? (
-                  <div className="enterprise-card__body" style={{ textAlign: 'center', padding: 'var(--space-12)' }}>
-                    <p style={{ color: 'var(--neutral-400)', fontSize: 14 }}>No feedback data available for trainers yet.</p>
-                  </div>
+                  <div className="reg-admin-empty"><TrendingUp size={32} /><p>No feedback data available for trainers yet.</p></div>
                 ) : (
-                  <div style={{ overflow: 'auto' }}>
-                    <table className="enterprise-table">
-                      <thead>
-                        <tr>
-                          <th>Trainer Name</th>
-                          <th style={{ textAlign: 'center' }}>Avg Trainer Rating</th>
-                          <th style={{ textAlign: 'center' }}>Avg Subject Rating</th>
-                          <th style={{ textAlign: 'center' }}>Feedback Count</th>
+                  <table className="reg-admin-table">
+                    <thead>
+                      <tr>
+                        <th>Trainer Name</th>
+                        <th style={{ textAlign: 'center' }}>Avg Trainer Rating</th>
+                        <th style={{ textAlign: 'center' }}>Avg Subject Rating</th>
+                        <th style={{ textAlign: 'center' }}>Feedback Count</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adminReport.trainerPerformance.map(tp => (
+                        <tr key={tp.trainerId}>
+                          <td><span className="reg-admin-name">{tp.trainerName}</span></td>
+                          <td style={{ textAlign: 'center' }}>
+                            <span className="reg-admin-status" style={{ background: '#d1fae5', color: '#065f46', borderColor: '#6ee7b7', fontWeight: 600 }}>
+                              {tp.avgTrainerRating} / 5.0
+                            </span>
+                          </td>
+                          <td style={{ textAlign: 'center' }}>
+                            <span className="reg-admin-status" style={{ background: '#dbeafe', color: '#1e40af', borderColor: '#93c5fd', fontWeight: 600 }}>
+                              {tp.avgSubjectRating} / 5.0
+                            </span>
+                          </td>
+                          <td style={{ textAlign: 'center', color: '#64748b', fontSize: 13 }}>
+                            {tp.feedbackCount} response(s)
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {adminReport.trainerPerformance.map(tp => (
-                          <tr key={tp.trainerId}>
-                            <td className="font-semibold" style={{ color: 'var(--neutral-900)' }}>{tp.trainerName}</td>
-                            <td style={{ textAlign: 'center' }}>
-                              <span className="badge badge--success" style={{ fontWeight: 600 }}>
-                                {tp.avgTrainerRating} / 5.0
-                              </span>
-                            </td>
-                            <td style={{ textAlign: 'center' }}>
-                              <span className="badge badge--info" style={{ fontWeight: 600 }}>
-                                {tp.avgSubjectRating} / 5.0
-                              </span>
-                            </td>
-                            <td style={{ textAlign: 'center', color: 'var(--neutral-500)' }}>
-                              {tp.feedbackCount} response(s)
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                      ))}
+                    </tbody>
+                  </table>
                 )}
               </div>
             </div>
@@ -1555,118 +1592,104 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
       {/* ── EDIT MODAL ── */}
       {editModal && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
-          backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
-          justifyContent: 'center', zIndex: 1000, padding: 'var(--space-4)'
-        }} onClick={() => setEditModal(null)}>
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="enterprise-card"
-            style={{ width: '100%', maxWidth: 560, maxHeight: '90vh', overflow: 'auto' }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="enterprise-card__header">
-              <h3 className="enterprise-card__title">Edit Training Session</h3>
-              <button
-                onClick={() => setEditModal(null)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--neutral-400)', padding: 4, borderRadius: 'var(--radius-md)' }}
-              >
-                <X size={18} />
-              </button>
+        <div className="reg-modal-overlay" onClick={() => setEditModal(null)}>
+          <div className="reg-modal" onClick={e => e.stopPropagation()}>
+            <div className="reg-modal-header">
+              <h3>Edit Training Session</h3>
+              <button onClick={() => setEditModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={20} color="#64748b" /></button>
             </div>
-            <div className="enterprise-card__body">
+            <div className="reg-modal-body">
               <form onSubmit={handleUpdateTraining}>
-                <div className="field-group">
-                  <label className="field-label">Title</label>
-                  <input className="field-input" style={{ paddingLeft: 14 }} type="text" value={editForm.title}
-                    onChange={e => setEditForm(p => ({ ...p, title: e.target.value }))} required />
-                </div>
-                <div className="field-group">
-                  <label className="field-label">Description</label>
-                  <textarea className="field-input" style={{ paddingLeft: 14, minHeight: 80, resize: 'vertical' }} value={editForm.description}
-                    onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))} />
-                </div>
-                <div className="field-group">
-                  <label className="field-label">Assign Trainer(s)</label>
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-                    gap: 'var(--space-2)',
-                    maxHeight: 160,
-                    overflowY: 'auto',
-                    border: '1.5px solid var(--neutral-200)',
-                    padding: 'var(--space-3)',
-                    borderRadius: 'var(--radius-lg)',
-                    background: 'var(--neutral-25)',
-                    marginTop: 'var(--space-1)'
-                  }}>
-                    {trainers.map(t => {
-                      const isChecked = editForm.trainerIds?.includes(t.id);
-                      return (
-                        <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', cursor: 'pointer', fontSize: 13, color: 'var(--neutral-700)', padding: '6px', borderRadius: 'var(--radius-md)', background: isChecked ? 'var(--brand-admin-bg)' : 'transparent', transition: 'background 150ms' }}>
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={(e) => {
-                              const updated = e.target.checked
-                                ? [...(editForm.trainerIds || []), t.id]
-                                : (editForm.trainerIds || []).filter(id => id !== t.id);
-                              setEditForm(p => ({
-                                ...p,
-                                trainerIds: updated,
-                                trainerId: updated[0] || ''
-                              }));
-                            }}
-                            style={{ cursor: 'pointer' }}
-                          />
-                          <div>
-                            <span style={{ fontWeight: 600 }}>{t.name}</span>
-                            <div style={{ fontSize: 11, color: 'var(--neutral-400)' }}>{t.email}</div>
-                          </div>
-                        </label>
-                      );
-                    })}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  <div>
+                    <label className="reg-field-label">Title<span className="reg-req"> *</span></label>
+                    <input className="reg-input" type="text" value={editForm.title}
+                      onChange={e => setEditForm(p => ({ ...p, title: e.target.value }))} required />
+                  </div>
+                  <div>
+                    <label className="reg-field-label">Description</label>
+                    <textarea className="reg-textarea" value={editForm.description}
+                      onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="reg-field-label">Assign Trainer(s)</label>
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+                      gap: 8,
+                      maxHeight: 160,
+                      overflowY: 'auto',
+                      border: '1.5px solid #e2e8f0',
+                      padding: 12,
+                      borderRadius: 10,
+                      background: '#f8fafc',
+                      marginTop: 4,
+                    }}>
+                      {trainers.map(t => {
+                        const isChecked = editForm.trainerIds?.includes(t.id);
+                        return (
+                          <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: '#475569', padding: 6, borderRadius: 8, background: isChecked ? '#f0fdf4' : 'transparent', transition: 'background 150ms' }}>
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => {
+                                const updated = e.target.checked
+                                  ? [...(editForm.trainerIds || []), t.id]
+                                  : (editForm.trainerIds || []).filter(id => id !== t.id);
+                                setEditForm(p => ({
+                                  ...p,
+                                  trainerIds: updated,
+                                  trainerId: updated[0] || ''
+                                }));
+                              }}
+                              style={{ cursor: 'pointer', accentColor: '#16A34A' }}
+                            />
+                            <div>
+                              <span style={{ fontWeight: 600 }}>{t.name}</span>
+                              <div style={{ fontSize: 11, color: '#94a3b8' }}>{t.email}</div>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      id="editSequentialLearning"
+                      checked={editForm.sequentialLearning || false}
+                      onChange={e => setEditForm(p => ({ ...p, sequentialLearning: e.target.checked }))}
+                      style={{ width: 'auto', height: 'auto', cursor: 'pointer', margin: 0, accentColor: '#16A34A' }}
+                    />
+                    <label htmlFor="editSequentialLearning" style={{ fontSize: 13, fontWeight: 600, color: '#475569', cursor: 'pointer', margin: 0 }}>
+                      Enable Sequential Learning Lock
+                    </label>
+                  </div>
+                  <div className="reg-form-grid">
+                    <div>
+                      <label className="reg-field-label">Start Date</label>
+                      <input className="reg-input" type="datetime-local" value={editForm.startDate}
+                        onChange={e => setEditForm(p => ({ ...p, startDate: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label className="reg-field-label">End Date</label>
+                      <input className="reg-input" type="datetime-local" value={editForm.endDate}
+                        onChange={e => setEditForm(p => ({ ...p, endDate: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="reg-field-label">Capacity</label>
+                    <input className="reg-input" type="number" value={editForm.capacity}
+                      onChange={e => setEditForm(p => ({ ...p, capacity: e.target.value }))} placeholder="Unlimited" min="1" />
                   </div>
                 </div>
-                <div className="field-group" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-4)', marginBottom: 'var(--space-4)' }}>
-                  <input
-                    type="checkbox"
-                    id="editSequentialLearning"
-                    checked={editForm.sequentialLearning || false}
-                    onChange={e => setEditForm(p => ({ ...p, sequentialLearning: e.target.checked }))}
-                    style={{ width: 'auto', height: 'auto', cursor: 'pointer', margin: 0 }}
-                  />
-                  <label htmlFor="editSequentialLearning" style={{ fontSize: 13, fontWeight: 600, color: 'var(--neutral-700)', cursor: 'pointer', margin: 0 }}>
-                    Enable Sequential Learning Lock
-                  </label>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)' }}>
-                  <div className="field-group">
-                    <label className="field-label">Start Date</label>
-                    <input className="field-input" style={{ paddingLeft: 14 }} type="datetime-local" value={editForm.startDate}
-                      onChange={e => setEditForm(p => ({ ...p, startDate: e.target.value }))} />
-                  </div>
-                  <div className="field-group">
-                    <label className="field-label">End Date</label>
-                    <input className="field-input" style={{ paddingLeft: 14 }} type="datetime-local" value={editForm.endDate}
-                      onChange={e => setEditForm(p => ({ ...p, endDate: e.target.value }))} />
-                  </div>
-                </div>
-                <div className="field-group">
-                  <label className="field-label">Capacity</label>
-                  <input className="field-input" style={{ paddingLeft: 14 }} type="number" value={editForm.capacity}
-                    onChange={e => setEditForm(p => ({ ...p, capacity: e.target.value }))} placeholder="Unlimited" min="1" />
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)', marginTop: 'var(--space-6)' }}>
-                  <Button type="button" variant="secondary" onClick={() => setEditModal(null)}>Cancel</Button>
-                  <Button type="submit" variant="primary" disabled={loading}>{loading ? 'Saving...' : 'Save Changes'}</Button>
+                <div className="reg-modal-footer">
+                  <button type="button" className="reg-admin-btn reg-admin-btn--secondary" onClick={() => setEditModal(null)}>Cancel</button>
+                  <button type="submit" className="reg-admin-btn reg-admin-btn--primary" disabled={loading}>{loading ? 'Saving...' : 'Save Changes'}</button>
                 </div>
               </form>
             </div>
-          </motion.div>
+          </div>
         </div>
       )}
 
@@ -1691,38 +1714,22 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
       {/* ── CONFIRM MODAL ── */}
       {confirmModal && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
-          backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
-          justifyContent: 'center', zIndex: 1000, padding: 'var(--space-4)'
-        }} onClick={() => setConfirmModal(null)}>
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="enterprise-card"
-            style={{ width: '100%', maxWidth: 440 }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="enterprise-card__header">
-              <h3 className="enterprise-card__title">{confirmModal.title}</h3>
-              <button
-                onClick={() => setConfirmModal(null)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--neutral-400)', padding: 4, borderRadius: 'var(--radius-md)' }}
-              >
-                <X size={18} />
+        <div className="reg-modal-overlay" onClick={() => setConfirmModal(null)}>
+          <div className="reg-modal reg-modal--small" onClick={e => e.stopPropagation()}>
+            <div className="reg-modal-header">
+              <h3>{confirmModal.title}</h3>
+              <button onClick={() => setConfirmModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={20} color="#64748b" /></button>
+            </div>
+            <div className="reg-modal-body">
+              {confirmModal.subtitle && <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>{confirmModal.subtitle}</p>}
+            </div>
+            <div className="reg-modal-footer">
+              <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => setConfirmModal(null)}>Cancel</button>
+              <button className="reg-admin-btn reg-admin-btn--danger" onClick={confirmAction} disabled={loading}>
+                {loading ? 'Processing...' : (confirmModal.confirmText || 'Confirm')}
               </button>
             </div>
-            <div className="enterprise-card__body">
-              {confirmModal.subtitle && <p style={{ fontSize: 14, color: 'var(--neutral-500)', marginBottom: 'var(--space-6)' }}>{confirmModal.subtitle}</p>}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)' }}>
-                <Button variant="secondary" onClick={() => setConfirmModal(null)}>Cancel</Button>
-                <Button variant="danger" onClick={confirmAction} disabled={loading}>
-                  {loading ? 'Processing...' : (confirmModal.confirmText || 'Confirm')}
-                </Button>
-              </div>
-            </div>
-          </motion.div>
+          </div>
         </div>
       )}
 

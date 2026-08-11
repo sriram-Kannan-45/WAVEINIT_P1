@@ -61,7 +61,7 @@ function InterviewRoomInner({ user }) {
 
   const {
     setInterview, setSession, setDevices, setPeers, setLocalStreams,
-    devices, alerts, chatMessages,
+    devices, peers, alerts, chatMessages,
     addChatMessage, addAlert, updateDevice,
   } = useInterviewSession()
 
@@ -104,7 +104,7 @@ function InterviewRoomInner({ user }) {
   } = useInterviewMedia()
 
   const {
-    remoteStreams, connectionStates,
+    remoteStreams, connectionStates, addLocalStream,
     createOffer, handleOffer, handleAnswer, handleIceCandidate,
     replaceTrackAll, closePeer, closeAll: closeWebRTC,
   } = useWebRTC(socket, interviewId, localStreamRef)

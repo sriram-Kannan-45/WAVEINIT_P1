@@ -1,622 +1,469 @@
 import { useEffect, useMemo, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Search, X, User, Calendar, BookOpen, Sparkles, ClipboardList, Eye, Users, TrendingUp, Award, UserPlus, Check } from 'lucide-react'
+import {
+  Search, ChevronUp, ChevronDown, Download, X, Star, Award,
+  TrendingUp, Eye, RefreshCw, Users, Loader2, Clock,
+} from 'lucide-react'
 import { API } from '../../api/api'
-import { Button } from '../ui'
 import { useToast } from '../Toast'
-import { colors, iconBtn, skeletonStyle, typography, cardStyle } from '../../theme/tokens'
+import { downloadCSV } from '../../utils/export'
+import { LineAreaChart } from '../ui/ChartWrappers'
 
-function ProgressBar({ percent, color = colors.primary[600] }) {
-  const v = Math.max(0, Math.min(100, Number(percent || 0)))
+const PAGE_SIZE = 10
+
+const sortableHeaders = [
+  { key: 'name', label: 'Participant' },
+  { key: 'joinedAt', label: 'Joined', defaultSort: true },
+  { key: 'lessonsCompleted', label: 'Lessons', sortable: true },
+  { key: 'avgScore', label: 'Avg Score', sortable: true },
+]
+
+function sortParticipants(participants, sortConfig) {
+  if (!sortConfig) return participants
+  return [...participants].sort((a, b) => {
+    const av = a[sortConfig.key]
+    const bv = b[sortConfig.key]
+    let cmp = 0
+    if (typeof av === 'number' && typeof bv === 'number') cmp = av - bv
+    else cmp = String(av ?? '').localeCompare(String(bv ?? ''))
+    return sortConfig.direction === 'asc' ? cmp : -cmp
+  })
+}
+
+function ProgressBar({ value, color = '#0d9488' }) {
   return (
     <div style={{
-      height: 6, width: '100%', minWidth: 80, background: colors.slate[100],
-      borderRadius: 999, overflow: 'hidden',
+      width: '100%', height: 6, background: '#f1f5f9',
+      borderRadius: 999, overflow: 'hidden', minWidth: 60,
     }}>
-      <div style={{ width: `${v}%`, height: '100%', background: color, transition: 'width 0.3s' }} />
+      <div style={{
+        width: `${Math.min(value, 100)}%`, height: '100%',
+        background: color, borderRadius: 999, transition: 'width 0.3s',
+      }} />
     </div>
   )
 }
 
-function fmtDate(d) {
-  if (!d) return '—'
-  return new Date(d).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+function initials(name = '') {
+  return name.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase() || '?'
 }
 
-function initials(name) {
-  if (!name) return '?'
-  return name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
-}
-
-function ParticipantDetailModal({ user, courseId, participantId, onClose }) {
-  const { error: showError } = useToast()
-  const [data, setData] = useState(null)
-  const [tab, setTab] = useState('progress')
-
-  useEffect(() => {
-    let aborted = false
-    ;(async () => {
-      try {
-        const r = await fetch(API.TRAINER_COURSES.PARTICIPANT(courseId, participantId), {
-          headers: { Authorization: `Bearer ${user.token}` },
-        })
-        const d = await r.json()
-        if (aborted) return
-        if (d.success) setData(d)
-        else showError(d.error || 'Failed to load participant detail')
-      } catch (e) { showError(e.message) }
-    })()
-    return () => { aborted = true }
-  }, [participantId])
-
+function StatusBadge({ status }) {
+  const map = {
+    COMPLETED:    { bg: '#dcfce7', fg: '#15803d', label: 'Completed' },
+    IN_PROGRESS:  { bg: '#dbeafe', fg: '#1d4ed8', label: 'In Progress' },
+    NOT_STARTED:  { bg: '#f1f5f9', fg: '#475569', label: 'Not Started' },
+    DISQUALIFIED: { bg: '#fee2e2', fg: '#dc2626', label: 'Disqualified' },
+    RESULT_PUBLISHED: { bg: '#dbeafe', fg: '#1d4ed8', label: 'Result Published' },
+  }
+  const s = map[status] || { bg: '#f1f5f9', fg: '#475569', label: status || '—' }
   return (
-    <motion.div
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, background: colors.bg.overlay,
-        zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
-      }}
-    >
-      <motion.div
-        onClick={(e) => e.stopPropagation()}
-        initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-        style={{
-          background: colors.surface.primary, borderRadius: 14, width: '100%', maxWidth: 720,
-          maxHeight: '90vh', display: 'flex', flexDirection: 'column',
-          boxShadow: '0 25px 60px -10px rgba(0,0,0,0.25)',
-        }}
-      >
-        <div style={{
-          padding: 18, borderBottom: `1px solid ${colors.border.default}`,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{
-              width: 44, height: 44, borderRadius: 999,
-              background: `linear-gradient(135deg, ${colors.primary[500]}, ${colors.primary[400]})`, color: colors.surface.primary,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700,
-            }}>
-              {initials(data?.participant?.name)}
-            </div>
-            <div>
-              <div style={{ fontSize: 17, fontWeight: 700, color: colors.slate[900] }}>
-                {data?.participant?.name || 'Loading…'}
-              </div>
-              {data?.participant?.email && (
-                <div style={{ fontSize: 12, color: colors.slate[500] }}>{data.participant.email}</div>
-              )}
-              {data?.enrollment && (
-                <div style={{ fontSize: 11, color: colors.slate[400], marginTop: 2 }}>
-                  Enrolled {fmtDate(data.enrollment.enrolledAt)} · Progress {Math.round(data.enrollment.progressPercent)}%
-                </div>
-              )}
-            </div>
-          </div>
-          <button onClick={onClose} style={{
-            ...iconBtn(colors.slate[100], colors.slate[600]),
-          }}>
-            <X size={18} />
-          </button>
-        </div>
-
-        <div style={{ padding: 12, borderBottom: `1px solid ${colors.border.default}`, display: 'flex', gap: 4 }}>
-          {[
-            { key: 'progress',    label: 'Progress',     icon: <BookOpen size={14} /> },
-            { key: 'quizzes',     label: 'Quiz Results', icon: <Sparkles size={14} /> },
-            { key: 'assessments', label: 'Assessments',  icon: <ClipboardList size={14} /> },
-          ].map(t => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              style={{
-                flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                padding: '8px 12px', border: 'none', cursor: 'pointer',
-                borderRadius: 8, fontSize: 12, fontWeight: 600,
-                background: tab === t.key ? colors.primary[600] : 'transparent',
-                color: tab === t.key ? colors.surface.primary : colors.slate[600],
-              }}
-            >
-              {t.icon} {t.label}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ flex: 1, overflow: 'auto', padding: 18 }}>
-          {!data ? (
-            <div style={{ height: 200, background: colors.slate[100], borderRadius: 10 }} />
-          ) : tab === 'progress' ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {(data.lessons || []).map((l) => (
-                <div key={l.lessonId} style={{
-                  display: 'flex', gap: 12, alignItems: 'center', padding: 12,
-                  border: `1px solid ${colors.border.default}`, borderRadius: 8, background: colors.surface.primary,
-                }}>
-                  <div style={{ flex: 1, fontSize: 13, color: colors.slate[900], fontWeight: 600 }}>
-                    {l.title}
-                  </div>
-                  <div style={{ fontSize: 11, color: colors.slate[500], display: 'flex', gap: 8, flexShrink: 0 }}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      {l.contentViewed ? <><Check size={12} /> Viewed</> : <><X size={12} /> Not viewed</>}
-                    </span>
-                    <span>·</span>
-                    <span style={{ color: l.status === 'COMPLETED' ? colors.success[700] : l.status === 'IN_PROGRESS' ? colors.warning[800] : colors.slate[400], fontWeight: 600 }}>
-                      {l.status.replace('_', ' ')}
-                    </span>
-                  </div>
-                </div>
-              ))}
-              {(!data.lessons || data.lessons.length === 0) && (
-                <div style={{
-                  padding: 30, textAlign: 'center', color: colors.slate[400], fontSize: 13,
-                  background: colors.surface.primary, border: `1px dashed ${colors.slate[300]}`, borderRadius: 12,
-                }}>No lessons in this course yet.</div>
-              )}
-            </div>
-          ) : tab === 'quizzes' ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {(data.quizzes || []).map(q => (
-                <div key={q.quizId} style={{
-                  display: 'flex', gap: 12, alignItems: 'center', padding: 12,
-                  border: `1px solid ${colors.border.default}`, borderRadius: 8, background: colors.surface.primary,
-                }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: colors.slate[900] }}>{q.title}</div>
-                    <div style={{ fontSize: 11, color: colors.slate[500], marginTop: 2 }}>
-                      {q.submitted ? 'Submitted' : 'Not submitted yet'}
-                      {q.resultPublished && q.score != null && ' · Result published'}
-                    </div>
-                  </div>
-                  <div style={{ flexShrink: 0, fontSize: 13, fontWeight: 700, color: q.score != null && q.resultPublished ? colors.success[700] : colors.slate[400] }}>
-                    {q.score != null && q.resultPublished ? `${q.score.toFixed(0)}%` : '—'}
-                  </div>
-                </div>
-              ))}
-              {(!data.quizzes || data.quizzes.length === 0) && (
-                <div style={{
-                  padding: 30, textAlign: 'center', color: colors.slate[400], fontSize: 13,
-                  background: colors.surface.primary, border: `1px dashed ${colors.slate[300]}`, borderRadius: 12,
-                }}>No quizzes for this course.</div>
-              )}
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {(data.assessments || []).map(a => (
-                <div key={a.submissionId} style={{
-                  display: 'block', gap: 12, alignItems: 'center', padding: 12,
-                  border: `1px solid ${colors.border.default}`, borderRadius: 8, background: colors.surface.primary,
-                }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: colors.slate[900] }}>
-                      {a.title || `Assessment #${a.assessmentId}`}
-                    </div>
-                    <span style={{
-                      fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
-                      background: a.status === 'PUBLISHED' ? colors.success[100] : a.status === 'REVIEWED' ? colors.warning[100] : colors.info[100],
-                      color:      a.status === 'PUBLISHED' ? colors.success[700] : a.status === 'REVIEWED' ? colors.warning[800] : colors.info[700],
-                      textTransform: 'uppercase', letterSpacing: 0.5,
-                    }}>
-                      {a.status}
-                    </span>
-                  </div>
-                  {a.score != null && (
-                    <div style={{ fontSize: 12, color: colors.slate[600], marginTop: 6 }}>
-                      Score: <strong>{a.score}</strong>
-                    </div>
-                  )}
-                  {a.feedback && (
-                    <div style={{
-                      fontSize: 12, color: colors.slate[500], marginTop: 6,
-                      padding: 8, background: colors.surface.secondary, borderRadius: 6,
-                    }}>
-                      {a.feedback}
-                    </div>
-                  )}
-                </div>
-              ))}
-              {(!data.assessments || data.assessments.length === 0) && (
-                <div style={{
-                  padding: 30, textAlign: 'center', color: colors.slate[400], fontSize: 13,
-                  background: colors.surface.primary, border: `1px dashed ${colors.slate[300]}`, borderRadius: 12,
-                }}>No assessments submitted.</div>
-              )}
-            </div>
-          )}
-        </div>
-      </motion.div>
-    </motion.div>
+    <span className="reg-admin-status" style={{
+      background: s.bg, color: s.fg, padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+    }}>
+      {s.label}
+    </span>
   )
 }
 
-function InviteModal({ user, courseId, onClose, onInviteSuccess }) {
-  const { error: showError, success } = useToast()
-  const [participants, setParticipants] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [invitingId, setInvitingId] = useState(null)
+function StatCard({ icon, label, value, color, progress }) {
+  return (
+    <div className="reg-admin-stat">
+      <div className="reg-admin-stat-icon" style={{ background: `${color}22`, color }}>
+        {icon}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="reg-admin-stat-label">{label}</div>
+        <div className="reg-admin-stat-num" style={{ fontSize: 22 }}>
+          {value}
+          {progress !== undefined && (
+            <span style={{ fontSize: 11, color: '#64748b', marginLeft: 4 }}>{progress}%</span>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
 
-  useEffect(() => {
-    let aborted = false
-    const fetchAvailable = async () => {
-      try {
-        const r = await fetch(API.TRAINER_COURSES.AVAILABLE_PARTICIPANTS(courseId), {
-          headers: { Authorization: `Bearer ${user.token}` },
-        })
-        const d = await r.json()
-        if (aborted) return
-        if (d.success) {
-          setParticipants(d.participants || [])
-        } else {
-          showError(d.error || 'Failed to load available participants')
-        }
-      } catch (e) {
-        if (!aborted) showError(e.message)
-      } finally {
-        if (!aborted) setLoading(false)
-      }
-    }
-    fetchAvailable()
-    return () => { aborted = true }
-  }, [courseId])
+function ParticipantDetailModal({ participant, course, onClose }) {
 
-  const handleInvite = async (participantId) => {
-    try {
-      setInvitingId(participantId)
-      const r = await fetch(API.TRAINER_COURSES.PARTICIPANTS(courseId), {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${user.token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ participantId }),
-      })
-      const d = await r.json()
-      if (d.success) {
-        success('Participant invited successfully!')
-        setParticipants(prev => prev.filter(p => p.id !== participantId))
-        onInviteSuccess()
-      } else {
-        showError(d.error || 'Failed to invite participant')
-      }
-    } catch (e) {
-      showError(e.message)
-    } finally {
-      setInvitingId(null)
-    }
-  }
 
-  const filtered = useMemo(() => {
-    if (!search) return participants
-    const q = search.toLowerCase()
-    return participants.filter(p =>
-      (p.name || '').toLowerCase().includes(q) ||
-      (p.email || '').toLowerCase().includes(q)
-    )
-  }, [participants, search])
+  const progressColor = participant.avgScore >= 75 ? '#16a34a' : participant.avgScore >= 50 ? '#F59E0B' : '#dc2626'
+  const avgScore = participant.avgScore || 0
+  const ringDeg = Math.min(avgScore, 100) * 3.6
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, background: colors.bg.overlay,
-        zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
-      }}
-    >
-      <motion.div
-        onClick={(e) => e.stopPropagation()}
-        initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-        style={{
-          background: colors.surface.primary, borderRadius: 20, width: '100%', maxWidth: 520,
-          maxHeight: '80vh', display: 'flex', flexDirection: 'column',
-          boxShadow: '0 25px 60px -10px rgba(0,0,0,0.25)',
-          border: `1px solid ${colors.border.default}`,
-        }}
-      >
-        <div style={{
-          padding: 20, borderBottom: `1px solid ${colors.border.default}`,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        }}>
+    <div className="reg-modal-overlay" onClick={onClose}>
+      <div className="reg-modal" style={{ maxWidth: 900, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+        <div className="reg-modal-header">
           <div>
-            <div style={{ fontSize: 17, fontWeight: 700, color: colors.slate[900], fontFamily: typography.fontFamily }}>
-              Invite Participant
-            </div>
-            <div style={{ fontSize: 12, color: colors.slate[500], marginTop: 4 }}>
-              Select a registered participant to enroll them directly.
-            </div>
+            <h3>{participant.name}</h3>
+            <p style={{ margin: '2px 0 0', fontSize: 12.5, color: '#64748b', fontFamily: 'var(--font-primary)' }}>
+              {participant.email}
+            </p>
           </div>
-          <button onClick={onClose} style={{
-            ...iconBtn(colors.slate[100], colors.slate[600]),
-          }}>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', display: 'flex', padding: 4 }}
+          >
             <X size={18} />
           </button>
         </div>
 
-        <div style={{ padding: 16, borderBottom: `1px solid ${colors.border.default}` }}>
-          <div className="wl-participants-search">
-            <Search size={16} className="wl-participants-search-icon" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by name or email…"
+        <div className="reg-modal-body">
+          <div className="reg-admin-stats" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', marginBottom: 16 }}>
+            <StatCard
+              icon={<Users size={16} />} label="Lessons Completed"
+              value={participant.lessonsCompleted ?? '—'} color="#0d9488"
+            />
+            <StatCard
+              icon={<TrendingUp size={16} />} label="Avg Score"
+              value={avgScore ? `${avgScore.toFixed(1)}%` : '—'} color="#2563eb"
+            />
+            <StatCard
+              icon={<Clock size={16} />} label="Joined"
+              value={participant.joinedAt ? new Date(participant.joinedAt).toLocaleDateString() : '—'} color="#F59E0B"
+            />
+            <StatCard
+              icon={<Award size={16} />} label="Quizzes Attempted"
+              value={participant.quizzesAttempted ?? '—'} color="#16a34a"
             />
           </div>
-        </div>
 
-        <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
-          {loading ? (
-            <div style={{ display: 'flex', justifyContent: 'center', padding: 30 }}>
-              <span style={{ fontSize: 13, color: colors.slate[500] }}>Loading available participants...</span>
-            </div>
-          ) : filtered.length === 0 ? (
-            <div style={{
-              padding: 30, textAlign: 'center', color: colors.slate[400], fontSize: 13,
-              border: `1px dashed ${colors.slate[300]}`, borderRadius: 12,
-            }}>
-              {participants.length === 0
-                ? 'All registered participants are already enrolled.'
-                : 'No participants match your search.'}
-            </div>
-          ) : (
-            <div className="wl-participants-list">
-              {filtered.map(p => (
-                <div key={p.id} className="wl-participant-card" style={{ height: 'auto', padding: '12px 16px' }}>
-                  <div className="wl-participant-avatar" style={{
-                    width: 40, height: 40, borderRadius: 12,
-                    background: `linear-gradient(135deg, ${colors.primary[500]}, ${colors.primary[400]})`,
-                    color: colors.surface.primary,
-                    display: 'grid', placeItems: 'center',
-                    fontSize: 13, fontWeight: 700, flexShrink: 0,
-                  }}>
-                    {initials(p.name)}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+            <div className="reg-admin-table-wrap">
+              <div className="reg-card-header">
+                <h3 className="reg-card-title">Performance</h3>
+              </div>
+              <div className="reg-card-body" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                <div style={{ position: 'relative', width: 140, height: 140 }}>
+                  <svg viewBox="0 0 140 140" width={140} height={140}>
+                    <circle cx={70} cy={70} r={62} fill="none" stroke="#f1f5f9" strokeWidth={12} />
+                    <circle
+                      cx={70} cy={70} r={62} fill="none"
+                      stroke={progressColor} strokeWidth={12} strokeLinecap="round"
+                      strokeDasharray={`${ringDeg} ${360 - ringDeg}`} transform="rotate(-90 70 70)"
+                    />
+                  </svg>
+                  <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                    <span style={{ fontSize: 26, fontWeight: 700, color: '#111827', fontFamily: 'var(--font-primary)' }}>
+                      {avgScore ? `${avgScore.toFixed(1)}%` : '—'}
+                    </span>
+                    <span style={{ fontSize: 10, color: '#64748b', fontFamily: 'var(--font-primary)' }}>Avg Score</span>
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="wl-participant-name" style={{ fontSize: 14 }}>{p.name}</div>
-                    <div className="wl-participant-email">{p.email}</div>
-                  </div>
-                  <button
-                    disabled={invitingId === p.id}
-                    onClick={() => handleInvite(p.id)}
-                    style={{
-                      ...iconBtn(invitingId === p.id ? colors.slate[200] : colors.primary[600], invitingId === p.id ? colors.slate[400] : colors.surface.primary, 36),
-                      borderRadius: 10, fontSize: 12, fontWeight: 600,
-                      cursor: invitingId === p.id ? 'not-allowed' : 'pointer',
-                      opacity: invitingId === p.id ? 0.6 : 1,
-                    }}
-                  >
-                    {invitingId === p.id ? '...' : <UserPlus size={14} />}
-                  </button>
                 </div>
-              ))}
+                <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {[{ label: 'Lessons Completed', value: participant.lessonsCompleted ?? 0, max: course?.lessonCount ?? 100, color: '#0d9488' }].map(r => (
+                    <div key={r.label}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748b', marginBottom: 4, fontFamily: 'var(--font-primary)' }}>
+                        <span>{r.label}</span>
+                        <span>{r.value} / {r.max}</span>
+                      </div>
+                      <ProgressBar value={r.max ? (r.value / r.max) * 100 : 0} color={r.color} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="reg-admin-table-wrap">
+              <div className="reg-card-header">
+                <h3 className="reg-card-title">Quiz Results</h3>
+              </div>
+              <div className="reg-card-body" style={{ padding: 0 }}>
+                {participant.quizResults?.length ? (
+                  <table className="reg-admin-table">
+                    <thead>
+                      <tr>
+                        <th>Quiz</th>
+                        <th>Score</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {participant.quizResults.map((q, i) => (
+                        <tr key={`${q.title}-${i}`}>
+                          <td>{q.title}</td>
+                          <td>{q.score}</td>
+                          <td><StatusBadge status={q.status} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p style={{ padding: 16, color: '#94a3b8', fontSize: 12, fontFamily: 'var(--font-primary)' }}>
+                    No quiz results yet.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {participant.progressTrend?.length > 1 && (
+            <div className="reg-admin-table-wrap">
+              <div className="reg-card-header">
+                <h3 className="reg-card-title">Progress Trend</h3>
+              </div>
+              <div className="reg-card-body" style={{ height: 200 }}>
+                <LineAreaChart data={participant.progressTrend} />
+              </div>
             </div>
           )}
         </div>
-      </motion.div>
-    </motion.div>
+      </div>
+    </div>
   )
 }
 
-export default function CourseParticipantsTab({ user, courseId }) {
-  const { error: showError, success } = useToast()
+export default function CourseParticipantsTab({ courseId, user, course }) {
+  const { error: showError, success: showSuccess } = useToast()
   const [participants, setParticipants] = useState([])
-  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [sortBy, setSortBy] = useState('progress')
-  const [openDetailId, setOpenDetailId] = useState(null)
-  const [showInviteModal, setShowInviteModal] = useState(false)
+  const [page, setPage] = useState(1)
+  const [sortConfig, setSortConfig] = useState({ key: 'joinedAt', direction: 'desc' })
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [detail, setDetail] = useState(null)
 
-  const fetchParticipants = async () => {
+  const loadParticipants = async (targetPage = page, targetSearch = search) => {
+    setLoading(true)
     try {
-      setLoading(true)
-      const r = await fetch(API.TRAINER_COURSES.PARTICIPANTS(courseId), {
+      const r = await fetch(API.TRAINER_COURSES.PARTICIPANTS(courseId, targetPage, PAGE_SIZE, targetSearch), {
         headers: { Authorization: `Bearer ${user.token}` },
       })
       const d = await r.json()
-      if (d.success) setParticipants(d.participants || [])
-      else showError(d.error || 'Failed to load participants')
+      if (d.success) {
+        setParticipants(d.participants)
+        setTotal(d.total)
+        if (targetPage > Math.max(1, Math.ceil(d.total / PAGE_SIZE))) setPage(Math.max(1, Math.ceil(d.total / PAGE_SIZE)))
+      } else showError(d.error || 'Failed to load participants')
     } catch (e) { showError(e.message) }
     finally { setLoading(false) }
   }
 
   useEffect(() => {
-    fetchParticipants()
-  }, [courseId])
+    loadParticipants()
+  }, [courseId, user.token])
 
-  const filtered = useMemo(() => {
-    let out = participants
-    if (search) {
-      const q = search.toLowerCase()
-      out = out.filter(p =>
-        (p.name || '').toLowerCase().includes(q) ||
-        (p.email || '').toLowerCase().includes(q)
-      )
-    }
-    out = [...out].sort((a, b) => {
-      if (sortBy === 'name')     return (a.name || '').localeCompare(b.name || '')
-      if (sortBy === 'progress') return (b.progressPercent || 0) - (a.progressPercent || 0)
-      if (sortBy === 'score')    return (b.avgQuizScore || 0) - (a.avgQuizScore || 0)
-      return 0
+  const handleSearch = (e) => {
+    const v = e.target.value
+    setSearch(v)
+    setPage(1)
+    loadParticipants(1, v)
+  }
+
+  const handleSort = (key) => {
+    setSortConfig(prev => {
+      if (prev?.key === key) return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+      return { key, direction: key === 'name' ? 'asc' : 'desc' }
     })
-    return out
-  }, [participants, search, sortBy])
+  }
 
-  const stats = useMemo(() => {
-    const n = participants.length
-    if (n === 0) return { total: 0, avgCompletion: 0, avgScore: null }
-    const avgCompletion = participants.reduce((s, p) => s + Number(p.progressPercent || 0), 0) / n
-    const scoresOnly = participants.map(p => Number(p.avgQuizScore || 0)).filter(x => x > 0)
-    const avgScore = scoresOnly.length ? scoresOnly.reduce((s, x) => s + x, 0) / scoresOnly.length : null
-    return { total: n, avgCompletion, avgScore }
-  }, [participants])
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    await loadParticipants()
+    setRefreshing(false)
+    showSuccess('Participant list refreshed')
+  }
+
+  const handleExport = () => {
+    downloadCSV(participants, `participants-${courseId}.csv`)
+    showSuccess('CSV exported')
+  }
+
+  const filtered = useMemo(
+    () => sortParticipants(participants, sortConfig),
+    [participants, sortConfig]
+  )
+
+  const avgCompletion = participants.length
+    ? (participants.reduce((a, p) => a + (p.lessonsCompleted || 0), 0) / participants.length / Math.max(course?.lessonCount || 1, 1)) * 100
+    : 0
+  const avgScore = participants.length
+    ? participants.reduce((a, p) => a + (p.avgScore || 0), 0) / participants.length
+    : 0
+  const topScore = participants.length
+    ? Math.max(...participants.map(p => p.avgScore || 0))
+    : 0
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 24, fontFamily: typography.fontFamily }}>
-      {/* ── KPI Stats ── */}
-      <div className="wl-participants-kpi">
-        {[
-          { label: 'Total Enrolled', value: stats.total, icon: Users, bg: `linear-gradient(135deg, ${colors.primary[500]}, ${colors.primary[400]})` },
-          { label: 'Avg Completion', value: `${stats.avgCompletion.toFixed(1)}%`, icon: TrendingUp, bg: `linear-gradient(135deg, ${colors.success[500]}, ${colors.success[400]})` },
-          { label: 'Avg Quiz Score', value: stats.avgScore != null ? `${stats.avgScore.toFixed(1)}%` : '—', icon: Award, bg: `linear-gradient(135deg, ${colors.warning[500]}, ${colors.warning[400]})` },
-        ].map((s) => (
-          <div key={s.label} className="wl-participants-kpi-card">
-            <div className="wl-participants-kpi-icon" style={{ background: s.bg, color: '#ffffff' }}>
-              <s.icon size={24} />
-            </div>
-            <div className="wl-participants-kpi-data">
-              <div className="wl-participants-kpi-number">{s.value}</div>
-              <div className="wl-participants-kpi-label">{s.label}</div>
-            </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className="reg-admin-stats">
+        <StatCard icon={<Users size={18} />} label="Total Participants" value={total} color="#0d9488" />
+        <StatCard icon={<TrendingUp size={18} />} label="Avg Completion" value={`${avgCompletion.toFixed(1)}%`} color="#16a34a" progress={avgCompletion.toFixed(0)} />
+        <StatCard icon={<Star size={18} />} label="Avg Score" value={avgScore ? `${avgScore.toFixed(1)}%` : '—'} color="#2563eb" />
+        <StatCard icon={<Award size={18} />} label="Top Score" value={topScore ? `${topScore.toFixed(1)}%` : '—'} color="#F59E0B" />
+      </div>
+
+      <div className="reg-admin-table-wrap">
+        <div className="reg-card-header">
+          <div>
+            <h3 className="reg-card-title">Participants</h3>
+            <p className="reg-card-subtitle">{total} enrolled participants</p>
           </div>
-        ))}
-      </div>
-
-      {/* ── Toolbar: Search + Filter + Invite ── */}
-      <div className="wl-participants-toolbar">
-        <div className="wl-participants-search">
-          <Search size={16} className="wl-participants-search-icon" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by name or email…"
-          />
-        </div>
-        <div className="wl-participants-filter-group">
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value)}
-            className="wl-participants-filter-select"
-          >
-            <option value="progress">Progress (high → low)</option>
-            <option value="score">Quiz Score (high → low)</option>
-            <option value="name">Name (A → Z)</option>
-          </select>
-        </div>
-        <button className="wl-participants-btn-primary" onClick={() => setShowInviteModal(true)}>
-          <UserPlus size={16} />
-          Invite
-        </button>
-      </div>
-
-      {/* ── Participant List ── */}
-      {loading ? (
-        <div className="wl-participants-list">
-          {[1, 2, 3, 4].map(i => (
-            <div key={i} className="wl-participant-card" style={{ background: colors.surface.secondary }}>
-              <div style={{ ...skeletonStyle, width: 48, height: 48, borderRadius: 14 }} />
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ ...skeletonStyle, width: '40%', height: 16 }} />
-                <div style={{ ...skeletonStyle, width: '60%', height: 12 }} />
-              </div>
-              <div style={{ ...skeletonStyle, width: 140, height: 10, borderRadius: 999 }} />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <div className="reg-admin-search">
+              <Search size={14} />
+              <input
+                className="reg-admin-search-input"
+                placeholder="Search participants..."
+                value={search}
+                onChange={handleSearch}
+              />
             </div>
-          ))}
+            <button
+              className="reg-admin-action"
+              onClick={handleRefresh}
+              title="Refresh"
+            >
+              <RefreshCw size={14} className={refreshing ? 'bulk-spin' : ''} />
+            </button>
+            <button
+              className="reg-admin-action"
+              onClick={handleExport}
+              title="Export CSV"
+            >
+              <Download size={14} />
+            </button>
+          </div>
         </div>
-      ) : filtered.length === 0 ? (
-        <div className="wl-participants-empty" style={{
-          padding: 48, textAlign: 'center', color: colors.slate[400], fontSize: 14,
-          background: colors.surface.primary, border: `1px solid ${colors.border.default}`, borderRadius: 20,
+
+        <div style={{ overflowX: 'auto' }}>
+          <table className="reg-admin-table">
+            <thead>
+              <tr>
+                {sortableHeaders.map(h => (
+                  <th key={h.key}>
+                    {h.sortable || h.defaultSort ? (
+                      <button
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
+                          background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                          textTransform: 'inherit', letterSpacing: 'inherit', fontSize: 'inherit',
+                          fontWeight: 600, color: 'inherit',
+                        }}
+                        onClick={() => h.key !== 'name' && handleSort(h.key)}
+                      >
+                        {h.label}
+                        {sortConfig?.key === h.key && (
+                          sortConfig.direction === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
+                        )}
+                      </button>
+                    ) : h.label}
+                  </th>
+                ))}
+                <th>Progress</th>
+                <th>Status</th>
+                <th>Quiz Results</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: 'center', padding: 32 }}>
+                    <Loader2 size={20} className="bulk-spin" style={{ color: '#0d9488' }} />
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={6}>
+                    <div className="reg-admin-empty" style={{ padding: '32px 16px' }}>
+                      <Users size={24} />
+                      <h3>No participants found</h3>
+                      <p>{search ? 'Try a different search term.' : 'No participants have enrolled yet.'}</p>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                filtered.map(p => (
+                  <tr key={p.id || p.email}>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div className="reg-admin-avatar" style={{ width: 30, height: 30, fontSize: 11, borderRadius: '50%' }}>
+                          {initials(p.name)}
+                        </div>
+                        <div>
+                          <div className="reg-admin-name" style={{ fontSize: 13 }}>{p.name}</div>
+                          <div className="reg-admin-email">{p.email}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <span className="reg-admin-date">{p.joinedAt ? new Date(p.joinedAt).toLocaleDateString() : '—'}</span>
+                    </td>
+                    <td>
+                      <span className="reg-admin-score">{p.lessonsCompleted ?? '—'}</span>
+                    </td>
+                    <td>
+                      <span className="reg-admin-score">
+                        {p.avgScore != null ? `${p.avgScore.toFixed(1)}%` : '—'}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ minWidth: 110 }}>
+                        <ProgressBar
+                          value={course?.lessonCount ? ((p.lessonsCompleted || 0) / course.lessonCount) * 100 : 0}
+                        />
+                      </div>
+                    </td>
+                    <td>
+                      <StatusBadge status={p.status} />
+                    </td>
+                    <td>
+                      <span style={{ fontSize: 12, color: p.quizResults?.length ? '#0d9488' : '#94a3b8', fontFamily: 'var(--font-primary)' }}>
+                        {p.quizResults?.length ?? 0}
+                      </span>
+                    </td>
+                    <td>
+                      <button
+                        className="reg-admin-action"
+                        onClick={() => setDetail(p)}
+                        title="View details"
+                      >
+                        <Eye size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="reg-card-footer" style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '12px 16px', borderTop: '1px solid #e2e8f0', fontSize: 12, color: '#64748b',
         }}>
-          {participants.length === 0 ? 'No participants enrolled yet.' : 'No participants match your search.'}
+          <span>
+            {total === 0 ? '0 participants' : `Page ${Math.min(page, totalPages)} of ${totalPages} · ${total} total`}
+          </span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className="reg-admin-action"
+              disabled={page <= 1}
+              onClick={() => { const np = page - 1; setPage(np); loadParticipants(np) }}
+            >
+              Prev
+            </button>
+            <button
+              className="reg-admin-action"
+              disabled={page >= totalPages}
+              onClick={() => { const np = page + 1; setPage(np); loadParticipants(np) }}
+            >
+              Next
+            </button>
+          </div>
         </div>
-      ) : (
-        <div className="wl-participants-list">
-          {filtered.map((p, i) => {
-            const pct = p.progressPercent || 0
-            const badgeText = pct >= 80 ? 'Top Learner' : pct >= 40 ? 'On Track' : 'Just Started'
-            const badgeBg = pct >= 80 ? colors.success[100] : pct >= 40 ? colors.warning[100] : colors.slate[100]
-            const badgeFg = pct >= 80 ? colors.success[700] : pct >= 40 ? colors.warning[800] : colors.slate[500]
-            return (
-              <div
-                key={p.participantId}
-                className="wl-participant-card"
-                style={{ cursor: 'pointer' }}
-                onClick={() => setOpenDetailId(p.participantId)}
-              >
-                {/* Avatar */}
-                <div className="wl-participant-avatar" style={{
-                  background: `linear-gradient(135deg, ${colors.primary[500]}, ${colors.primary[400]})`,
-                }}>
-                  {initials(p.name)}
-                </div>
+      </div>
 
-                {/* Name / Email / Date */}
-                <div className="wl-participant-info">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div className="wl-participant-name">{p.name}</div>
-                    <span style={{
-                      display: 'inline-flex', alignItems: 'center', padding: '2px 8px',
-                      borderRadius: 9999, fontSize: 10, fontWeight: 700,
-                      background: badgeBg, color: badgeFg, whiteSpace: 'nowrap',
-                    }}>
-                      {badgeText}
-                    </span>
-                  </div>
-                  <div className="wl-participant-email">{p.email}</div>
-                  <div className="wl-participant-date" style={{ fontSize: 12, marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <Calendar size={10} /> Enrolled {fmtDate(p.enrolledAt)}
-                  </div>
-                </div>
-
-                {/* Progress */}
-                <div className="wl-participant-progress">
-                  <div className="wl-participant-progress-label">
-                    <span className="wl-participant-progress-text">Course Progress</span>
-                    <span className="wl-participant-progress-value">{Math.round(pct)}%</span>
-                  </div>
-                  <div className="wl-participant-progress-bar">
-                    <motion.div
-                      className="wl-participant-progress-fill"
-                      initial={{ width: 0 }}
-                      animate={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
-                      transition={{ duration: 0.8, ease: 'easeOut', delay: i * 0.05 }}
-                      style={{
-                        background: pct >= 80
-                          ? `linear-gradient(90deg, ${colors.success[600]}, ${colors.success[500]})`
-                          : pct >= 40
-                          ? `linear-gradient(90deg, ${colors.warning[500]}, ${colors.warning[400]})`
-                          : `linear-gradient(90deg, ${colors.primary[500]}, ${colors.primary[400]})`,
-                      }}
-                    />
-                  </div>
-                </div>
-
-                {/* Quiz Score */}
-                <div className="wl-participant-quiz">
-                  <strong>{p.avgQuizScore != null ? `${Number(p.avgQuizScore).toFixed(0)}%` : '—'}</strong>
-                  quiz
-                </div>
-
-                {/* Actions */}
-                <div className="wl-participant-actions">
-                  <div className="wl-participant-action-btn" title="Lessons" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: 'auto', height: 'auto', padding: '6px 10px', gap: 2, border: 'none', background: 'transparent' }}>
-                    <BookOpen size={14} style={{ color: colors.primary[500] }} />
-                    <span style={{ fontSize: 11, color: colors.slate[500] }}>{p.lessonsDone}/{p.totalLessons}</span>
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
+      {detail && (
+        <ParticipantDetailModal participant={detail} course={course} onClose={() => setDetail(null)} />
       )}
-
-      <AnimatePresence>
-        {openDetailId && (
-          <ParticipantDetailModal
-            user={user}
-            courseId={courseId}
-            participantId={openDetailId}
-            onClose={() => setOpenDetailId(null)}
-          />
-        )}
-        {showInviteModal && (
-          <InviteModal
-            user={user}
-            courseId={courseId}
-            onClose={() => setShowInviteModal(false)}
-            onInviteSuccess={fetchParticipants}
-          />
-        )}
-      </AnimatePresence>
     </div>
   )
 }

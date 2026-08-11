@@ -7,14 +7,17 @@ export default function TrainerMonitoringReportPage() {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-sky-50/40 px-4 py-6 text-slate-900 sm:px-6 lg:px-10">
-      <button
-        onClick={() => navigate(-1)}
-        className="mb-4 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" /> Back
-      </button>
-      <TrainerMonitoringReport quizId={Number(quizId)} />
+    <div style={{ minHeight: '100vh', background: 'linear-gradient(180deg, #f8fafc 0%, #ffffff 50%, #f0f9ff 100%)', padding: '24px 16px' }}>
+      <div className="reg-admin">
+        <button
+          onClick={() => navigate(-1)}
+          className="reg-admin-btn reg-admin-btn--secondary"
+          style={{ marginBottom: 16, cursor: 'pointer' }}
+        >
+          <ArrowLeft size={15} /> Back
+        </button>
+        <TrainerMonitoringReport quizId={Number(quizId)} />
+      </div>
     </div>
   );
 }

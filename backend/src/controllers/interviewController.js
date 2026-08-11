@@ -347,7 +347,7 @@ class InterviewController {
             interviewId: interview.id,
             sessionId: session.id,
             token: tokenResult.token,
-            socketUrl: process.env.SOCKET_URL || 'http://localhost:3001',
+            socketUrl: process.env.SOCKET_URL || `${req.protocol}://${req.get('host')}`,
           }),
           expiresAt: tokenResult.expiresAt,
         };
@@ -813,7 +813,7 @@ class InterviewController {
           interviewId: interview.id,
           sessionId: session.id,
           token: tokenResult.token,
-          socketUrl: process.env.SOCKET_URL || 'http://localhost:3001',
+          socketUrl: process.env.SOCKET_URL || `${req.protocol}://${req.get('host')}`,
         }),
         expiresAt: tokenResult.expiresAt,
       };

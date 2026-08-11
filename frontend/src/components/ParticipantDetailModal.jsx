@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
+import { Loader2, X } from 'lucide-react';
 import { API_BASE, assetUrl } from '../api/api';
 
 const authHeaders = (token) => ({
@@ -62,101 +63,109 @@ export default function ParticipantDetailModal({ participant, token, onClose, on
   if (!participant) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="max-h-[90vh] w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+    <div className="reg-modal-overlay" style={{ zIndex: 60 }}>
+      <div
+        className="reg-modal"
+        style={{ maxWidth: 860, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
-        <div className="flex items-center justify-between border-b px-6 py-4">
-          <div>
-            <h2 className="text-xl font-bold text-slate-900">{participant.name}</h2>
-            <p className="text-sm text-slate-500">{participant.email}</p>
+        <div className="reg-modal-header" style={{ flexShrink: 0 }}>
+          <div style={{ minWidth: 0 }}>
+            <h3>{participant.name}</h3>
+            <p style={{ fontSize: 12, color: '#64748b', margin: '2px 0 0' }}>{participant.email}</p>
           </div>
-          <button
-            onClick={onClose}
-            className="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-          >
-            ✕
+          <button type="button" onClick={onClose} aria-label="Close">
+            <X size={18} />
           </button>
         </div>
 
         {/* Info section */}
-        <div className="grid grid-cols-3 gap-4 border-b bg-slate-50 px-6 py-4 text-sm">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, padding: '14px 22px', borderBottom: '1px solid #e2e8f0', background: '#f8fafc', flexShrink: 0 }}>
           <div>
-            <p className="text-slate-500">Started at</p>
-            <p className="font-medium text-slate-800">{formatDate(participant.startedAt)}</p>
+            <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600, color: '#64748b' }}>Started at</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#334155', marginTop: 2 }}>{formatDate(participant.startedAt)}</div>
           </div>
           <div>
-            <p className="text-slate-500">Time remaining</p>
-            <p className="font-medium text-slate-800">{participant.timeRemaining}s</p>
+            <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600, color: '#64748b' }}>Time remaining</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#334155', marginTop: 2 }}>{participant.timeRemaining}s</div>
           </div>
           <div>
-            <p className="text-slate-500">Violations</p>
-            <p className="font-medium text-slate-800">{participant.violationCount}</p>
+            <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600, color: '#64748b' }}>Violations</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#334155', marginTop: 2 }}>{participant.violationCount}</div>
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b px-6">
-          {[
-            { id: 'violations', label: 'Violation Log' },
-            { id: 'screenshots', label: 'Screenshots' },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`border-b-2 px-4 py-3 text-sm font-medium ${
-                activeTab === tab.id
-                  ? 'border-primary-600 text-primary-600'
-                  : 'border-transparent text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+        <div style={{ display: 'flex', padding: '12px 22px 0', borderBottom: '1px solid #e2e8f0', flexShrink: 0 }}>
+          <div className="reg-admin-filter-tabs">
+            {[
+              { id: 'violations', label: 'Violation Log' },
+              { id: 'screenshots', label: 'Screenshots' },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`reg-admin-filter-tab ${activeTab === tab.id ? 'reg-admin-filter-tab--active' : ''}`}
+                style={{ borderBottomLeftRadius: 0, borderBottomRightRadius: 0 }}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Content */}
-        <div className="max-h-[50vh] overflow-y-auto p-6">
+        <div style={{ flex: 1, overflowY: 'auto', padding: '18px 22px' }}>
           {loading ? (
-            <p className="text-center text-slate-500">Loading…</p>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '32px 0', color: '#64748b' }}>
+              <Loader2 size={18} className="reg-spin" />
+              <span style={{ fontSize: 13 }}>Loading…</span>
+            </div>
           ) : activeTab === 'violations' ? (
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b text-slate-500">
-                  <th className="pb-2">#</th>
-                  <th className="pb-2">Type</th>
-                  <th className="pb-2">Time</th>
-                </tr>
-              </thead>
-              <tbody>
-                {violations.length === 0 && (
+            <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden' }}>
+              <table className="reg-admin-table">
+                <thead>
                   <tr>
-                    <td colSpan={3} className="py-4 text-center text-slate-400">
-                      No violations recorded
-                    </td>
+                    <th style={{ width: 40 }}>#</th>
+                    <th>Type</th>
+                    <th>Time</th>
                   </tr>
-                )}
-                {violations.map((v, idx) => (
-                  <tr key={v.id} className="border-b last:border-0">
-                    <td className="py-2">{idx + 1}</td>
-                    <td className="py-2 capitalize">{v.type.replace(/_/g, ' ')}</td>
-                    <td className="py-2">{formatTime(v.timestamp)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {violations.length === 0 && (
+                    <tr>
+                      <td colSpan={3} style={{ textAlign: 'center', color: '#94a3b8', padding: '24px 14px', borderBottom: 'none' }}>
+                        No violations recorded
+                      </td>
+                    </tr>
+                  )}
+                  {violations.map((v, idx) => (
+                    <tr key={v.id}>
+                      <td style={{ color: '#64748b' }}>{idx + 1}</td>
+                      <td style={{ textTransform: 'capitalize' }}>{v.type.replace(/_/g, ' ')}</td>
+                      <td style={{ color: '#64748b' }}>{formatTime(v.timestamp)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           ) : (
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
               {screenshots.length === 0 && (
-                <p className="col-span-full text-center text-slate-400">No screenshots yet</p>
+                <p style={{ gridColumn: '1 / -1', textAlign: 'center', color: '#94a3b8', fontSize: 13, margin: 0, padding: '16px 0' }}>
+                  No screenshots yet
+                </p>
               )}
               {screenshots.map((ss) => (
-                <div key={ss.id} className="rounded-lg border bg-slate-50 p-2">
+                <div key={ss.id} style={{ borderRadius: 10, border: '1px solid #e2e8f0', background: '#f8fafc', padding: 8 }}>
                   <img
                     src={assetUrl(ss.filePath)}
                     alt={`Screenshot at ${formatTime(ss.timestamp)}`}
-                    className="mb-2 aspect-video w-full rounded-md object-cover"
+                    style={{ aspectRatio: '16 / 9', width: '100%', objectFit: 'cover', borderRadius: 6, marginBottom: 6, display: 'block' }}
                   />
-                  <p className="text-center text-xs text-slate-500">{formatTime(ss.timestamp)}</p>
+                  <p style={{ textAlign: 'center', fontSize: 11, color: '#64748b', margin: 0 }}>{formatTime(ss.timestamp)}</p>
                 </div>
               ))}
             </div>
@@ -164,43 +173,52 @@ export default function ParticipantDetailModal({ participant, token, onClose, on
         </div>
 
         {/* Actions */}
-        <div className="border-t bg-slate-50 p-6">
-          <div className="mb-4 flex flex-wrap gap-3">
+        <div style={{ borderTop: '1px solid #e2e8f0', background: '#f8fafc', padding: '16px 22px', flexShrink: 0 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
             <button
+              type="button"
               onClick={() => onAction('flag', participant.id)}
-              className="rounded-lg bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-200"
+              className="reg-admin-btn"
+              style={{ background: '#fffbeb', color: '#d97706', border: '1px solid #fcd34d', cursor: 'pointer' }}
             >
               Flag Participant
             </button>
             <button
+              type="button"
               onClick={() => onAction('disqualify', participant.id)}
-              className="rounded-lg bg-red-100 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-200"
+              className="reg-admin-btn reg-admin-btn--danger"
+              style={{ cursor: 'pointer' }}
             >
               Disqualify
             </button>
             <button
+              type="button"
               onClick={() => onAction('force-submit', participant.id)}
-              className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
+              className="reg-admin-btn reg-admin-btn--secondary"
+              style={{ cursor: 'pointer' }}
             >
               Force Submit
             </button>
           </div>
 
-          <div className="flex gap-2">
+          <div style={{ display: 'flex', gap: 8 }}>
             <input
               type="text"
               value={warningText}
               onChange={(e) => setWarningText(e.target.value)}
               placeholder="Warning message…"
-              className="flex-1 rounded-lg border px-4 py-2 text-sm"
+              className="reg-input"
+              style={{ flex: 1 }}
             />
             <button
+              type="button"
               onClick={() => {
                 onAction('warn', participant.id, warningText);
                 setWarningText('');
               }}
               disabled={!warningText.trim()}
-              className="rounded-lg bg-primary-600 px-5 py-2 text-sm font-semibold text-white hover:bg-primary-700 disabled:opacity-50"
+              className="reg-admin-btn reg-admin-btn--primary"
+              style={{ cursor: warningText.trim() ? 'pointer' : 'not-allowed', opacity: warningText.trim() ? 1 : 0.5 }}
             >
               Send Warning
             </button>

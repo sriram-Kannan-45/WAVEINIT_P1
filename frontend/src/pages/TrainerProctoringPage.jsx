@@ -13,12 +13,13 @@ export default function TrainerProctoringPage() {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
       <button
         onClick={() => navigate(-1)}
-        className="fixed left-4 top-4 z-50 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300"
+        className="reg-admin-btn reg-admin-btn--secondary"
+        style={{ position: 'fixed', left: 16, top: 16, zIndex: 50, cursor: 'pointer', boxShadow: '0 1px 3px rgba(15,23,42,0.12)' }}
       >
-        <ArrowLeft className="h-3.5 w-3.5" /> Back
+        <ArrowLeft size={15} /> Back
       </button>
       <TrainerProctoringDashboard quizId={Number(quizId)} />
     </div>

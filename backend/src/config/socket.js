@@ -18,6 +18,7 @@ const logger = require('../utils/logger');
  */
 const initializeSocket = (server) => {
   const isDev = process.env.NODE_ENV !== 'production';
+  const isLanOrigin = (origin) => /^https?:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$/.test(origin);
   const allowedSocketOrigins = new Set([
     process.env.FRONTEND_URL,
     'http://localhost:5173',
@@ -33,8 +34,8 @@ const initializeSocket = (server) => {
     cors: {
       origin: (origin, cb) => {
         if (!origin) return cb(null, true);
-        // In development allow any origin (LAN phone access via QR / mobile web).
-        if (isDev) return cb(null, true);
+        // In development or on LAN allow any LAN origin (LAN access via QR / mobile / web).
+        if (isDev || isLanOrigin(origin)) return cb(null, true);
         if (allowedSocketOrigins.has(origin)) return cb(null, true);
         return cb(new Error(`Socket.IO CORS: origin ${origin} not allowed`));
       },

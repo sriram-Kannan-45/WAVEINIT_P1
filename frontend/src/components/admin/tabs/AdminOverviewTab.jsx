@@ -1,22 +1,10 @@
-import { useState, useMemo } from 'react'
+import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { motion } from 'framer-motion'
 import {
-  BookOpen, Users, UserCheck, Star, MessageSquare,
-  TrendingUp, Clock, FileText, Plus, Video, Layers,
-  AlertCircle, CheckCircle2, Calendar, ArrowRight, Activity
+  BookOpen, Users, UserCheck, AlertCircle, Activity,
+  Calendar, ArrowRight, Plus, FileText, Layers, Star, TrendingUp
 } from 'lucide-react'
 import { LineAreaChart } from '../../ui/ChartWrappers'
-import { EmptyState } from '../../ui'
-
-const container = {
-  hidden: { opacity: 0 },
-  show: { opacity: 1, transition: { staggerChildren: 0.06 } }
-}
-const item = {
-  hidden: { opacity: 0, y: 12 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16, 1, 0.3, 1] } }
-}
 
 function fmtTimeAgo(d) {
   if (!d) return ''
@@ -27,6 +15,9 @@ function fmtTimeAgo(d) {
   if (hours < 24) return `${hours}h ago`
   return `${Math.floor(hours / 24)}d ago`
 }
+
+const statusColor = (status) => (status || '').toUpperCase() === 'PUBLISHED' ? '#16a34a' : '#d97706'
+const statusBg = (status) => (status || '').toUpperCase() === 'PUBLISHED' ? '#f0fdf4' : '#fffbeb'
 
 export default function AdminOverviewTab({ user, stats, feedbacks, trainings, participants, trainers, initialLoading, loading }) {
   const navigate = useNavigate()
@@ -59,9 +50,8 @@ export default function AdminOverviewTab({ user, stats, feedbacks, trainings, pa
       activities.push({
         id: `t-${t.id || i}`,
         type: 'course',
-        icon: BookOpen,
-        color: t.status === 'PUBLISHED' ? '#16a34a' : '#d97706',
-        message: `"${t.title}" is ${t.status === 'PUBLISHED' ? 'published' : 'in draft'}`,
+        color: statusColor(t.status),
+        message: `"${t.title}" is ${statusColor(t.status) === '#16a34a' ? 'published' : 'in draft'}`,
         time: t.updatedAt || t.createdAt || new Date(Date.now() - (i + 1) * 7200000).toISOString(),
       })
     })
@@ -87,81 +77,63 @@ export default function AdminOverviewTab({ user, stats, feedbacks, trainings, pa
   }, [participants])
 
   return (
-    <motion.div variants={container} initial="hidden" animate="show" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {/* Welcome Banner */}
-      <motion.div variants={item} className="wl-welcome">
-        <div>
-          <h1 className="wl-welcome-title">
-            Welcome back, {firstName} 👋
+      <div className="reg-admin-header">
+        <div className="reg-admin-header-icon" style={{ background: '#f0fdf4', color: '#16a34a' }}>
+          <TrendingUp size={22} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h1 className="reg-admin-title">
+            Welcome back, {firstName}
           </h1>
-          <p className="wl-welcome-sub">
+          <p className="reg-admin-subtitle">
             Here's what's happening across your platform today.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            style={{
-              padding: '10px 20px', borderRadius: 10,
-              border: '1px solid #e5e7eb', background: '#fff',
-              color: '#374151', fontSize: 13, fontWeight: 600,
-              cursor: 'pointer', fontFamily: 'var(--font-primary)',
-              transition: 'all 150ms ease',
-            }}
-          >
-            View Reports
-          </motion.button>
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => navigate('/my-profile')}
-            style={{
-              padding: '10px 20px', borderRadius: 10,
-              border: 'none', background: '#16a34a',
-              color: '#fff', fontSize: 13, fontWeight: 600,
-              cursor: 'pointer', fontFamily: 'var(--font-primary)',
-              transition: 'all 150ms ease',
-            }}
-          >
-            My Profile
-          </motion.button>
+          <button className="reg-admin-btn reg-admin-btn--secondary" type="button" style={{ cursor: 'pointer' }}>
+            <FileText size={15} /> View Reports
+          </button>
+          <button className="reg-admin-btn reg-admin-btn--primary" type="button" style={{ cursor: 'pointer' }} onClick={() => navigate('/my-profile')}>
+            <Users size={15} /> My Profile
+          </button>
         </div>
-      </motion.div>
+      </div>
 
       {/* Stat Cards */}
-      <motion.div variants={item} className="wl-stat-grid">
-        {overviewStatCards.map((s, i) => (
-          <motion.div key={s.label} className="wl-stat-card" whileHover={{ y: -2 }} transition={{ delay: i * 0.05 }}>
-            <div className="wl-stat-card-icon" style={{ background: s.bg, color: s.color }}>
+      <div className="reg-admin-stats">
+        {overviewStatCards.map((s) => (
+          <div key={s.label} className="reg-admin-stat">
+            <div className="reg-admin-stat-icon" style={{ background: s.bg, color: s.color }}>
               <s.icon size={20} />
             </div>
             <div>
-              <div className="wl-stat-card-value">{s.value}</div>
-              <div className="wl-stat-card-label">{s.label}</div>
+              <div className="reg-admin-stat-num">{s.value}</div>
+              <div className="reg-admin-stat-label">{s.label}</div>
             </div>
-          </motion.div>
+          </div>
         ))}
-      </motion.div>
+      </div>
 
       {/* Content Grid */}
-      <div className="wl-content-grid">
+      <div className="reg-dash-grid">
         {/* Left Column */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           {/* Training Analytics Chart */}
-          <motion.div variants={item} className="wl-dash-card">
-            <div className="wl-dash-card-header">
+          <div className="reg-admin-table-wrap">
+            <div className="reg-card-header">
               <div>
-                <h3 className="wl-dash-card-title">Training Analytics</h3>
-                <p style={{ fontSize: 12, color: '#9ca3af', marginTop: 2 }}>Enrollment trends across all programs</p>
+                <h3 className="reg-card-title">Training Analytics</h3>
+                <p className="reg-card-subtitle">Enrollment trends across all programs</p>
               </div>
-              <select style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, background: '#fff', color: '#374151', cursor: 'pointer', outline: 'none' }}>
+              <select className="reg-select" defaultValue="This Month" style={{ width: 'auto', padding: '6px 28px 6px 12px', fontSize: 12 }}>
                 <option>This Month</option>
                 <option>This Week</option>
                 <option>Last Quarter</option>
               </select>
             </div>
-            <div className="wl-chart-container">
+            <div className="reg-card-body" style={{ paddingTop: 0 }}>
               <LineAreaChart
                 data={chartData}
                 xKey="name"
@@ -172,39 +144,37 @@ export default function AdminOverviewTab({ user, stats, feedbacks, trainings, pa
                 fillColorEnd="#f0fdfa"
               />
             </div>
-          </motion.div>
+          </div>
 
           {/* Training Programs */}
-          <motion.div variants={item} className="wl-dash-card">
-            <div className="wl-dash-card-header">
-              <h3 className="wl-dash-card-title">Training Programs</h3>
-              <button className="wl-dash-card-link">
-                View all <ArrowRight size={12} />
+          <div className="reg-admin-table-wrap">
+            <div className="reg-card-header">
+              <h3 className="reg-card-title">Training Programs</h3>
+              <button className="reg-admin-btn reg-admin-btn--ghost" type="button" style={{ cursor: 'pointer' }}>
+                View all <ArrowRight size={13} />
               </button>
             </div>
-            <div className="wl-dash-card-body" style={{ padding: '12px 16px 16px' }}>
+            <div className="reg-card-body" style={{ padding: '12px 16px 16px' }}>
               {trainings.length === 0 ? (
-                <EmptyState icon={BookOpen} title="No trainings yet" description="Training programs will appear here." />
+                <div className="reg-admin-empty">
+                  <BookOpen size={22} />
+                  <div className="reg-admin-empty-title">No trainings yet</div>
+                  <div className="reg-admin-empty-sub">Training programs will appear here.</div>
+                </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {trainings.slice(0, 3).map((t) => (
-                    <div key={t.id} className="wl-course-card">
-                      <div className="wl-course-card-icon" style={{
-                        background: t.status === 'PUBLISHED' ? '#f0fdf4' : '#fffbeb',
-                        color: t.status === 'PUBLISHED' ? '#16a34a' : '#d97706',
-                      }}>
-                        <BookOpen size={18} />
+                    <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 10, border: '1px solid #eef2f7', background: '#fff' }}>
+                      <div style={{ width: 38, height: 38, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, background: statusBg(t.status), color: statusColor(t.status) }}>
+                        <BookOpen size={17} />
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className="wl-course-card-title">{t.title}</div>
-                        <div className="wl-course-card-meta">
+                        <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', fontFamily: 'var(--font-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</div>
+                        <div style={{ fontSize: 12, color: '#64748b', marginTop: 2, fontFamily: 'var(--font-primary)' }}>
                           {(t.enrolledCount || t.participantCount || 0)} participants
                         </div>
                       </div>
-                      <span className="wl-course-card-badge" style={{
-                        background: t.status === 'PUBLISHED' ? '#f0fdf4' : '#fffbeb',
-                        color: t.status === 'PUBLISHED' ? '#16a34a' : '#d97706',
-                      }}>
+                      <span style={{ padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600, fontFamily: 'var(--font-primary)', background: statusBg(t.status), color: statusColor(t.status) }}>
                         {t.status || 'Draft'}
                       </span>
                     </div>
@@ -212,115 +182,132 @@ export default function AdminOverviewTab({ user, stats, feedbacks, trainings, pa
                 </div>
               )}
             </div>
-          </motion.div>
+          </div>
 
           {/* Recent Activities */}
-          <motion.div variants={item} className="wl-dash-card">
-            <div className="wl-dash-card-header">
-              <h3 className="wl-dash-card-title">Recent Activities</h3>
+          <div className="reg-admin-table-wrap">
+            <div className="reg-card-header">
+              <h3 className="reg-card-title">Recent Activities</h3>
             </div>
-            <div className="wl-dash-card-body">
+            <div className="reg-card-body">
               {recentActivities.length === 0 ? (
-                <EmptyState icon={Activity} title="No activity yet" description="Activity will appear here." />
+                <div className="reg-admin-empty">
+                  <Activity size={22} />
+                  <div className="reg-admin-empty-title">No activity yet</div>
+                  <div className="reg-admin-empty-sub">Activity will appear here.</div>
+                </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
                   {recentActivities.slice(0, 5).map((act) => (
-                    <div key={act.id} className="wl-activity-item">
-                      <div className="wl-activity-dot" style={{ background: act.color }} />
-                      <div style={{ flex: 1 }}>
-                        <div className="wl-activity-text">{act.message}</div>
-                        <div className="wl-activity-time">{fmtTimeAgo(act.time)}</div>
+                    <div key={act.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 0' }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 999, marginTop: 5, flexShrink: 0, background: act.color }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, color: '#334155', fontFamily: 'var(--font-primary)' }}>{act.message}</div>
+                        <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2, fontFamily: 'var(--font-primary)' }}>{fmtTimeAgo(act.time)}</div>
                       </div>
                     </div>
                   ))}
                 </div>
               )}
             </div>
-          </motion.div>
+          </div>
         </div>
 
         {/* Right Column */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           {/* Recent Sessions */}
-          <motion.div variants={item} className="wl-dash-card">
-            <div className="wl-dash-card-header">
-              <h3 className="wl-dash-card-title">Recent Sessions</h3>
+          <div className="reg-admin-table-wrap">
+            <div className="reg-card-header">
+              <h3 className="reg-card-title">Recent Sessions</h3>
             </div>
-            <div className="wl-dash-card-body" style={{ padding: '8px 16px 16px' }}>
+            <div className="reg-card-body" style={{ padding: '8px 16px 16px' }}>
               {recentSessions.length === 0 ? (
-                <EmptyState icon={Calendar} title="No sessions" description="Sessions will appear here." />
+                <div className="reg-admin-empty">
+                  <Calendar size={22} />
+                  <div className="reg-admin-empty-title">No sessions</div>
+                  <div className="reg-admin-empty-sub">Sessions will appear here.</div>
+                </div>
               ) : (
                 recentSessions.map((s, idx) => (
-                  <div key={idx} className="wl-session-card">
-                    <div className="wl-session-date">
-                      <span className="wl-session-date-month">{s.month}</span>
-                      <span className="wl-session-date-day">{s.date}</span>
+                  <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0' }}>
+                    <div style={{ width: 46, height: 46, borderRadius: 10, background: '#0d9488', color: '#fff', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: 0.5, fontFamily: 'var(--font-primary)' }}>{s.month}</span>
+                      <span style={{ fontSize: 15, fontWeight: 700, lineHeight: 1, fontFamily: 'var(--font-primary)' }}>{s.date}</span>
                     </div>
-                    <div className="wl-session-info">
-                      <div className="wl-session-title">{s.title}</div>
-                      <div className="wl-session-time">{s.time}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 600, color: '#0f172a', fontFamily: 'var(--font-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.title}</div>
+                      <div style={{ fontSize: 12, color: '#64748b', marginTop: 2, fontFamily: 'var(--font-primary)' }}>{s.time}</div>
                     </div>
-                    <span className="wl-session-badge">+ Live</span>
+                    <span style={{ padding: '3px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-primary)', background: '#f0fdf4', color: '#16a34a' }}>+ Live</span>
                   </div>
                 ))
               )}
             </div>
-          </motion.div>
+          </div>
 
           {/* Pending Requests */}
-          <motion.div variants={item} className="wl-dash-card">
-            <div className="wl-dash-card-header">
-              <h3 className="wl-dash-card-title">Pending Requests</h3>
+          <div className="reg-admin-table-wrap">
+            <div className="reg-card-header">
+              <h3 className="reg-card-title">Pending Requests</h3>
             </div>
-            <div className="wl-dash-card-body">
+            <div className="reg-card-body">
               {pendingRequests.length === 0 ? (
-                <EmptyState icon={CheckCircle2} title="All clear" description="No pending requests at the moment." />
+                <div className="reg-admin-empty">
+                  <Star size={22} />
+                  <div className="reg-admin-empty-title">All clear</div>
+                  <div className="reg-admin-empty-sub">No pending requests at the moment.</div>
+                </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
                   {pendingRequests.map((p) => (
-                    <div key={p.id} className="wl-activity-item">
-                      <div className="wl-activity-dot" style={{ background: '#f59e0b' }} />
-                      <div style={{ flex: 1 }}>
-                        <div className="wl-activity-text">{p.name}</div>
-                        <div className="wl-activity-time">{p.email}</div>
+                    <div key={p.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 0' }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 999, marginTop: 5, flexShrink: 0, background: '#f59e0b' }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, color: '#334155', fontWeight: 600, fontFamily: 'var(--font-primary)' }}>{p.name}</div>
+                        <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2, fontFamily: 'var(--font-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.email}</div>
                       </div>
                     </div>
                   ))}
                 </div>
               )}
             </div>
-          </motion.div>
+          </div>
 
           {/* Quick Actions */}
-          <motion.div variants={item} className="wl-dash-card">
-            <div className="wl-dash-card-header">
-              <h3 className="wl-dash-card-title">Quick Actions</h3>
+          <div className="reg-admin-table-wrap">
+            <div className="reg-card-header">
+              <h3 className="reg-card-title">Quick Actions</h3>
             </div>
-            <div className="wl-dash-card-body">
-              <div className="wl-action-grid">
+            <div className="reg-card-body">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 {[
                   { label: 'Create Training', icon: Plus, bg: '#f0fdf4', color: '#16a34a' },
                   { label: 'Manage Trainers', icon: UserCheck, bg: '#f0f9ff', color: '#0284c7' },
                   { label: 'View Reports', icon: FileText, bg: '#fffbeb', color: '#d97706' },
                   { label: 'Bulk Import', icon: Layers, bg: '#faf5ff', color: '#9333ea' },
                 ].map((act, idx) => (
-                  <motion.button
+                  <button
                     key={idx}
-                    className="wl-action-btn"
-                    whileHover={{ y: -2 }}
-                    whileTap={{ scale: 0.98 }}
+                    type="button"
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '12px',
+                      borderRadius: 10, border: '1px solid #eef2f7', background: '#fff',
+                      cursor: 'pointer', transition: 'all 150ms ease', fontFamily: 'var(--font-primary)',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = '#cbd5e1'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(15,23,42,0.06)' }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = '#eef2f7'; e.currentTarget.style.boxShadow = 'none' }}
                   >
-                    <div className="wl-action-icon" style={{ background: act.bg, color: act.color }}>
-                      <act.icon size={18} />
+                    <div style={{ width: 34, height: 34, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, background: act.bg, color: act.color }}>
+                      <act.icon size={16} />
                     </div>
-                    <span className="wl-action-label">{act.label}</span>
-                  </motion.button>
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: '#334155', textAlign: 'left' }}>{act.label}</span>
+                  </button>
                 ))}
               </div>
             </div>
-          </motion.div>
+          </div>
         </div>
       </div>
-    </motion.div>
+    </div>
   )
 }
