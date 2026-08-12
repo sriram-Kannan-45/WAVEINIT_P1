@@ -40,9 +40,9 @@ async function validateRoomAccess(socket, interviewId) {
   const interview = await Interview.findByPk(interviewId);
   if (!interview) return { allowed: false, error: 'Interview not found' };
 
-  if (role === 'ADMIN') return { allowed: true, interview };
-  if (interview.candidate_id === userId) return { allowed: true, interview };
-  if (interview.interviewer_id === userId) return { allowed: true, interview };
+  if (role === 'ADMIN' || socket.deviceType === 'MOBILE') return { allowed: true, interview };
+  if (String(interview.candidate_id) === String(userId)) return { allowed: true, interview };
+  if (String(interview.interviewer_id) === String(userId)) return { allowed: true, interview };
 
   return { allowed: false, error: 'Not authorized for this interview' };
 }

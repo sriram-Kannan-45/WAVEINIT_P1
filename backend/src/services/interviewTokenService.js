@@ -99,6 +99,13 @@ class InterviewTokenService {
         return { success: false, status: 404, message: 'Invalid pairing token' };
       }
       if (existing.token_status === 'CONSUMED') {
+        // If device was previously consumed for an active session, allow mobile socket reconnection
+        const { InterviewSession } = require('../models');
+        const session = await InterviewSession.findByPk(existing.session_id);
+        if (session && (session.status === 'WAITING' || session.status === 'ACTIVE')) {
+          logger.info('Mobile socket reconnected to active session', { deviceId: existing.id, sessionId: existing.session_id });
+          return { success: true, device: existing, reconnected: true };
+        }
         return { success: false, status: 410, message: 'Token already used. Please request a new QR code.' };
       }
       if (existing.token_status === 'EXPIRED') {
@@ -113,7 +120,7 @@ class InterviewTokenService {
     });
 
     // Validate user identity
-    if (expectedUserId && device.user_id !== expectedUserId) {
+    if (expectedUserId && String(device.user_id) !== String(expectedUserId)) {
       return { success: false, status: 403, message: 'Token does not belong to this user' };
     }
 
@@ -128,15 +135,10 @@ class InterviewTokenService {
   }
 
   /**
-   * Validate a pairing token is still PENDING and not expired.
-   * Non-destructive — used to authorize a mobile socket connection before the
-   * token is consumed atomically on join-room.
+   * Validate a pairing token without consuming it.
+   * Returns the device record if valid (PENDING or CONSUMED for socket reconnects), or an error.
    */
   async validatePairingToken(token) {
-    if (!token) {
-      return { success: false, status: 400, message: 'Pairing token is required' };
-    }
-
     const device = await InterviewDevice.findOne({ where: { pairing_token: token } });
     if (!device) {
       return { success: false, status: 404, message: 'Invalid pairing token' };
@@ -147,10 +149,7 @@ class InterviewTokenService {
       return { success: false, status: 410, message: 'Pairing code has expired. Please scan a new QR code.' };
     }
 
-    if (device.token_status !== 'PENDING') {
-      if (device.token_status === 'CONSUMED') {
-        return { success: false, status: 410, message: 'This QR code has already been used. Please scan a new one.' };
-      }
+    if (device.token_status === 'EXPIRED') {
       return { success: false, status: 410, message: 'This QR code is no longer valid. Please scan a new one.' };
     }
 

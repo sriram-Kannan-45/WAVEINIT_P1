@@ -1,0 +1,10 @@
+﻿const fs = require('fs');
+const hook = fs.readFileSync('frontend/src/hooks/useInterviewMedia.js', 'utf8');
+console.log('=== useInterviewMedia.js first 40 lines ===');
+console.log(hook.split('\n').slice(0, 40).join('\n'));
+console.log('\n=== return keys ===');
+const ret = hook.slice(hook.indexOf('return {'));
+console.log(ret.slice(0, ret.indexOf('}') + 2));
+const room = fs.readFileSync('frontend/src/pages/interview/InterviewRoom.jsx', 'utf8');
+console.log('\n=== InterviewRoom media usages ===');
+room.split('\n').forEach((l, i) => { if (/interviewMedia\./.test(l)) console.log((i+1) + ': ' + l.trim()); });

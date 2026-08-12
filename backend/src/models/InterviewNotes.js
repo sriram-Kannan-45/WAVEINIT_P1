@@ -9,7 +9,7 @@ const InterviewNotes = sequelize.define('InterviewNotes', {
   },
   session_id: {
     type: DataTypes.BIGINT.UNSIGNED,
-    allowNull: false,
+    allowNull: true,
     references: { model: 'interview_sessions', key: 'id' },
     onDelete: 'CASCADE',
   },

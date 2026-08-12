@@ -81,29 +81,58 @@ export default function MobileJoin() {
 
   const connectSocket = useCallback(() => {
     if (!info?.socketToken || socket) return
+    console.log('[MOBILE] BEFORE socket connect — URL:', info.socketUrl || window.location.origin)
     setPhase(PHASE.CONNECTING)
+
+    // 10-second failure timeout guard
+    const timeoutTimer = setTimeout(() => {
+      if (!joinedRef.current && !endedRef.current) {
+        console.error('[MOBILE] CONNECTION TIMEOUT — Could not join room within 10s')
+        setError('Unable to connect to the interview room. Please check your connection and tap Try Again.')
+        setPhase(PHASE.ERROR)
+      }
+    }, 10000)
 
     // Same-origin so the Vite dev proxy / reverse proxy forwards /socket.io.
     const s = io({
       auth: { token: info.socketToken },
-      transports: ['websocket', 'polling'],
-      reconnection: false,
+      transports: ['polling', 'websocket'],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      timeout: 10000,
     })
 
     s.on('connect', () => {
+      console.log('[MOBILE] SOCKET CONNECTED — socket.id:', s.id)
+      console.log('[MOBILE] EMITTING join-room for interviewId:', info.interviewId)
       s.emit('join-room', { interviewId: info.interviewId, deviceType: 'MOBILE' }, (ack) => {
+        clearTimeout(timeoutTimer)
+        console.log('[MOBILE] JOIN ROOM ACK:', ack)
         if (endedRef.current) return
         if (ack?.success) {
           joinedRef.current = true
+          console.log('[MOBILE] CONNECTED & JOINED INTERVIEW SESSION SUCCESSFULLY')
+          
+          // NOW add the local stream to the peer connections (after peers exist)
+          if (localStreamRef.current) {
+            console.log('[MOBILE] Adding local stream to peer connections')
+            addLocalStream(localStreamRef.current)
+          } else {
+            console.warn('[MOBILE] localStream not ready when join-room succeeded')
+          }
+          
           setPhase(PHASE.CONNECTED)
         } else {
+          console.error('[MOBILE] JOIN ROOM FAILED:', ack?.error)
           setError(ack?.error || 'Could not pair this device. Please scan the QR code again.')
           setPhase(PHASE.ERROR)
         }
       })
     })
 
-    s.on('disconnect', () => {
+    s.on('disconnect', (reason) => {
+      console.warn('[MOBILE] SOCKET DISCONNECTED:', reason)
       if (joinedRef.current && !endedRef.current) {
         setError('Connection to the interview was lost. Please scan the QR code again.')
         setPhase(PHASE.ERROR)
@@ -111,14 +140,17 @@ export default function MobileJoin() {
     })
 
     s.on('connect_error', (err) => {
+      clearTimeout(timeoutTimer)
+      console.error('[MOBILE] SOCKET CONNECT ERROR:', err)
       const msg = err?.message || ''
       setError(/Pairing error/.test(msg)
         ? 'This QR code has already been used or has expired. Please scan a new one.'
-        : 'Could not connect. Check your network and try again.')
+        : `Could not connect to signaling server: ${msg || 'Network error'}`)
       setPhase(PHASE.ERROR)
     })
 
     s.on('interview-ended', () => {
+      clearTimeout(timeoutTimer)
       endedRef.current = true
       setPhase(PHASE.ENDED)
     })
@@ -126,29 +158,55 @@ export default function MobileJoin() {
     setSocket(s)
   }, [info, socket])
 
-  const requestCamera = useCallback(async () => {
-    try {
-      setPhase(PHASE.CAMERA)
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false,
-      })
-      localStreamRef.current = stream
-      setLocalStream(stream)
-      connectSocket()
-    } catch {
-      setError('Camera access denied. Please allow camera access to pair your device.')
-      setPhase(PHASE.ERROR)
-    }
-  }, [connectSocket])
-
   // Wire the WebRTC offer/answer/ICE handlers to the socket once connected.
   const {
     handleOffer,
     handleAnswer,
     handleIceCandidate,
+    addLocalStream,
     connectionStates,
   } = useWebRTC(socket, info?.interviewId, localStreamRef)
+
+  const requestCamera = useCallback(async () => {
+    if (typeof window !== 'undefined' && window.isSecureContext === false) {
+      setError(`Secure connection (HTTPS) is required for mobile camera access. Please change 'http://' to 'https://' in your mobile browser address bar.`)
+      setPhase(PHASE.ERROR)
+      return
+    }
+    try {
+      setPhase(PHASE.CAMERA)
+      console.log('[MOBILE] Requesting camera access...')
+      let stream
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        })
+      } catch (firstErr) {
+        // Fallback for devices without environment camera or with strict constraints
+        console.warn('[MOBILE] Environment camera failed, trying default camera')
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        })
+      }
+      console.log('[MOBILE] ✅ Camera acquired:', {
+        streamId: stream.id,
+        tracks: stream.getTracks().map(t => ({ kind: t.kind, label: t.label, readyState: t.readyState })),
+      })
+      localStreamRef.current = stream
+      setLocalStream(stream)
+      // DO NOT call addLocalStream() yet - socket must connect first
+      connectSocket()
+    } catch (err) {
+      console.error('[MOBILE] Camera access failed:', err)
+      const isDenied = err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError'
+      setError(isDenied
+        ? 'Camera access was denied. Please allow camera access in your mobile browser settings and try again.'
+        : 'Could not access camera. Please make sure no other app is using your camera and try again.')
+      setPhase(PHASE.ERROR)
+    }
+  }, [connectSocket])
 
   useEffect(() => {
     if (!socket) return
@@ -167,7 +225,33 @@ export default function MobileJoin() {
 
   // Keep the preview <video> bound to the live stream.
   useEffect(() => {
-    if (videoRef.current && localStream) videoRef.current.srcObject = localStream
+    if (videoRef.current && localStream) {
+      console.log('[MOBILE] Attaching stream to video preview:', {
+        streamId: localStream.id,
+        tracks: localStream.getTracks().map(t => ({ kind: t.kind, label: t.label, readyState: t.readyState })),
+      })
+      videoRef.current.srcObject = localStream
+      
+      // Explicitly play the video
+      videoRef.current.play().catch(err => {
+        console.warn('[MOBILE] video.play() failed:', err.message)
+      })
+
+      // Wait for metadata to confirm video is ready
+      const onLoadedMetadata = () => {
+        console.log('[MOBILE] ✅ Video preview ready:', {
+          videoWidth: videoRef.current.videoWidth,
+          videoHeight: videoRef.current.videoHeight,
+        })
+      }
+      videoRef.current.addEventListener('loadedmetadata', onLoadedMetadata)
+
+      return () => {
+        if (videoRef.current) {
+          videoRef.current.removeEventListener('loadedmetadata', onLoadedMetadata)
+        }
+      }
+    }
   }, [localStream])
 
   // Cleanup on unmount.
@@ -260,7 +344,7 @@ export default function MobileJoin() {
             autoPlay
             playsInline
             muted
-            className="w-full rounded-2xl border border-gray-700/50 bg-black"
+            className="w-full rounded-2xl border border-gray-700/50 bg-black aspect-video object-cover"
           />
           <p className="text-center text-green-400 text-xs mt-2 font-medium">
             📹 Camera Active — Monitoring Mode
@@ -333,10 +417,24 @@ export default function MobileJoin() {
 
         {(phase === PHASE.CAMERA || phase === PHASE.CONNECTING) && (
           <div className="flex flex-col items-center gap-3 py-4">
-            <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-            <span className="text-gray-400 text-sm">
+            <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mb-1" />
+            <span className="text-gray-300 text-sm font-medium">
               {phase === PHASE.CAMERA ? 'Requesting camera access…' : 'Connecting to the interview…'}
             </span>
+            {localStream && (
+              <div className="mt-3 w-full">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full rounded-2xl border border-gray-700/50 bg-black aspect-video object-cover"
+                />
+                <p className="text-center text-indigo-300 text-xs mt-2 font-medium">
+                  📷 Local Camera Active — Connecting Stream…
+                </p>
+              </div>
+            )}
           </div>
         )}
       </motion.div>

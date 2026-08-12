@@ -7,6 +7,7 @@ const { Op } = require('sequelize');
 const {
   Interview, InterviewSession, InterviewDevice, InterviewRecording,
   InterviewLog, InterviewAlert, InterviewFeedback, InterviewResult, User,
+  InterviewNotes,
   RegistrationApplication, Training, Enrollment,
 } = require('../models');
 const tokenService = require('../services/interviewTokenService');
@@ -397,6 +398,55 @@ class InterviewController {
   }
 
   /**
+   * POST /interviews/:id/consent
+   * Record recording & AI monitoring consent for the user in the interview session.
+   */
+  async recordConsent(req, res) {
+    try {
+      const interviewId = parseInterviewId(req.params.id);
+      if (!interviewId) return res.status(400).json({ error: 'Invalid interview id' });
+
+      const interview = await Interview.findByPk(interviewId);
+      if (!interview) return res.status(404).json({ error: 'Interview not found' });
+
+      const userId = req.user.id;
+      const role = req.user.role;
+
+      if (role === 'PARTICIPANT' && interview.candidate_id !== userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+      if (role === 'TRAINER' && interview.interviewer_id !== userId && interview.candidate_id !== userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      let session = await InterviewSession.findOne({
+        where: { interview_id: interview.id, status: { [Op.in]: ['WAITING', 'ACTIVE'] } },
+        order: [['created_at', 'DESC']],
+      });
+
+      if (!session) {
+        session = await InterviewSession.create({
+          interview_id: interview.id,
+          status: 'WAITING',
+        });
+      }
+
+      await InterviewLog.create({
+        session_id: session.id,
+        actor_id: userId,
+        event_type: 'CONSENT_GRANTED',
+        payload_json: { role, grantedAt: new Date().toISOString() },
+      });
+
+      logger.info('Interview consent recorded', { interviewId: interview.id, sessionId: session.id, userId, role });
+      res.json({ success: true, consentGivenAt: new Date().toISOString(), sessionId: session.id });
+    } catch (error) {
+      logger.error('Error recording consent', { error: error.message });
+      res.status(500).json({ error: 'Failed to record consent' });
+    }
+  }
+
+  /**
    * POST /interviews/:id/pair-mobile
    * Mobile device pairs using a one-time token.
    */
@@ -721,6 +771,93 @@ class InterviewController {
     } catch (error) {
       logger.error('Error getting recordings', { error: error.message });
       res.status(500).json({ error: 'Failed to get recordings' });
+    }
+  }
+
+  /**
+   * GET /interviews/:id/notes
+   * List notes for an interview. Participants only see public notes (or their
+   * own private ones); interviewers/admins see everything.
+   */
+  async getNotes(req, res) {
+    try {
+      const interview = await Interview.findByPk(req.params.id);
+      if (!interview) return res.status(404).json({ error: 'Interview not found' });
+
+      const userId = req.user.id;
+      const role = req.user.role;
+      if (role === 'PARTICIPANT' && interview.candidate_id !== userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+      if (role === 'TRAINER' && interview.interviewer_id !== userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      const where = { interview_id: interview.id };
+      if (role === 'PARTICIPANT') {
+        where[Op.or] = [{ is_private: false }, { author_id: userId }];
+      }
+
+      const notes = await InterviewNotes.findAll({
+        where,
+        order: [['created_at', 'ASC']],
+        include: [{ model: User, as: 'author', attributes: ['id', 'name', 'role', 'profile_image_path'] }],
+      });
+
+      res.json({ notes: notes.map(n => n.toJSON()) });
+    } catch (error) {
+      logger.error('Error getting interview notes', { error: error.message });
+      res.status(500).json({ error: 'Failed to get notes' });
+    }
+  }
+
+  /**
+   * POST /interviews/:id/notes
+   * Create a note for an interview. Attaches to the active session when one
+   * exists, otherwise leaves session_id null.
+   */
+  async createNote(req, res) {
+    try {
+      const interview = await Interview.findByPk(req.params.id);
+      if (!interview) return res.status(404).json({ error: 'Interview not found' });
+
+      const userId = req.user.id;
+      const role = req.user.role;
+      if (role === 'PARTICIPANT' && interview.candidate_id !== userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+      if (role === 'TRAINER' && interview.interviewer_id !== userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      const { content, noteType, timestampSeconds, isPrivate } = req.body;
+      if (!content || !String(content).trim()) {
+        return res.status(400).json({ error: 'Note content is required' });
+      }
+
+      const activeSession = await InterviewSession.findOne({
+        where: { interview_id: interview.id, status: { [Op.in]: ['WAITING', 'ACTIVE'] } },
+        order: [['created_at', 'DESC']],
+      });
+
+      const note = await InterviewNotes.create({
+        interview_id: interview.id,
+        session_id: activeSession ? activeSession.id : null,
+        author_id: userId,
+        note_type: noteType || 'GENERAL',
+        content: String(content).trim(),
+        timestamp_seconds: Number.isInteger(timestampSeconds) ? timestampSeconds : null,
+        is_private: Boolean(isPrivate),
+      });
+
+      const created = await InterviewNotes.findByPk(note.id, {
+        include: [{ model: User, as: 'author', attributes: ['id', 'name', 'role', 'profile_image_path'] }],
+      });
+
+      res.status(201).json({ note: created.toJSON() });
+    } catch (error) {
+      logger.error('Error creating interview note', { error: error.message });
+      res.status(500).json({ error: 'Failed to create note' });
     }
   }
 

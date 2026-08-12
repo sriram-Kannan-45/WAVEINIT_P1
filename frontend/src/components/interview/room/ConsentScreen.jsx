@@ -1,68 +1,131 @@
 /**
- * ConsentScreen
- * Step 3 (participant only). Explicit recording & monitoring consent before
- * the participant joins the signaling room.
+ * ConsentScreen Component (Stage 3: Recording & Monitoring Consent)
+ * Standard LMS consent modal / card step.
  */
 import InterviewShell from './InterviewShell'
+import { ShieldCheck, Check, AlertTriangle, XCircle } from 'lucide-react'
 
 const CONSENT_POINTS = [
-  'Video and audio will be recorded from your camera and microphone',
-  'Screen sharing content may be recorded if you enable it',
-  'The interviewer can view your laptop and mobile camera feeds',
-  'Activity logs (tab switches, code editor changes) are tracked',
-  'Recordings are accessible only by authorized interviewers and admins',
+  'Video and audio will be recorded from your camera and microphone during the interview.',
+  'Screen sharing content may be recorded if screen share is activated.',
+  'Camera and microphone inputs are monitored for identity and presence verification.',
+  'Tab changes, copy/paste events, and system activity may be logged for audit purposes.',
+  'Authorized access to interview recordings and logs is strictly limited to relevant LMS admins and trainers.',
 ]
 
-export default function ConsentScreen({ onConsent, onDecline, isBusy }) {
+export default function ConsentScreen({ onConsent, onDecline, isBusy, error, interviewId }) {
   return (
     <InterviewShell
+      interviewId={interviewId}
+      title="Interview Room"
+      statusBadge="Consent Required"
+      subtitle="Recording & Monitoring Agreement"
+      step="Stage 2 of 4"
       headerRight={
         <button
           onClick={onDecline}
-          className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
+          disabled={isBusy}
+          className="reg-admin-btn reg-admin-btn--secondary"
         >
           Decline & Exit
         </button>
       }
     >
-      <div className="bg-white rounded-2xl border border-surface-200 shadow-card overflow-hidden">
-        <div className="px-8 py-7 text-center border-b border-surface-100">
-          <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-primary-50 border border-primary-100 flex items-center justify-center">
-            <span className="text-2xl">📹</span>
+      <div className="reg-admin-table-wrap" style={{ maxWidth: 760, margin: '0 auto', background: '#fff' }}>
+        {/* Card Header */}
+        <div style={{
+          padding: '20px 24px',
+          borderBottom: '1px solid #e2e8f0',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 14,
+          background: '#f8fafc',
+        }}>
+          <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
+            <ShieldCheck size={22} color="#fff" />
           </div>
-          <h1 className="text-xl font-bold text-surface-900 mb-2" style={{ fontFamily: 'Poppins, sans-serif' }}>
-            Recording & Monitoring Consent
-          </h1>
-          <p className="text-surface-500 text-sm leading-relaxed max-w-md mx-auto">
-            This interview session will be recorded for quality and evaluation purposes.
-            AI-based monitoring may be active to detect tab switches, copy/paste
-            activity, and camera status changes.
-          </p>
+          <div>
+            <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: '#0f172a' }}>
+              Recording & Monitoring Consent
+            </h3>
+            <p style={{ fontSize: 13, color: '#64748b', margin: '2px 0 0' }}>
+              Please review and accept the session recording and activity monitoring policy.
+            </p>
+          </div>
         </div>
 
-        <div className="px-8 py-6">
-          <div className="bg-primary-50 rounded-xl px-5 py-4 mb-6 border border-primary-100 space-y-2">
-            {CONSENT_POINTS.map((point) => (
-              <p key={point} className="text-sm text-surface-700 flex items-start gap-2">
-                <span className="text-primary-600 font-bold leading-snug">•</span>
-                <span>{point}</span>
-              </p>
+        <div style={{ padding: 24 }}>
+          {error && (
+            <div style={{
+              marginBottom: 16,
+              padding: '12px 16px',
+              background: '#fee2e2',
+              border: '1px solid #fca5a5',
+              borderRadius: 8,
+              fontSize: 13,
+              color: '#dc2626',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}>
+              <AlertTriangle size={16} />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <div style={{
+            background: '#f0fdf4',
+            border: '1px solid #bbf7d0',
+            borderRadius: 12,
+            padding: 20,
+            marginBottom: 24,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 14,
+          }}>
+            {CONSENT_POINTS.map((point, index) => (
+              <div key={index} style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                <div style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: '50%',
+                  background: '#16A34A',
+                  color: '#fff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  marginTop: 1,
+                }}>
+                  <Check size={12} strokeWidth={3} />
+                </div>
+                <span style={{ fontSize: 13, color: '#166534', lineHeight: 1.5 }}>
+                  {point}
+                </span>
+              </div>
             ))}
           </div>
 
-          <div className="flex gap-3">
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, paddingTop: 12, borderTop: '1px solid #f1f5f9' }}>
             <button
               onClick={onDecline}
-              className="px-5 py-3 bg-surface-100 hover:bg-surface-200 text-surface-700 text-sm font-medium rounded-xl transition-colors"
+              disabled={isBusy}
+              className="reg-admin-btn reg-admin-btn--secondary"
             >
               Decline & Exit
             </button>
+
             <button
               onClick={onConsent}
               disabled={isBusy}
-              className="flex-1 px-6 py-3 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors shadow-lg shadow-primary-600/25"
+              className="reg-admin-btn reg-admin-btn--primary"
+              style={{ padding: '10px 24px', fontSize: 14 }}
             >
-              I Consent — Continue
+              {isBusy ? (
+                <span>Recording consent...</span>
+              ) : (
+                <span>I Consent — Continue</span>
+              )}
             </button>
           </div>
         </div>

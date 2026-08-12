@@ -66,15 +66,6 @@ const initializeSocket = (server) => {
       }
       const decoded = jwt.verify(token, secret);
       const userId = decoded.id || decoded.userId;
-      const user = await User.findByPk(userId);
-
-      if (!user) {
-        return next(new Error('Authentication error: User not found'));
-      }
-
-      socket.userId = userId;
-      socket.userRole = user.role;
-      socket.userName = user.name;
 
       // Mobile pairing sockets authenticate with a short-lived socket token that
       // embeds the one-time pairing token. Re-validate the pairing token is still
@@ -85,6 +76,9 @@ const initializeSocket = (server) => {
           logger.warn('Mobile socket pairing rejected', { userId, message: result.message });
           return next(new Error(`Pairing error: ${result.message}`));
         }
+        socket.userId = userId;
+        socket.userRole = 'PARTICIPANT';
+        socket.userName = decoded.candidateName || 'Candidate Mobile';
         socket.deviceType = 'MOBILE';
         socket.pairingToken = decoded.pairingToken;
         socket.sessionId = decoded.sessionId || result.device.session_id;
@@ -92,6 +86,16 @@ const initializeSocket = (server) => {
         logger.info('Mobile socket connected', { userId, sessionId: socket.sessionId });
         return next();
       }
+
+      const user = await User.findByPk(userId);
+
+      if (!user) {
+        return next(new Error('Authentication error: User not found'));
+      }
+
+      socket.userId = userId;
+      socket.userRole = user.role;
+      socket.userName = user.name;
 
       logger.info('Socket connected', { userId: socket.userId, role: socket.userRole });
       next();

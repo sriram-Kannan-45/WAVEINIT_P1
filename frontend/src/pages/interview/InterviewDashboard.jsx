@@ -12,29 +12,10 @@ import {
 } from 'lucide-react'
 import { useToast } from '../../components/Toast'
 import interviewService from '../../services/interviewService'
-
-const STATUS_COLORS = {
-  SCHEDULED:   { bg: '#dbeafe', text: '#1e40af', border: '#93c5fd' },
-  IN_PROGRESS: { bg: '#fef3c7', text: '#92400e', border: '#fcd34d' },
-  COMPLETED:   { bg: '#d1fae5', text: '#065f46', border: '#6ee7b7' },
-  CANCELLED:   { bg: '#fee2e2', text: '#991b1b', border: '#fca5a5' },
-  RESCHEDULED: { bg: '#e0e7ff', text: '#3730a3', border: '#a5b4fc' },
-  NO_SHOW:     { bg: '#fee2e2', text: '#991b1b', border: '#fca5a5' },
-}
-
-const TYPE_BADGE = {
-  TECHNICAL: { cls: 'reg-admin-type--technical', label: 'Technical' },
-  HR:        { cls: 'reg-admin-type--hr', label: 'HR' },
-  MANAGERIAL:{ cls: 'reg-admin-type--managerial', label: 'Managerial' },
-  CUSTOM:    { cls: 'reg-admin-type--custom', label: 'Custom' },
-}
-
-const MEETING_BADGE = {
-  ONLINE:    { cls: 'reg-admin-meeting--online', label: 'Online' },
-  IN_PERSON: { cls: 'reg-admin-meeting--in-person', label: 'In-Person' },
-  HYBRID:    { cls: 'reg-admin-meeting--hybrid', label: 'Hybrid' },
-  IN_PLATFORM: { cls: 'reg-admin-meeting--online', label: 'In-Platform' },
-}
+import {
+  STATUS_COLORS, TYPE_BADGE, MEETING_BADGE,
+  formatDate, formatTime, formatDateTime,
+} from '../../utils/interviewPresentation'
 
 // Allowed next statuses per current status (matches backend transition rules).
 const STATUS_OPTIONS = {
@@ -169,7 +150,12 @@ export default function InterviewDashboard({ user }) {
   const openMenu = (e, id) => {
     e.stopPropagation()
     const rect = e.currentTarget.getBoundingClientRect()
-    const right = Math.max(8, window.innerWidth - rect.right)
+    const menuWidth = 180
+    let right = window.innerWidth - rect.right
+    if (right < 8) right = 8
+    if (window.innerWidth - right - menuWidth < 8) {
+      right = Math.max(8, window.innerWidth - rect.left - menuWidth)
+    }
     const estHeight = menuRef.current?.offsetHeight || 260
     let top = rect.bottom + 6
     if (top + estHeight > window.innerHeight - 8) {
@@ -319,9 +305,7 @@ export default function InterviewDashboard({ user }) {
     return false
   }
 
-  const formatDate = (dt) => new Date(dt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-  const formatTime = (dt) => new Date(dt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
-  const formatDateTime = (dt) => dt ? `${formatDate(dt)} at ${formatTime(dt)}` : '—'
+  
   const getInitials = (name) => (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
   const isAdmin = user?.role === 'ADMIN'
 

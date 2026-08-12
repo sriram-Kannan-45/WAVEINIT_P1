@@ -26,3 +26,4 @@
 {"id":"019f2250-cff0-712a-9238-9e0bee2717af","timestamp":"2026-07-02T10:12:29.295Z","type":"ferment_running","preStateHash":"fdb23e5cbabc6f6a","postStateHash":"2407425978a3bf4b","payload":{}}
 {"id":"019f2250-cff1-7077-83ab-07687f9ab026","timestamp":"2026-07-02T10:12:29.295Z","type":"phase_activated","preStateHash":"2407425978a3bf4b","postStateHash":"5971dd3b738de9c9","payload":{"phaseId":"phase-4","startedAt":"2026-07-02T10:12:29.295Z"}}
 {"id":"019f2252-6834-72f0-8fa8-c6f985172121","timestamp":"2026-07-02T10:14:13.812Z","type":"step_started","preStateHash":"5971dd3b738de9c9","postStateHash":"29669f2c62bf124f","payload":{"phaseId":"phase-4","stepId":"step-1","startedAt":"2026-07-02T10:14:13.812Z"}}
+{"id":"019ff580-8381-73ac-b9e7-0a9e6e460e18","timestamp":"2026-08-12T10:24:28.031Z","type":"ferment_paused","preStateHash":"29669f2c62bf124f","postStateHash":"07652655b14952bf","payload":{}}

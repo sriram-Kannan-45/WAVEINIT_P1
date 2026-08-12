@@ -266,7 +266,10 @@ function RecordingDetailWrapper({ user, onLogout, pageVariants }) {
 
 function DashboardWrapper({ component: Component, user, onLogout }) {
   const location = useLocation()
-  const [activeTab, setActiveTab] = useState(location.state?.tab || DEFAULT_TABS[user?.role] || 'overview')
+  const isInterviewRoute = location.pathname.startsWith('/interview')
+  const [activeTab, setActiveTab] = useState(
+    location.state?.tab || (isInterviewRoute ? 'interviews' : DEFAULT_TABS[user?.role] || 'overview')
+  )
 
   useEffect(() => {
     if (location.state?.tab) {
@@ -566,7 +569,7 @@ function AppRoutes({ user, onLogin, onLogout }) {
         path="/interview/:id/room"
         element={
           user ? (
-            <InterviewRoom user={user} />
+            <DashboardWrapper component={InterviewRoom} user={user} onLogout={onLogout} />
           ) : (
             <Navigate to="/login" replace />
           )
@@ -576,7 +579,7 @@ function AppRoutes({ user, onLogin, onLogout }) {
         path="/interview/:id/join"
         element={
           user ? (
-            <InterviewRoom user={user} />
+            <DashboardWrapper component={InterviewRoom} user={user} onLogout={onLogout} />
           ) : (
             <Navigate to="/login" replace />
           )

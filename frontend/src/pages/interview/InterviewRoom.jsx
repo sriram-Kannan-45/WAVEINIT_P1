@@ -15,6 +15,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { AlertCircle, Clapperboard, Loader2 } from 'lucide-react'
 import ActiveRoom from '../../components/interview/room/ActiveRoom'
 import ConsentScreen from '../../components/interview/room/ConsentScreen'
 import DeviceCheckScreen from '../../components/interview/room/DeviceCheckScreen'
@@ -27,6 +28,7 @@ import { useInterviewMedia } from '../../hooks/useInterviewMedia'
 import { useInterviewRecorder } from '../../hooks/useInterviewRecorder'
 import { useSocket, useSocketEvent } from '../../hooks/useSocket'
 import { useWebRTC } from '../../hooks/useWebRTC'
+import { normalizeInterview } from '../../utils/interviewPresentation'
 import { isSecureContextForMedia } from '../../utils/mobilePairingUrl'
 import interviewService from '../../services/interviewService'
 
@@ -44,9 +46,9 @@ const PHASE = {
 function FullScreenLoader({ message = 'Loading interview...' }) {
   return (
     <InterviewShell>
-      <div className="bg-white/5 border border-white/10 rounded-2xl p-10 text-center">
-        <div className="w-10 h-10 mx-auto mb-4 border-4 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-        <p className="text-slate-200 text-sm">{message}</p>
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-card p-10 text-center">
+        <div className="w-10 h-10 mx-auto mb-4 border-4 border-primary-500 border-t-transparent rounded-full animate-spin" />
+        <p className="text-slate-500 text-sm">{message}</p>
       </div>
     </InterviewShell>
   )
@@ -61,7 +63,7 @@ function InterviewRoomInner({ user }) {
 
   const {
     setInterview, setSession, setDevices, setPeers, setLocalStreams,
-    devices, peers, alerts, chatMessages,
+    devices: sessionDevices, peers, alerts, chatMessages,
     addChatMessage, addAlert, updateDevice,
   } = useInterviewSession()
 
@@ -96,18 +98,61 @@ function InterviewRoomInner({ user }) {
     mediaError,
     isMuted,
     isCameraOff,
+    devices: mediaDevices,
+    selectedCamera,
+    selectedMicrophone,
+    cameraPermission,
+    micPermission,
+    micLevel,
+    isMicDetected,
     startLocalMedia,
     stopLocalMedia,
     toggleMute,
     toggleCamera,
     resetMediaError,
+    enumerateDevices,
+    switchCamera,
+    switchMicrophone,
   } = useInterviewMedia()
 
   const {
-    remoteStreams, connectionStates, addLocalStream,
+    remoteStreams, connectionStates, webrtcState, addLocalStream,
     createOffer, handleOffer, handleAnswer, handleIceCandidate,
-    replaceTrackAll, closePeer, closeAll: closeWebRTC,
+    replaceTrackAll, addScreenStream, removeScreenStream,
+    closePeer, closeAll: closeWebRTC,
   } = useWebRTC(socket, interviewId, localStreamRef)
+
+  const handleToggleScreenShare = useCallback(async () => {
+    if (isScreenSharing && screenStreamRef.current) {
+      await removeScreenStream(screenStreamRef.current)
+      screenStreamRef.current.getTracks().forEach(t => t.stop())
+      screenStreamRef.current = null
+      setIsScreenSharing(false)
+      if (socket && interviewId) socket.emit('screen-share', { interviewId, sharing: false })
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+        screenStreamRef.current = stream
+        await addScreenStream(stream)
+        setIsScreenSharing(true)
+        if (socket && interviewId) socket.emit('screen-share', { interviewId, sharing: true })
+        const screenTrack = stream.getVideoTracks()[0]
+        if (screenTrack) {
+          screenTrack.onended = async () => {
+            if (screenStreamRef.current) {
+              await removeScreenStream(screenStreamRef.current)
+              screenStreamRef.current.getTracks().forEach(t => t.stop())
+              screenStreamRef.current = null
+            }
+            setIsScreenSharing(false)
+            if (socket && interviewId) socket.emit('screen-share', { interviewId, sharing: false })
+          }
+        }
+      } catch (err) {
+        console.error('Screen share failed:', err)
+      }
+    }
+  }, [isScreenSharing, socket, interviewId, addScreenStream, removeScreenStream])
   const { isRecording, toggleRecording } = useInterviewRecorder(sessionId)
   const { monitorTrack } = useInterviewDetectors({
     socket,
@@ -135,36 +180,38 @@ function InterviewRoomInner({ user }) {
 
   /**
    * Pre-fetch interview details and validate access on mount.
+   * Also reused by the error screen's "Try Again" action.
    */
-  useEffect(() => {
+  const loadInterview = useCallback(async () => {
     if (!interviewId) {
       setError('Interview ID is missing.')
       setPhase(PHASE.ERROR)
       return
     }
-    let cancelled = false
-    interviewService.get(interviewId)
-      .then((res) => {
-        if (cancelled) return
-        setInterviewData(res.interview)
-        setInterview(res.interview)
-        if (res.interview?.status === 'IN_PROGRESS') {
-          markStarted(res.interview.startedAt || new Date().toISOString())
-        }
-        setPhase(PHASE.INVITE)
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(err?.message || 'Could not load this interview.')
-          setPhase(PHASE.ERROR)
-        }
-      })
-    return () => { cancelled = true }
+    setPhase(PHASE.LOADING)
+    setError(null)
+    try {
+      const res = await interviewService.get(interviewId)
+      const iv = normalizeInterview(res?.interview || res?.data?.interview || res)
+      setInterviewData(iv)
+      setInterview(iv)
+      if (iv.status === 'IN_PROGRESS') {
+        markStarted(iv.startedAt || new Date().toISOString())
+      }
+      setPhase(PHASE.INVITE)
+    } catch (err) {
+      setError(err?.message || 'Could not load this interview.')
+      setPhase(PHASE.ERROR)
+    }
   }, [interviewId, setInterview, markStarted])
 
-  // Request camera + mic when the user reaches the device check step.
   useEffect(() => {
-    if (phase !== PHASE.DEVICE) return
+    loadInterview()
+  }, [loadInterview])
+
+  // Request camera + mic whenever entering invite, device check, waiting, or active room phases.
+  useEffect(() => {
+    if (phase === PHASE.LOADING || phase === PHASE.ENDED || phase === PHASE.ERROR) return
     if (localStreamRef.current) return
     startLocalMedia()
   }, [phase, startLocalMedia, localStreamRef])
@@ -172,43 +219,120 @@ function InterviewRoomInner({ user }) {
   // Keep the video element attached to the live stream.
   useEffect(() => {
     if (localVideoRef.current && localStreamRef.current) {
+      console.log('[INTERVIEW] Attaching local stream to video element', {
+        streamId: localStreamRef.current.id,
+        trackCount: localStreamRef.current.getTracks().length,
+        tracks: localStreamRef.current.getTracks().map(t => ({
+          kind: t.kind,
+          label: t.label,
+          readyState: t.readyState,
+          enabled: t.enabled,
+        })),
+      })
       localVideoRef.current.srcObject = localStreamRef.current
+      
+      // Explicitly play the video
+      localVideoRef.current.play().catch(err => {
+        console.warn('[INTERVIEW] video.play() failed (may be expected):', err.message)
+      })
+
+      // Wait for metadata to confirm video is ready
+      const onLoadedMetadata = () => {
+        console.log('[INTERVIEW] ✅ Local video ready:', {
+          videoWidth: localVideoRef.current.videoWidth,
+          videoHeight: localVideoRef.current.videoHeight,
+        })
+      }
+      localVideoRef.current.addEventListener('loadedmetadata', onLoadedMetadata)
+      
+      return () => {
+        if (localVideoRef.current) {
+          localVideoRef.current.removeEventListener('loadedmetadata', onLoadedMetadata)
+        }
+      }
     }
-  }, [mediaState, localStreamRef])
+  }, [mediaState, localStreamRef, phase])
 
   /**
    * Join the signaling room. `onJoined(success)` is called with the result.
    */
   const joinSocketRoom = useCallback((onJoined) => {
-    if (!socket || !isConnected) {
-      setError('Could not connect to the interview server. Check your connection and try again.')
-      setPhase(PHASE.ERROR)
-      onJoined?.(false)
-      return
-    }
-    socket.emit('join-room', { interviewId }, (response) => {
-      if (leavingRef.current) return
-      if (response?.success) {
-        setJoined(true)
-        setSessionId(response.sessionId)
-        if (response.interview) {
-          setInterviewData((prev) => prev || response.interview)
-          setInterview(response.interview)
-        }
-        setPeers(response.peers || [])
-        // The laptop does not need the participant's mobile feed (the
-        // interviewer receives it); skip offers to mobile peers.
-        response.peers?.forEach((peer) => {
-          if (peer.deviceType !== 'MOBILE') createOffer(peer.socketId)
-        })
-        onJoined?.(true)
-      } else {
-        setError(response?.error || 'Failed to join the interview room.')
+    const doJoin = () => {
+      if (!socket) {
+        console.error('[INTERVIEW] Cannot join room: socket unavailable')
+        setError('Interview server connection unavailable.')
         setPhase(PHASE.ERROR)
         onJoined?.(false)
+        return
       }
-    })
-  }, [socket, isConnected, interviewId, createOffer, setInterview, setPeers])
+      console.log('[INTERVIEW] Emitting join-room', {
+        interviewId,
+        socketId: socket.id,
+        userId: user?.id,
+        role: user?.role,
+        isInterviewer,
+      })
+      socket.emit('join-room', { interviewId }, (response) => {
+        if (leavingRef.current) return
+        console.log('[INTERVIEW] join-room response:', {
+          success: response?.success,
+          sessionId: response?.sessionId,
+          peerCount: response?.peers?.length || 0,
+          peers: response?.peers?.map(p => ({ socketId: p.socketId, role: p.role, deviceType: p.deviceType })),
+        })
+        if (response?.success) {
+          setJoined(true)
+          setSessionId(response.sessionId)
+          if (response.interview) {
+            setInterviewData((prev) => prev || response.interview)
+            setInterview(response.interview)
+          }
+          setPeers(response.peers || [])
+          response.peers?.forEach((peer) => {
+            console.log('[INTERVIEW] Found existing peer:', {
+              socketId: peer.socketId,
+              role: peer.role,
+              deviceType: peer.deviceType,
+              willCreateOffer: isInterviewer || peer.deviceType !== 'MOBILE',
+            })
+            if (isInterviewer || peer.deviceType !== 'MOBILE') {
+              createOffer(peer.socketId)
+            }
+          })
+          onJoined?.(true)
+        } else {
+          console.error('[INTERVIEW] join-room failed:', response?.error)
+          setError(response?.error || 'Failed to join the interview room.')
+          setPhase(PHASE.ERROR)
+          onJoined?.(false)
+        }
+      })
+    }
+
+    if (socket && isConnected) {
+      doJoin()
+    } else if (socket) {
+      // Socket exists but is still connecting, wait for connect event
+      const onConnect = () => {
+        socket.off('connect', onConnect)
+        doJoin()
+      }
+      socket.once('connect', onConnect)
+      // Safety timeout after 5s
+      setTimeout(() => {
+        socket.off('connect', onConnect)
+        if (!socket.connected && !joined) {
+          setError('Could not connect to the interview server. Check your connection and try again.')
+          setPhase(PHASE.ERROR)
+          onJoined?.(false)
+        }
+      }, 5000)
+    } else {
+      setError('Interview server connection unavailable.')
+      setPhase(PHASE.ERROR)
+      onJoined?.(false)
+    }
+  }, [socket, isConnected, interviewId, createOffer, setInterview, setPeers, joined])
 
   /**
    * Trainer: flip the interview to IN_PROGRESS via the backend and announce
@@ -238,7 +362,11 @@ function InterviewRoomInner({ user }) {
    * (participant) or after the device check (interviewer).
    */
   const beginJoin = useCallback(async () => {
-    if (joined || !interviewId) return
+    if (!interviewId) return
+    if (joined) {
+      setPhase(PHASE.WAITING)
+      return
+    }
     setError(null)
     setNotice(null)
     setIsBusy(true)
@@ -247,8 +375,11 @@ function InterviewRoomInner({ user }) {
       setSessionId(joinRes.session?.id)
       setQrPayload(joinRes.qrPayload || null)
       if (joinRes.interview) {
-        setInterviewData(joinRes.interview)
-        setInterview(joinRes.interview)
+        const joinedIv = normalizeInterview(joinRes.interview)
+        // Preserve the richer GET payload (candidate/interviewer/etc.) and
+        // overlay the fresh join session fields (sessionId, status, …).
+        setInterviewData((prev) => (prev ? { ...prev, ...joinedIv } : joinedIv))
+        setInterview(joinedIv)
       }
       setSession(joinRes.session)
       setDevices({
@@ -354,34 +485,7 @@ function InterviewRoomInner({ user }) {
   }, [startedAt])
 
   // ── Media controls ──────────────────────────────────────────────────────
-  const handleToggleScreenShare = useCallback(async () => {
-    if (isScreenSharing && screenStreamRef.current) {
-      const cameraTrack = localStreamRef.current?.getVideoTracks()[0] || null
-      replaceTrackAll(cameraTrack, 'video')
-      screenStreamRef.current.getTracks().forEach(t => t.stop())
-      screenStreamRef.current = null
-      setIsScreenSharing(false)
-      if (socket && interviewId) socket.emit('screen-share', { interviewId, sharing: false })
-    } else {
-      try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
-        screenStreamRef.current = stream
-        const screenTrack = stream.getVideoTracks()[0]
-        if (screenTrack) replaceTrackAll(screenTrack, 'video')
-        setIsScreenSharing(true)
-        if (socket && interviewId) socket.emit('screen-share', { interviewId, sharing: true })
-        screenTrack.onended = () => {
-          const cameraTrack = localStreamRef.current?.getVideoTracks()[0] || null
-          replaceTrackAll(cameraTrack, 'video')
-          setIsScreenSharing(false)
-          screenStreamRef.current = null
-          if (socket && interviewId) socket.emit('screen-share', { interviewId, sharing: false })
-        }
-      } catch (err) {
-        console.error('Screen share failed:', err)
-      }
-    }
-  }, [isScreenSharing, socket, interviewId, replaceTrackAll, localStreamRef])
+
 
   const handleSendMessage = useCallback((message) => {
     if (socket && interviewId && sessionId) {
@@ -444,10 +548,24 @@ function InterviewRoomInner({ user }) {
     }
   }, [closeWebRTC, socket, interviewId, stopLocalMedia])
 
-  const handleAcceptConsent = useCallback(() => {
-    setConsentGiven(true)
-    beginJoin()
-  }, [beginJoin])
+  const handleAcceptConsent = useCallback(async () => {
+    if (isBusy) return
+    setIsBusy(true)
+    setError(null)
+    try {
+      await interviewService.recordConsent(interviewId)
+      setConsentGiven(true)
+      setIsBusy(false)
+      if (joined) {
+        setPhase(PHASE.WAITING)
+      } else {
+        await beginJoin()
+      }
+    } catch (err) {
+      setIsBusy(false)
+      setError(err?.message || 'Unable to record consent. Please try again.')
+    }
+  }, [interviewId, isBusy, joined, beginJoin, setConsentGiven])
 
   const handleRefreshQr = useCallback(async () => {
     const res = await interviewService.refreshQr(interviewId)
@@ -461,6 +579,7 @@ function InterviewRoomInner({ user }) {
 
   // ── Derived values ──────────────────────────────────────────────────────
   const peerConnected = Object.values(connectionStates).includes('connected')
+  const videoStreaming = Object.values(webrtcState).some(state => state?.video === 'live')
 
   const connectionStatus = useMemo(() => {
     if (!joined) return 'Preparing your room...'
@@ -469,11 +588,14 @@ function InterviewRoomInner({ user }) {
         ? 'Waiting for the participant to join'
         : 'Waiting for the interviewer to join'
     }
+    if (videoStreaming) {
+      return isInterviewer ? 'Participant video streaming' : 'Interviewer video streaming'
+    }
     if (peerConnected) {
-      return isInterviewer ? 'Participant connected' : 'Interviewer connected'
+      return 'Connection established, waiting for video...'
     }
     return 'Establishing secure connection...'
-  }, [joined, peers.length, peerConnected, isInterviewer])
+  }, [joined, peers.length, peerConnected, videoStreaming, isInterviewer])
 
   const formatTime = (seconds) => {
     const h = Math.floor(seconds / 3600)
@@ -490,16 +612,18 @@ function InterviewRoomInner({ user }) {
   // ── Screens ─────────────────────────────────────────────────────────────
   if (ended) {
     return (
-      <InterviewShell>
-        <div className="bg-white rounded-2xl border border-surface-200 shadow-card p-8 max-w-md w-full mx-auto text-center">
-          <div className="text-4xl mb-3">🎬</div>
-          <h2 className="text-xl font-bold text-surface-900 mb-2" style={{ fontFamily: 'Poppins, sans-serif' }}>
+      <InterviewShell interviewId={interviewId} title="Interview Room" statusBadge="Ended">
+        <div className="reg-admin-table-wrap" style={{ maxWidth: 500, margin: '0 auto', padding: 32, textAlign: 'center', background: '#fff' }}>
+          <Clapperboard size={36} color="#16A34A" style={{ margin: '0 auto 12px' }} />
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', margin: '0 0 8px' }}>
             Interview Ended
           </h2>
-          <p className="text-surface-500 text-sm mb-6">
+          <p style={{ fontSize: 13, color: '#64748b', margin: '0 0 20px' }}>
             This interview was ended by {ended.byName}. You will be redirected shortly.
           </p>
-          <div className="w-5 h-5 mx-auto border-2 border-primary-600 border-t-transparent rounded-full animate-spin" />
+          <div className="reg-admin-loading" style={{ padding: 0 }}>
+            <Loader2 size={24} className="spin" />
+          </div>
         </div>
       </InterviewShell>
     )
@@ -507,21 +631,23 @@ function InterviewRoomInner({ user }) {
 
   if (phase === PHASE.ERROR) {
     return (
-      <InterviewShell>
-        <div className="bg-white rounded-2xl border border-danger-200 shadow-card p-8 max-w-lg w-full mx-auto text-center">
-          <div className="text-4xl mb-3">⚠️</div>
-          <h2 className="text-xl font-bold text-surface-900 mb-2">Error</h2>
-          <p className="text-surface-500 text-sm mb-6">{error}</p>
-          <div className="flex gap-3">
+      <InterviewShell interviewId={interviewId} title="Interview Room" statusBadge="Error">
+        <div className="reg-admin-table-wrap" style={{ maxWidth: 540, margin: '0 auto', padding: 32, textAlign: 'center', background: '#fff' }}>
+          <AlertCircle size={40} color="#dc2626" style={{ margin: '0 auto 12px' }} />
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', margin: '0 0 8px' }}>
+            Couldn't Load the Interview
+          </h2>
+          <p style={{ fontSize: 13, color: '#64748b', margin: '0 0 24px' }}>{error}</p>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
             <button
-              onClick={() => { setError(null); setPhase(PHASE.INVITE) }}
-              className="flex-1 px-6 py-2.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-xl transition-colors"
+              onClick={loadInterview}
+              className="reg-admin-btn reg-admin-btn--primary"
             >
               Try Again
             </button>
             <button
               onClick={() => navigate('/interviews')}
-              className="flex-1 px-6 py-2.5 bg-surface-100 hover:bg-surface-200 text-surface-700 text-sm font-medium rounded-xl transition-colors"
+              className="reg-admin-btn reg-admin-btn--secondary"
             >
               Back to Interviews
             </button>
@@ -532,7 +658,14 @@ function InterviewRoomInner({ user }) {
   }
 
   if (phase === PHASE.LOADING) {
-    return <FullScreenLoader />
+    return (
+      <InterviewShell interviewId={interviewId} title="Interview Room" statusBadge="Loading">
+        <div className="reg-admin-loading">
+          <Loader2 size={32} className="spin" color="#16A34A" />
+          <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>Loading interview room...</span>
+        </div>
+      </InterviewShell>
+    )
   }
 
   if (phase === PHASE.INVITE) {
@@ -551,25 +684,41 @@ function InterviewRoomInner({ user }) {
   if (phase === PHASE.DEVICE) {
     return (
       <DeviceCheckScreen
+        interviewId={interviewId}
         mediaState={mediaState}
         mediaError={mediaError}
         localVideoRef={localVideoRef}
         isSecure={isSecureContextForMedia()}
         supportsMedia={!!navigator?.mediaDevices?.getUserMedia}
         onRetry={handleRetryMedia}
-        onContinue={() => (isInterviewer ? beginJoin() : setPhase(PHASE.CONSENT))}
+        onContinue={() => setPhase(PHASE.CONSENT)}
         onBack={() => setPhase(PHASE.INVITE)}
         isBusy={isBusy}
+        devices={mediaDevices}
+        selectedCamera={selectedCamera}
+        selectedMicrophone={selectedMicrophone}
+        onCameraChange={switchCamera}
+        onMicrophoneChange={switchMicrophone}
+        onEnumerateDevices={enumerateDevices}
+        micLevel={micLevel}
+        isMicDetected={isMicDetected}
+        cameraPermission={cameraPermission}
+        micPermission={micPermission}
       />
     )
   }
 
-  if (phase === PHASE.CONSENT && !isInterviewer) {
+  if (phase === PHASE.CONSENT) {
     return (
       <ConsentScreen
+        interviewId={interviewId}
         onConsent={handleAcceptConsent}
-        onDecline={() => navigate('/interviews')}
+        onDecline={() => {
+          stopLocalMedia()
+          navigate('/interviews')
+        }}
         isBusy={isBusy}
+        error={error}
       />
     )
   }
@@ -584,7 +733,7 @@ function InterviewRoomInner({ user }) {
         mediaState={mediaState}
         remoteStreams={remoteStreams}
         peers={peers}
-        devices={devices}
+        devices={sessionDevices}
         qrPayload={qrPayload}
         onRefreshQr={handleRefreshQr}
         isMuted={isMuted}
@@ -619,19 +768,41 @@ function InterviewRoomInner({ user }) {
   // Waiting room (joined socket, not yet started)
   return (
     <WaitingRoomScreen
-      isInterviewer={isInterviewer}
       interviewData={interviewData}
-      qrPayload={qrPayload}
-      onRefreshQr={handleRefreshQr}
+      isInterviewer={isInterviewer}
+      user={user}
       localVideoRef={localVideoRef}
       mediaState={mediaState}
-      devices={devices}
+      remoteStreams={remoteStreams}
+      peers={peers}
+      devices={sessionDevices}
+      qrPayload={qrPayload}
+      onRefreshQr={handleRefreshQr}
+      isMuted={isMuted}
+      onToggleMute={toggleMute}
+      isCameraOff={isCameraOff}
+      onToggleCamera={toggleCamera}
+      isScreenSharing={isScreenSharing}
+      onToggleScreenShare={handleToggleScreenShare}
+      isRecording={isRecording}
+      onToggleRecording={() => toggleRecording(localStreamRef.current, 'LAPTOP')}
+      isChatOpen={isChatOpen}
+      onToggleChat={setIsChatOpen}
+      chatMessages={chatMessages}
+      onSendMessage={handleSendMessage}
+      alerts={alerts}
+      elapsed={elapsed}
+      formatTime={formatTime}
       peerConnected={peerConnected}
       connectionStatus={connectionStatus}
       notice={notice}
-      isStarting={isBusy}
-      onStartNow={attemptStart}
-      onExit={() => navigate('/interviews')}
+      handleEndInterview={handleEndInterview}
+      handleLeaveInterview={handleLeaveInterview}
+      socket={socket}
+      interviewId={interviewId}
+      sessionId={sessionId}
+      expandedTile={expandedTile}
+      onToggleTile={(key) => setExpandedTile((prev) => (prev === key ? null : key))}
     />
   )
 }

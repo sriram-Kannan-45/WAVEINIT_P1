@@ -688,6 +688,39 @@ const connectDB = async () => {
         logger.error('⚠️ Error adding columns to trainer_profiles', { error: tpErr.message });
       }
 
+      // Manual database migration for interview_results (is_published column)
+      // The model defines is_published but sync({ alter: false }) never adds
+      // columns to existing tables — without it, GET /api/interviews/:id 500s
+      // on the LEFT JOIN select (unknown column 'result.is_published').
+      try {
+        const [irCols] = await sequelize.query("SHOW COLUMNS FROM `interview_results` WHERE `Field` = 'is_published'");
+        if (irCols.length === 0) {
+          logger.info('➕ Adding is_published column to interview_results...');
+          await sequelize.query(
+            "ALTER TABLE `interview_results` ADD COLUMN `is_published` TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'If true, result is visible to participants'"
+          );
+        } else {
+          logger.info('✅ interview_results.is_published column already exists');
+        }
+      } catch (irErr) {
+        logger.error('⚠️ Error adding column to interview_results', { error: irErr.message });
+      }
+
+      // Manual migration for interview_notes.session_id
+      // The model defines session_id as NOT NULL, but notes may be written
+      // before a session row exists (e.g. in the details/waiting screens).
+      // The model file relaxes the column to nullable; this makes the live
+      // table match when sync({ alter: false }) cannot change it.
+      try {
+        const [inCols] = await sequelize.query("SHOW COLUMNS FROM `interview_notes` WHERE `Field` = 'session_id'");
+        if (inCols.length > 0 && inCols[0].Null === 'NO') {
+          logger.info('➕ Relaxing interview_notes.session_id to nullable...');
+          await sequelize.query("ALTER TABLE `interview_notes` MODIFY `session_id` BIGINT UNSIGNED NULL");
+        }
+      } catch (inErr) {
+        logger.error('⚠️ Error relaxing interview_notes.session_id', { error: inErr.message });
+      }
+
       logger.info('✅ Manual schema migration checks completed successfully');
     } catch (migError) {
       logger.error('⚠️ Error applying manual schema migrations to ai_questions', { error: migError.message });

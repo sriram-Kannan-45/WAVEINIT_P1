@@ -5,6 +5,7 @@
  */
 import { useState, useCallback, useRef, useEffect } from 'react'
 import Editor from '@monaco-editor/react'
+import { Code2 } from 'lucide-react'
 
 const LANGUAGES = [
   { value: 'javascript', label: 'JavaScript' },
@@ -99,15 +100,13 @@ export default function SharedCodeEditor({
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2.5 bg-slate-800/90 border-b border-slate-700/50">
         <div className="flex items-center gap-2">
-          <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-          </svg>
+          <Code2 size={15} className="text-slate-400" />
           <span className="text-slate-300 text-xs font-medium">Shared Code Editor</span>
         </div>
         <select
           value={language}
           onChange={handleLanguageChange}
-          className="bg-slate-700 border border-slate-600 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 cursor-pointer transition-all"
+          className="bg-slate-700 border border-slate-600 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 cursor-pointer transition-all"
         >
           {LANGUAGES.map(lang => (
             <option key={lang.value} value={lang.value}>{lang.label}</option>
@@ -153,7 +152,7 @@ export default function SharedCodeEditor({
           loading={
             <div className="flex items-center justify-center h-full bg-slate-900">
               <div className="flex flex-col items-center gap-3">
-                <div className="w-8 h-8 border-2 border-slate-700 border-t-violet-500 rounded-full animate-spin" />
+                <div className="w-8 h-8 border-2 border-slate-700 border-t-primary-500 rounded-full animate-spin" />
                 <span className="text-slate-500 text-sm">Loading editor...</span>
               </div>
             </div>

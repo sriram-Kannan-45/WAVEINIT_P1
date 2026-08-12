@@ -96,6 +96,7 @@ router.delete('/:id', roleMiddleware('ADMIN'), interviewController.deleteIntervi
 
 // Session lifecycle
 router.post('/:id/join', interviewController.joinInterview);
+router.post('/:id/consent', interviewController.recordConsent);
 router.post('/:id/pair-mobile', interviewController.pairMobile);
 router.post('/:id/refresh-qr', interviewController.refreshQr);
 router.post('/:id/start', roleMiddleware('ADMIN', 'TRAINER'), interviewController.startInterview);
@@ -110,6 +111,10 @@ router.post('/:id/publish-result', roleMiddleware('ADMIN', 'TRAINER'), interview
 // Status & Recordings
 router.get('/:id/status', interviewController.getInterviewStatus);
 router.get('/:id/recordings', interviewController.getRecordings);
+
+// Notes (shared, live interview scratchpad)
+router.get('/:id/notes', interviewController.getNotes);
+router.post('/:id/notes', interviewController.createNote);
 
 // AI Monitoring alerts
 router.post('/:id/alerts', interviewController.logAlert);

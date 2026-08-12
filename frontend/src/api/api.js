@@ -18,13 +18,11 @@ export { getAuthHeaders };
 /** Base origin of the Node backend — no trailing slash, no /api */
 const getBackendOrigin = () => {
   const envUrl = import.meta.env.VITE_API_URL;
-  if (envUrl && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
+  if (envUrl) {
     return envUrl.replace(/\/api$/, '');
   }
-  if (typeof window !== 'undefined' && window.location && window.location.hostname) {
-    const protocol = window.location.protocol || 'http:';
-    const hostname = window.location.hostname;
-    return `${protocol}//${hostname}:3001`;
+  if (typeof window !== 'undefined' && window.location && window.location.origin) {
+    return window.location.origin;
   }
   return 'http://localhost:3001';
 };

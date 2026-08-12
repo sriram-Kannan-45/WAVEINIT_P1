@@ -4,6 +4,7 @@
  * Dark theme for video interview context.
  */
 import { useRef, useEffect } from 'react'
+import { Video } from 'lucide-react'
 
 export default function VideoTile({
   stream,
@@ -19,9 +20,35 @@ export default function VideoTile({
 
   useEffect(() => {
     if (videoRef.current && stream) {
+      console.log(`[VideoTile] Attaching stream to ${label}:`, {
+        streamId: stream.id,
+        trackCount: stream.getTracks().length,
+        tracks: stream.getTracks().map(t => ({
+          kind: t.kind,
+          label: t.label,
+          readyState: t.readyState,
+        })),
+      })
       videoRef.current.srcObject = stream
+      videoRef.current.play().catch((e) => {
+        console.warn(`[VideoTile] ${label} auto-play error:`, e.message)
+      })
+
+      const onLoadedMetadata = () => {
+        console.log(`[VideoTile] ✅ ${label} video ready:`, {
+          videoWidth: videoRef.current.videoWidth,
+          videoHeight: videoRef.current.videoHeight,
+        })
+      }
+      videoRef.current.addEventListener('loadedmetadata', onLoadedMetadata)
+
+      return () => {
+        if (videoRef.current) {
+          videoRef.current.removeEventListener('loadedmetadata', onLoadedMetadata)
+        }
+      }
     }
-  }, [stream])
+  }, [stream, label])
 
   return (
     <div
@@ -49,7 +76,7 @@ export default function VideoTile({
           {label || 'Unknown'}
         </span>
         {isScreenShare && (
-          <span className="px-2 py-0.5 bg-violet-500/80 backdrop-blur-sm rounded-md text-white text-xs font-medium">
+          <span className="px-2 py-0.5 bg-primary-500/80 backdrop-blur-sm rounded-md text-white text-xs font-medium">
             Screen
           </span>
         )}
@@ -60,9 +87,7 @@ export default function VideoTile({
         <div className="absolute inset-0 flex items-center justify-center bg-slate-800">
           <div className="text-center">
             <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-slate-700 flex items-center justify-center">
-              <svg className="w-6 h-6 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-              </svg>
+              <Video size={22} className="text-slate-500" />
             </div>
             <span className="text-slate-400 text-xs">{label || 'No Feed'}</span>
           </div>

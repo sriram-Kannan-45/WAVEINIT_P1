@@ -74,6 +74,10 @@ async function main() {
     'proctor_violations',
     'registration_applications',
     'certificates',
+    'interviews',
+    'interview_sessions',
+    'interview_devices',
+    'interview_logs',
   ];
 
   for (const table of tables) {

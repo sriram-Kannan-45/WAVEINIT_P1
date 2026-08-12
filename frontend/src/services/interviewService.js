@@ -24,6 +24,8 @@ export const interviewService = {
 
   join: (id) => api.post(`${INTERVIEW_BASE}/${id}/join`),
 
+  recordConsent: (id) => api.post(`${INTERVIEW_BASE}/${id}/consent`),
+
   pairMobile: (id, token) => api.post(`${INTERVIEW_BASE}/${id}/pair-mobile`, { token }),
 
   refreshQr: (id) => api.post(`${INTERVIEW_BASE}/${id}/refresh-qr`),
@@ -43,6 +45,10 @@ export const interviewService = {
   getStatus: (id) => api.get(`${INTERVIEW_BASE}/${id}/status`),
 
   getRecordings: (id) => api.get(`${INTERVIEW_BASE}/${id}/recordings`),
+
+  getNotes: (id) => api.get(`${INTERVIEW_BASE}/${id}/notes`),
+
+  createNote: (id, data) => api.post(`${INTERVIEW_BASE}/${id}/notes`, data),
 
   logAlert: (id, data) => api.post(`${INTERVIEW_BASE}/${id}/alerts`, data),
 

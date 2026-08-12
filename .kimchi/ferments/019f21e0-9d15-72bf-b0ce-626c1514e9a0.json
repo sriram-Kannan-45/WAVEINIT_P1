@@ -2,7 +2,7 @@
   "id": "019f21e0-9d15-72bf-b0ce-626c1514e9a0",
   "name": "Coding Assessment IDE & Workflow",
   "description": "Bring the coding assessment participant experience in line with the quiz assessment: enforce the same consent/fullscreen/screen-share proctoring workflow, and restyle the coding IDE to resemble a light VS Code environment with a clean, functional terminal/output panel.",
-  "status": "running",
+  "status": "paused",
   "worktree": {
     "path": "/mnt/d/feedWeb (2)/feedWeb",
     "branch": "feat/architecture-skeleton",
@@ -164,7 +164,7 @@
           "id": "step-1",
           "index": 1,
           "description": "Restyle output panel with light theme tabs and status badges for stdout/stderr/compile/test results.",
-          "status": "running",
+          "status": "pending",
           "verification": {
             "command": "grep -n 'Program Output' /mnt/d/feedWeb\\ \\(2\\)/feedWeb/frontend/src/pages/ParticipantCodingAttemptPage.jsx | head -3",
             "retries": 2,
@@ -180,7 +180,7 @@
   "decisions": [],
   "memories": [],
   "createdAt": "2026-07-02T08:09:56.245Z",
-  "updatedAt": "2026-07-02T10:14:13.812Z",
+  "updatedAt": "2026-08-12T10:24:28.031Z",
   "goal": "Bring the coding assessment participant experience in line with the quiz assessment: enforce the same consent/fullscreen/screen-share proctoring workflow, and restyle the coding IDE to resemble a light VS Code environment with a clean, functional terminal/output panel.",
   "successCriteria": [
     "Coding assessment uses the same 3-step consent gate as quiz (consent → screen share → fullscreen).",
