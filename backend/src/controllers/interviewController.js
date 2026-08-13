@@ -349,9 +349,9 @@ class InterviewController {
         await device.update({ status: 'CONNECTED', connected_at: new Date() });
       }
 
-      // Generate QR code for mobile pairing (only for candidate)
+      // Generate QR code for mobile pairing (always for candidate)
       let qrPayload = null;
-      if (role === 'PARTICIPANT' && interview.require_mobile_pairing) {
+      if (role === 'PARTICIPANT') {
         const tokenResult = await tokenService.generatePairingToken(session.id, userId, 'MOBILE');
         qrPayload = {
           ...qrGenerator.generatePairingPayload({

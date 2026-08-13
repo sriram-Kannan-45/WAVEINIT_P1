@@ -2,10 +2,11 @@
  * ActiveRoom Component (Stage 5: Main Interview Room)
  * Redesigned to match the reference SaaS structure using LMS design system components.
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import InterviewShell from './InterviewShell'
 import VideoTile from '../VideoTile'
 import QRPairing from '../QRPairing'
+import MobileFeedTile from './MobileFeedTile'
 import interviewService from '../../../services/interviewService'
 import {
   Mic,
@@ -14,7 +15,6 @@ import {
   VideoOff,
   Monitor,
   LogOut,
-  Smartphone,
   CheckCircle2,
   Clock,
   User,
@@ -30,7 +30,71 @@ const defaultFormatTime = (seconds = 0) => {
   const s = seconds % 60
   return h > 0
     ? `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
-    : `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+    : `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '00')}`
+}
+
+/** Development-only real-time connection diagnostics panel */
+function WebRTCDebugPanel({ isInterviewer, peers, connectionStates, remoteStreams, mediaState, socket, interviewId, getRemoteDiagnostics }) {
+  return null
+  const remotePeer = isInterviewer
+    ? peers.find(p => (p.role === 'PARTICIPANT' || p.role === 'CANDIDATE') && p.deviceType !== 'MOBILE')
+    : peers.find(p => (p.role === 'TRAINER' || p.role === 'ADMIN') && p.deviceType !== 'MOBILE')
+  const remoteState = remotePeer ? (connectionStates[remotePeer.socketId] || (Object.keys(connectionStates).length > 0 ? 'connecting' : 'connecting')) : undefined
+  const remoteStream = remotePeer ? remoteStreams[remotePeer.socketId] : undefined
+  const remoteVideoTracks = remoteStream?.getVideoTracks() || []
+  const remoteAudioTracks = remoteStream?.getAudioTracks() || []
+
+  const row = (label, value, ok) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, padding: '2px 0', borderBottom: '1px solid #333' }}>
+      <span style={{ color: '#94a3b8' }}>{label}</span>
+      <span style={{ color: ok === true ? '#4ade80' : ok === false ? '#f87171' : '#fbbf24', fontFamily: 'monospace' }}>{value ?? '—'}</span>
+    </div>
+  )
+
+  const activeConnSummary = Object.entries(connectionStates)
+    .map(([id, s]) => `${id.substr(0, 6)}:${s}`)
+    .join(' ') || (peers.length > 0 ? 'connecting' : 'none')
+
+  return (
+    <div style={{
+      position: 'fixed', bottom: 12, left: 12, zIndex: 9999,
+      background: 'rgba(15,23,42,0.95)', border: '1px solid #334155',
+      borderRadius: 8, padding: '8px 12px', minWidth: 240,
+      boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
+    }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: '#60a5fa', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
+        WebRTC Debug [{isInterviewer ? 'TRAINER' : 'PARTICIPANT'}]
+      </div>
+      {row('Socket ID', socket?.id?.substr(0, 12), !!socket?.connected)}
+      {row('Socket', socket?.connected ? 'connected' : 'disconnected', socket?.connected)}
+      {row('Interview ID', interviewId, true)}
+      {row('Media State', mediaState, mediaState === 'ready')}
+      {row('Remote Peer', remotePeer?.socketId?.substr(0, 12) || 'none', !!remotePeer)}
+      {row('Remote Role', remotePeer?.role, !!remotePeer)}
+      {row('WebRTC State', remoteState, remoteState === 'connected' || remoteState === 'completed')}
+      {row('Remote Video Tracks', remoteVideoTracks.length, remoteVideoTracks.length > 0)}
+      {row('Remote Audio Tracks', remoteAudioTracks.length, remoteAudioTracks.length > 0)}
+      {row('Remote Stream ID', remoteStream?.id?.substr(0, 12), !!remoteStream)}
+      {row('All Peers', peers.map(p => `${p.role}/${p.deviceType}`).join(', ') || 'none', peers.length > 0)}
+      {row('Conn States', activeConnSummary, Object.values(connectionStates).some(s => s === 'connected' || s === 'completed'))}
+      <div style={{ marginTop: 6, display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+        <button
+          onClick={() => {
+            peers.filter(p => p.socketId).forEach(p => {
+              console.log(`[WEBRTC SIGNALING] debug: getRemoteDiagnostics for ${p.role}/${p.deviceType} ${p.socketId}`)
+              getRemoteDiagnostics?.(p.socketId)
+            })
+          }}
+          style={{
+            background: '#1e293b', color: '#94a3b8', border: '1px solid #334155',
+            borderRadius: 4, padding: '3px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'monospace',
+          }}
+        >
+          Dump getStats
+        </button>
+      </div>
+    </div>
+  )
 }
 
 export default function ActiveRoom({
@@ -40,6 +104,8 @@ export default function ActiveRoom({
   localVideoRef,
   mediaState,
   remoteStreams = {},
+  connectionStates = {},
+  webrtcState = {},
   peers = [],
   devices = {},
   qrPayload,
@@ -56,14 +122,22 @@ export default function ActiveRoom({
   handleLeaveInterview,
   socket,
   interviewId,
+  getRemoteDiagnostics,
   elapsed = 0,
   formatTime = defaultFormatTime,
+  started = false,
   peerConnected,
   connectionStatus,
 }) {
   const [notes, setNotes] = useState('')
   const [savingNotes, setSavingNotes] = useState(false)
   const [showQrModal, setShowQrModal] = useState(false)
+  const [screenShareLive, setScreenShareLive] = useState(false)
+  const [screenShareStatus, setScreenShareStatus] = useState('none') // 'none' | 'connecting' | 'live' | 'failed'
+
+  const handleScreenShareVideoState = useCallback((state) => {
+    setScreenShareLive(state.ready)
+  }, [])
 
   // Fetch initial notes
   useEffect(() => {
@@ -104,6 +178,9 @@ export default function ActiveRoom({
     : '—'
   const durationMinutes = interviewData?.durationMinutes || interviewData?.duration_minutes || 60
 
+  // Pinned stream selection state (Option B)
+  const [pinnedStreamKey, setPinnedStreamKey] = useState(null)
+
   // Differentiate streams by role and deviceType
   const remoteEntries = Object.entries(remoteStreams || {})
 
@@ -116,35 +193,158 @@ export default function ActiveRoom({
   // Participant laptop peer & stream (for Trainer view)
   const participantLaptopPeer = peers.find(p => (p.role === 'PARTICIPANT' || p.role === 'CANDIDATE') && p.deviceType !== 'MOBILE')
   const participantLaptopStream = participantLaptopPeer
-    ? remoteStreams[participantLaptopPeer.socketId]
-    : (isInterviewer ? (remoteEntries.find(([id]) => id !== mobilePeer?.socketId)?.[1] || null) : null)
+    ? (remoteStreams[participantLaptopPeer.socketId] || remoteEntries.find(([id]) => id !== mobilePeer?.socketId && !id.endsWith('_screen'))?.[1] || null)
+    : (isInterviewer ? (remoteEntries.find(([id]) => id !== mobilePeer?.socketId && !id.endsWith('_screen'))?.[1] || null) : null)
 
   // Trainer laptop peer & stream (for Participant view)
   const trainerLaptopPeer = peers.find(p => (p.role === 'TRAINER' || p.role === 'ADMIN') && p.deviceType !== 'MOBILE')
   const trainerLaptopStream = trainerLaptopPeer
-    ? remoteStreams[trainerLaptopPeer.socketId]
-    : (!isInterviewer ? (remoteEntries.find(([id]) => id !== mobilePeer?.socketId)?.[1] || null) : null)
+    ? (remoteStreams[trainerLaptopPeer.socketId] || remoteEntries.find(([id]) => id !== mobilePeer?.socketId && !id.endsWith('_screen'))?.[1] || null)
+    : (!isInterviewer ? (remoteEntries.find(([id]) => id !== mobilePeer?.socketId && !id.endsWith('_screen'))?.[1] || null) : null)
 
-  // Primary video stage stream:
-  // - Trainer sees Participant Laptop Stream
-  // - Participant sees Trainer Laptop Stream
-  const mainStageStream = isInterviewer
-    ? (participantLaptopStream || (remoteEntries.find(([id]) => id !== mobilePeer?.socketId)?.[1] || null))
-    : (trainerLaptopStream || (remoteEntries.find(([id]) => id !== mobilePeer?.socketId)?.[1] || null))
+  // Screen share detection: resolve explicitly tagged _screen stream or any secondary video stream
+  const participantScreenStream = (remoteStreams[`${participantLaptopPeer?.socketId}_screen`]
+    || remoteEntries.find(([id]) => id.endsWith('_screen'))?.[1]
+    || (participantLaptopPeer && remoteStreams[participantLaptopPeer.socketId]?.getVideoTracks().length > 1
+        ? remoteStreams[participantLaptopPeer.socketId] : null)
+    || null)
 
-  const mainStagePeer = isInterviewer ? participantLaptopPeer : trainerLaptopPeer
-  const mainStageLabel = isInterviewer
-    ? `${candidateName}'s Laptop Video`
-    : `${interviewerName}'s Camera`
+  // Screen share status lifecycle with 8s timeout to prevent hanging on "Starting..."
+  useEffect(() => {
+    if (!participantScreenStream) {
+      setScreenShareStatus('none')
+      return
+    }
+    if (screenShareLive) {
+      setScreenShareStatus('live')
+      return
+    }
 
-  // Screen share detection
-  const participantScreenStream = participantLaptopPeer
-    ? remoteStreams[`${participantLaptopPeer.socketId}_screen`]
-    : null
+    setScreenShareStatus('connecting')
+    const timer = setTimeout(() => {
+      setScreenShareStatus(prev => prev === 'live' ? 'live' : 'failed')
+    }, 8000)
 
-  const isMobileConnected = !!mobileStream || !!mobilePeer || devices?.mobile
-  const isParticipantLaptopConnected = !!participantLaptopStream || !!participantLaptopPeer
-  const isTrainerConnected = !!trainerLaptopStream || !!trainerLaptopPeer
+    return () => clearTimeout(timer)
+  }, [participantScreenStream, screenShareLive])
+
+  // Tier 4: Remote Media Status — stream exists with live video tracks
+  const hasTrainerVideo      = !!trainerLaptopStream      && trainerLaptopStream.getVideoTracks().some(t => t.readyState === 'live')
+  const hasParticipantVideo  = !!participantLaptopStream  && participantLaptopStream.getVideoTracks().some(t => t.readyState === 'live')
+  const hasMobileVideo       = !!mobileStream             && mobileStream.getVideoTracks().some(t => t.readyState === 'live')
+  const hasScreenVideo       = !!participantScreenStream && participantScreenStream.getVideoTracks().some(t => t.readyState === 'live')
+
+  // Primary video stage stream resolution:
+  // Main Stage ALWAYS shows the candidate's laptop camera feed (or pinned stream if user explicitly pins)
+  const mainStageStream = (() => {
+    if (pinnedStreamKey) {
+      if (pinnedStreamKey === 'screen' && participantScreenStream) return participantScreenStream
+      if (pinnedStreamKey === 'mobile' && mobileStream) return mobileStream
+      if (pinnedStreamKey === 'laptop' && participantLaptopStream) return participantLaptopStream
+      if (remoteStreams[pinnedStreamKey]) return remoteStreams[pinnedStreamKey]
+    }
+
+    if (isInterviewer) {
+      // Main Stage ALWAYS defaults to the candidate's laptop camera feed
+      return participantLaptopStream || (remoteEntries.find(([id]) => id !== mobilePeer?.socketId && !id.endsWith('_screen'))?.[1]) || null
+    } else {
+      // Participant view: Main Stage shows the Trainer's camera feed
+      return trainerLaptopStream || (remoteEntries.find(([id]) => id !== mobilePeer?.socketId && !id.endsWith('_screen'))?.[1]) || null
+    }
+  })()
+
+  const mainStageLabel = (() => {
+    if (mainStageStream === participantScreenStream) return `${candidateName}'s Screen Share`
+    if (mainStageStream === mobileStream) return `${candidateName}'s Mobile Camera`
+    return isInterviewer ? `${candidateName}'s Laptop Camera` : `${interviewerName}'s Camera`
+  })()
+
+  const isMainStageLive = !!mainStageStream && mainStageStream.getVideoTracks().some(t => t.readyState === 'live')
+
+  // Tier 1: Room Presence — peer is in the signaling room
+  const trainerInRoom   = !!trainerLaptopPeer
+  const participantInRoom = !!participantLaptopPeer
+  const mobileInRoom    = !!mobilePeer
+
+  // Tier 2 / 3: WebRTC Connection State (real RTCPeerConnection.connectionState)
+  const mobileWebRTCState            = mobilePeer            ? connectionStates[mobilePeer.socketId]            : null
+  const participantLaptopWebRTCState  = participantLaptopPeer ? connectionStates[participantLaptopPeer.socketId]  : null
+  const trainerLaptopWebRTCState      = trainerLaptopPeer    ? connectionStates[trainerLaptopPeer.socketId]      : null
+
+  // Derived boolean helpers for badges and main stage display
+  const isMobileConnected            = hasMobileVideo || mobileWebRTCState === 'connected' || !!devices?.mobile || mobileInRoom
+  const isParticipantLaptopConnected = hasParticipantVideo || participantLaptopWebRTCState === 'connected'
+  const isTrainerConnected           = hasTrainerVideo || trainerLaptopWebRTCState === 'connected'
+
+  // For the center stage, the remote peer (the one you're watching) depends on role
+  const remotePeerInRoom     = isInterviewer ? (participantInRoom || mobileInRoom) : trainerInRoom
+  const remoteWebRTCState    = isInterviewer ? (participantLaptopWebRTCState || mobileWebRTCState) : trainerLaptopWebRTCState
+  const remoteHasVideo       = isMainStageLive
+  const remoteName           = isInterviewer ? candidateName : interviewerName
+
+  /**
+   * Derive center-stage status from the 4 tiers:
+   * 'waiting'      — remote peer not yet in signaling room
+   * 'connecting'   — in room, WebRTC negotiating
+   * 'connected'    — WebRTC connected, waiting for first video frame
+   * 'live'         — video tracks flowing
+   * 'failed'       — connection failed
+   */
+  const centerStageStatus = (() => {
+    if (isMainStageLive) return 'live'
+    if (!remotePeerInRoom) return 'waiting'
+    if (remoteWebRTCState === 'connected') return 'connected'
+    if (remoteWebRTCState === 'failed') return 'failed'
+    if (remoteWebRTCState === 'disconnected') return 'disconnected'
+    return 'connecting'
+  })()
+
+  const getStatusBadgeProps = (peerObj, peerStream, peerWebRTCState, peerHasVideo) => {
+    if (!peerObj) {
+      return { text: '○ Waiting', bg: '#f8fafc', color: '#64748b', border: '#e2e8f0' }
+    }
+    if (peerHasVideo || peerWebRTCState === 'connected') {
+      return { text: '● Connected', bg: '#dcfce7', color: '#15803D', border: '#bbf7d0' }
+    }
+    if (peerWebRTCState === 'connecting' || peerWebRTCState === 'checking' || peerWebRTCState === 'new') {
+      return { text: '◐ Connecting...', bg: '#fef3c7', color: '#d97706', border: '#fcd34d' }
+    }
+    if (peerWebRTCState === 'failed') {
+      return { text: '✕ Failed', bg: '#fee2e2', color: '#dc2626', border: '#fca5a5' }
+    }
+    if (peerWebRTCState === 'disconnected') {
+      return { text: '↻ Reconnecting', bg: '#fef3c7', color: '#d97706', border: '#fcd34d' }
+    }
+    // Peer in room but WebRTC not yet started
+    return { text: '◐ Connecting...', bg: '#fef3c7', color: '#d97706', border: '#fcd34d' }
+  }
+
+  // Center-stage placeholder message
+  const centerStageContent = (() => {
+    if (centerStageStatus === 'live') return null // render VideoTile
+    const icon = <VideoIcon size={32} color="#CBD5E1" />
+    let heading = ''
+    let sub = ''
+    if (centerStageStatus === 'waiting') {
+      heading = isInterviewer ? 'Waiting for participant to join...' : 'Waiting for interviewer...'
+      sub = isInterviewer
+        ? 'The participant video feed will appear automatically once they join.'
+        : 'The interviewer video feed will appear automatically once they join.'
+    } else if (centerStageStatus === 'connecting') {
+      heading = `Connecting to ${remoteName}...`
+      sub = 'Establishing secure WebRTC connection. This takes a few seconds.'
+    } else if (centerStageStatus === 'connected') {
+      heading = `Connected to ${remoteName}`
+      sub = 'Waiting for video stream to start...'
+    } else if (centerStageStatus === 'failed') {
+      heading = 'Connection failed'
+      sub = 'Could not establish a video connection. Please refresh the page.'
+    } else if (centerStageStatus === 'disconnected') {
+      heading = `${remoteName} disconnected`
+      sub = 'Trying to reconnect...'
+    }
+    return { icon, heading, sub }
+  })()
 
   return (
     <InterviewShell
@@ -152,7 +352,7 @@ export default function ActiveRoom({
       title="Interview Room"
       statusBadge={interviewData?.status || 'IN_PROGRESS'}
       subtitle={`${interviewData?.type || 'HR'} Interview · Interview #${interviewId}`}
-      status={peerConnected ? 'Live' : 'Waiting status'}
+      status={isTrainerConnected || isParticipantLaptopConnected ? 'Live' : 'Waiting status'}
       headerRight={
         <button
           onClick={isInterviewer ? handleEndInterview : handleLeaveInterview}
@@ -211,31 +411,43 @@ export default function ActiveRoom({
               Connection Status
             </h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
-                <span style={{ color: '#475569', fontWeight: 500 }}>
-                  {isInterviewer ? 'Participant Laptop' : 'Interviewer Laptop'}
-                </span>
-                <span className="reg-admin-status" style={{
-                  background: (isInterviewer ? isParticipantLaptopConnected : isTrainerConnected) ? '#dcfce7' : '#f8fafc',
-                  color: (isInterviewer ? isParticipantLaptopConnected : isTrainerConnected) ? '#15803D' : '#64748b',
-                  borderColor: (isInterviewer ? isParticipantLaptopConnected : isTrainerConnected) ? '#bbf7d0' : '#e2e8f0',
-                  fontSize: 10, padding: '2px 8px'
-                }}>
-                  {(isInterviewer ? isParticipantLaptopConnected : isTrainerConnected) ? '● Connected' : '○ Waiting'}
-                </span>
-              </div>
+              {(() => {
+                const targetPeer      = isInterviewer ? participantLaptopPeer : trainerLaptopPeer
+                const targetHasVideo  = isInterviewer ? hasParticipantVideo   : hasTrainerVideo
+                const targetState     = isInterviewer ? participantLaptopWebRTCState : trainerLaptopWebRTCState
+                const laptopBadge = getStatusBadgeProps(targetPeer, null, targetState, targetHasVideo)
+                const mobileBadge = getStatusBadgeProps(mobilePeer, null, mobileWebRTCState, hasMobileVideo)
 
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
-                <span style={{ color: '#475569', fontWeight: 500 }}>Mobile Camera</span>
-                <span className="reg-admin-status" style={{
-                  background: isMobileConnected ? '#dcfce7' : '#f1f5f9',
-                  color: isMobileConnected ? '#15803D' : '#64748b',
-                  borderColor: isMobileConnected ? '#bbf7d0' : '#e2e8f0',
-                  fontSize: 10, padding: '2px 8px'
-                }}>
-                  {isMobileConnected ? '● Connected' : '○ Not Paired'}
-                </span>
-              </div>
+                return (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
+                      <span style={{ color: '#475569', fontWeight: 500 }}>
+                        {isInterviewer ? 'Participant Laptop' : 'Interviewer Laptop'}
+                      </span>
+                      <span className="reg-admin-status" style={{
+                        background: laptopBadge.bg,
+                        color: laptopBadge.color,
+                        borderColor: laptopBadge.border,
+                        fontSize: 10, padding: '2px 8px'
+                      }}>
+                        {laptopBadge.text}
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
+                      <span style={{ color: '#475569', fontWeight: 500 }}>Mobile Camera</span>
+                      <span className="reg-admin-status" style={{
+                        background: mobileBadge.bg,
+                        color: mobileBadge.color,
+                        borderColor: mobileBadge.border,
+                        fontSize: 10, padding: '2px 8px'
+                      }}>
+                        {mobileBadge.text}
+                      </span>
+                    </div>
+                  </>
+                )
+              })()}
 
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
                 <span style={{ color: '#475569', fontWeight: 500 }}>Microphone</span>
@@ -274,37 +486,33 @@ export default function ActiveRoom({
             justifyContent: 'center',
             boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
           }}>
-            {/* If participant or trainer stream exists */}
-            {mainStageStream ? (
+            {/* Remote video stream (live) */}
+            {centerStageStatus === 'live' && mainStageStream ? (
               <VideoTile
                 stream={mainStageStream}
                 label={mainStageLabel}
                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
               />
             ) : (
-              /* Waiting state */
+              /* Status placeholder */
               <div style={{ textAlign: 'center', color: '#94A3B8', padding: 24 }}>
                 <div style={{
-                  width: 64,
-                  height: 64,
-                  borderRadius: '50%',
-                  background: 'rgba(255,255,255,0.08)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
+                  width: 64, height: 64, borderRadius: '50%',
+                  background: centerStageStatus === 'failed' ? 'rgba(220,38,38,0.15)' : 'rgba(255,255,255,0.08)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
                   margin: '0 auto 14px',
                 }}>
-                  <VideoIcon size={32} color="#CBD5E1" />
+                  {centerStageStatus === 'failed'
+                    ? <AlertCircle size={32} color="#dc2626" />
+                    : centerStageStatus === 'connecting' || centerStageStatus === 'connected'
+                      ? <div style={{ width: 32, height: 32, border: '3px solid #475569', borderTopColor: '#60a5fa', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                      : <VideoIcon size={32} color="#CBD5E1" />}
                 </div>
                 <h3 style={{ fontSize: 16, fontWeight: 600, color: '#F8FAFC', margin: '0 0 6px' }}>
-                  {isInterviewer
-                    ? (isParticipantLaptopConnected ? 'Live Video Session' : 'Waiting for participant to join...')
-                    : (isTrainerConnected ? 'Live Video Session' : 'Waiting for interviewer...')}
+                  {centerStageContent?.heading}
                 </h3>
                 <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>
-                  {isInterviewer
-                    ? 'The participant video feed will appear automatically once they join.'
-                    : 'The interviewer video feed will appear automatically once they join.'}
+                  {centerStageContent?.sub}
                 </p>
               </div>
             )}
@@ -438,13 +646,32 @@ export default function ActiveRoom({
             <>
               {/* Participant Screen Share Feed Tile (if screen share active) */}
               {participantScreenStream && (
-                <div className="reg-admin-table-wrap" style={{ background: '#fff', padding: 18 }}>
+                <div
+                  className="reg-admin-table-wrap"
+                  style={{
+                    background: '#fff',
+                    padding: 18,
+                    cursor: 'pointer',
+                    outline: pinnedStreamKey === 'screen' ? '2px solid #2563eb' : 'none',
+                  }}
+                  onClick={() => setPinnedStreamKey(pinnedStreamKey === 'screen' ? null : 'screen')}
+                  title="Click to pin/unpin to main stage"
+                >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, borderBottom: '1px solid #f1f5f9', paddingBottom: 8 }}>
                     <h4 style={{ fontSize: 14, fontWeight: 700, margin: 0, color: '#0f172a' }}>
-                      Participant Screen Share
+                      Participant Screen Share {pinnedStreamKey === 'screen' ? '📌' : ''}
                     </h4>
-                    <span className="reg-admin-status" style={{ background: '#dcfce7', color: '#15803D', borderColor: '#bbf7d0', fontSize: 10, padding: '2px 8px' }}>
-                      ● Live Sharing
+                    <span className="reg-admin-status" style={{
+                      background: screenShareStatus === 'live' ? '#dcfce7' : screenShareStatus === 'failed' ? '#fee2e2' : '#fef3c7',
+                      color: screenShareStatus === 'live' ? '#15803D' : screenShareStatus === 'failed' ? '#dc2626' : '#d97706',
+                      borderColor: screenShareStatus === 'live' ? '#bbf7d0' : screenShareStatus === 'failed' ? '#fca5a5' : '#fcd34d',
+                      fontSize: 10, padding: '2px 8px',
+                    }}>
+                      {screenShareStatus === 'live'
+                        ? '● Live Sharing'
+                        : screenShareStatus === 'failed'
+                          ? '✕ Screen share failed — Retry'
+                          : '◐ Starting screen share...'}
                     </span>
                   </div>
                   <div style={{ width: '100%', aspectRatio: '16/10', background: '#0f172a', borderRadius: 8, overflow: 'hidden' }}>
@@ -453,53 +680,23 @@ export default function ActiveRoom({
                       label={`${candidateName}'s Screen`}
                       isScreenShare
                       style={{ width: '100%', height: '100%' }}
+                      onVideoState={handleScreenShareVideoState}
                     />
                   </div>
                 </div>
               )}
 
               {/* Participant Mobile Camera Feed Tile */}
-              <div className="reg-admin-table-wrap" style={{ background: '#fff', padding: 18 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, borderBottom: '1px solid #f1f5f9', paddingBottom: 8 }}>
-                  <h4 style={{ fontSize: 14, fontWeight: 700, margin: 0, color: '#0f172a' }}>
-                    Participant Mobile Feed
-                  </h4>
-                  <span className="reg-admin-status" style={{
-                    background: isMobileConnected ? '#dcfce7' : '#f1f5f9',
-                    color: isMobileConnected ? '#15803D' : '#64748b',
-                    borderColor: isMobileConnected ? '#bbf7d0' : '#e2e8f0',
-                    fontSize: 10,
-                    padding: '2px 8px'
-                  }}>
-                    {isMobileConnected ? '● Connected' : '○ Not Paired'}
-                  </span>
-                </div>
-                <div style={{
-                  width: '100%',
-                  aspectRatio: '4/3',
-                  background: '#f8fafc',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: 8,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  textAlign: 'center',
-                  overflow: 'hidden'
-                }}>
-                  {mobileStream ? (
-                    <VideoTile stream={mobileStream} label={`${candidateName} (Mobile Camera)`} style={{ width: '100%', height: '100%', borderRadius: 6 }} />
-                  ) : (
-                    <div style={{ padding: 16 }}>
-                      <div style={{ width: 44, height: 44, borderRadius: '50%', background: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px', color: '#64748b' }}>
-                        <Smartphone size={22} />
-                      </div>
-                      <p style={{ fontSize: 12, color: '#64748b', margin: 0, lineHeight: 1.4 }}>
-                        {isMobileConnected ? 'Mobile camera connected' : 'Waiting for participant to scan QR code on their laptop screen...'}
-                      </p>
-                    </div>
-                  )}
-                </div>
+              <div
+                style={{
+                  cursor: 'pointer',
+                  borderRadius: 12,
+                  outline: pinnedStreamKey === 'mobile' ? '2px solid #2563eb' : 'none',
+                }}
+                onClick={() => setPinnedStreamKey(pinnedStreamKey === 'mobile' ? null : 'mobile')}
+                title="Click to pin/unpin to main stage"
+              >
+                <MobileFeedTile stream={mobileStream} name={candidateName} />
               </div>
             </>
           ) : (
@@ -622,6 +819,16 @@ export default function ActiveRoom({
           </div>
         </div>
       </div>
+      <WebRTCDebugPanel
+        isInterviewer={isInterviewer}
+        peers={peers}
+        connectionStates={connectionStates}
+        remoteStreams={remoteStreams}
+        mediaState={mediaState}
+        socket={socket}
+        interviewId={interviewId}
+        getRemoteDiagnostics={getRemoteDiagnostics}
+      />
     </InterviewShell>
   )
 }

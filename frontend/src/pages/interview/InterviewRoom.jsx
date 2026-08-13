@@ -90,6 +90,7 @@ function InterviewRoomInner({ user }) {
   const screenStreamRef = useRef(null)
   const leavingRef = useRef(false)
   const startAttemptedRef = useRef(false)
+  const prevOfferPeersRef = useRef(new Set())
 
   // Hooks
   const {
@@ -117,9 +118,9 @@ function InterviewRoomInner({ user }) {
 
   const {
     remoteStreams, connectionStates, webrtcState, addLocalStream,
-    createOffer, handleOffer, handleAnswer, handleIceCandidate,
+    createOffer, preparePeer, handleOffer, handleAnswer, handleIceCandidate,
     replaceTrackAll, addScreenStream, removeScreenStream,
-    closePeer, closeAll: closeWebRTC,
+    closePeer, closeAll: closeWebRTC, getRemoteDiagnostics,
   } = useWebRTC(socket, interviewId, localStreamRef)
 
   const handleToggleScreenShare = useCallback(async () => {
@@ -163,12 +164,19 @@ function InterviewRoomInner({ user }) {
 
   // Register newly-acquired streams with the WebRTC layer + shared context.
   const handleLocalStream = useCallback((stream) => {
+    if (!stream) return
+    console.log('[INTERVIEW] handleLocalStream: registering stream with WebRTC layer', {
+      streamId: stream.id,
+      tracks: stream.getTracks().map(t => `${t.kind}:${t.readyState}`),
+    })
     addLocalStream(stream)
     setLocalStreams((prev) => ({ ...prev, laptop: stream }))
     stream.getTracks().forEach((track) => monitorTrack(track, 'LAPTOP'))
   }, [addLocalStream, setLocalStreams, monitorTrack])
 
+  // Only fire when media is actually ready (not on 'requesting' or 'error')
   useEffect(() => {
+    if (mediaState !== 'ready') return
     const stream = localStreamRef.current
     if (stream) handleLocalStream(stream)
   }, [mediaState]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -287,16 +295,59 @@ function InterviewRoomInner({ user }) {
             setInterviewData((prev) => prev || response.interview)
             setInterview(response.interview)
           }
-          setPeers(response.peers || [])
+          // MERGE ACK peers into existing peers instead of overwriting.
+          // A `peer-joined`/`mobile-camera-paired` event may have already
+          // added a peer (async DB awaits make ordering racy); overwriting
+          // would wipe it and leave the Trainer "stuck not paired" (Bug A).
+          setPeers(prev => {
+            const merged = new Map(prev.map(p => [p.socketId, p]))
+            ;(response.peers || []).forEach(p => merged.set(p.socketId, p))
+            return Array.from(merged.values())
+          })
           response.peers?.forEach((peer) => {
-            console.log('[INTERVIEW] Found existing peer:', {
+            console.log('[INTERVIEW] Found existing peer in join ACK:', {
               socketId: peer.socketId,
               role: peer.role,
               deviceType: peer.deviceType,
-              willCreateOffer: isInterviewer || peer.deviceType !== 'MOBILE',
             })
-            if (isInterviewer || peer.deviceType !== 'MOBILE') {
+            // A MOBILE peer always initiates the offer (it is the joiner). We
+            // only prepare our peer connection in polite mode and wait for its
+            // offer. Laptop peers found in the ACK get an offer from us.
+            if (peer.deviceType === 'MOBILE') {
+              preparePeer(peer.socketId)
+            } else {
+              prevOfferPeersRef.current.add(peer.socketId)
               createOffer(peer.socketId)
+            }
+          })
+
+          // Late-join / refresh sync: fetch the CURRENT room state so a peer
+          // that paired before our ACK (e.g. the mobile camera) is never missed.
+          // Dedicated pairing events may have already fired before we were
+          // listening, so this one-shot snapshot closes that gap.
+          socket.emit('get-room-state', { interviewId }, (roomState) => {
+            if (leavingRef.current) return
+            console.log('[WEBRTC SIGNALING] trainer: get-room-state response:', roomState)
+            if (!roomState?.success) return
+            if (roomState.mobilePaired) {
+              setDevices(prev => ({ ...prev, mobile: true }))
+            }
+            const syncPeers = roomState.peers || []
+            if (syncPeers.length) {
+              setPeers(prev => {
+                const merged = new Map(prev.map(p => [p.socketId, p]))
+                syncPeers.forEach(p => merged.set(p.socketId, p))
+                return Array.from(merged.values())
+              })
+              syncPeers.forEach((peer) => {
+                if (peer.deviceType === 'MOBILE') {
+                  console.log(`[WEBRTC SIGNALING] trainer: get-room-state found mobile peer ${peer.socketId}, preparing in polite mode`)
+                  preparePeer(peer.socketId)
+                } else if (!prevOfferPeersRef.current?.has(peer.socketId)) {
+                  prevOfferPeersRef.current.add(peer.socketId)
+                  createOffer(peer.socketId)
+                }
+              })
             }
           })
           onJoined?.(true)
@@ -412,30 +463,135 @@ function InterviewRoomInner({ user }) {
     setSession, setDevices, setInterview,
   ])
 
+  // ── Re-sync room state on socket reconnection ──────────────────────────────
+  useEffect(() => {
+    if (isConnected && joined && socket && interviewId) {
+      console.log(`[TRAINER] Socket reconnected — re-emitting join-room & get-room-state for roomId=${interviewId}`)
+      socket.emit('join-room', { interviewId: String(interviewId), deviceType: 'LAPTOP' }, (ack) => {
+        if (ack?.success) {
+          socket.emit('get-room-state', { interviewId: String(interviewId) })
+        }
+      })
+    }
+  }, [isConnected, joined, socket, interviewId])
+
   // ── Socket event handlers ───────────────────────────────────────────────
+  useSocketEvent('room:state', useCallback((snapshot) => {
+    if (!snapshot || String(snapshot.roomId) !== String(interviewId)) return
+    console.log(`[ROOM STATE] client: received room:state snapshot for roomId=${snapshot.roomId}`, snapshot)
+    setDevices(prev => ({ ...prev, mobile: snapshot.mobilePaired }))
+
+    if (snapshot.peers) {
+      setPeers(prev => {
+        const peerMap = new Map(prev.map(p => [p.socketId, p]))
+        snapshot.peers.forEach(p => {
+          if (p.socketId !== socket?.id) peerMap.set(p.socketId, p)
+        })
+        return Array.from(peerMap.values())
+      })
+
+      snapshot.peers.forEach(p => {
+        if (p.socketId && p.socketId !== socket?.id) {
+          preparePeer(p.socketId)
+        }
+      })
+    }
+  }, [interviewId, setDevices, setPeers, preparePeer, socket]))
   useSocketEvent('peer-joined', useCallback((data) => {
+    const isMobilePeer = data.deviceType === 'MOBILE'
+    const matchesRoom = String(interviewId) === String(interviewId) // Matches current interview session
+    console.log(`[TRAINER] Received mobile-joined event for room: ${interviewId}, matches current interview: ${matchesRoom}`, data)
+    
+    if (isMobilePeer) {
+      console.log('[TRAINER] Participant Mobile Feed status updated to: Paired / Connected')
+      setDevices(prev => ({ ...prev, mobile: true }))
+    }
+
     setPeers(prev => {
       if (prev.some(p => p.socketId === data.socketId)) return prev
       return [...prev, data]
     })
-    if (!joined) return
-    const isMobilePeer = data.deviceType === 'MOBILE'
+
     if (isMobilePeer) {
       // Only the interviewer receives the participant's mobile camera feed.
+      // Mobile is always the joiner, so they will send the offer.
       if (isInterviewer) {
-        createOffer(data.socketId)
+        // We are existing; prepare the peer connection (polite mode) and wait.
+        preparePeer(data.socketId)
         if (!started) attemptStart()
       }
     } else {
-      createOffer(data.socketId)
+      // The new peer is the joiner — they found us in the join ACK and will
+      // send an offer. We prepare our peer connection in polite mode and wait.
+      preparePeer(data.socketId)
       if (isInterviewer && !started) attemptStart()
     }
-  }, [setPeers, joined, createOffer, isInterviewer, started, attemptStart]))
+  }, [interviewId, setPeers, setDevices, preparePeer, isInterviewer, started, attemptStart]))
+
+  useSocketEvent('device-status', useCallback((data) => {
+    console.log('[TRAINER] Received device-status event:', data)
+    if (data.deviceType === 'MOBILE' && data.connected) {
+      console.log('[TRAINER] Participant Mobile Feed status updated to: Paired / Connected')
+      setDevices(prev => ({ ...prev, mobile: true }))
+    }
+  }, [setDevices]))
+
+  // ── Mobile camera pairing (Bug A): dedicated, deterministic events ─────
+  // Emitted by the server in the mobile's join-room success handler, and on
+  // leave/disconnect. The Trainer UI must never fake "Paired"/"Live".
+  useSocketEvent('mobile-camera-paired', useCallback((data) => {
+    if (String(data.roomId) !== String(interviewId)) {
+      console.log(`[WEBRTC SIGNALING] trainer: mobile-camera-paired IGNORED (roomId=${data.roomId} !== current=${interviewId})`)
+      return
+    }
+    console.log(`[WEBRTC SIGNALING] trainer: mobile-camera-paired received, roomId=${data.roomId}`, {
+      socketId: data.socketId,
+      participantId: data.participantId,
+      participantName: data.participantName,
+      pairedAt: new Date(data.pairedAt)?.toISOString?.() || data.pairedAt,
+    })
+    setDevices(prev => ({ ...prev, mobile: true }))
+    if (data.socketId) {
+      setPeers(prev => prev.some(p => p.socketId === data.socketId)
+        ? prev
+        : [...prev, {
+            socketId: data.socketId,
+            userId: data.participantId,
+            role: 'PARTICIPANT',
+            userName: data.participantName,
+            deviceType: 'MOBILE',
+          }])
+      // Mobile is always the offerer; prepare in polite mode and wait.
+      if (isInterviewer) {
+        preparePeer(data.socketId)
+        if (!started) attemptStart()
+      }
+    }
+  }, [interviewId, setDevices, setPeers, preparePeer, isInterviewer, started, attemptStart]))
+
+  useSocketEvent('mobile-camera-disconnected', useCallback((data) => {
+    if (String(data.roomId) !== String(interviewId)) {
+      console.log(`[WEBRTC SIGNALING] trainer: mobile-camera-disconnected IGNORED (roomId=${data.roomId} !== current=${interviewId})`)
+      return
+    }
+    console.log(`[WEBRTC SIGNALING] trainer: mobile-camera-disconnected received, roomId=${data.roomId}`, {
+      socketId: data.socketId,
+      disconnectedAt: new Date(data.disconnectedAt)?.toISOString?.() || data.disconnectedAt,
+    })
+    setDevices(prev => ({ ...prev, mobile: false }))
+    if (data.socketId) {
+      setPeers(prev => prev.filter(p => p.socketId !== data.socketId))
+      closePeer(data.socketId)
+    }
+  }, [interviewId, setDevices, setPeers, closePeer]))
 
   useSocketEvent('peer-left', useCallback((data) => {
     setPeers(prev => prev.filter(p => p.socketId !== data.socketId))
+    if (data.deviceType === 'MOBILE') {
+      setDevices(prev => ({ ...prev, mobile: false }))
+    }
     closePeer(data.socketId)
-  }, [setPeers, closePeer]))
+  }, [setPeers, setDevices, closePeer]))
 
   useSocketEvent('offer', useCallback((data) => {
     handleOffer(data.fromSocketId, data.offer)
@@ -462,8 +618,10 @@ function InterviewRoomInner({ user }) {
   }, [addAlert]))
 
   useSocketEvent('screen-share', useCallback((data) => {
-    setIsScreenSharing(!!data.sharing)
-  }, []))
+    if (socket && data?.fromSocketId === socket.id) {
+      setIsScreenSharing(!!data.sharing)
+    }
+  }, [socket]))
 
   useSocketEvent('interview-started', useCallback((data) => {
     markStarted()
@@ -607,7 +765,20 @@ function InterviewRoomInner({ user }) {
   }
 
   const isTerminal = interviewData && ['COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(interviewData.status)
-  const live = joined && started
+  // Show live room as soon as joined — don't block on `started`.
+  // `started` only gates the interview timer and Trainer controls.
+  const live = joined
+
+  // ── Full-screen room mode ───────────────────────────────────────────────
+  // While the live room view is active (joined and not ended), hide the LMS
+  // sidebar/topbar chrome so the interview fills the viewport. Purely
+  // visual: toggled via a scoped body class and removed on end/unmount, so
+  // the sidebar returns once the room is no longer active.
+  const roomActive = live && !ended
+  useEffect(() => {
+    document.body.classList.toggle('iv-room-fullscreen', roomActive)
+    return () => document.body.classList.remove('iv-room-fullscreen')
+  }, [roomActive])
 
   // ── Screens ─────────────────────────────────────────────────────────────
   if (ended) {
@@ -732,6 +903,8 @@ function InterviewRoomInner({ user }) {
         localVideoRef={localVideoRef}
         mediaState={mediaState}
         remoteStreams={remoteStreams}
+        connectionStates={connectionStates}
+        webrtcState={webrtcState}
         peers={peers}
         devices={sessionDevices}
         qrPayload={qrPayload}
@@ -751,6 +924,7 @@ function InterviewRoomInner({ user }) {
         alerts={alerts}
         elapsed={elapsed}
         formatTime={formatTime}
+        started={started}
         peerConnected={peerConnected}
         connectionStatus={connectionStatus}
         notice={notice}
@@ -759,6 +933,7 @@ function InterviewRoomInner({ user }) {
         socket={socket}
         interviewId={interviewId}
         sessionId={sessionId}
+        getRemoteDiagnostics={getRemoteDiagnostics}
         expandedTile={expandedTile}
         onToggleTile={(key) => setExpandedTile((prev) => (prev === key ? null : key))}
       />
@@ -795,6 +970,7 @@ function InterviewRoomInner({ user }) {
       formatTime={formatTime}
       peerConnected={peerConnected}
       connectionStatus={connectionStatus}
+      connectionStates={connectionStates}
       notice={notice}
       handleEndInterview={handleEndInterview}
       handleLeaveInterview={handleLeaveInterview}

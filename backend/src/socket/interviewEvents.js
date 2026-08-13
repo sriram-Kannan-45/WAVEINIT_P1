@@ -20,14 +20,82 @@ const tokenService = require('../services/interviewTokenService');
 const aiMonitorService = require('../services/interviewAiMonitorService');
 const logger = require('../utils/logger');
 
-// In-memory room state: interviewId → { peers: Map<socketId, {userId, role, devices}> }
+// In-memory room state: interviewId → InterviewRoomState instance
 const rooms = new Map();
 
-function getRoom(interviewId) {
-  if (!rooms.has(interviewId)) {
-    rooms.set(interviewId, { peers: new Map() });
+class InterviewRoomState {
+  constructor(interviewId) {
+    this.interviewId = String(interviewId);
+    this.peers = new Map(); // socketId → { socketId, userId, role, userName, deviceType, streams }
   }
-  return rooms.get(interviewId);
+
+  addPeer(socketId, info) {
+    this.peers.set(socketId, {
+      socketId,
+      userId: info.userId,
+      role: info.role,
+      userName: info.userName,
+      deviceType: info.deviceType || 'LAPTOP',
+      joinedAt: Date.now(),
+      streams: {
+        camera: true,
+        screen: false,
+        mic: true,
+      },
+    });
+  }
+
+  removePeer(socketId) {
+    const peer = this.peers.get(socketId);
+    this.peers.delete(socketId);
+    return peer;
+  }
+
+  setStreamStatus(socketId, streamType, active) {
+    const peer = this.peers.get(socketId);
+    if (peer && peer.streams) {
+      peer.streams[streamType] = active;
+    }
+  }
+
+  toSnapshot() {
+    const peerList = [];
+    let mobilePaired = false;
+    for (const [socketId, info] of this.peers) {
+      if (info.deviceType === 'MOBILE') mobilePaired = true;
+      peerList.push({
+        socketId: info.socketId,
+        userId: info.userId,
+        role: info.role,
+        userName: info.userName,
+        deviceType: info.deviceType,
+        streams: info.streams,
+      });
+    }
+    return {
+      roomId: this.interviewId,
+      mobilePaired,
+      peers: peerList,
+      timestamp: Date.now(),
+    };
+  }
+}
+
+function getRoom(interviewId) {
+  const key = String(interviewId);
+  if (!rooms.has(key)) {
+    rooms.set(key, new InterviewRoomState(key));
+  }
+  return rooms.get(key);
+}
+
+function broadcastRoomState(io, interviewId) {
+  const key = String(interviewId);
+  const room = rooms.get(key);
+  if (!room) return;
+  const snapshot = room.toSnapshot();
+  console.log(`[ROOM STATE] server: broadcast snapshot for roomId=${key} (peers=${snapshot.peers.length}, mobilePaired=${snapshot.mobilePaired})`);
+  io.to(`interview_${key}`).emit('room:state', snapshot);
 }
 
 /**
@@ -56,7 +124,10 @@ function registerInterviewEvents(io, socket) {
    */
   socket.on('join-room', async (data, callback) => {
     try {
-      const { interviewId } = data;
+      // CRITICAL: coerce to String so the in-memory `rooms` Map always uses
+      // the same key type regardless of whether the client sent a string
+      // (Trainer, from URL params) or a number (Mobile, from REST API).
+      const interviewId = data.interviewId != null ? String(data.interviewId) : null;
       if (!interviewId) {
         if (callback) callback({ success: false, error: 'interviewId required' });
         return;
@@ -91,12 +162,24 @@ function registerInterviewEvents(io, socket) {
         }).catch(() => {});
 
         // Tell the laptop side that the mobile camera is now connected.
+        // `device-status` updates the generic device list; `mobile-camera-paired`
+        // is the dedicated, clearly-named event the Trainer's "Mobile Camera" /
+        // "Participant Mobile Feed" widgets listen for (Bug A fix).
+        const pairedPayload = {
+          roomId: interviewId,
+          socketId: socket.id,
+          participantId: socket.userId,
+          participantName: socket.userName,
+          pairedAt: Date.now(),
+        };
+        console.log(`[WEBRTC SIGNALING] server: mobile-camera-paired emitted, roomId=${interviewId}, socketId=${socket.id}`);
         socket.to(`interview_${interviewId}`).emit('device-status', {
           fromUserId: socket.userId,
           deviceType: 'MOBILE',
           connected: true,
           timestamp: new Date().toISOString(),
         });
+        io.to(`interview_${interviewId}`).emit('mobile-camera-paired', pairedPayload);
       }
 
       // Find or create session
@@ -127,12 +210,15 @@ function registerInterviewEvents(io, socket) {
 
       // Add this socket to the room
       socket.join(`interview_${interviewId}`);
-      room.peers.set(socket.id, {
+      room.addPeer(socket.id, {
         userId: socket.userId,
         role: socket.userRole,
         userName: socket.userName,
         deviceType,
       });
+
+      // Broadcast updated room:state snapshot to room
+      broadcastRoomState(io, interviewId);
 
       // Store interviewId on socket for cleanup
       socket.currentInterviewId = interviewId;
@@ -159,10 +245,12 @@ function registerInterviewEvents(io, socket) {
         payload_json: { socketId: socket.id, role: socket.userRole, deviceType },
       }).catch(() => {});
 
+      const snapshot = room.toSnapshot();
       if (callback) callback({
         success: true,
         sessionId: session.id,
         peers: existingPeers,
+        roomState: snapshot,
         interview: {
           id: interview.id,
           type: interview.type,
@@ -177,10 +265,22 @@ function registerInterviewEvents(io, socket) {
   });
 
   /**
+   * get-room-state: One-shot "current room state" query so a peer that joins
+   * (or refreshes) after the mobile camera already paired can sync immediately.
+   */
+  socket.on('get-room-state', (data, callback) => {
+    const interviewId = data?.interviewId != null ? String(data.interviewId) : null;
+    const room = getRoom(interviewId);
+    const snapshot = room.toSnapshot();
+    console.log(`[WEBRTC SIGNALING] server: get-room-state for roomId=${interviewId} → peers=${snapshot.peers.length}, mobilePaired=${snapshot.mobilePaired}`);
+    if (callback) callback({ success: true, roomId: interviewId, peers: snapshot.peers, mobilePaired: snapshot.mobilePaired, roomState: snapshot });
+  });
+
+  /**
    * leave-room: Leave an interview room.
    */
   socket.on('leave-room', async (data) => {
-    const { interviewId } = data || {};
+    const interviewId = data?.interviewId != null ? String(data.interviewId) : null;
     if (!interviewId) return;
 
     await handleLeaveRoom(io, socket, interviewId);
@@ -191,7 +291,7 @@ function registerInterviewEvents(io, socket) {
    * started so participants leave the waiting state.
    */
   socket.on('interview-started', (data) => {
-    const { interviewId } = data || {};
+    const interviewId = data?.interviewId != null ? String(data.interviewId) : null;
     if (!interviewId) return;
 
     io.to(`interview_${interviewId}`).emit('interview-started', {
@@ -206,7 +306,7 @@ function registerInterviewEvents(io, socket) {
    * Marks the session ENDED and notifies all peers so they leave the room.
    */
   socket.on('end-interview', async (data, callback) => {
-    const { interviewId } = data || {};
+    const interviewId = data?.interviewId != null ? String(data.interviewId) : null;
     if (!interviewId) {
       if (callback) callback({ success: false, error: 'interviewId required' });
       return;
@@ -246,29 +346,41 @@ function registerInterviewEvents(io, socket) {
    * WebRTC signalling: offer, answer, ice-candidate
    */
   socket.on('offer', (data) => {
-    const { interviewId, targetSocketId, offer } = data;
+    const { targetSocketId, offer } = data;
+    const interviewId = data.interviewId != null ? String(data.interviewId) : null;
+    const roomName = `interview_${interviewId}`;
+    console.log(`[SERVER] Received offer for interviewId/room: ${interviewId} (targetSocketId: ${targetSocketId}) from socket: ${socket.id}`);
     if (targetSocketId) {
+      console.log(`[SERVER] Relaying offer to targetSocketId: ${targetSocketId}`);
       io.to(targetSocketId).emit('offer', {
         fromSocketId: socket.id,
         fromUserId: socket.userId,
         offer,
       });
+    } else {
+      console.warn(`[SERVER] Received offer without targetSocketId from socket: ${socket.id}`);
     }
   });
 
   socket.on('answer', (data) => {
     const { targetSocketId, answer } = data;
+    const interviewId = data.interviewId != null ? String(data.interviewId) : null;
+    console.log(`[SERVER] Received answer from socket: ${socket.id} for targetSocketId: ${targetSocketId}`);
     if (targetSocketId) {
+      console.log(`[SERVER] Relaying answer to targetSocketId: ${targetSocketId}`);
       io.to(targetSocketId).emit('answer', {
         fromSocketId: socket.id,
         fromUserId: socket.userId,
         answer,
       });
+    } else {
+      console.warn(`[SERVER] Received answer without targetSocketId from socket: ${socket.id}`);
     }
   });
 
   socket.on('ice-candidate', (data) => {
     const { targetSocketId, candidate } = data;
+    console.log(`[SERVER] Received ice-candidate from socket: ${socket.id} for targetSocketId: ${targetSocketId}`);
     if (targetSocketId) {
       io.to(targetSocketId).emit('ice-candidate', {
         fromSocketId: socket.id,
@@ -281,7 +393,8 @@ function registerInterviewEvents(io, socket) {
    * screen-share: Broadcast screen share start/stop to room.
    */
   socket.on('screen-share', (data) => {
-    const { interviewId, sharing, metadata } = data;
+    const { sharing, metadata } = data;
+    const interviewId = data.interviewId != null ? String(data.interviewId) : null;
     if (interviewId) {
       socket.to(`interview_${interviewId}`).emit('screen-share', {
         fromSocketId: socket.id,
@@ -296,7 +409,8 @@ function registerInterviewEvents(io, socket) {
    * chat-message: Broadcast chat to room.
    */
   socket.on('chat-message', async (data) => {
-    const { interviewId, message, sessionId } = data;
+    const { message, sessionId } = data;
+    const interviewId = data.interviewId != null ? String(data.interviewId) : null;
     if (!interviewId || !message) return;
 
     // Persist to interview_logs
@@ -322,7 +436,8 @@ function registerInterviewEvents(io, socket) {
    * device-status: Client reports device connection status change.
    */
   socket.on('device-status', async (data) => {
-    const { interviewId, sessionId, deviceType, connected } = data;
+    const { sessionId, deviceType, connected } = data;
+    const interviewId = data.interviewId != null ? String(data.interviewId) : null;
     if (!interviewId) return;
 
     // Broadcast to room
@@ -357,7 +472,8 @@ function registerInterviewEvents(io, socket) {
 
     if (alert) {
       // Broadcast alert to interviewer (and admin if present)
-      const room = getRoom(data.interviewId || socket.currentInterviewId);
+      const alertRoomId = String(data.interviewId || socket.currentInterviewId || '');
+      const room = alertRoomId ? getRoom(alertRoomId) : null;
       if (room) {
         for (const [peerSocketId, peerInfo] of room.peers) {
           if (peerInfo.role === 'TRAINER' || peerInfo.role === 'ADMIN') {
@@ -379,7 +495,8 @@ function registerInterviewEvents(io, socket) {
    * code-sync: Shared code editor content broadcast.
    */
   socket.on('code-sync', (data) => {
-    const { interviewId, content, language, cursor } = data;
+    const { content, language, cursor } = data;
+    const interviewId = data.interviewId != null ? String(data.interviewId) : null;
     if (!interviewId) return;
 
     // Broadcast to all peers except sender (last-write-wins for MVP)
@@ -396,7 +513,8 @@ function registerInterviewEvents(io, socket) {
    * recording-status: Broadcast recording state changes.
    */
   socket.on('recording-status', (data) => {
-    const { interviewId, recording, deviceType } = data;
+    const { recording, deviceType } = data;
+    const interviewId = data.interviewId != null ? String(data.interviewId) : null;
     if (!interviewId) return;
 
     io.to(`interview_${interviewId}`).emit('recording-status', {
@@ -424,7 +542,7 @@ function registerInterviewEvents(io, socket) {
    */
   socket.on('disconnect', async () => {
     if (socket.currentInterviewId) {
-      await handleLeaveRoom(io, socket, socket.currentInterviewId);
+      await handleLeaveRoom(io, socket, String(socket.currentInterviewId));
     }
     logger.info('Interview socket disconnected', { socketId: socket.id, userId: socket.userId });
   });
@@ -437,11 +555,12 @@ async function handleLeaveRoom(io, socket, interviewId) {
   const room = rooms.get(interviewId);
   if (!room) return;
 
-  const peerInfo = room.peers.get(socket.id) || {};
+  const peerInfo = room.removePeer(socket.id) || {};
   const deviceType = peerInfo.deviceType || 'LAPTOP';
-
-  room.peers.delete(socket.id);
   socket.leave(`interview_${interviewId}`);
+
+  // Broadcast updated room:state snapshot to remaining room members
+  broadcastRoomState(io, interviewId);
 
   // Notify remaining peers
   for (const [peerSocketId] of room.peers) {
@@ -476,21 +595,28 @@ async function handleLeaveRoom(io, socket, interviewId) {
         event_type: 'SOCKET_LEFT',
         payload_json: { socketId: socket.id, deviceType },
       }).catch(() => {});
-
-      // Tell the laptop side when the mobile camera goes away.
-      if (deviceType === 'MOBILE') {
-        for (const [peerSocketId] of room.peers) {
-          io.to(peerSocketId).emit('device-status', {
-            fromUserId: socket.userId,
-            deviceType: 'MOBILE',
-            connected: false,
-            timestamp: new Date().toISOString(),
-          });
-        }
-      }
     }
   } catch (err) {
     logger.error('Error handling leave room cleanup', { error: err.message });
+  }
+
+  // Tell the laptop side when the mobile camera goes away.
+  if (deviceType === 'MOBILE') {
+    console.log(`[WEBRTC SIGNALING] server: mobile-camera-disconnected emitted, roomId=${interviewId}, socketId=${socket.id}`);
+    for (const [peerSocketId] of room.peers) {
+      io.to(peerSocketId).emit('device-status', {
+        fromUserId: socket.userId,
+        deviceType: 'MOBILE',
+        connected: false,
+        timestamp: new Date().toISOString(),
+      });
+      io.to(peerSocketId).emit('mobile-camera-disconnected', {
+        roomId: interviewId,
+        socketId: socket.id,
+        participantId: socket.userId,
+        disconnectedAt: Date.now(),
+      });
+    }
   }
 
   // Clean up empty rooms

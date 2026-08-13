@@ -6,6 +6,17 @@
 import { useRef, useEffect } from 'react'
 import { Video } from 'lucide-react'
 
+const reportVideoState = (video, onVideoState) => {
+  const ready = video && video.videoWidth > 2 && video.videoHeight > 2 && video.readyState >= 2
+  onVideoState?.({
+    hasStream: !!video?.srcObject,
+    videoWidth: video?.videoWidth || 0,
+    videoHeight: video?.videoHeight || 0,
+    readyState: video?.readyState || 0,
+    ready,
+  })
+}
+
 export default function VideoTile({
   stream,
   label,
@@ -15,40 +26,100 @@ export default function VideoTile({
   isMuted = false,
   isScreenShare = false,
   className = '',
+  style = {},
+  onVideoState,
 }) {
   const videoRef = useRef(null)
+  const onVideoStateRef = useRef(onVideoState)
 
   useEffect(() => {
-    if (videoRef.current && stream) {
-      console.log(`[VideoTile] Attaching stream to ${label}:`, {
-        streamId: stream.id,
-        trackCount: stream.getTracks().length,
-        tracks: stream.getTracks().map(t => ({
-          kind: t.kind,
-          label: t.label,
-          readyState: t.readyState,
-        })),
-      })
-      videoRef.current.srcObject = stream
-      videoRef.current.play().catch((e) => {
-        console.warn(`[VideoTile] ${label} auto-play error:`, e.message)
-      })
+    onVideoStateRef.current = onVideoState
+  })
 
-      const onLoadedMetadata = () => {
-        console.log(`[VideoTile] ✅ ${label} video ready:`, {
-          videoWidth: videoRef.current.videoWidth,
-          videoHeight: videoRef.current.videoHeight,
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+
+    const reportState = () => reportVideoState(video, onVideoStateRef.current)
+    video.addEventListener('loadedmetadata', reportState)
+    video.addEventListener('loadeddata', reportState)
+    video.addEventListener('resize', reportState)
+    video.addEventListener('playing', reportState)
+
+    if (stream) {
+      if (video.srcObject !== stream) {
+        console.log(`[WEBRTC MAIN STAGE] Attaching stream to ${label}:`, {
+          streamId: stream.id,
+          trackCount: stream.getTracks().length,
+          tracks: stream.getTracks().map(t => ({
+            kind: t.kind,
+            label: t.label,
+            readyState: t.readyState,
+          })),
         })
+        video.srcObject = stream
       }
-      videoRef.current.addEventListener('loadedmetadata', onLoadedMetadata)
 
-      return () => {
-        if (videoRef.current) {
-          videoRef.current.removeEventListener('loadedmetadata', onLoadedMetadata)
+      const attemptPlay = () => {
+        if (!video) return
+        const playPromise = video.play()
+        if (playPromise && typeof playPromise.then === 'function') {
+          playPromise.then(() => {
+            console.log(`[WEBRTC MAIN STAGE] srcObject set (${label}):`, {
+              hasStream: !!video.srcObject,
+              videoWidth: video.videoWidth,
+              videoHeight: video.videoHeight,
+              readyState: video.readyState,
+              paused: video.paused,
+            })
+            reportState()
+          }).catch((e) => {
+            if (e.name !== 'AbortError') {
+              console.warn(`[VideoTile] ${label} auto-play error, trying muted play:`, e.message)
+              video.muted = true
+              video.play().catch(err => console.warn(`[VideoTile] ${label} muted play error:`, err.message))
+            }
+          })
         }
       }
+
+      attemptPlay()
+
+      const onLoadedMetadata = () => {
+        console.log(`[WEBRTC MAIN STAGE] ✅ ${label} video ready:`, {
+          hasStream: !!video.srcObject,
+          videoWidth: video.videoWidth,
+          videoHeight: video.videoHeight,
+          readyState: video.readyState,
+        })
+        reportState()
+        attemptPlay()
+      }
+
+      video.addEventListener('loadedmetadata', onLoadedMetadata)
+      const t1 = setTimeout(attemptPlay, 1000)
+      const t2 = setTimeout(attemptPlay, 3500)
+
+      return () => {
+        if (video) {
+          video.removeEventListener('loadedmetadata', onLoadedMetadata)
+          video.removeEventListener('loadedmetadata', reportState)
+          video.removeEventListener('loadeddata', reportState)
+          video.removeEventListener('resize', reportState)
+          video.removeEventListener('playing', reportState)
+        }
+        clearTimeout(t1)
+        clearTimeout(t2)
+      }
     }
-  }, [stream, label])
+
+    return () => {
+      video.removeEventListener('loadedmetadata', reportState)
+      video.removeEventListener('loadeddata', reportState)
+      video.removeEventListener('resize', reportState)
+      video.removeEventListener('playing', reportState)
+    }
+  }, [stream, label, isLocal])
 
   return (
     <div
@@ -56,13 +127,13 @@ export default function VideoTile({
         isExpanded ? 'col-span-2 row-span-2 z-10' : ''
       } ${className}`}
       onClick={onToggleExpand}
-      style={{ cursor: onToggleExpand ? 'pointer' : 'default' }}
+      style={{ cursor: onToggleExpand ? 'pointer' : 'default', width: '100%', height: '100%', ...style }}
     >
       <video
         ref={videoRef}
         autoPlay
         playsInline
-        muted={isMuted}
+        muted={isLocal || isMuted}
         className="absolute inset-0 w-full h-full object-cover"
         style={{ transform: isLocal ? 'scaleX(-1)' : 'none' }}
       />

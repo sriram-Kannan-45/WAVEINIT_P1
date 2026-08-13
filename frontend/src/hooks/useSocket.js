@@ -17,7 +17,11 @@ const stateListeners = new Set()
 
 function notifyState(next) {
   connectionState = next
-  stateListeners.forEach((fn) => fn(next))
+  // Execute listener updates in a microtask so setState is never invoked
+  // synchronously during a React component's render phase.
+  queueMicrotask(() => {
+    stateListeners.forEach((fn) => fn(next))
+  })
 }
 
 function getStoredToken() {
