@@ -1,37 +1,37 @@
 import { motion } from 'framer-motion';
-import { Briefcase, Building2, MapPin, Clock, Globe } from 'lucide-react';
+import { Briefcase, MapPin, Clock } from 'lucide-react';
 
-const inputCls = "w-full px-4 py-3 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200";
-const labelCls = "block text-sm font-medium text-slate-700 mb-2";
+const inputCls = "w-full px-3.5 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200";
+const labelCls = "block text-xs font-semibold text-slate-700 mb-1.5";
 
 export default function ProfessionalSection({
-  company, department, designation, experience, location, timezone, language,
-  onCompanyChange, onDepartmentChange, onDesignationChange, onExperienceChange,
-  onLocationChange, onTimezoneChange, onLanguageChange,
+  company, department, designation, employeeId, experience, location, timezone,
+  onCompanyChange, onDepartmentChange, onDesignationChange, onEmployeeIdChange,
+  onExperienceChange, onLocationChange, onTimezoneChange,
 }) {
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3 mb-4">
+    <div className="space-y-4">
+      <div className="flex items-center gap-2.5 mb-2">
         <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center"
+          className="w-7 h-7 rounded-lg flex items-center justify-center"
           style={{ background: 'linear-gradient(135deg, #F0FDF4, #DCFCE7)' }}
         >
-          <Briefcase size={16} className="text-emerald-600" />
+          <Briefcase size={15} className="text-emerald-600" />
         </div>
-        <h3 className="text-sm font-semibold text-slate-900" style={{ fontFamily: "'Poppins', sans-serif" }}>
+        <h3 className="text-sm font-bold text-slate-900" style={{ fontFamily: "'Poppins', sans-serif" }}>
           Professional Details
         </h3>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
         <div>
           <label className={labelCls}>Company</label>
           <input
             type="text"
             className={inputCls}
-            value={company}
+            value={company || ''}
             onChange={(e) => onCompanyChange(e.target.value)}
-            placeholder="Company name"
+            placeholder="Wave Init Solutions"
           />
         </div>
 
@@ -40,9 +40,9 @@ export default function ProfessionalSection({
           <input
             type="text"
             className={inputCls}
-            value={department}
+            value={department || ''}
             onChange={(e) => onDepartmentChange(e.target.value)}
-            placeholder="Engineering, Marketing..."
+            placeholder="Engineering"
           />
         </div>
 
@@ -51,9 +51,20 @@ export default function ProfessionalSection({
           <input
             type="text"
             className={inputCls}
-            value={designation}
+            value={designation || ''}
             onChange={(e) => onDesignationChange(e.target.value)}
-            placeholder="Software Engineer, Manager..."
+            placeholder="Senior Software Engineer"
+          />
+        </div>
+
+        <div>
+          <label className={labelCls}>Employee ID</label>
+          <input
+            type="text"
+            className={inputCls}
+            value={employeeId || ''}
+            onChange={(e) => onEmployeeIdChange && onEmployeeIdChange(e.target.value)}
+            placeholder="EMP-1024"
           />
         </div>
 
@@ -62,9 +73,9 @@ export default function ProfessionalSection({
           <input
             type="text"
             className={inputCls}
-            value={experience}
+            value={experience || ''}
             onChange={(e) => onExperienceChange(e.target.value)}
-            placeholder="5 years"
+            placeholder="5 Years"
           />
         </div>
 
@@ -74,38 +85,24 @@ export default function ProfessionalSection({
             <MapPin size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              className="pl-10 w-full px-4 py-3 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200"
-              value={location}
+              className="pl-9 w-full px-3.5 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200"
+              value={location || ''}
               onChange={(e) => onLocationChange(e.target.value)}
-              placeholder="City, Country"
+              placeholder="Chennai, India"
             />
           </div>
         </div>
 
-        <div>
-          <label className={labelCls}>Timezone</label>
+        <div className="md:col-span-3">
+          <label className={labelCls}>Time Zone</label>
           <div className="relative">
             <Clock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              className="pl-10 w-full px-4 py-3 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200"
-              value={timezone}
+              className="pl-9 w-full px-3.5 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200"
+              value={timezone || ''}
               onChange={(e) => onTimezoneChange(e.target.value)}
-              placeholder="IST, PST, UTC..."
-            />
-          </div>
-        </div>
-
-        <div className="col-span-2">
-          <label className={labelCls}>Language</label>
-          <div className="relative">
-            <Globe size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              className="pl-10 w-full px-4 py-3 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200"
-              value={language}
-              onChange={(e) => onLanguageChange(e.target.value)}
-              placeholder="English, Hindi..."
+              placeholder="Asia/Kolkata (IST)"
             />
           </div>
         </div>

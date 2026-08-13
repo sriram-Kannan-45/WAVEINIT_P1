@@ -76,7 +76,7 @@ export default function SkillsInput({ skills, suggestions, onChange }) {
           <input
             ref={inputRef}
             type="text"
-            className="flex-1 min-w-[120px] outline-none text-sm text-slate-900 placeholder-slate-400"
+            className="flex-1 min-w-[140px] outline-none text-xs text-slate-900 placeholder-slate-400 py-1"
             value={inputValue}
             onChange={(e) => {
               setInputValue(e.target.value);
@@ -85,9 +85,10 @@ export default function SkillsInput({ skills, suggestions, onChange }) {
             onFocus={() => setShowSuggestions(true)}
             onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
             onKeyDown={handleKeyDown}
-            placeholder={skills.length === 0 ? "Type a skill and press Enter..." : "Add more..."}
+            placeholder="Type a skill and press Enter..."
           />
         </div>
+        <p className="text-[11px] text-slate-400 mt-1.5">Press Enter to add a skill</p>
 
         <AnimatePresence>
           {showSuggestions && inputValue && filteredSuggestions.length > 0 && (

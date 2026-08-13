@@ -120,35 +120,33 @@ export default function ProfilePhotoUploader({ profile, onAvatarUpdate }) {
       </div>
 
       <div className="flex-1">
-        <h4 className="text-sm font-semibold text-slate-900 mb-1" style={{ fontFamily: "'Poppins', sans-serif" }}>
+        <h4 className="text-sm font-bold text-slate-900 mb-1" style={{ fontFamily: "'Poppins', sans-serif" }}>
           Profile Photo
         </h4>
         <p className="text-xs text-slate-500 mb-3">
-          Drag and drop or click to upload. Max 5MB.
+          JPG, PNG or WEBP. Max size 5MB.
         </p>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2.5">
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
-            className="flex items-center gap-2 px-4 py-2 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-colors"
+            className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-emerald-700 bg-emerald-50/80 hover:bg-emerald-100 border border-emerald-200 rounded-xl transition-all"
           >
-            <Upload size={12} />
-            Upload
+            <Upload size={13} />
+            Upload Photo
           </motion.button>
-          {(profile?.profileImage || user?.profilePic) && (
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={handleDelete}
-              disabled={uploading}
-              className="flex items-center gap-2 px-4 py-2 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-xl transition-colors"
-            >
-              <Trash2 size={12} />
-              Remove
-            </motion.button>
-          )}
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={handleDelete}
+            disabled={uploading}
+            className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-rose-600 bg-rose-50/80 hover:bg-rose-100 border border-rose-200 rounded-xl transition-all"
+          >
+            <Trash2 size={13} />
+            Remove
+          </motion.button>
         </div>
       </div>
     </div>
