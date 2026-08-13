@@ -1,19 +1,14 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import {
     Award,
-    BarChart3,
     BookOpen,
-    Calendar,
-    ClipboardCheck,
-    ClipboardList, FileText, GraduationCap,
+    FileText,
+    GraduationCap,
     LayoutDashboard,
     Menu,
-    MessageSquare,
-    NotebookPen,
-    ShieldCheck,
-    Trophy, User,
+    Trophy,
+    User,
     UserCheck,
-    UserCog,
     Users,
     Video,
     X
@@ -47,19 +42,24 @@ const navGroups = {
       ],
     },
     {
-      title: 'Content',
+      title: 'Interviews',
       items: [
-        { key: 'sessions', label: 'Sessions', icon: Calendar },
-        { key: 'assignments', label: 'Assignments', icon: ClipboardCheck },
-        { key: 'notes', label: 'Notes', icon: NotebookPen },
-        { key: 'surveys', label: 'Surveys', icon: ClipboardList },
+        { key: 'interviews', label: 'Interviews', icon: Video },
+      ],
+    },
+  ],
+  TRAINER: [
+    {
+      title: 'Overview',
+      items: [
+        { key: 'overview', label: 'Dashboard', icon: LayoutDashboard },
+        { key: 'courses', label: 'My Courses', icon: GraduationCap },
       ],
     },
     {
-      title: 'Reports',
+      title: 'Content',
       items: [
-        { key: 'feedback', label: 'Feedback', icon: MessageSquare },
-        { key: 'reports', label: 'Analytics', icon: BarChart3 },
+        { key: 'credentials', label: 'Participant Credentials', icon: FileText },
       ],
     },
     {
@@ -69,26 +69,45 @@ const navGroups = {
       ],
     },
     {
-      title: 'Settings',
+      title: 'Account',
       items: [
-        { key: 'bulkImport', label: 'User Management', icon: UserCog },
-        { key: 'programs', label: 'Roles & Permissions', icon: ShieldCheck },
+        { key: 'profile', label: 'My Profile', icon: User },
       ],
     },
   ],
-  TRAINER: [
-    { title: 'Overview', items: [{ key: 'overview', label: 'Dashboard', icon: LayoutDashboard }, { key: 'courses', label: 'My Courses', icon: GraduationCap }] },
-    { title: 'Content', items: [{ key: 'credentials', label: 'Participant Credentials', icon: FileText }, { key: 'notes', label: 'Notes', icon: NotebookPen }, { key: 'assignments', label: 'Assignments', icon: ClipboardCheck }] },
-    { title: 'Insights', items: [{ key: 'reports', label: 'Reports', icon: BarChart3 }, { key: 'feedback', label: 'Feedback', icon: MessageSquare }] },
-    { title: 'Interviews', items: [{ key: 'interviews', label: 'Interviews', icon: Video }] },
-    { title: 'Account', items: [{ key: 'profile', label: 'My Profile', icon: User }] },
-  ],
   PARTICIPANT: [
-    { title: 'Overview', items: [{ key: 'overview', label: 'Dashboard', icon: LayoutDashboard }] },
-    { title: 'Learning', items: [{ key: 'myEnrollments', label: 'My Courses', icon: GraduationCap }, { key: 'leaderboard', label: 'Leaderboard', icon: Trophy }, { key: 'achievements', label: 'Achievements', icon: Award }] },
-    { title: 'Activity', items: [{ key: 'reports', label: 'My Reports', icon: BarChart3 }, { key: 'certificates', label: 'Certificates', icon: Award }, { key: 'feedback', label: 'Give Feedback', icon: MessageSquare }, { key: 'myFeedbacks', label: 'My Feedbacks', icon: MessageSquare }] },
-    { title: 'Interviews', items: [{ key: 'interviews', label: 'Interviews', icon: Video }] },
-    { title: 'Account', items: [{ key: 'profile', label: 'Profile', icon: User }] },
+    {
+      title: 'Overview',
+      items: [
+        { key: 'overview', label: 'Dashboard', icon: LayoutDashboard },
+      ],
+    },
+    {
+      title: 'Learning',
+      items: [
+        { key: 'myEnrollments', label: 'My Courses', icon: GraduationCap },
+        { key: 'leaderboard', label: 'Leaderboard', icon: Trophy },
+        { key: 'achievements', label: 'Achievements', icon: Award },
+      ],
+    },
+    {
+      title: 'Activity',
+      items: [
+        { key: 'certificates', label: 'Certificates', icon: Award },
+      ],
+    },
+    {
+      title: 'Interviews',
+      items: [
+        { key: 'interviews', label: 'Interviews', icon: Video },
+      ],
+    },
+    {
+      title: 'Account',
+      items: [
+        { key: 'profile', label: 'Profile', icon: User },
+      ],
+    },
   ],
 }
 
@@ -97,21 +116,13 @@ const pageDescriptions = {
   trainings: 'Manage all training programs',
   trainers: 'Manage trainer accounts and assignments',
   participants: 'View and manage learner accounts',
-  bulkImport: 'Bulk import participants from Excel files',
-  sessions: 'Manage assessment and quiz sessions',
-  assignments: 'Manage course assignments',
-  notes: 'Organize course notes and resources',
-  feedback: 'View and respond to feedback',
-  surveys: 'Create and manage surveys',
   courses: 'Manage your training courses',
   credentials: 'Send login credentials to participants',
-  reports: 'View detailed analytics and reports',
   profile: 'Manage your account settings',
   myEnrollments: 'Your enrolled training programs',
   leaderboard: 'See how you rank among learners',
   achievements: 'Your badges and accomplishments',
   certificates: 'Download your completion certificates',
-  myFeedbacks: 'Feedback you\'ve submitted',
   interviews: 'Schedule and manage interviews',
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Search, ChevronUp, ChevronDown, Download, X, Star, Award,
-  TrendingUp, Eye, RefreshCw, Users, Loader2, Clock,
+  TrendingUp, Eye, RefreshCw, Users, Loader2, Clock, UserPlus, Check,
 } from 'lucide-react'
 import { API } from '../../api/api'
 import { useToast } from '../Toast'
@@ -9,6 +9,217 @@ import { downloadCSV } from '../../utils/export'
 import { LineAreaChart } from '../ui/ChartWrappers'
 
 const PAGE_SIZE = 10
+
+function InviteParticipantsModal({ courseId, user, onClose, onSuccess }) {
+  const { error: showError, success: showSuccess } = useToast()
+  const [availableParticipants, setAvailableParticipants] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [inviting, setInviting] = useState(false)
+  const [selectedIds, setSelectedIds] = useState([])
+  const [searchTerm, setSearchTerm] = useState('')
+
+  useEffect(() => {
+    fetchAvailable()
+  }, [courseId])
+
+  const fetchAvailable = async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(API.TRAINER_COURSES.AVAILABLE_PARTICIPANTS(courseId), {
+        headers: { Authorization: `Bearer ${user.token}` }
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setAvailableParticipants(data.participants || [])
+      } else {
+        showError(data.error || 'Failed to fetch approved participants')
+      }
+    } catch (e) {
+      showError(e.message || 'Network error fetching approved participants')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const filtered = useMemo(() => {
+    if (!searchTerm) return availableParticipants
+    const q = searchTerm.toLowerCase()
+    return availableParticipants.filter(p =>
+      (p.name || '').toLowerCase().includes(q) ||
+      (p.email || '').toLowerCase().includes(q)
+    )
+  }, [availableParticipants, searchTerm])
+
+  const handleToggleParticipant = (id) => {
+    setSelectedIds(prev =>
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    )
+  }
+
+  const handleSelectAll = () => {
+    if (selectedIds.length === filtered.length) {
+      setSelectedIds([])
+    } else {
+      setSelectedIds(filtered.map(p => p.id || p.participantId || p.userId))
+    }
+  }
+
+  const handleInvite = async () => {
+    if (selectedIds.length === 0) return
+    setInviting(true)
+    try {
+      const res = await fetch(API.TRAINER_COURSES.PARTICIPANTS(courseId), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${user.token}`
+        },
+        body: JSON.stringify({
+          participantId: selectedIds[0],
+          participantIds: selectedIds
+        })
+      })
+      const data = await res.json()
+      if (res.ok && (data.success || data.enrolledCount > 0)) {
+        showSuccess(data.message || `Successfully invited ${selectedIds.length} participant(s)`)
+        onSuccess()
+        onClose()
+      } else {
+        showError(data.error || data.message || 'Failed to invite participants')
+      }
+    } catch (e) {
+      showError(e.message || 'Error inviting participants')
+    } finally {
+      setInviting(false)
+    }
+  }
+
+  return (
+    <div className="reg-modal-overlay" onClick={onClose}>
+      <div className="reg-modal" style={{ maxWidth: 580, width: '90%' }} onClick={e => e.stopPropagation()}>
+        <div className="reg-modal-header" style={{ padding: '20px 24px', borderBottom: '1px solid #e2e8f0' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#0f172a' }}>Approved Participants</h3>
+            <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>Select approved participants to invite to this training</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 4 }}
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="reg-modal-body" style={{ padding: 24 }}>
+          {loading ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 0', color: '#0d9488', gap: 12 }}>
+              <Loader2 size={28} className="bulk-spin" />
+              <span style={{ fontSize: 14, color: '#64748b' }}>Loading approved participants...</span>
+            </div>
+          ) : availableParticipants.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '40px 20px', color: '#64748b' }}>
+              <Users size={36} style={{ color: '#94a3b8', marginBottom: 12 }} />
+              <h4 style={{ margin: '0 0 4px', fontSize: 15, fontWeight: 600, color: '#334155' }}>No approved participants available</h4>
+              <p style={{ margin: 0, fontSize: 13, color: '#94a3b8' }}>Either all approved participants are already enrolled or no participants have been approved by admin yet.</p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {/* Search & Select All row */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <div className="reg-admin-search" style={{ flex: 1 }}>
+                  <Search size={14} />
+                  <input
+                    className="reg-admin-search-input"
+                    placeholder="Search approved participants..."
+                    value={searchTerm}
+                    onChange={e => setSearchTerm(e.target.value)}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSelectAll}
+                  style={{
+                    padding: '8px 14px', borderRadius: 8, border: '1px solid #cbd5e1',
+                    background: '#f8fafc', fontSize: 12.5, fontWeight: 600, color: '#334155', cursor: 'pointer'
+                  }}
+                >
+                  {selectedIds.length === filtered.length && filtered.length > 0 ? 'Deselect All' : 'Select All'}
+                </button>
+              </div>
+
+              {/* Participant List */}
+              <div style={{ maxHeight: 280, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 12, padding: '4px 0' }}>
+                {filtered.map(p => {
+                  const pId = p.id || p.participantId || p.userId
+                  const isChecked = selectedIds.includes(pId)
+                  return (
+                    <label
+                      key={pId}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px',
+                        cursor: 'pointer', background: isChecked ? '#f0fdf4' : 'transparent',
+                        borderBottom: '1px solid #f1f5f9', transition: 'background 0.15s'
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => handleToggleParticipant(pId)}
+                        style={{ width: 18, height: 18, accentColor: '#16a34a', cursor: 'pointer' }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>{p.name}</div>
+                        <div style={{ fontSize: 12.5, color: '#64748b' }}>{p.email}</div>
+                      </div>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: '#16a34a', background: '#dcfce7', padding: '2px 8px', borderRadius: 999 }}>
+                        APPROVED
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+
+              {/* Selection Summary */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>
+                  Selected: <span style={{ color: '#16a34a' }}>{selectedIds.length}</span>
+                </span>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    style={{
+                      padding: '10px 18px', borderRadius: 10, border: '1px solid #cbd5e1',
+                      background: '#fff', fontSize: 13, fontWeight: 600, color: '#475569', cursor: 'pointer'
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleInvite}
+                    disabled={selectedIds.length === 0 || inviting}
+                    style={{
+                      padding: '10px 20px', borderRadius: 10, border: 'none',
+                      background: selectedIds.length > 0 ? '#16a34a' : '#cbd5e1',
+                      color: '#fff', fontSize: 13, fontWeight: 600,
+                      cursor: selectedIds.length > 0 ? 'pointer' : 'not-allowed',
+                      display: 'flex', alignItems: 'center', gap: 8
+                    }}
+                  >
+                    {inviting ? <Loader2 size={16} className="bulk-spin" /> : null}
+                    <span>Invite Selected Participants</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 const sortableHeaders = [
   { key: 'name', label: 'Participant' },
@@ -226,6 +437,7 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [detail, setDetail] = useState(null)
+  const [showInviteModal, setShowInviteModal] = useState(false)
 
   const loadParticipants = async (targetPage = page, targetSearch = search) => {
     setLoading(true)
@@ -317,6 +529,20 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
             </div>
             <button
               className="reg-admin-action"
+              onClick={() => setShowInviteModal(true)}
+              title="Invite Approved Participants"
+              style={{
+                background: '#16a34a', color: '#ffffff', border: 'none',
+                padding: '0 14px', borderRadius: 8, display: 'flex',
+                alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 12.5,
+                cursor: 'pointer'
+              }}
+            >
+              <UserPlus size={14} />
+              <span>Invite Participants</span>
+            </button>
+            <button
+              className="reg-admin-action"
               onClick={handleRefresh}
               title="Refresh"
             >
@@ -376,6 +602,18 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
                       <Users size={24} />
                       <h3>No participants found</h3>
                       <p>{search ? 'Try a different search term.' : 'No participants have enrolled yet.'}</p>
+                      <button
+                        onClick={() => setShowInviteModal(true)}
+                        style={{
+                          marginTop: 12, padding: '8px 16px', borderRadius: 8,
+                          background: '#16a34a', color: '#fff', border: 'none',
+                          fontWeight: 600, fontSize: 13, cursor: 'pointer',
+                          display: 'inline-flex', alignItems: 'center', gap: 6
+                        }}
+                      >
+                        <UserPlus size={15} />
+                        <span>Invite Participants</span>
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -463,6 +701,15 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
 
       {detail && (
         <ParticipantDetailModal participant={detail} course={course} onClose={() => setDetail(null)} />
+      )}
+
+      {showInviteModal && (
+        <InviteParticipantsModal
+          courseId={courseId}
+          user={user}
+          onClose={() => setShowInviteModal(false)}
+          onSuccess={() => loadParticipants()}
+        />
       )}
     </div>
   )

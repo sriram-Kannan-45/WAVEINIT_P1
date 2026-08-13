@@ -1,14 +1,6 @@
 import { motion } from 'framer-motion';
-import { CheckCircle2 } from 'lucide-react';
-import { Moon, HelpCircle } from 'lucide-react';
+import { Moon, HelpCircle, BookOpen } from 'lucide-react';
 import loginIMG from '../../assets/loginIMG.png';
-
-const features = [
-  'Smart Learning',
-  'Secure & Reliable',
-  'Real-time Analytics',
-  'Scalable',
-];
 
 const fadeUp = (delay = 0) => ({
   initial: { opacity: 0, y: 14 },
@@ -20,11 +12,6 @@ export default function AuthLayout() {
   return (
     <div className="auth-layout--left">
       <div className="auth-bg-gradient" />
-
-      <svg className="auth-bg-wave" viewBox="0 0 900 500" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <path d="M-60 380 C80 300, 240 460, 400 360 C560 260, 700 440, 960 340" stroke="#16a34a" strokeWidth="2.5" fill="none" opacity="0.08" />
-        <path d="M-60 420 C60 350, 260 490, 440 400 C620 310, 740 470, 980 380" stroke="#22c55e" strokeWidth="1.8" fill="none" opacity="0.06" />
-      </svg>
 
       <div className="auth-topbar">
         <button type="button" className="auth-topbar-btn" aria-label="Toggle dark mode">
@@ -41,10 +28,7 @@ export default function AuthLayout() {
         <motion.div className="auth-hero-top" {...fadeUp(0)}>
           <div className="auth-logo-bar">
             <div className="auth-logo-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
-                <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
-              </svg>
+              <BookOpen size={20} color="#ffffff" />
             </div>
             <span className="auth-logo-text">WAVE INIT LMS</span>
           </div>
@@ -55,7 +39,8 @@ export default function AuthLayout() {
         </motion.div>
 
         <motion.h1 className="auth-hero-title" {...fadeUp(0.1)}>
-          Learn. Assess. Grow with<br />
+          Learn. Assess.<br />
+          Grow with<br />
           <span className="auth-hero-highlight">Wave Init</span> LMS
         </motion.h1>
 
@@ -76,21 +61,10 @@ export default function AuthLayout() {
             className="auth-illustration-img"
           />
         </motion.div>
-
-        <motion.div className="auth-features" {...fadeUp(0.34)}>
-          {features.map((f) => (
-            <span className="auth-feature-badge" key={f}>
-              <span className="auth-feature-icon">
-                <CheckCircle2 size={14} />
-              </span>
-              {f}
-            </span>
-          ))}
-        </motion.div>
       </div>
 
       <div className="auth-footer">
-        <span className="auth-footer-copy">&copy; 2026 Wave Init LMS</span>
+        <span className="auth-footer-copy">&copy; 2026 Wave Init LMS. All rights reserved.</span>
         <div className="auth-footer-links">
           <a href="https://linkedin.com" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect width="4" height="12" x="2" y="9"/><circle cx="4" cy="4" r="2"/></svg>
@@ -106,3 +80,4 @@ export default function AuthLayout() {
     </div>
   );
 }
+

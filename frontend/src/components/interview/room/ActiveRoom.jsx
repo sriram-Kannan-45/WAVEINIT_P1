@@ -644,37 +644,39 @@ export default function ActiveRoom({
           {isInterviewer ? (
             /* Trainer View: Participant Screen Share & Mobile Camera Feed Tiles */
             <>
-              {/* Participant Screen Share Feed Tile (if screen share active) */}
-              {participantScreenStream && (
-                <div
-                  className="reg-admin-table-wrap"
-                  style={{
-                    background: '#fff',
-                    padding: 18,
-                    cursor: 'pointer',
-                    outline: pinnedStreamKey === 'screen' ? '2px solid #2563eb' : 'none',
-                  }}
-                  onClick={() => setPinnedStreamKey(pinnedStreamKey === 'screen' ? null : 'screen')}
-                  title="Click to pin/unpin to main stage"
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, borderBottom: '1px solid #f1f5f9', paddingBottom: 8 }}>
-                    <h4 style={{ fontSize: 14, fontWeight: 700, margin: 0, color: '#0f172a' }}>
-                      Participant Screen Share {pinnedStreamKey === 'screen' ? '📌' : ''}
-                    </h4>
-                    <span className="reg-admin-status" style={{
-                      background: screenShareStatus === 'live' ? '#dcfce7' : screenShareStatus === 'failed' ? '#fee2e2' : '#fef3c7',
-                      color: screenShareStatus === 'live' ? '#15803D' : screenShareStatus === 'failed' ? '#dc2626' : '#d97706',
-                      borderColor: screenShareStatus === 'live' ? '#bbf7d0' : screenShareStatus === 'failed' ? '#fca5a5' : '#fcd34d',
-                      fontSize: 10, padding: '2px 8px',
-                    }}>
-                      {screenShareStatus === 'live'
-                        ? '● Live Sharing'
-                        : screenShareStatus === 'failed'
-                          ? '✕ Screen share failed — Retry'
-                          : '◐ Starting screen share...'}
-                    </span>
-                  </div>
-                  <div style={{ width: '100%', aspectRatio: '16/10', background: '#0f172a', borderRadius: 8, overflow: 'hidden' }}>
+              {/* Participant Screen Share Feed Tile (ALWAYS MOUNTED) */}
+              <div
+                className="reg-admin-table-wrap"
+                style={{
+                  background: '#fff',
+                  padding: 18,
+                  cursor: participantScreenStream ? 'pointer' : 'default',
+                  outline: pinnedStreamKey === 'screen' ? '2px solid #2563eb' : 'none',
+                }}
+                onClick={() => participantScreenStream && setPinnedStreamKey(pinnedStreamKey === 'screen' ? null : 'screen')}
+                title={participantScreenStream ? 'Click to pin/unpin to main stage' : undefined}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, borderBottom: '1px solid #f1f5f9', paddingBottom: 8 }}>
+                  <h4 style={{ fontSize: 14, fontWeight: 700, margin: 0, color: '#0f172a' }}>
+                    Participant Screen Share {pinnedStreamKey === 'screen' ? '📌' : ''}
+                  </h4>
+                  <span className="reg-admin-status" style={{
+                    background: screenShareStatus === 'live' ? '#dcfce7' : screenShareStatus === 'failed' ? '#fee2e2' : screenShareStatus === 'connecting' ? '#fef3c7' : '#f1f5f9',
+                    color: screenShareStatus === 'live' ? '#15803D' : screenShareStatus === 'failed' ? '#dc2626' : screenShareStatus === 'connecting' ? '#d97706' : '#64748b',
+                    borderColor: screenShareStatus === 'live' ? '#bbf7d0' : screenShareStatus === 'failed' ? '#fca5a5' : screenShareStatus === 'connecting' ? '#fcd34d' : '#e2e8f0',
+                    fontSize: 10, padding: '2px 8px',
+                  }}>
+                    {screenShareStatus === 'live'
+                      ? '● Live Sharing'
+                      : screenShareStatus === 'failed'
+                        ? '✕ Screen share failed — Retry'
+                        : screenShareStatus === 'connecting'
+                          ? '◐ Starting screen share...'
+                          : '○ Not Sharing'}
+                  </span>
+                </div>
+                <div style={{ width: '100%', aspectRatio: '16/10', background: '#0f172a', borderRadius: 8, overflow: 'hidden', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {participantScreenStream ? (
                     <VideoTile
                       stream={participantScreenStream}
                       label={`${candidateName}'s Screen`}
@@ -682,9 +684,15 @@ export default function ActiveRoom({
                       style={{ width: '100%', height: '100%' }}
                       onVideoState={handleScreenShareVideoState}
                     />
-                  </div>
+                  ) : (
+                    <div style={{ textAlign: 'center', padding: 12 }}>
+                      <p style={{ color: '#94a3b8', fontSize: 11, margin: 0 }}>
+                        Waiting for participant to share their screen...
+                      </p>
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
 
               {/* Participant Mobile Camera Feed Tile */}
               <div

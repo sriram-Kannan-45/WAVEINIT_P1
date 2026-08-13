@@ -6937,13 +6937,171 @@ body.iv-room-fullscreen .app-layout {
   display: block !important;
 }
 
-/* Slightly tighter page padding in full-screen so the room uses the
-   freed viewport (sidebar + topbar space) without feeling cramped. */
-body.iv-room-fullscreen .page-content {
-  padding: 20px 24px 40px !important;
+/* ═══════════════════════════════════════════════════════════════════
+   FULL-SCREEN INTERVIEW ROOM — fit the whole room in one viewport
+   Locks the document to 100dvh so the page header, 3-column content
+   row and Interview Timeline strip all fit with NO page scrollbar
+   from 1366x768 up to 1920x1080. Scoped to body.iv-room-fullscreen
+   (only active while the live room view is on screen) and reverts
+   below 992px where the room becomes a normal scrollable page.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Lock the document to the viewport ── */
+body.iv-room-fullscreen,
+body.iv-room-fullscreen #root,
+body.iv-room-fullscreen .app-layout,
+body.iv-room-fullscreen .main-content {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 
-/* Let the room breathe on large monitors without looking stretched. */
+body.iv-room-fullscreen .page-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  /* Slightly tighter page padding in full-screen so the room uses the
+     freed viewport (sidebar + topbar space) without feeling cramped. */
+  padding: 12px 24px 16px !important;
+}
+
+/* ── InterviewShell: header stays fixed, content flexes to fill ── */
 body.iv-room-fullscreen .reg-admin {
   max-width: 1600px !important;
+  width: 100%;
+  margin: 0 auto;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+body.iv-room-fullscreen .reg-admin > div:first-child {
+  flex-shrink: 0;
+  margin-bottom: 14px !important;
+}
+
+body.iv-room-fullscreen .reg-admin > div:last-child {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── 3-column grid fills the remaining height; columns stretch ── */
+body.iv-room-fullscreen .interview-room-grid {
+  flex: 1;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+body.iv-room-fullscreen .interview-col-details,
+body.iv-room-fullscreen .interview-col-video,
+body.iv-room-fullscreen .interview-col-notes {
+  min-height: 0;
+  overflow: hidden;
+  gap: 14px !important;
+}
+
+/* Center column: video stage flexes, controls bar stays put */
+body.iv-room-fullscreen .interview-col-video > div:first-child {
+  flex: 1 1 0%;
+  min-height: 0 !important;
+  aspect-ratio: auto !important;
+}
+
+body.iv-room-fullscreen .interview-video-controls {
+  flex-shrink: 0;
+}
+
+/* Right column tiles: clamped heights that scale with the viewport */
+body.iv-room-fullscreen .interview-col-notes > .reg-admin-table-wrap:not(:last-child) > div:last-child {
+  height: clamp(96px, 16vh, 180px) !important;
+  aspect-ratio: auto !important;
+}
+
+body.iv-room-fullscreen .interview-col-notes > div > .reg-admin-table-wrap > div:last-child {
+  height: clamp(72px, 11vh, 140px) !important;
+  aspect-ratio: auto !important;
+}
+
+/* Right column: notes card fills whatever space is left */
+body.iv-room-fullscreen .interview-col-notes > .reg-admin-table-wrap:last-child {
+  flex: 1;
+  min-height: 0;
+  padding: 14px !important;
+}
+
+body.iv-room-fullscreen .interview-col-notes > .reg-admin-table-wrap:last-child textarea {
+  flex: 1 1 0% !important;
+  min-height: 72px !important;
+}
+
+/* ── Bottom Interview Timeline strip (compact) ── */
+body.iv-room-fullscreen .reg-admin > div:last-child > .reg-admin-table-wrap {
+  flex-shrink: 0;
+  padding: 12px 18px !important;
+}
+
+body.iv-room-fullscreen .reg-admin > div:last-child > .reg-admin-table-wrap h4 {
+  margin: 0 0 8px !important;
+}
+
+body.iv-room-fullscreen .reg-admin > div:last-child > .reg-admin-table-wrap > div > div {
+  padding: 10px 12px !important;
+}
+
+/* ── Below 992px the room falls back to a scrollable page ── */
+@media (max-width: 991px) {
+  body.iv-room-fullscreen,
+  body.iv-room-fullscreen #root,
+  body.iv-room-fullscreen .app-layout,
+  body.iv-room-fullscreen .main-content,
+  body.iv-room-fullscreen .page-content {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  body.iv-room-fullscreen .reg-admin {
+    flex: none;
+    height: auto;
+  }
+
+  body.iv-room-fullscreen .reg-admin > div:last-child {
+    flex: none;
+    overflow: visible;
+  }
+
+  body.iv-room-fullscreen .interview-room-grid {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+  }
+
+  body.iv-room-fullscreen .interview-col-video > div:first-child {
+    flex: none !important;
+    aspect-ratio: 16/10 !important;
+    min-height: 200px !important;
+  }
+
+  body.iv-room-fullscreen .interview-col-notes > .reg-admin-table-wrap:not(:last-child) > div:last-child {
+    height: auto !important;
+    aspect-ratio: 16/10 !important;
+  }
+
+  body.iv-room-fullscreen .interview-col-notes > div > .reg-admin-table-wrap > div:last-child {
+    height: auto !important;
+    aspect-ratio: 4/3 !important;
+  }
+
+  body.iv-room-fullscreen .interview-col-notes > .reg-admin-table-wrap:last-child {
+    flex: none !important;
+  }
 }

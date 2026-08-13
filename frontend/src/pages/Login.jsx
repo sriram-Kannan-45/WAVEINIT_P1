@@ -108,127 +108,111 @@ export default function Login({ onLogin, defaultRole }) {
       <AuthLayout />
 
       <AuthCard>
-        <div className="auth-card-header">
-          <motion.h2
-            className="auth-card-title"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.15 }}
-          >
-            Welcome Back
-          </motion.h2>
-          <motion.p
-            className="auth-card-subtitle"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.2 }}
-          >
-            Sign in to continue to your workspace
-          </motion.p>
-        </div>
-
-        <RoleSelector
-          roles={ROLES}
-          activeRole={form.role}
-          onRoleChange={(id) => {
-            setForm(p => ({ ...p, role: id }));
-            localStorage.setItem('lastRole', id);
-            setError('');
-          }}
-        />
-
-        <AnimatePresence>
-          {error && (
-            <motion.div className="auth-error" role="alert"
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.2 }}
-            >
-              <AlertCircle className="auth-error-icon" size={18} />
-              <span className="auth-error-text">{error}</span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <form onSubmit={handleSubmit} autoComplete="on">
-          <div className="auth-form-group">
-            <label className="auth-form-label" htmlFor="login-email">Username or Email</label>
-            <div className="auth-input-wrapper">
-              <input
-                id="login-email"
-                className="auth-form-input"
-                type="text"
-                value={form.email}
-                onChange={e => set('email', e.target.value)}
-                placeholder={activeRole.placeholder}
-                autoComplete="username"
-                required
-              />
-              {form.email && (
-                <span className="auth-input-icon" style={{ pointerEvents: 'none' }}>
-                  <Mail size={18} />
-                </span>
-              )}
-            </div>
+        <div className="auth-card-inner">
+          <div className="auth-card-header">
+            <h2 className="auth-card-title">Welcome Back</h2>
+            <p className="auth-card-subtitle">Sign in to continue to your workspace</p>
           </div>
 
-          <div className="auth-form-group">
-            <label className="auth-form-label" htmlFor="login-password">Password</label>
-            <div className="auth-input-wrapper">
-              <input
-                id="login-password"
-                className="auth-form-input"
-                type={showPassword ? 'text' : 'password'}
-                value={form.password}
-                onChange={e => set('password', e.target.value)}
-                placeholder="Enter your password"
-                autoComplete="current-password"
-                required
-              />
-              <button
-                type="button"
-                className="auth-password-toggle"
-                onClick={() => setShowPassword(v => !v)}
-                aria-label={showPassword ? 'Hide password' : 'Show password'}
-              >
-                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+          <RoleSelector
+            roles={ROLES}
+            activeRole={form.role}
+            onRoleChange={(id) => {
+              setForm(p => ({ ...p, role: id }));
+              localStorage.setItem('lastRole', id);
+              setError('');
+            }}
+          />
+
+          <div className="login-error-container">
+            {error ? (
+              <div className="auth-error" role="alert">
+                <AlertCircle className="auth-error-icon" size={16} />
+                <span className="auth-error-text">{error}</span>
+              </div>
+            ) : null}
+          </div>
+
+          <form onSubmit={handleSubmit} autoComplete="on" className="auth-form-body">
+            <div className="auth-form-group">
+              <label className="auth-form-label" htmlFor="login-email">Username or Email</label>
+              <div className="auth-input-wrapper">
+                <input
+                  id="login-email"
+                  className="auth-form-input"
+                  type="text"
+                  value={form.email}
+                  onChange={e => set('email', e.target.value)}
+                  placeholder={activeRole.placeholder}
+                  autoComplete="username"
+                  required
+                />
+                {form.email && (
+                  <span className="auth-input-icon" style={{ pointerEvents: 'none' }}>
+                    <Mail size={18} />
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="auth-form-group">
+              <label className="auth-form-label" htmlFor="login-password">Password</label>
+              <div className="auth-input-wrapper">
+                <input
+                  id="login-password"
+                  className="auth-form-input"
+                  type={showPassword ? 'text' : 'password'}
+                  value={form.password}
+                  onChange={e => set('password', e.target.value)}
+                  placeholder="Enter your password"
+                  autoComplete="current-password"
+                  required
+                />
+                <button
+                  type="button"
+                  className="auth-password-toggle"
+                  onClick={() => setShowPassword(v => !v)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+            </div>
+
+            <div className="auth-form-options">
+              <label className="auth-checkbox-group">
+                <input
+                  type="checkbox"
+                  className="auth-checkbox"
+                  checked={rememberMe}
+                  onChange={e => setRememberMe(e.target.checked)}
+                />
+                <span className="auth-checkbox-label">Remember me</span>
+              </label>
+              <button type="button" className="auth-forgot-link" onClick={() => navigate('/forgot-password')}>
+                Forgot password?
               </button>
             </div>
-          </div>
 
-          <div className="auth-form-options">
-            <label className="auth-checkbox-group">
-              <input
-                type="checkbox"
-                className="auth-checkbox"
-                checked={rememberMe}
-                onChange={e => setRememberMe(e.target.checked)}
-              />
-              <span className="auth-checkbox-label">Remember me</span>
-            </label>
-            <button type="button" className="auth-forgot-link" onClick={() => navigate('/forgot-password')}>
-              Forgot password?
-            </button>
-          </div>
+            <AuthButton type="submit" disabled={loading}>
+              {loading ? (
+                <>
+                  <span className="auth-spinner" />
+                  <span>Signing in...</span>
+                </>
+              ) : (
+                <>
+                  <span>Sign in as {activeRole.label}</span>
+                  <LogIn size={18} />
+                </>
+              )}
+            </AuthButton>
+          </form>
 
-          <AuthButton type="submit" disabled={loading}>
-            {loading ? (
-              <>
-                <span className="auth-spinner" />
-                <span>Signing in...</span>
-              </>
-            ) : (
-              <>
-                <span>Sign in as {activeRole.label}</span>
-                <LogIn size={18} />
-              </>
-            )}
-          </AuthButton>
-        </form>
-
-        {form.role === 'PARTICIPANT' && (
-          <div className="auth-card-footer">
+          <div
+            className="auth-card-footer"
+            style={{ visibility: form.role === 'PARTICIPANT' ? 'visible' : 'hidden' }}
+          >
             Don&apos;t have an account?{' '}
             <button
               type="button"
@@ -238,7 +222,7 @@ export default function Login({ onLogin, defaultRole }) {
               Create one
             </button>
           </div>
-        )}
+        </div>
       </AuthCard>
     </div>
   );

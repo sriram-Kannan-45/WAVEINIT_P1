@@ -82,6 +82,9 @@ export default function Register() {
 
       <AuthCard>
         <div className="auth-card-header">
+          <div className="auth-card-avatar">
+            <User size={22} />
+          </div>
           <h2 className="auth-card-title">Create Account</h2>
           <p className="auth-card-subtitle">Join as a participant to start learning</p>
         </div>
@@ -116,58 +119,68 @@ export default function Register() {
             {/* Full Name */}
             <div className="auth-form-group">
               <label className="auth-form-label" htmlFor="reg-name">Full Name</label>
-              <input
-                id="reg-name"
-                className="auth-form-input"
-                type="text"
-                value={form.name}
-                onChange={e => set('name', e.target.value)}
-                placeholder="John Doe"
-                autoComplete="name"
-                disabled={loading}
-                required
-              />
+              <div className="auth-input-wrapper">
+                <User size={16} className="auth-input-icon-left" />
+                <input
+                  id="reg-name"
+                  className="auth-form-input auth-form-input--has-icon-left"
+                  type="text"
+                  value={form.name}
+                  onChange={e => set('name', e.target.value)}
+                  placeholder="John Doe"
+                  autoComplete="name"
+                  disabled={loading}
+                  required
+                />
+              </div>
             </div>
 
             {/* Email */}
             <div className="auth-form-group">
               <label className="auth-form-label" htmlFor="reg-email">Email Address</label>
-              <input
-                id="reg-email"
-                className="auth-form-input"
-                type="email"
-                value={form.email}
-                onChange={e => set('email', e.target.value)}
-                placeholder="john@example.com"
-                autoComplete="email"
-                disabled={loading}
-                required
-              />
+              <div className="auth-input-wrapper">
+                <Mail size={16} className="auth-input-icon-left" />
+                <input
+                  id="reg-email"
+                  className="auth-form-input auth-form-input--has-icon-left"
+                  type="email"
+                  value={form.email}
+                  onChange={e => set('email', e.target.value)}
+                  placeholder="john@example.com"
+                  autoComplete="email"
+                  disabled={loading}
+                  required
+                />
+              </div>
             </div>
 
             {/* Phone */}
             <div className="auth-form-group">
               <label className="auth-form-label" htmlFor="reg-phone">Phone Number</label>
-              <input
-                id="reg-phone"
-                className="auth-form-input"
-                type="tel"
-                value={form.phone}
-                onChange={e => set('phone', e.target.value)}
-                placeholder="e.g., 9876543210"
-                autoComplete="tel"
-                disabled={loading}
-                required
-              />
+              <div className="auth-input-wrapper">
+                <Phone size={16} className="auth-input-icon-left" />
+                <input
+                  id="reg-phone"
+                  className="auth-form-input auth-form-input--has-icon-left"
+                  type="tel"
+                  value={form.phone}
+                  onChange={e => set('phone', e.target.value)}
+                  placeholder="e.g., 9876543210"
+                  autoComplete="tel"
+                  disabled={loading}
+                  required
+                />
+              </div>
             </div>
 
             {/* Password */}
             <div className="auth-form-group">
               <label className="auth-form-label" htmlFor="reg-pw">Password</label>
               <div className="auth-input-wrapper">
+                <Lock size={16} className="auth-input-icon-left" />
                 <input
                   id="reg-pw"
-                  className="auth-form-input"
+                  className="auth-form-input auth-form-input--has-icon-left auth-form-input--has-icon-right"
                   type={showPassword ? 'text' : 'password'}
                   value={form.password}
                   onChange={e => set('password', e.target.value)}
@@ -183,7 +196,7 @@ export default function Register() {
                   onClick={() => setShowPassword(v => !v)}
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
-                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
               <AnimatePresence>
@@ -192,7 +205,7 @@ export default function Register() {
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: 'auto' }}
                     exit={{ opacity: 0, height: 0 }}
-                    style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}
+                    style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 8 }}
                   >
                     <div style={{ display: 'flex', gap: 3, flex: 1 }}>
                       {[1, 2, 3, 4].map(i => (
@@ -209,9 +222,10 @@ export default function Register() {
             <div className="auth-form-group">
               <label className="auth-form-label" htmlFor="reg-confirm">Confirm Password</label>
               <div className="auth-input-wrapper">
+                <Lock size={16} className="auth-input-icon-left" />
                 <input
                   id="reg-confirm"
-                  className="auth-form-input"
+                  className="auth-form-input auth-form-input--has-icon-left auth-form-input--has-icon-right"
                   type={showConfirm ? 'text' : 'password'}
                   value={form.confirmPassword}
                   onChange={e => set('confirmPassword', e.target.value)}
@@ -226,7 +240,7 @@ export default function Register() {
                   onClick={() => setShowConfirm(v => !v)}
                   aria-label={showConfirm ? 'Hide password' : 'Show password'}
                 >
-                  {showConfirm ? <EyeOff size={18} /> : <Eye size={18} />}
+                  {showConfirm ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
               {form.confirmPassword && form.password !== form.confirmPassword && (
@@ -250,9 +264,9 @@ export default function Register() {
                 />
                 <span className="auth-checkbox-label">
                   I agree to the{' '}
-                  <button type="button" style={{ background: 'none', border: 'none', color: '#16a34a', fontWeight: 600, cursor: 'pointer', padding: 0, fontSize: 12.5, fontFamily: 'inherit' }}>
+                  <span className="auth-terms-link">
                     Terms of Service
-                  </button>
+                  </span>
                 </span>
               </label>
             </div>
@@ -276,7 +290,7 @@ export default function Register() {
 
         <div className="auth-card-footer">
           Already have an account?{' '}
-          <Link to="/login">Sign In</Link>
+          <Link to="/login">Sign in</Link>
         </div>
       </AuthCard>
     </div>

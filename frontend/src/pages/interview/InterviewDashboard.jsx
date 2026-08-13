@@ -432,7 +432,6 @@ export default function InterviewDashboard({ user }) {
               <tr>
                 <th>ID</th>
                 <th>Candidate</th>
-                <th>Mobile</th>
                 <th>Interviewer</th>
                 <th>Type</th>
                 <th>Date</th>
@@ -465,7 +464,6 @@ export default function InterviewDashboard({ user }) {
                         </div>
                       </div>
                     </td>
-                    <td>{iv.candidate?.phone || '—'}</td>
                     <td>
                       <div className="reg-admin-name" style={{ fontSize: 13 }}>{iv.interviewer?.name || '—'}</div>
                       <div className="reg-admin-email">{iv.interviewer?.email || ''}</div>

@@ -1217,6 +1217,135 @@ async function rejectParticipant(req, res) {
   }
 }
 
+// GET /api/trainer/courses/:courseId/available-participants
+async function getAvailableParticipants(req, res) {
+  try {
+    const course = await loadOwnedCourse(req, res, req.params.courseId);
+    if (!course) return;
+
+    // Find all already enrolled/pending participant IDs for this course / training
+    const existingEnrollments = await Enrollment.findAll({
+      where: {
+        [Op.or]: [
+          { courseId: course.id },
+          ...(course.trainingProgramId ? [{ trainingId: course.trainingProgramId }] : [])
+        ],
+        status: { [Op.in]: ['ENROLLED', 'PENDING'] }
+      },
+      attributes: ['participantId']
+    });
+    const enrolledParticipantIds = existingEnrollments.map(e => e.participantId);
+
+    // Fetch approved participants who are NOT already enrolled in this course
+    const approvedParticipants = await User.findAll({
+      where: {
+        role: 'PARTICIPANT',
+        status: 'APPROVED',
+        isDeleted: false,
+        id: { [Op.notIn]: enrolledParticipantIds.length > 0 ? enrolledParticipantIds : [0] }
+      },
+      attributes: ['id', 'name', 'email', 'phone', 'created_at'],
+      order: [['name', 'ASC']]
+    });
+
+    const out = approvedParticipants.map(p => ({
+      id: p.id,
+      participantId: p.id,
+      userId: p.id,
+      name: p.name || 'Unnamed Participant',
+      email: p.email || '',
+      phone: p.phone || '',
+      status: 'APPROVED',
+      created_at: p.createdAt || p.dataValues?.created_at
+    }));
+
+    res.json({ success: true, participants: out, total: out.length });
+  } catch (e) {
+    console.error('getAvailableParticipants error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch available participants' });
+  }
+}
+
+// POST /api/trainer/courses/:courseId/participants
+async function addParticipant(req, res) {
+  try {
+    const course = await loadOwnedCourse(req, res, req.params.courseId);
+    if (!course) return;
+
+    const { participantIds, participantId, participant_id, userId, userIds } = req.body || {};
+    let rawIds = [];
+    if (Array.isArray(participantIds)) rawIds.push(...participantIds);
+    if (Array.isArray(userIds)) rawIds.push(...userIds);
+    if (participantId) rawIds.push(participantId);
+    if (participant_id) rawIds.push(participant_id);
+    if (userId) rawIds.push(userId);
+
+    const targetIds = Array.from(new Set(rawIds.map(id => parseInt(id, 10)).filter(Boolean)));
+
+    if (targetIds.length === 0) {
+      return res.status(400).json({ error: 'participantId is required' });
+    }
+
+    // Verify all selected users are approved participants
+    const approvedUsers = await User.findAll({
+      where: {
+        id: targetIds,
+        role: 'PARTICIPANT',
+        status: 'APPROVED',
+        isDeleted: false
+      }
+    });
+
+    if (approvedUsers.length === 0) {
+      return res.status(400).json({ error: 'No valid approved participants found to invite.' });
+    }
+
+    const trainingId = course.trainingProgramId || null;
+    let enrolledCount = 0;
+
+    for (const user of approvedUsers) {
+      const [enrollment, created] = await Enrollment.findOrCreate({
+        where: {
+          participantId: user.id,
+          courseId: course.id
+        },
+        defaults: {
+          participantId: user.id,
+          courseId: course.id,
+          trainingId: trainingId,
+          status: 'ENROLLED',
+          progressPercent: 0
+        }
+      });
+
+      if (!created && enrollment.status !== 'ENROLLED') {
+        await enrollment.update({ status: 'ENROLLED', trainingId: trainingId || enrollment.trainingId });
+      }
+
+      enrolledCount++;
+
+      // Send notification
+      NotificationService.createNotification({
+        userId: user.id,
+        message: `You have been invited and enrolled in course "${course.title}".`,
+        type: 'ENROLLMENT',
+        actionUrl: `/participant`,
+        relatedEntityId: course.id,
+        relatedEntityType: 'Course'
+      }, req.app.get('io')).catch(() => {});
+    }
+
+    res.json({
+      success: true,
+      message: `Successfully invited ${enrolledCount} participant(s) to "${course.title}".`,
+      enrolledCount
+    });
+  } catch (e) {
+    console.error('addParticipant error:', e.message);
+    res.status(500).json({ error: 'Failed to invite participants' });
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ANALYTICS
 // ─────────────────────────────────────────────────────────────────────────────
