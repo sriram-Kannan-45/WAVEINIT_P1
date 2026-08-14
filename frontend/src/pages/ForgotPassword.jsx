@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Mail, ArrowLeft, Eye, EyeOff, CheckCircle2, AlertCircle, Loader2, ShieldCheck, KeyRound, RefreshCw } from 'lucide-react'
+import { Mail, ArrowLeft, Eye, EyeOff, CheckCircle2, AlertCircle, Loader2, ShieldCheck, KeyRound, RefreshCw, ArrowRight } from 'lucide-react'
 import { API } from '../api/api'
+import AuthLayout from '../components/auth/AuthLayout'
+import AuthCard from '../components/auth/AuthCard'
 
 /* ── password strength ── */
 function getStrength(pw) {
@@ -14,7 +16,7 @@ function getStrength(pw) {
   return s
 }
 const STRENGTH_LABEL = ['', 'Weak', 'Fair', 'Good', 'Strong']
-const STRENGTH_COLOR = ['', '#F04438', '#F79009', '#059669', '#12B76A']
+const STRENGTH_COLOR = ['', '#EF4444', '#F59E0B', '#10B981', '#16A34A']
 
 /* ── OTP digit input ── */
 function OtpInput({ value, onChange }) {
@@ -44,7 +46,7 @@ function OtpInput({ value, onChange }) {
   }
 
   return (
-    <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', marginBottom: '24px' }}>
+    <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', marginBottom: '20px' }}>
       {digits.map((d, i) => (
         <input
           key={i}
@@ -58,25 +60,25 @@ function OtpInput({ value, onChange }) {
           onPaste={handlePaste}
           autoComplete="one-time-code"
           style={{
-            width: '48px',
-            height: '56px',
+            width: '46px',
+            height: '52px',
             textAlign: 'center',
             fontSize: '20px',
             fontWeight: 700,
-            fontFamily: 'var(--font-primary)',
-            border: '1.5px solid var(--neutral-200)',
-            borderRadius: 'var(--radius-lg)',
-            background: d ? 'var(--neutral-50)' : 'var(--neutral-0)',
-            color: 'var(--neutral-900)',
+            fontFamily: "'Poppins', sans-serif",
+            border: '1.5px solid #E2E8F0',
+            borderRadius: '10px',
+            background: d ? '#F8FAFC' : '#FFFFFF',
+            color: '#0F172A',
             outline: 'none',
             transition: 'all 150ms ease',
           }}
           onFocus={(e) => {
-            e.target.style.borderColor = 'var(--brand-admin)'
-            e.target.style.boxShadow = '0 0 0 3px rgba(79, 70, 229, 0.1)'
+            e.target.style.borderColor = '#16A34A'
+            e.target.style.boxShadow = '0 0 0 3px rgba(22, 163, 74, 0.12)'
           }}
           onBlur={(e) => {
-            e.target.style.borderColor = 'var(--neutral-200)'
+            e.target.style.borderColor = '#E2E8F0'
             e.target.style.boxShadow = 'none'
           }}
         />
@@ -87,9 +89,9 @@ function OtpInput({ value, onChange }) {
 
 /* ── step slide animation ── */
 const stepVariants = {
-  enter: { opacity: 0, x: 40 },
-  center: { opacity: 1, x: 0, transition: { duration: 0.35, ease: [0.16, 1, 0.3, 1] } },
-  exit: { opacity: 0, x: -40, transition: { duration: 0.22, ease: 'easeIn' } }
+  enter: { opacity: 0, x: 20 },
+  center: { opacity: 1, x: 0, transition: { duration: 0.25, ease: [0.16, 1, 0.3, 1] } },
+  exit: { opacity: 0, x: -20, transition: { duration: 0.18, ease: 'easeIn' } }
 }
 
 export default function ForgotPassword() {
@@ -227,78 +229,49 @@ export default function ForgotPassword() {
   const strength = getStrength(password)
 
   return (
-    <div className="auth-layout" style={{ background: 'var(--neutral-25)' }}>
-      {/* Left Side — Hero */}
-      <div className="auth-layout__left">
-        <div className="auth-layout__brand">
-          <div className="auth-layout__brand-icon">W</div>
-          <span className="auth-layout__brand-text">WAVE INIT</span>
-        </div>
+    <div className="auth-page">
+      <AuthLayout />
 
-        <div className="auth-layout__hero">
-          <div className="auth-layout__hero-visual" />
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.3 }}
-          >
-            <h1 className="auth-layout__hero-title">
-              Reset your<br />
-              <span style={{ background: 'linear-gradient(135deg, #0D9488, #2DD4BF)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                Password
-              </span>
-            </h1>
-            <p className="auth-layout__hero-subtitle">
-              Don't worry, it happens to the best of us. 
-              We'll help you get back into your account in no time.
-            </p>
-          </motion.div>
-        </div>
-      </div>
-
-      {/* Right Side — Form */}
-      <div className="auth-layout__right">
-        <motion.div 
-          className="auth-card"
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
-        >
+      <AuthCard>
+        <div className="auth-card-inner">
           {/* Back button */}
           {step < 4 && (
             <button
               onClick={() => step === 1 ? navigate('/login') : setStep(s => s - 1)}
               style={{
-                display: 'flex',
+                display: 'inline-flex',
                 alignItems: 'center',
-                gap: '8px',
+                gap: '6px',
                 background: 'none',
                 border: 'none',
                 fontSize: '13px',
-                fontWeight: 600,
-                color: 'var(--neutral-500)',
+                fontWeight: 500,
+                color: '#64748B',
                 cursor: 'pointer',
-                padding: 0,
-                marginBottom: '24px',
+                padding: '0 0 14px 0',
+                fontFamily: "'Poppins', sans-serif",
+                transition: 'color 150ms ease',
               }}
+              onMouseEnter={(e) => e.currentTarget.style.color = '#0F172A'}
+              onMouseLeave={(e) => e.currentTarget.style.color = '#64748B'}
             >
-              <ArrowLeft size={16} />
+              <ArrowLeft size={15} />
               {step === 1 ? 'Back to Login' : 'Back'}
             </button>
           )}
 
-          {/* Step indicator */}
+          {/* 3-Step Progress Bar */}
           {step < 4 && (
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '32px' }}>
+            <div style={{ display: 'flex', gap: '6px', marginBottom: '22px' }}>
               {[1, 2, 3].map(s => (
                 <div 
                   key={s} 
                   style={{
-                    width: '100%',
+                    flex: 1,
                     height: '4px',
                     borderRadius: '2px',
-                    background: step >= s ? 'var(--brand-admin)' : 'var(--neutral-200)',
-                    transition: 'background 300ms ease',
+                    background: step >= s ? '#16A34A' : '#E2E8F0',
+                    transition: 'background 250ms ease',
                   }}
                 />
               ))}
@@ -309,48 +282,72 @@ export default function ForgotPassword() {
             {/* STEP 1: Email */}
             {step === 1 && (
               <motion.div key="s1" variants={stepVariants} initial="enter" animate="center" exit="exit">
-                <div style={{ 
-                  width: '48px', 
-                  height: '48px', 
-                  borderRadius: 'var(--radius-xl)', 
-                  background: 'var(--status-info-bg)',
+                <div style={{
+                  width: '46px',
+                  height: '46px',
+                  borderRadius: '12px',
+                  background: '#EAF8F0',
+                  color: '#16A34A',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  color: 'var(--status-info)',
-                  marginBottom: '20px'
+                  marginBottom: '16px'
                 }}>
                   <Mail size={22} />
                 </div>
-                <div className="auth-card__header">
-                  <h2 className="auth-card__title">Forgot Password?</h2>
-                  <p className="auth-card__subtitle">Enter your registered email and we'll send you a 6-digit OTP.</p>
+
+                <div className="auth-card-header" style={{ textAlign: 'left', marginBottom: '18px' }}>
+                  <h2 className="auth-card-title">Forgot Password?</h2>
+                  <p className="auth-card-subtitle">
+                    Enter your registered email and we&apos;ll send you a 6-digit verification OTP.
+                  </p>
                 </div>
 
                 {error && (
-                  <motion.div className="alert alert--error" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
-                    <AlertCircle size={16} />
-                    <span>{error}</span>
-                  </motion.div>
+                  <div className="auth-error" role="alert" style={{ marginBottom: '14px' }}>
+                    <AlertCircle className="auth-error-icon" size={16} />
+                    <span className="auth-error-text">{error}</span>
+                  </div>
                 )}
 
-                <form onSubmit={handleSendOtp}>
-                  <div className="field-group">
-                    <label className="field-label">Email Address</label>
-                    <div className="field-input-wrap">
-                      <Mail size={16} className="field-input-icon" />
+                <form onSubmit={handleSendOtp} className="auth-form-body">
+                  <div className="auth-form-group">
+                    <label className="auth-form-label" htmlFor="forgot-email">Email Address</label>
+                    <div className="auth-input-wrapper">
                       <input
-                        className="field-input"
+                        id="forgot-email"
+                        className="auth-form-input auth-form-input--has-icon-right"
                         type="email"
                         placeholder="you@example.com"
                         value={email}
                         onChange={e => setEmail(e.target.value)}
+                        autoComplete="email"
+                        required
                         autoFocus
                       />
+                      <span className="auth-input-icon" style={{ pointerEvents: 'none' }}>
+                        <Mail size={17} />
+                      </span>
                     </div>
                   </div>
-                  <button className="btn-enterprise btn-enterprise--primary btn-enterprise--full" type="submit" disabled={loading}>
-                    {loading ? <><Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />Sending OTP...</> : 'Send OTP'}
+
+                  <button
+                    className="auth-submit-btn"
+                    type="submit"
+                    disabled={loading}
+                    style={{ marginTop: '8px' }}
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
+                        <span>Sending OTP...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Send Verification Code</span>
+                        <ArrowRight size={17} />
+                      </>
+                    )}
                   </button>
                 </form>
               </motion.div>
@@ -359,41 +356,72 @@ export default function ForgotPassword() {
             {/* STEP 2: OTP */}
             {step === 2 && (
               <motion.div key="s2" variants={stepVariants} initial="enter" animate="center" exit="exit">
-                <div style={{ 
-                  width: '48px', 
-                  height: '48px', 
-                  borderRadius: 'var(--radius-xl)', 
-                  background: 'var(--status-info-bg)',
+                <div style={{
+                  width: '46px',
+                  height: '46px',
+                  borderRadius: '12px',
+                  background: '#EAF8F0',
+                  color: '#16A34A',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  color: 'var(--status-info)',
-                  marginBottom: '20px'
+                  marginBottom: '16px'
                 }}>
                   <ShieldCheck size={22} />
                 </div>
-                <div className="auth-card__header">
-                  <h2 className="auth-card__title">Enter OTP</h2>
-                  <p className="auth-card__subtitle">We sent a 6-digit code to <strong>{email}</strong>. It expires in 5 minutes.</p>
+
+                <div className="auth-card-header" style={{ textAlign: 'left', marginBottom: '18px' }}>
+                  <h2 className="auth-card-title">Enter Verification Code</h2>
+                  <p className="auth-card-subtitle">
+                    We sent a 6-digit OTP code to <strong style={{ color: '#0F172A' }}>{email}</strong>. It expires in 5 minutes.
+                  </p>
                 </div>
 
                 {info && (
-                  <motion.div className="alert alert--info" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    background: '#F0FDF4',
+                    border: '1px solid #BBF7D0',
+                    color: '#15803D',
+                    padding: '10px 14px',
+                    borderRadius: '10px',
+                    fontSize: '13px',
+                    marginBottom: '14px',
+                    fontFamily: "'Poppins', sans-serif",
+                  }}>
                     <CheckCircle2 size={16} />
                     <span>{info}</span>
-                  </motion.div>
-                )}
-                {error && (
-                  <motion.div className="alert alert--error" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
-                    <AlertCircle size={16} />
-                    <span>{error}</span>
-                  </motion.div>
+                  </div>
                 )}
 
-                <form onSubmit={handleVerifyOtp}>
+                {error && (
+                  <div className="auth-error" role="alert" style={{ marginBottom: '14px' }}>
+                    <AlertCircle className="auth-error-icon" size={16} />
+                    <span className="auth-error-text">{error}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleVerifyOtp} className="auth-form-body">
                   <OtpInput value={otp} onChange={setOtp} />
-                  <button className="btn-enterprise btn-enterprise--primary btn-enterprise--full" type="submit" disabled={loading || otp.replace(/\D/g,'').length < 6}>
-                    {loading ? <><Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />Verifying...</> : 'Verify OTP'}
+
+                  <button
+                    className="auth-submit-btn"
+                    type="submit"
+                    disabled={loading || otp.replace(/\D/g,'').length < 6}
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
+                        <span>Verifying...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Verify & Continue</span>
+                        <ArrowRight size={17} />
+                      </>
+                    )}
                   </button>
                 </form>
 
@@ -410,13 +438,14 @@ export default function ForgotPassword() {
                     background: 'none',
                     border: 'none',
                     fontSize: '13px',
-                    fontWeight: 600,
-                    color: countdown > 0 ? 'var(--neutral-400)' : 'var(--brand-admin)',
+                    fontWeight: 500,
+                    color: countdown > 0 ? '#94A3B8' : '#16A34A',
                     cursor: countdown > 0 ? 'not-allowed' : 'pointer',
+                    fontFamily: "'Poppins', sans-serif",
                   }}
                 >
                   <RefreshCw size={14} />
-                  {countdown > 0 ? `Resend in ${countdown}s` : 'Resend OTP'}
+                  {countdown > 0 ? `Resend code in ${countdown}s` : 'Resend Verification Code'}
                 </button>
               </motion.div>
             )}
@@ -424,94 +453,126 @@ export default function ForgotPassword() {
             {/* STEP 3: New Password */}
             {step === 3 && (
               <motion.div key="s3" variants={stepVariants} initial="enter" animate="center" exit="exit">
-                <div style={{ 
-                  width: '48px', 
-                  height: '48px', 
-                  borderRadius: 'var(--radius-xl)', 
-                  background: 'var(--status-info-bg)',
+                <div style={{
+                  width: '46px',
+                  height: '46px',
+                  borderRadius: '12px',
+                  background: '#EAF8F0',
+                  color: '#16A34A',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  color: 'var(--status-info)',
-                  marginBottom: '20px'
+                  marginBottom: '16px'
                 }}>
                   <KeyRound size={22} />
                 </div>
-                <div className="auth-card__header">
-                  <h2 className="auth-card__title">New Password</h2>
-                  <p className="auth-card__subtitle">Choose a strong password with at least 8 characters.</p>
+
+                <div className="auth-card-header" style={{ textAlign: 'left', marginBottom: '18px' }}>
+                  <h2 className="auth-card-title">Set New Password</h2>
+                  <p className="auth-card-subtitle">
+                    Choose a strong password with at least 8 characters.
+                  </p>
                 </div>
 
                 {error && (
-                  <motion.div className="alert alert--error" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
-                    <AlertCircle size={16} />
-                    <span>{error}</span>
-                  </motion.div>
+                  <div className="auth-error" role="alert" style={{ marginBottom: '14px' }}>
+                    <AlertCircle className="auth-error-icon" size={16} />
+                    <span className="auth-error-text">{error}</span>
+                  </div>
                 )}
 
-                <form onSubmit={handleReset}>
-                  <div className="field-group">
-                    <label className="field-label">New Password</label>
-                    <div className="field-input-wrap">
-                      <KeyRound size={16} className="field-input-icon" />
+                <form onSubmit={handleReset} className="auth-form-body">
+                  <div className="auth-form-group">
+                    <label className="auth-form-label" htmlFor="new-pw">New Password</label>
+                    <div className="auth-input-wrapper">
                       <input
-                        className="field-input"
+                        id="new-pw"
+                        className="auth-form-input"
                         type={showPw ? 'text' : 'password'}
                         placeholder="Min. 8 characters"
                         value={password}
                         onChange={e => setPassword(e.target.value)}
+                        autoComplete="new-password"
+                        required
                         autoFocus
                       />
-                      <button type="button" className="field-input-icon-right" onClick={() => setShowPw(v => !v)}>
-                        {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
+                      <button
+                        type="button"
+                        className="auth-password-toggle"
+                        onClick={() => setShowPw(v => !v)}
+                        aria-label={showPw ? 'Hide password' : 'Show password'}
+                      >
+                        {showPw ? <EyeOff size={17} /> : <Eye size={17} />}
                       </button>
                     </div>
                   </div>
 
                   {password.length > 0 && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
                       <div style={{ display: 'flex', gap: '4px', flex: 1 }}>
-                        {[1,2,3,4].map(n => (
+                        {[1, 2, 3, 4].map(n => (
                           <div key={n} style={{ 
                             flex: 1, 
                             height: '4px', 
                             borderRadius: '2px',
-                            background: n <= strength ? STRENGTH_COLOR[strength] : 'var(--neutral-200)',
+                            background: n <= strength ? STRENGTH_COLOR[strength] : '#E2E8F0',
                             transition: 'background 200ms ease'
                           }} />
                         ))}
                       </div>
-                      <span style={{ fontSize: '12px', fontWeight: 600, color: STRENGTH_COLOR[strength] }}>
+                      <span style={{ fontSize: '12px', fontWeight: 600, color: STRENGTH_COLOR[strength], fontFamily: "'Poppins', sans-serif" }}>
                         {STRENGTH_LABEL[strength]}
                       </span>
                     </div>
                   )}
 
-                  <div className="field-group">
-                    <label className="field-label">Confirm Password</label>
-                    <div className="field-input-wrap">
-                      <KeyRound size={16} className="field-input-icon" />
+                  <div className="auth-form-group">
+                    <label className="auth-form-label" htmlFor="confirm-pw">Confirm New Password</label>
+                    <div className="auth-input-wrapper">
                       <input
-                        className="field-input"
+                        id="confirm-pw"
+                        className="auth-form-input"
                         type={showCf ? 'text' : 'password'}
                         placeholder="Re-enter password"
                         value={confirm}
                         onChange={e => setConfirm(e.target.value)}
+                        autoComplete="new-password"
+                        required
                       />
-                      <button type="button" className="field-input-icon-right" onClick={() => setShowCf(v => !v)}>
-                        {showCf ? <EyeOff size={16} /> : <Eye size={16} />}
+                      <button
+                        type="button"
+                        className="auth-password-toggle"
+                        onClick={() => setShowCf(v => !v)}
+                        aria-label={showCf ? 'Hide password' : 'Show password'}
+                      >
+                        {showCf ? <EyeOff size={17} /> : <Eye size={17} />}
                       </button>
                     </div>
                   </div>
 
                   {confirm.length > 0 && password !== confirm && (
-                    <p style={{ fontSize: '12px', color: 'var(--status-error)', marginTop: '-8px', marginBottom: '16px' }}>
+                    <p style={{ fontSize: '12.5px', color: '#EF4444', marginTop: '-4px', marginBottom: '12px', fontFamily: "'Poppins', sans-serif" }}>
                       Passwords do not match
                     </p>
                   )}
 
-                  <button className="btn-enterprise btn-enterprise--primary btn-enterprise--full" type="submit" disabled={loading || password.length < 8 || password !== confirm}>
-                    {loading ? <><Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />Resetting...</> : 'Reset Password'}
+                  <button
+                    className="auth-submit-btn"
+                    type="submit"
+                    disabled={loading || password.length < 8 || password !== confirm}
+                    style={{ marginTop: '8px' }}
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
+                        <span>Resetting Password...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Reset Password</span>
+                        <ArrowRight size={17} />
+                      </>
+                    )}
                   </button>
                 </form>
               </motion.div>
@@ -519,49 +580,48 @@ export default function ForgotPassword() {
 
             {/* STEP 4: Success */}
             {step === 4 && (
-              <motion.div key="s4" variants={stepVariants} initial="enter" animate="center" exit="exit" style={{ textAlign: 'center', padding: '24px 0' }}>
+              <motion.div
+                key="s4"
+                variants={stepVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                style={{ textAlign: 'center', padding: '16px 0 8px' }}
+              >
                 <motion.div
                   style={{ 
-                    width: '64px', 
-                    height: '64px', 
-                    borderRadius: 'var(--radius-2xl)', 
-                    background: 'var(--status-success-bg)',
+                    width: '60px', 
+                    height: '60px', 
+                    borderRadius: '16px', 
+                    background: '#EAF8F0',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: 'var(--status-success)',
-                    margin: '0 auto 20px'
+                    color: '#16A34A',
+                    margin: '0 auto 18px'
                   }}
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
                   transition={{ type: 'spring', stiffness: 300, damping: 20, delay: 0.1 }}
                 >
-                  <CheckCircle2 size={28} />
+                  <CheckCircle2 size={32} />
                 </motion.div>
-                <h2 className="auth-card__title" style={{ marginBottom: '8px' }}>Password Reset!</h2>
-                <p className="auth-card__subtitle" style={{ marginBottom: '24px' }}>Your password has been updated successfully. You can now sign in.</p>
+                <h2 className="auth-card-title" style={{ marginBottom: '6px' }}>Password Reset!</h2>
+                <p className="auth-card-subtitle" style={{ marginBottom: '22px' }}>
+                  Your password has been updated successfully. You can now sign in to your account.
+                </p>
                 <button 
-                  className="btn-enterprise btn-enterprise--primary btn-enterprise--full" 
+                  className="auth-submit-btn"
                   onClick={() => navigate('/login', { state: { message: 'Password reset successfully. Please sign in.' } })}
                 >
-                  Go to Login
+                  <span>Go to Login</span>
+                  <ArrowRight size={17} />
                 </button>
               </motion.div>
             )}
           </AnimatePresence>
-        </motion.div>
-
-        <p style={{ marginTop: '32px', fontSize: '12px', color: '#98A2B3' }}>
-          © {new Date().getFullYear()} WaveInit LMS. All rights reserved.
-        </p>
-      </div>
-
-      <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
+        </div>
+      </AuthCard>
     </div>
   )
 }

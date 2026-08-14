@@ -159,7 +159,14 @@ export const API = {
     LESSON:        (courseId, lessonId)=> `${API_BASE}/trainer/courses/${courseId}/lessons/${lessonId}`,
     REORDER_LESSONS:(courseId)         => `${API_BASE}/trainer/courses/${courseId}/lessons/reorder`,
 
+    STRUCTURE:     (courseId)          => `${API_BASE}/trainer/courses/${courseId}/structure`,
+    SAVE_STRUCTURE:(courseId)          => `${API_BASE}/trainer/courses/${courseId}/structure`,
+    CLEAR_STRUCTURE:(courseId)         => `${API_BASE}/trainer/courses/${courseId}/structure`,
+    DELETE_MODULE: (courseId, modId)   => `${API_BASE}/trainer/courses/${courseId}/structure/module/${modId}`,
+    DELETE_SUBMODULE:(courseId, subId) => `${API_BASE}/trainer/courses/${courseId}/structure/submodule/${subId}`,
+    DELETE_TOPIC:  (courseId, topId)   => `${API_BASE}/trainer/courses/${courseId}/structure/topic/${topId}`,
     GENERATE_STRUCTURE:(courseId)     => `${API_BASE}/trainer/courses/${courseId}/generate-structure`,
+
 
     MATERIALS:     (lessonId)          => `${API_BASE}/trainer/lessons/${lessonId}/materials`,
     MATERIAL:      (lessonId, id)      => `${API_BASE}/trainer/lessons/${lessonId}/materials/${id}`,

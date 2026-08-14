@@ -295,39 +295,103 @@ const aiService = {
     }
   },
 
-  async generateCourseStructure({ text, prompt }) {
+  async generateCourseStructure({ text, prompt, file_path, mime_type, courseTitle }) {
     const cleanPrompt = (prompt || '').toString().trim();
     if (!cleanPrompt) throw new Error('Prompt cannot be empty.');
+
+    // 1. Try Python microservice (which uses Gemini Client / gemini-2.5-flash)
+    let microserviceError = null;
     try {
-      console.log(`[aiService] Generating course structure (text length: ${(text || '').length})`);
+      console.log(`[aiService] Calling Python AI microservice at ${AI_SERVICE_URL}/generate-course-structure for prompt: "${cleanPrompt.substring(0, 120)}..."`);
       const response = await axios.post(`${AI_SERVICE_URL}/generate-course-structure`, {
         prompt: cleanPrompt,
         text: text || '',
+        file_path: file_path || undefined,
+        mime_type: mime_type || undefined,
       }, { timeout: AI_TIMEOUT, headers: { 'Content-Type': 'application/json' } });
-      if (!response.data || !response.data.success) {
-        throw new Error(response.data?.error || 'Invalid response from AI service');
+
+      if (response.data && response.data.success && Array.isArray(response.data.structure?.modules) && response.data.structure.modules.length > 0) {
+        console.log(`[aiService] Gemini AI generated structure successfully with ${response.data.structure.modules.length} modules.`);
+        return response.data;
       }
-      return response.data;
-    } catch (error) {
-      console.error('[aiService] generateCourseStructure failed:', error.message);
-      if (error.response?.status === 503) {
-        throw new Error('AI service is temporarily unavailable. Please retry.');
+      if (response.data && response.data.error) {
+        throw new Error(response.data.error);
       }
-      if (error.response?.status === 502) {
-        throw new Error('AI returned an invalid response. Please retry.');
-      }
-      if (error.response?.status === 404) {
-        throw new Error('AI service endpoint not found. Please restart the Python AI service.');
-      }
-      if (error.code === 'ECONNREFUSED') {
-        throw new Error('AI service is not running. Please start the Python AI service first.');
-      }
-      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
-        throw new Error('AI service timed out. The document may be too large or the model is overloaded.');
-      }
-      throw new Error('Failed to generate course structure: ' + error.message);
+    } catch (err) {
+      microserviceError = err;
+      console.warn('[aiService] Python microservice call failed:', err.response?.data?.detail || err.message);
     }
+
+    // 2. Direct Gemini API call fallback (if microservice unreachable)
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (apiKey && apiKey !== 'your-gemini-api-key-here' && !apiKey.startsWith('AQ.')) {
+      try {
+        console.log('[aiService] Attempting direct Google Gemini API call...');
+        const systemPrompt = `You are an enterprise LMS curriculum architect and master instructional designer.
+Generate a comprehensive, highly customized course structure based on the EXACT trainer instructions provided below.
+
+=== TRAINER INSTRUCTIONS ===
+${cleanPrompt}
+============================
+
+CRITICAL ARCHITECTURAL RULES:
+1. STRICT DOMAIN RELEVANCE: Focus 100% on the subject/technology requested in the Trainer Instructions (e.g. Python, Java Selenium, MySQL/SQL). Do NOT produce unrelated subjects.
+2. DURATION & PACING: Calculate total learning hours from the prompt (e.g. '1 month with 7 hours/day' = ~210 hours; '2 weeks with 4 hours/day' = ~40 hours; '10 days' = appropriately partitioned) and distribute them across all modules, sub-modules, and topics.
+3. HIERARCHY: Include modules -> subModules -> topics with realistic estimated durations.
+
+Return ONLY valid JSON matching this exact schema:
+{
+  "courseTitle": "Specific Course Title",
+  "estimatedDuration": "Total Duration (e.g. 210 Hours / 1 Month)",
+  "modules": [
+    {
+      "title": "Module 1: Title",
+      "duration": "42 Hours",
+      "description": "Module overview and learning outcomes",
+      "subModules": [
+        {
+          "title": "Sub Module Name",
+          "duration": "14 Hours",
+          "topics": [
+            {
+              "title": "Topic Name",
+              "duration": "2 Hours",
+              "description": "Topic details"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}`;
+
+        const geminiRes = await axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+          {
+            contents: [{ parts: [{ text: systemPrompt }] }],
+            generationConfig: { temperature: 0.3, responseMimeType: 'application/json' }
+          },
+          { timeout: 45000 }
+        );
+
+        const rawText = geminiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (rawText) {
+          const parsed = JSON.parse(rawText);
+          if (parsed && Array.isArray(parsed.modules) && parsed.modules.length > 0) {
+            console.log('[aiService] Successfully generated structure via direct Gemini API');
+            return { success: true, structure: parsed };
+          }
+        }
+      } catch (geminiErr) {
+        console.warn('[aiService] Direct Gemini API call failed:', geminiErr.message);
+      }
+    }
+
+    // No hardcoded fallback — throw the actual error so the user and system know the genuine AI status!
+    throw buildAIError(microserviceError || new Error('AI service failed to generate course structure.'));
   },
 };
 
 module.exports = aiService;
+
+

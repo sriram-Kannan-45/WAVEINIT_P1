@@ -50,26 +50,25 @@ const navGroups = {
   ],
   TRAINER: [
     {
-      title: 'Overview',
+      title: 'OVERVIEW',
       items: [
         { key: 'overview', label: 'Dashboard', icon: LayoutDashboard },
-        { key: 'courses', label: 'My Courses', icon: GraduationCap },
       ],
     },
     {
-      title: 'Content',
+      title: 'CONTENT',
       items: [
-        { key: 'credentials', label: 'Participant Credentials', icon: FileText },
+        { key: 'courses', label: 'My Trainings', icon: GraduationCap },
       ],
     },
     {
-      title: 'Interviews',
+      title: 'INTERVIEWS',
       items: [
         { key: 'interviews', label: 'Interviews', icon: Video },
       ],
     },
     {
-      title: 'Account',
+      title: 'ACCOUNT',
       items: [
         { key: 'profile', label: 'My Profile', icon: User },
       ],
@@ -77,13 +76,13 @@ const navGroups = {
   ],
   PARTICIPANT: [
     {
-      title: 'Overview',
+      title: 'OVERVIEW',
       items: [
         { key: 'overview', label: 'Dashboard', icon: LayoutDashboard },
       ],
     },
     {
-      title: 'Learning',
+      title: 'LEARNING',
       items: [
         { key: 'myEnrollments', label: 'My Courses', icon: GraduationCap },
         { key: 'leaderboard', label: 'Leaderboard', icon: Trophy },
@@ -91,19 +90,19 @@ const navGroups = {
       ],
     },
     {
-      title: 'Activity',
+      title: 'ACTIVITY',
       items: [
         { key: 'certificates', label: 'Certificates', icon: Award },
       ],
     },
     {
-      title: 'Interviews',
+      title: 'INTERVIEWS',
       items: [
         { key: 'interviews', label: 'Interviews', icon: Video },
       ],
     },
     {
-      title: 'Account',
+      title: 'ACCOUNT',
       items: [
         { key: 'profile', label: 'Profile', icon: User },
       ],
@@ -117,7 +116,6 @@ const pageDescriptions = {
   trainers: 'Manage trainer accounts and assignments',
   participants: 'View and manage learner accounts',
   courses: 'Manage your training courses',
-  credentials: 'Send login credentials to participants',
   profile: 'Manage your account settings',
   myEnrollments: 'Your enrolled training programs',
   leaderboard: 'See how you rank among learners',
@@ -176,7 +174,7 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
               </svg>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="wl-sidebar-brand">Wave Init</div>
+              <div className="wl-sidebar-brand">Wave Init LMS</div>
               <div className="wl-sidebar-tagline">{roleLabel} Portal</div>
             </div>
             <button onClick={onCloseSidebar} className="wl-sidebar-close">
@@ -190,7 +188,10 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
               <div key={gi} className="wl-sidebar-group">
                 <div className="wl-sidebar-group-label">{group.title}</div>
                 {group.items.map((item) => {
-                  const isActive = activeTab === item.key
+                  const isProfileRoute = location.pathname === '/my-profile' || location.pathname === '/trainer/profile'
+                  const isInterviewRoute = location.pathname.startsWith('/interview')
+                  const currentActive = isProfileRoute ? 'profile' : (isInterviewRoute ? 'interviews' : activeTab)
+                  const isActive = currentActive === item.key
                   const Icon = item.icon
                   return (
                     <motion.button
@@ -202,7 +203,7 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
                         } else if (item.key === 'interviews') {
                           navigate('/interviews')
                         } else {
-                          const home = ROLE_HOME[user.role] || '/admin'
+                          const home = ROLE_HOME[user?.role] || '/admin'
                           if (location.pathname !== home) {
                             navigate(home, { state: { tab: item.key } })
                           } else {

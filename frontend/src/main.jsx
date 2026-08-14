@@ -11,6 +11,7 @@ import './styles/quiz-taking.css'
 import './styles/academic-theme.css'
 import './styles/profile.css'
 import './styles/resources.css'
+import './styles/trainer-my-trainings.css'
 
 const RootElement = import.meta.env.DEV ? (
   <React.StrictMode>

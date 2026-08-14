@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { MessageSquare, HelpCircle, Megaphone, Pin, Trash2, CornerDownRight, Send, RefreshCw } from 'lucide-react'
 import { useToast } from '../Toast'
 import { API_BASE } from '../../api/api'
+import '../../styles/course-tabs.css'
+
 
 function DiscussionBoard({ user, trainingId }) {
   const { success, error: showError } = useToast()
@@ -146,257 +148,232 @@ function DiscussionBoard({ user, trainingId }) {
   })
 
   return (
-    <div style={{ fontFamily: "'Poppins', sans-serif", color: 'var(--academic-text)' }}>
-      {/* Tab controls */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
-        <div style={{ display: 'flex', gap: 6, background: 'rgba(255,255,255,0.03)', padding: 4, borderRadius: 8, border: '1px solid var(--academic-border)' }}>
+    <div className="cdb-container">
+      {/* Top Filter & Action Bar */}
+      <div className="cdb-top-bar">
+        <div className="cdb-filter-pills">
           {[
-            { key: 'ALL', label: 'All Posts', icon: <MessageSquare size={14} /> },
-            { key: 'DISCUSSION', label: 'Discussions', icon: <MessageSquare size={14} /> },
-            { key: 'QUESTION', label: 'Q&A', icon: <HelpCircle size={14} /> },
-            { key: 'ANNOUNCEMENT', label: 'Announcements', icon: <Megaphone size={14} /> }
+            { key: 'ALL', label: 'All Posts', icon: <MessageSquare size={16} /> },
+            { key: 'DISCUSSION', label: 'Discussions', icon: <MessageSquare size={16} /> },
+            { key: 'QUESTION', label: 'Q&A', icon: <HelpCircle size={16} /> },
+            { key: 'ANNOUNCEMENT', label: 'Announcements', icon: <Megaphone size={16} /> }
           ].map(t => (
             <button
               key={t.key}
               onClick={() => setActiveTab(t.key)}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', border: 'none', borderRadius: 6,
-                fontSize: 12, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s',
-                background: activeTab === t.key ? 'var(--academic-primary)' : 'transparent',
-                color: activeTab === t.key ? '#fff' : 'var(--academic-text-secondary)'
-              }}
+              className={`cdb-filter-pill ${activeTab === t.key ? 'cdb-filter-pill--active' : ''}`}
             >
-              {t.icon} {t.label}
+              {t.icon} <span>{t.label}</span>
             </button>
           ))}
         </div>
-        <button onClick={fetchPosts} className="ac-btn ac-btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <RefreshCw size={14} className={loading ? 'spin-animation' : ''} /> Refresh
+        <button onClick={fetchPosts} className="cdb-btn-refresh">
+          <RefreshCw size={15} className={loading ? 'bulk-spin' : ''} /> <span>Refresh</span>
         </button>
       </div>
 
-      {/* New Post Form */}
-      <div className="ac-card" style={{ padding: 20, marginBottom: 24 }}>
-        <h3 className="ac-section-title" style={{ fontSize: 15, marginBottom: 12 }}>Join the discussion</h3>
+      {/* New Post Form Card */}
+      <div className="cdb-card cdb-new-post-card">
+        <h4 className="cdb-section-title">Join the discussion</h4>
         <form onSubmit={handleCreatePost}>
           <textarea
-            className="form-control"
+            className="cdb-textarea"
             value={newPostContent}
             onChange={e => setNewPostContent(e.target.value)}
             placeholder="What's on your mind? Write a post, ask a question, or share an announcement..."
             rows={3}
             required
-            style={{ marginBottom: 12 }}
           />
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+          <div className="cdb-form-actions">
             <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-              <div className="form-group" style={{ margin: 0 }}>
-                <select
-                  className="form-control"
-                  value={newPostType}
-                  onChange={e => setNewPostType(e.target.value)}
-                  style={{ padding: '6px 12px', fontSize: 13, minWidth: 150 }}
-                >
-                  <option value="DISCUSSION">Normal Post</option>
-                  <option value="QUESTION">Question</option>
-                  {isTrainerOrAdmin && <option value="ANNOUNCEMENT">Announcement</option>}
-                </select>
-              </div>
+              <select
+                className="cdb-select"
+                value={newPostType}
+                onChange={e => setNewPostType(e.target.value)}
+              >
+                <option value="DISCUSSION">Normal Post</option>
+                <option value="QUESTION">Question</option>
+                {isTrainerOrAdmin && <option value="ANNOUNCEMENT">Announcement</option>}
+              </select>
 
               {isTrainerOrAdmin && newPostType !== 'ANNOUNCEMENT' && (
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                <label className="cdb-pin-label">
                   <input
                     type="checkbox"
                     checked={newPostPinned}
                     onChange={e => setNewPostPinned(e.target.checked)}
-                    style={{ margin: 0 }}
                   />
                   Pin Post
                 </label>
               )}
             </div>
-            <button type="submit" className="ac-btn ac-btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <Send size={14} /> Post
+            <button type="submit" className="cdb-btn-submit">
+              <Send size={15} /> <span>Post</span>
             </button>
           </div>
         </form>
       </div>
 
       {/* Posts list */}
-      {loading && posts.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--academic-text-muted)' }}>Loading discussion board...</div>
-      ) : filteredPosts.length === 0 ? (
-        <div className="ac-card" style={{ padding: 40, textAlign: 'center', color: 'var(--academic-text-muted)' }}>
-          <MessageSquare size={36} style={{ marginBottom: 12, opacity: 0.5 }} />
-          <p>No posts found in this tab. Be the first to start the conversation!</p>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {filteredPosts.map(post => (
-            <motion.div
-              key={post.id}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              style={{
-                border: post.isPinned ? '1px solid var(--academic-primary)' : '1px solid var(--academic-border)',
-                background: post.type === 'ANNOUNCEMENT' ? 'rgba(79, 70, 229, 0.04)' : 'rgba(255,255,255,0.02)',
-                borderRadius: 10,
-                padding: 20
-              }}
-            >
-              {/* Post Header */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
-                <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                  <div style={{
-                    width: 38, height: 38, borderRadius: '50%', background: 'rgba(255, 255, 255, 0.08)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13, color: 'var(--academic-primary)'
-                  }}>
-                    {getInitials(post.user?.name)}
-                  </div>
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontWeight: 600, fontSize: 14 }}>{post.user?.name || 'Unknown'}</span>
-                      <span style={{ fontSize: 10, color: 'var(--academic-text-muted)', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase' }}>
-                        {post.user?.role}
-                      </span>
-                    </div>
-                    <span style={{ fontSize: 11, color: 'var(--academic-text-muted)' }}>
-                      {new Date(post.createdAt).toLocaleString()}
-                    </span>
-                  </div>
+      <div className="cdb-posts-list">
+        {loading && posts.length === 0 && (
+          <div className="cdb-empty-state">Loading discussion board...</div>
+        )}
+        {!loading && filteredPosts.length === 0 && (
+          <div className="cdb-empty-state">
+            <MessageSquare size={30} color="#94A3B8" style={{ marginBottom: 6 }} />
+            <p style={{ margin: 0, fontSize: 13, color: '#64748B' }}>No posts found in this tab. Be the first to start the conversation!</p>
+          </div>
+        )}
+        {filteredPosts.map(post => (
+          <motion.div
+            key={post.id}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={`cdb-post-card ${post.isPinned ? 'cdb-post-card--pinned' : ''}`}
+          >
+            {/* Post Header */}
+            <div className="cdb-post-header">
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <div className="cdb-avatar">
+                  {getInitials(post.user?.name)}
                 </div>
-                
-                {/* Badges / Actions */}
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  {post.isPinned && (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--academic-primary)', fontWeight: 600 }}>
-                      <Pin size={12} /> Pinned
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span className="cdb-user-name">{post.user?.name || 'Unknown'}</span>
+                    <span className="cdb-user-role">
+                      {post.user?.role}
                     </span>
-                  )}
-                  {post.type === 'ANNOUNCEMENT' && (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#e11d48', fontWeight: 600, textTransform: 'uppercase' }}>
-                      <Megaphone size={12} /> Announcement
-                    </span>
-                  )}
-                  {post.type === 'QUESTION' && (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#f59e0b', fontWeight: 600, textTransform: 'uppercase' }}>
-                      <HelpCircle size={12} /> Question
-                    </span>
-                  )}
-
-                  {/* Pin/Unpin */}
-                  {isTrainerOrAdmin && post.type !== 'ANNOUNCEMENT' && (
-                    <button
-                      onClick={() => handleTogglePin(post)}
-                      style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 4, color: 'var(--academic-text-secondary)', hover: { color: 'var(--academic-primary)' } }}
-                      title={post.isPinned ? 'Unpin Post' : 'Pin Post'}
-                    >
-                      <Pin size={14} style={{ opacity: post.isPinned ? 1 : 0.4 }} />
-                    </button>
-                  )}
-
-                  {/* Delete */}
-                  {(user.id === post.userId || isTrainerOrAdmin) && (
-                    <button
-                      onClick={() => handleDeletePost(post.id)}
-                      style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 4, color: '#ef4444' }}
-                      title="Delete Post"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  )}
+                  </div>
+                  <span className="cdb-post-date">
+                    {new Date(post.createdAt).toLocaleString()}
+                  </span>
                 </div>
               </div>
 
-              {/* Post Content */}
-              <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: 'pre-wrap', marginBottom: 16 }}>
-                {post.content}
+              {/* Badges / Actions */}
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                {post.isPinned && (
+                  <span className="cdb-badge-pinned">
+                    <Pin size={11} /> Pinned
+                  </span>
+                )}
+                {post.type === 'ANNOUNCEMENT' && (
+                  <span className="cdb-badge-announcement">
+                    <Megaphone size={11} /> Announcement
+                  </span>
+                )}
+                {post.type === 'QUESTION' && (
+                  <span className="cdb-badge-question">
+                    <HelpCircle size={11} /> Question
+                  </span>
+                )}
+
+                {/* Pin/Unpin */}
+                {isTrainerOrAdmin && post.type !== 'ANNOUNCEMENT' && (
+                  <button
+                    onClick={() => handleTogglePin(post)}
+                    className="cdb-btn-icon"
+                    title={post.isPinned ? 'Unpin Post' : 'Pin Post'}
+                  >
+                    <Pin size={13} style={{ opacity: post.isPinned ? 1 : 0.45 }} />
+                  </button>
+                )}
+
+                {/* Delete */}
+                {(user.id === post.userId || isTrainerOrAdmin) && (
+                  <button
+                    onClick={() => handleDeletePost(post.id)}
+                    className="cdb-btn-icon cdb-btn-icon--delete"
+                    title="Delete Post"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                )}
               </div>
+            </div>
 
-              {/* Reply Button */}
-              <div style={{ borderTop: '1px solid var(--academic-border)', paddingTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 12, color: 'var(--academic-text-muted)' }}>
-                  {post.replies?.length || 0} reply(ies)
-                </span>
-                <button
-                  className="ac-btn ac-btn-sm ac-btn-secondary"
-                  onClick={() => setReplyingToId(replyingToId === post.id ? null : post.id)}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                >
-                  <CornerDownRight size={12} /> Reply
-                </button>
-              </div>
+            {/* Post Content */}
+            <div className="cdb-post-body">
+              {post.content}
+            </div>
 
-              {/* Reply input box */}
-              {replyingToId === post.id && (
-                <motion.form
-                  onSubmit={(e) => handleCreateReply(e, post.id)}
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  style={{ marginTop: 12 }}
-                >
-                  <textarea
-                    className="form-control"
-                    value={replyContent}
-                    onChange={e => setReplyContent(e.target.value)}
-                    placeholder="Write your reply..."
-                    rows={2}
-                    required
-                    style={{ marginBottom: 8 }}
-                  />
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                    <button type="button" className="ac-btn ac-btn-sm ac-btn-secondary" onClick={() => setReplyingToId(null)}>Cancel</button>
-                    <button type="submit" className="ac-btn ac-btn-sm ac-btn-primary">Post Reply</button>
-                  </div>
-                </motion.form>
-              )}
+            {/* Reply Button */}
+            <div className="cdb-reply-footer">
+              <span style={{ fontSize: 11.5, color: '#94A3B8' }}>
+                {post.replies?.length || 0} reply(ies)
+              </span>
+              <button
+                className="cdb-btn-reply"
+                onClick={() => setReplyingToId(replyingToId === post.id ? null : post.id)}
+              >
+                <CornerDownRight size={11} /> Reply
+              </button>
+            </div>
 
-              {/* Nesting replies */}
-              {post.replies && post.replies.length > 0 && (
-                <div style={{ borderLeft: '2px solid var(--academic-border)', paddingLeft: 16, marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {post.replies.map(reply => (
-                    <div key={reply.id} style={{ background: 'rgba(255,255,255,0.01)', padding: 12, borderRadius: 6 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                          <div style={{
-                            width: 28, height: 28, borderRadius: '50%', background: 'rgba(255, 255, 255, 0.05)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 10, color: 'var(--academic-primary)'
-                          }}>
-                            {getInitials(reply.user?.name)}
-                          </div>
-                          <div>
-                            <span style={{ fontWeight: 600, fontSize: 13 }}>{reply.user?.name}</span>
-                            <span style={{ fontSize: 9, color: 'var(--academic-text-muted)', background: 'rgba(255,255,255,0.04)', padding: '1px 4px', borderRadius: 3, marginLeft: 6 }}>
-                              {reply.user?.role}
-                            </span>
-                            <span style={{ fontSize: 10, color: 'var(--academic-text-muted)', marginLeft: 8 }}>
-                              {new Date(reply.createdAt).toLocaleDateString()}
-                            </span>
-                          </div>
+            {/* Reply input box */}
+            {replyingToId === post.id && (
+              <motion.form
+                onSubmit={(e) => handleCreateReply(e, post.id)}
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                style={{ marginTop: 10 }}
+              >
+                <textarea
+                  className="cdb-textarea"
+                  value={replyContent}
+                  onChange={e => setReplyContent(e.target.value)}
+                  placeholder="Write your reply..."
+                  rows={2}
+                  required
+                />
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 6 }}>
+                  <button type="button" className="cdb-btn-secondary-sm" onClick={() => setReplyingToId(null)}>Cancel</button>
+                  <button type="submit" className="cdb-btn-primary-sm">Post Reply</button>
+                </div>
+              </motion.form>
+            )}
+
+            {/* Replies list */}
+            {post.replies && post.replies.length > 0 && (
+              <div className="cdb-replies-list">
+                {post.replies.map(reply => (
+                  <div key={reply.id} className="cdb-reply-item">
+                    <div className="cdb-reply-header">
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <div className="cdb-avatar cdb-avatar--sm">
+                          {getInitials(reply.user?.name)}
                         </div>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span className="cdb-user-name" style={{ fontSize: 12.5 }}>{reply.user?.name}</span>
+                            <span className="cdb-user-role" style={{ fontSize: 9 }}>{reply.user?.role}</span>
+                          </div>
+                          <span className="cdb-post-date">{new Date(reply.createdAt).toLocaleString()}</span>
+                        </div>
+                      </div>
 
-                        {/* Reply actions */}
-                        {(user.id === reply.userId || isTrainerOrAdmin) && (
-                          <button
-                            onClick={() => handleDeletePost(reply.id)}
-                            style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 4, color: '#ef4444' }}
-                            title="Delete Reply"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        )}
-                      </div>
-                      <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--academic-text-secondary)', paddingLeft: 36 }}>
-                        {reply.content}
-                      </div>
+                      {/* Reply actions */}
+                      {(user.id === reply.userId || isTrainerOrAdmin) && (
+                        <button
+                          onClick={() => handleDeletePost(reply.id)}
+                          className="cdb-btn-icon cdb-btn-icon--delete"
+                          title="Delete Reply"
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      )}
                     </div>
-                  ))}
-                </div>
-              )}
-            </motion.div>
-          ))}
-        </div>
-      )}
+                    <div className="cdb-reply-body">
+                      {reply.content}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </motion.div>
+        ))}
+      </div>
     </div>
   )
 }

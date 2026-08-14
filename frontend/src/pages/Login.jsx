@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { AlertCircle, LogIn, Eye, EyeOff, Mail } from 'lucide-react';
+import { AlertCircle, LogIn, Eye, EyeOff, Mail, Shield, BookOpen, GraduationCap, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { API } from '../api/api';
 import { useToast } from '../components/Toast';
@@ -10,9 +10,9 @@ import RoleSelector from '../components/auth/RoleSelector';
 import AuthButton from '../components/auth/AuthButton';
 
 const ROLES = [
-  { id: 'ADMIN', label: 'Admin', icon: '🛡️', placeholder: 'admin_username' },
-  { id: 'TRAINER', label: 'Trainer', icon: '📖', placeholder: 'trainer_username' },
-  { id: 'PARTICIPANT', label: 'Learner', icon: '🎓', placeholder: 'learner_username' },
+  { id: 'ADMIN', label: 'Admin', icon: Shield, placeholder: 'Enter admin email or username' },
+  { id: 'TRAINER', label: 'Trainer', icon: BookOpen, placeholder: 'Enter trainer email or username' },
+  { id: 'PARTICIPANT', label: 'Learner', icon: GraduationCap, placeholder: 'Enter learner email or username' },
 ];
 
 export default function Login({ onLogin, defaultRole }) {

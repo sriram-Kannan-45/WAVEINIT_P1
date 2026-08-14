@@ -214,7 +214,7 @@ const pageVariants = {
 
 const DEFAULT_TABS = {
   ADMIN: 'overview',
-  TRAINER: 'courses',
+  TRAINER: 'overview',
   PARTICIPANT: 'overview',
 }
 
@@ -266,16 +266,25 @@ function RecordingDetailWrapper({ user, onLogout, pageVariants }) {
 
 function DashboardWrapper({ component: Component, user, onLogout }) {
   const location = useLocation()
+  const isProfileRoute = location.pathname === '/my-profile' || location.pathname === '/trainer/profile'
   const isInterviewRoute = location.pathname.startsWith('/interview')
-  const [activeTab, setActiveTab] = useState(
-    location.state?.tab || (isInterviewRoute ? 'interviews' : DEFAULT_TABS[user?.role] || 'overview')
-  )
+
+  const resolveTab = () => {
+    if (isProfileRoute) return 'profile'
+    if (isInterviewRoute) return 'interviews'
+    if (location.state?.tab) return location.state.tab
+    return DEFAULT_TABS[user?.role] || 'overview'
+  }
+
+  const [activeTab, setActiveTab] = useState(resolveTab)
 
   useEffect(() => {
+    const nextTab = resolveTab()
+    setActiveTab(nextTab)
     if (location.state?.tab) {
       window.history.replaceState({}, document.title)
     }
-  }, [])
+  }, [location.pathname, location.state?.tab])
 
   return (
     <ErrorBoundary>
@@ -284,7 +293,7 @@ function DashboardWrapper({ component: Component, user, onLogout }) {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         onLogout={onLogout}
-        headerSlot={user?.role === 'PARTICIPANT' || user?.role === 'ADMIN' ? <NotificationsPanel placement="top" /> : null}
+        headerSlot={user?.role === 'PARTICIPANT' ? <NotificationsPanel placement="top" /> : null}
       >
         <motion.div
           initial="initial"

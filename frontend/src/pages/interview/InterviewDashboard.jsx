@@ -241,6 +241,7 @@ export default function InterviewDashboard({ user }) {
   }
 
   const handleStart = (interview) => {
+    if (user?.role === 'ADMIN') return
     setMenuOpen(null)
     navigate(`/interview/${interview.id}/room`)
   }
@@ -331,19 +332,19 @@ export default function InterviewDashboard({ user }) {
     <motion.div variants={itemVariants} initial="hidden" animate="visible" className="reg-admin">
       {/* Header */}
       <div className="reg-admin-header">
-        <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #6366f1, #4f46e5)' }}>
-          <Video size={22} color="#fff" />
+        <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
+          <Video size={26} color="#fff" />
         </div>
         <div>
           <h2 className="reg-admin-title">Interviews</h2>
           <p className="reg-admin-subtitle">
-            {isAdmin ? 'Manage all interviews across the platform' : 'Your assigned interviews'}
+            {isAdmin ? 'Schedule and manage candidate interview sessions' : 'Your assigned interviews'}
           </p>
         </div>
         <div style={{ flex: 1 }} />
         {isAdmin && (
           <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => navigate('/interview/schedule')}>
-            <Plus size={15} /> Schedule Interview
+            <Plus size={16} /> Schedule Interview
           </button>
         )}
       </div>
@@ -479,60 +480,102 @@ export default function InterviewDashboard({ user }) {
                     </td>
                     <td><span className={`reg-admin-meeting ${mb.cls}`}>{mb.label}</span></td>
                     <td>
-                      <div className="reg-admin-actions">
-                        <button
-                          className="reg-admin-action"
-                          title="Actions"
-                          data-menu-btn={iv.id}
-                          onClick={(e) => openMenu(e, iv.id)}
-                        >
-                          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                            <circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/>
-                          </svg>
-                        </button>
-                        <AnimatePresence>
-                          {menuOpen === iv.id && (
-                            <motion.div
-                              ref={menuRef}
-                              className="reg-admin-action-menu"
-                              style={{ top: menuPos?.top, right: menuPos?.right }}
-                              initial={{ opacity: 0, y: -4 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: -4 }}
-                              transition={{ duration: 0.15 }}
+                      {isAdmin ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <button
+                            className="reg-admin-btn reg-admin-btn--secondary"
+                            style={{ padding: '5px 8px', height: 30 }}
+                            title="View Details"
+                            onClick={() => handleView(iv)}
+                          >
+                            <Eye size={14} />
+                          </button>
+                          <button
+                            className="reg-admin-btn reg-admin-btn--secondary"
+                            style={{ padding: '5px 8px', height: 30 }}
+                            title="Edit Interview"
+                            onClick={() => openEdit(iv)}
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            className="reg-admin-btn reg-admin-btn--secondary"
+                            style={{ padding: '5px 8px', height: 30 }}
+                            title="Change Status"
+                            onClick={() => { setChangeStatusTarget(iv); setNewStatus(''); }}
+                          >
+                            <Filter size={14} />
+                          </button>
+                          {iv.status === 'SCHEDULED' && (
+                            <button
+                              className="reg-admin-btn reg-admin-btn--secondary"
+                              style={{ padding: '5px 8px', height: 30, color: '#d97706' }}
+                              title="Cancel Interview"
+                              onClick={() => setConfirmTarget({ interview: iv, action: 'cancel' })}
                             >
-                              <button className="reg-admin-action-menu-item" onClick={() => handleView(iv)}>
-                                <Eye size={14} /> View Details
-                              </button>
-                              {manage && (
-                                <button className="reg-admin-action-menu-item" onClick={() => openEdit(iv)}>
-                                  <Pencil size={14} /> Edit Interview
-                                </button>
-                              )}
-                              {manage && (
-                                <button className="reg-admin-action-menu-item" onClick={() => { setChangeStatusTarget(iv); setNewStatus(''); setMenuOpen(null) }}>
-                                  <Filter size={14} /> Change Status
-                                </button>
-                              )}
-                              {(iv.status === 'SCHEDULED' || iv.status === 'IN_PROGRESS') && (
-                                <button className="reg-admin-action-menu-item" onClick={() => handleStart(iv)}>
-                                  <Play size={14} /> Start Interview
-                                </button>
-                              )}
-                              {iv.status === 'SCHEDULED' && manage && (
-                                <button className="reg-admin-action-menu-item" onClick={() => { setConfirmTarget({ interview: iv, action: 'cancel' }); setMenuOpen(null) }}>
-                                  <CalendarClock size={14} /> Cancel
-                                </button>
-                              )}
-                              {isAdmin && (
-                                <button className="reg-admin-action-menu-item reg-admin-action-menu-item--danger" onClick={() => { setConfirmTarget({ interview: iv, action: 'delete' }); setMenuOpen(null) }}>
-                                  <Trash2 size={14} /> Delete Interview
-                                </button>
-                              )}
-                            </motion.div>
+                              <CalendarClock size={14} />
+                            </button>
                           )}
-                        </AnimatePresence>
-                      </div>
+                          <button
+                            className="reg-admin-btn reg-admin-btn--secondary"
+                            style={{ padding: '5px 8px', height: 30, color: '#dc2626', borderColor: '#fca5a5' }}
+                            title="Delete Interview"
+                            onClick={() => setConfirmTarget({ interview: iv, action: 'delete' })}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="reg-admin-actions">
+                          <button
+                            className="reg-admin-action"
+                            title="Actions"
+                            data-menu-btn={iv.id}
+                            onClick={(e) => openMenu(e, iv.id)}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                              <circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/>
+                            </svg>
+                          </button>
+                          <AnimatePresence>
+                            {menuOpen === iv.id && (
+                              <motion.div
+                                ref={menuRef}
+                                className="reg-admin-action-menu"
+                                style={{ top: menuPos?.top, right: menuPos?.right }}
+                                initial={{ opacity: 0, y: -4 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -4 }}
+                                transition={{ duration: 0.15 }}
+                              >
+                                <button className="reg-admin-action-menu-item" onClick={() => handleView(iv)}>
+                                  <Eye size={14} /> View Details
+                                </button>
+                                {manage && (
+                                  <button className="reg-admin-action-menu-item" onClick={() => openEdit(iv)}>
+                                    <Pencil size={14} /> Edit Interview
+                                  </button>
+                                )}
+                                {manage && (
+                                  <button className="reg-admin-action-menu-item" onClick={() => { setChangeStatusTarget(iv); setNewStatus(''); setMenuOpen(null) }}>
+                                    <Filter size={14} /> Change Status
+                                  </button>
+                                )}
+                                {(iv.status === 'SCHEDULED' || iv.status === 'IN_PROGRESS') && (
+                                  <button className="reg-admin-action-menu-item" onClick={() => handleStart(iv)}>
+                                    <Play size={14} /> Start Interview
+                                  </button>
+                                )}
+                                {iv.status === 'SCHEDULED' && manage && (
+                                  <button className="reg-admin-action-menu-item" onClick={() => { setConfirmTarget({ interview: iv, action: 'cancel' }); setMenuOpen(null) }}>
+                                    <CalendarClock size={14} /> Cancel
+                                  </button>
+                                )}
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 )

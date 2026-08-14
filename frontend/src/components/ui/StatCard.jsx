@@ -1,12 +1,12 @@
 import { motion } from 'framer-motion'
 
 const colorMap = {
-  primary: { bg: 'rgba(22, 163, 74, 0.06)', color: '#16a34a', border: 'rgba(22, 163, 74, 0.1)' },
-  emerald: { bg: 'rgba(16, 185, 129, 0.06)', color: '#10B981', border: 'rgba(16, 185, 129, 0.1)' },
-  amber: { bg: 'rgba(245, 158, 11, 0.06)', color: '#F59E0B', border: 'rgba(245, 158, 11, 0.1)' },
-  blue: { bg: 'rgba(13, 148, 136, 0.06)', color: '#0D9488', border: 'rgba(13, 148, 136, 0.1)' },
-  violet: { bg: 'rgba(147, 51, 234, 0.06)', color: '#9333ea', border: 'rgba(147, 51, 234, 0.1)' },
-  rose: { bg: 'rgba(244, 63, 94, 0.06)', color: '#F43F5E', border: 'rgba(244, 63, 94, 0.1)' },
+  primary: { bg: 'rgba(22, 163, 74, 0.06)', color: '#16a34a' },
+  emerald: { bg: 'rgba(16, 185, 129, 0.06)', color: '#10B981' },
+  amber: { bg: 'rgba(245, 158, 11, 0.06)', color: '#F59E0B' },
+  blue: { bg: 'rgba(13, 148, 136, 0.06)', color: '#0D9488' },
+  violet: { bg: 'rgba(147, 51, 234, 0.06)', color: '#9333ea' },
+  rose: { bg: 'rgba(244, 63, 94, 0.06)', color: '#F43F5E' },
 }
 
 export default function StatCard({
@@ -22,14 +22,11 @@ export default function StatCard({
 
   return (
     <motion.div
-      className={`wl-stat-card ${className}`}
+      className={`reg-admin-stat ${className}`}
       whileHover={{ y: -2 }}
       transition={{ duration: 0.2 }}
     >
-      <div className="wl-stat-card-icon" style={{
-        background: colors.bg,
-        color: colors.color,
-      }}>
+      <div className="reg-admin-stat-icon" style={{ background: colors.bg, color: colors.color }}>
         {Icon && <Icon size={20} />}
       </div>
       <div>
@@ -37,12 +34,12 @@ export default function StatCard({
           display: 'block',
           fontSize: '12px',
           fontWeight: 500,
-          color: '#6b7280',
+          color: '#64748b',
           marginBottom: '2px',
         }}>
           {label}
         </span>
-        <span className="wl-stat-card-value">
+        <span className="reg-admin-stat-num">
           {value}
         </span>
         {trend && (

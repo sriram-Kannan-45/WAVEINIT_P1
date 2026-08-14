@@ -327,14 +327,12 @@ body:has(.auth-page) {
    LOGIN / REGISTER CARD
    ═══════════════════════════════════════════════════════════════════ */
 .auth-card {
-  width: min(500px, calc(100vw - 40px));
-  height: 530px;
-  min-height: 530px;
-  max-height: 530px;
+  width: min(480px, calc(100vw - 40px));
+  min-height: auto;
   background: var(--color-white);
   border-radius: 20px;
   border: 1px solid #e2e8f0;
-  padding: 28px 36px;
+  padding: 32px 36px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.04);
   position: relative;
   box-sizing: border-box;
@@ -346,7 +344,7 @@ body:has(.auth-page) {
   display: flex;
   flex-direction: column;
   height: 100%;
-  justify-content: space-between;
+  gap: 4px;
 }
 
 /* ── Card Header Avatar ────────────────────────────────────────── */
@@ -366,23 +364,25 @@ body:has(.auth-page) {
 /* ── Card Header ───────────────────────────────────────────────── */
 .auth-card-header {
   text-align: center;
-  margin-bottom: 18px;
+  margin-bottom: 20px;
 }
 
 .auth-card-title {
   font-size: 26px;
   font-weight: 700;
-  color: var(--color-dark);
+  color: #0F172A;
   margin: 0 0 4px 0;
   letter-spacing: -0.4px;
   line-height: 1.2;
+  font-family: 'Poppins', sans-serif;
 }
 
 .auth-card-subtitle {
   font-size: 13.5px;
-  color: var(--color-secondary);
+  color: #64748B;
   margin: 0;
   line-height: 1.4;
+  font-family: 'Poppins', sans-serif;
 }
 
 /* ── Role Selector ─────────────────────────────────────────────── */
@@ -391,9 +391,9 @@ body:has(.auth-page) {
   grid-template-columns: repeat(3, 1fr);
   background: #F1F5F9;
   border-radius: 12px;
-  padding: 3px;
-  gap: 3px;
-  margin-bottom: 18px;
+  padding: 4px;
+  gap: 4px;
+  margin-bottom: 20px;
 }
 
 .auth-role-btn {
@@ -402,40 +402,40 @@ body:has(.auth-page) {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 10px 8px;
+  gap: 7px;
+  padding: 9px 10px;
   border: none;
   border-radius: 9px;
   font-family: 'Poppins', sans-serif;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
-  color: var(--color-secondary);
+  color: #64748B;
   background: transparent;
   cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   white-space: nowrap;
 }
 
 .auth-role-btn:hover:not(.auth-role-btn--active) {
-  color: #475569;
-  background: rgba(255, 255, 255, 0.5);
+  color: #0F172A;
+  background: rgba(255, 255, 255, 0.7);
 }
 
 .auth-role-btn--active {
-  background: var(--color-primary);
-  color: var(--color-white);
+  background: #16A34A;
+  color: #FFFFFF;
   font-weight: 600;
-  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.3);
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.28);
 }
 
 .auth-role-btn svg {
-  width: 14px;
-  height: 14px;
-  opacity: 0.7;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
 }
 
 .auth-role-btn--active svg {
-  opacity: 1;
+  color: #FFFFFF;
 }
 
 /* ── Form Group ────────────────────────────────────────────────── */

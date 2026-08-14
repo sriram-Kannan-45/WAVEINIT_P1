@@ -84,29 +84,46 @@ const getStats = async (userId, role) => {
 
 const getCompletionPercent = async (userId, profile, user) => {
   let filled = 0;
-  const total = 10;
+  const total = 8;
 
-  if (user?.profilePic || profile?.profileImage) filled++;
-  if (profile?.bannerImage) filled++;
+  // 1. Basic Info: Name & headline/designation/department
+  const hasName = !!(user?.name || profile?.user?.name || profile?.name);
+  const hasHeadline = !!(profile?.headline || profile?.designation || profile?.department);
+  if (hasName && hasHeadline) filled++;
+
+  // 2. Profile Photo: Profile Picture
+  const hasPhoto = !!(user?.profilePic || profile?.user?.profilePic || profile?.profileImage || profile?.imagePath);
+  if (hasPhoto) filled++;
+
+  // 3. Contact Details: Phone & Email
+  const hasEmail = !!(user?.email || profile?.user?.email || profile?.email);
+  const hasPhone = !!(profile?.phone || user?.phone);
+  if (hasEmail && hasPhone) filled++;
+
+  // 4. About / Bio
   if (profile?.about && profile.about.trim().length > 0) filled++;
-  if (profile?.phone && profile.phone.trim().length > 0) filled++;
-  if (profile?.location && profile.location.trim().length > 0) filled++;
 
-  const skillCount = await ProfileSkill.count({ where: { profileId: profile?.id } }).catch(() => 0);
+  // 5. Professional / Company / Location
+  if (profile?.company || profile?.location || profile?.address || profile?.employeeId) filled++;
+
+  // 6. Skills: At least 1 skill
+  const skillCount = profile?.skills?.length || await ProfileSkill.count({ where: { profileId: profile?.id } }).catch(() => 0);
   if (skillCount > 0) filled++;
 
-  const expCount = await ProfileExperience.count({ where: { profileId: profile?.id } }).catch(() => 0);
-  if (expCount > 0) filled++;
+  // 7. Experience / Education / Projects
+  const expCount = profile?.experiences?.length || await ProfileExperience.count({ where: { profileId: profile?.id } }).catch(() => 0);
+  const eduCount = profile?.educations?.length || await ProfileEducation.count({ where: { profileId: profile?.id } }).catch(() => 0);
+  const projCount = profile?.projects?.length || await ProfileProject.count({ where: { profileId: profile?.id } }).catch(() => 0);
+  if (expCount > 0 || eduCount > 0 || projCount > 0) filled++;
 
-  const eduCount = await ProfileEducation.count({ where: { profileId: profile?.id } }).catch(() => 0);
-  if (eduCount > 0) filled++;
+  // 8. Resume / Certifications / Social Links
+  const certCount = profile?.certificates?.length || await ProfileCertificate.count({ where: { profileId: profile?.id } }).catch(() => 0);
+  const linkCount = profile?.contactLinks?.length || await ProfileContactLink.count({ where: { profileId: profile?.id } }).catch(() => 0);
+  const hasSocial = !!(profile?.socialLinks && Object.values(profile.socialLinks).some(v => !!v));
+  if (profile?.resume || certCount > 0 || linkCount > 0 || hasSocial) filled++;
 
-  const certCount = await ProfileCertificate.count({ where: { profileId: profile?.id } }).catch(() => 0);
-  if (certCount > 0) filled++;
-
-  if (profile?.resume) filled++;
-
-  return Math.round((filled / total) * 100);
+  const pct = Math.min(100, Math.round((filled / total) * 100));
+  return { pct, count: filled, total };
 };
 
 exports.getMyProfile = async (req, res) => {
@@ -136,7 +153,11 @@ exports.getProfileById = async (req, res) => {
     const user = await User.findByPk(id, { attributes: { exclude: ['password'] } });
     if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
-    const profile = await getFullProfile(id);
+    let profile = await getFullProfile(id);
+    if (!profile) {
+      await UserProfile.create({ userId: id });
+      profile = await getFullProfile(id);
+    }
     const stats = await getStats(id, user.role);
     const completion = await getCompletionPercent(id, profile, user);
 

@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { AlertCircle, BookOpen, CheckCircle2, ClipboardList, Clock, Eye, Loader2, MessageSquare, RefreshCw, Search, Star, Trash2, TrendingUp, User, UserPlus, Users, X, XCircle } from 'lucide-react'
+import { AlertCircle, BookOpen, CheckCircle2, ClipboardList, Clock, Eye, Layers, Loader2, MessageSquare, Plus, RefreshCw, Search, Star, Trash2, TrendingUp, User, UserCheck, UserPlus, Users, X, XCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { API, API_BASE } from '../api/api'
 import AssessmentSessionsPanel from '../components/admin/AssessmentSessionsPanel'
@@ -9,7 +9,7 @@ import CreateTrainingModule from '../components/admin/CreateTrainingModule'
 import AdminOverviewTab from '../components/admin/tabs/AdminOverviewTab'
 import ParticipantProfileView from '../components/shared/ParticipantProfileView'
 import { useToast } from '../components/Toast'
-import TrainerDetails from '../components/TrainerDetails'
+import TrainerProfileModal from '../components/admin/TrainerProfileModal'
 
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'
@@ -564,7 +564,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       {tab === 'pending' && (
         <motion.div variants={itemVariants} className="reg-admin">
           <div className="reg-admin-header">
-            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)' }}>
+            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
               <User size={22} color="#fff" />
             </div>
             <div>
@@ -628,8 +628,8 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
           <motion.div variants={itemVariants} className="reg-admin">
             {/* Header */}
             <div className="reg-admin-header">
-              <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}>
-                <BookOpen size={22} color="#fff" />
+              <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
+                <BookOpen size={26} color="#fff" />
               </div>
               <div>
                 <h2 className="reg-admin-title">Training Sessions</h2>
@@ -637,7 +637,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
               </div>
               <div style={{ flex: 1 }} />
               <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => handleTabChange('createTraining')}>
-                <UserPlus size={15} /> Add Training
+                <Plus size={16} /> Add Training
               </button>
             </div>
             {/* Stats */}
@@ -793,8 +793,8 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
         <motion.div variants={itemVariants} className="reg-admin">
           {/* Header */}
           <div className="reg-admin-header">
-            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)' }}>
-              <User size={22} color="#fff" />
+            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
+              <Users size={26} color="#fff" />
             </div>
             <div>
               <h2 className="reg-admin-title">Trainers</h2>
@@ -802,7 +802,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
             </div>
             <div style={{ flex: 1 }} />
             <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => handleTabChange('createTrainer')}>
-              <UserPlus size={15} /> Add Trainer
+              <Plus size={16} /> Add Trainer
             </button>
           </div>
           {/* Stats */}
@@ -831,7 +831,15 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
           {/* Trainers Table */}
           {initialLoading ? (
             <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading trainers...</p></div>
-          ) : trainers.filter(t => !trainerSearch || t.name?.toLowerCase().includes(trainerSearch.toLowerCase()) || t.email?.toLowerCase().includes(trainerSearch.toLowerCase())).length === 0 ? (
+          ) : trainers.filter(t => {
+            if (!trainerSearch) return true
+            const q = trainerSearch.toLowerCase()
+            return (
+              t.name?.toLowerCase().includes(q) ||
+              t.email?.toLowerCase().includes(q) ||
+              (t.employeeId || t.employee_id || '').toLowerCase().includes(q)
+            )
+          }).length === 0 ? (
             <div className="reg-admin-empty"><User size={40} /><h3>No Trainers Found</h3><p>{trainerSearch ? 'No trainers match your search.' : 'Add your first trainer to get started.'}</p></div>
           ) : (
             <div className="reg-admin-table-wrap">
@@ -839,27 +847,43 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                 <thead>
                   <tr>
                     <th>Trainer</th>
+                    <th>Employee ID</th>
                     <th>Email</th>
                     <th>Phone</th>
+                    <th>Experience</th>
                     <th>Profile</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {trainers.filter(t => !trainerSearch || t.name?.toLowerCase().includes(trainerSearch.toLowerCase()) || t.email?.toLowerCase().includes(trainerSearch.toLowerCase())).map(trainer => {
-                    const hasProfile = trainer.profile && (trainer.profile.phone || trainer.profile.dob || trainer.profile.qualification || trainer.profile.experience)
+                  {trainers.filter(t => {
+                    if (!trainerSearch) return true
+                    const q = trainerSearch.toLowerCase()
+                    return (
+                      t.name?.toLowerCase().includes(q) ||
+                      t.email?.toLowerCase().includes(q) ||
+                      (t.employeeId || t.employee_id || '').toLowerCase().includes(q)
+                    )
+                  }).map(trainer => {
+                    const empId = trainer.employeeId || trainer.employee_id || trainer.profile?.employeeId || trainer.profile?.employee_id || ''
+                    const exp = trainer.experience || trainer.profile?.experience || ''
+                    const phone = trainer.profile?.phone || trainer.phone || ''
+                    const hasProfile = trainer.profile && (phone || trainer.profile.dob || trainer.profile.qualification || exp)
+
                     return (
                       <tr key={trainer.id}>
                         <td>
                           <div className="reg-admin-participant">
-                            <div className="reg-admin-avatar" style={{ background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)' }}>
+                            <div className="reg-admin-avatar" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
                               {trainer.name?.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
                             </div>
                             <span className="reg-admin-name">{trainer.name}</span>
                           </div>
                         </td>
+                        <td className="reg-admin-date" style={{ fontWeight: 600, color: '#334155' }}>{empId || '—'}</td>
                         <td className="reg-admin-email">{trainer.email}</td>
-                        <td className="reg-admin-date">{trainer.profile?.phone || '—'}</td>
+                        <td className="reg-admin-date">{phone || '—'}</td>
+                        <td className="reg-admin-date">{exp || '—'}</td>
                         <td>
                           <span className={`reg-admin-status`} style={{
                             background: hasProfile ? '#d1fae5' : '#f1f5f9',
@@ -889,13 +913,16 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
           {/* Header */}
           <div className="reg-admin-header">
             <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-              <Users size={22} color="#fff" />
+              <Users size={26} color="#fff" />
             </div>
             <div>
               <h2 className="reg-admin-title">Participants</h2>
               <p className="reg-admin-subtitle">View and manage participant accounts, status, and enrollments</p>
             </div>
             <div style={{ flex: 1 }} />
+            <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => handleTabChange('bulk-import')}>
+              <Plus size={16} /> Add Participant
+            </button>
           </div>
           {/* Stats */}
           <div className="reg-admin-stats">
@@ -1693,24 +1720,13 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
         </div>
       )}
 
-      {/* ── TRAINER DETAIL MODAL ── */}
-      {trainerDetailModal && (
-        <div className="reg-modal-overlay" onClick={() => setTrainerDetailModal(null)}>
-          <div className="reg-modal" onClick={e => e.stopPropagation()}>
-            <div className="reg-modal-header">
-              <h3>Trainer Details — {trainerDetailModal.name}</h3>
-              <button onClick={() => setTrainerDetailModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={20} color="#64748b" /></button>
-            </div>
-            <div className="reg-modal-body">
-              <TrainerDetails trainer={trainerDetailModal} token={user.token} />
-            </div>
-            <div className="reg-modal-footer">
-              <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => setTrainerDetailModal(null)}>Close</button>
-              <button className="reg-admin-btn reg-admin-btn--danger" onClick={() => { setTrainerDetailModal(null); handleDeleteTrainer(trainerDetailModal.id, trainerDetailModal.name) }}>Delete Trainer</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ── TRAINER PROFILE VIEW MODAL ── */}
+      <TrainerProfileModal
+        open={!!trainerDetailModal}
+        trainer={trainerDetailModal}
+        onClose={() => setTrainerDetailModal(null)}
+        onDelete={(id, name) => handleDeleteTrainer(id, name)}
+      />
 
       {/* ── CONFIRM MODAL ── */}
       {confirmModal && (
@@ -1737,12 +1753,14 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       <ParticipantProfileView
         open={!!viewingParticipant}
         userId={viewingParticipant?.id}
+        participant={viewingParticipant}
         fallback={viewingParticipant ? {
           name: viewingParticipant.name,
           email: viewingParticipant.email,
           createdAt: viewingParticipant.created_at || viewingParticipant.joinedAt,
         } : null}
         onClose={() => setViewingParticipant(null)}
+        onDelete={(id, name) => handleDeleteParticipant(id, name)}
       />
     </motion.div>
   )

@@ -43,8 +43,7 @@ export default function DashboardLayout({
   }
 
   const handleProfile = () => {
-    if (user?.role === 'TRAINER') navigate('/trainer/profile')
-    else onTabChange?.('profile')
+    navigate('/my-profile')
   }
 
   return (
@@ -77,14 +76,16 @@ export default function DashboardLayout({
           transition: 'margin-left 300ms ease',
         }}
       >
-        <TopNavbar
-          user={user}
-          currentPageLabel={currentPageLabel}
-          onOpenCreate={handleOpenCreate}
-          onProfile={handleProfile}
-        />
+        {user?.role !== 'ADMIN' && user?.role !== 'admin' && user?.role !== 'TRAINER' && user?.role !== 'trainer' && (
+          <TopNavbar
+            user={user}
+            currentPageLabel={currentPageLabel}
+            onOpenCreate={handleOpenCreate}
+            onProfile={handleProfile}
+          />
+        )}
 
-        {headerSlot && (
+        {user?.role !== 'ADMIN' && user?.role !== 'admin' && user?.role !== 'TRAINER' && user?.role !== 'trainer' && headerSlot && (
           <div style={{ padding: '0 var(--space-6)', paddingTop: 'var(--space-4)' }}>
             {headerSlot}
           </div>

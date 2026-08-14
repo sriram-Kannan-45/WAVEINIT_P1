@@ -123,20 +123,25 @@ export default function TrainerCodingAssessmentDetails({ user, onLogout }) {
 
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 20px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+      <div className="reg-admin-header" style={{ marginBottom: 20 }}>
         <button onClick={() => navigate(-1)} style={iconBtn(colors.slate[100], colors.slate[600], 32)}>
           <ArrowLeft size={16} />
         </button>
-        <div style={{ flex: 1 }}>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: colors.text.primary }}>{assessment.title}</h1>
+        <div className="reg-admin-header-icon" style={{ flexShrink: 0 }}>
+          <Code size={22} color="#fff" />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h1 className="reg-admin-title">{assessment.title}</h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
-            <span style={{ ...statusV, padding: '2px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>{assessment.status?.split('_').map(w => w[0] + w.slice(1).toLowerCase()).join(' ')}</span>
-            <span style={{ ...resultV, padding: '2px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>Results: {assessment.resultStatus?.split('_').map(w => w[0] + w.slice(1).toLowerCase()).join(' ')}</span>
-            <span style={{ fontSize: 12, color: colors.slate[500] }}>{assessment.problems?.length || 0} problems</span>
-            <span style={{ fontSize: 12, color: colors.slate[400] }}>•</span>
-            <span style={{ fontSize: 12, color: colors.slate[500] }}>{assessment.languages?.length || 1} language(s)</span>
-            <span style={{ fontSize: 12, color: colors.slate[400] }}>•</span>
-            <span style={{ fontSize: 12, color: colors.slate[500] }}>{assessment.timeLimit || 60} min</span>
+            <span className={`reg-admin-badge ${assessment.status === 'PUBLISHED' ? 'reg-admin-badge--green' : ''}`}>
+              {assessment.status?.split('_').map(w => w[0] + w.slice(1).toLowerCase()).join(' ')}
+            </span>
+            <span className="reg-admin-badge reg-admin-badge--blue">Results: {assessment.resultStatus?.split('_').map(w => w[0] + w.slice(1).toLowerCase()).join(' ')}</span>
+            <span style={{ fontSize: 12, color: '#64748b' }}>{assessment.problems?.length || 0} problems</span>
+            <span style={{ fontSize: 12, color: '#94a3b8' }}>•</span>
+            <span style={{ fontSize: 12, color: '#64748b' }}>{assessment.languages?.length || 1} language(s)</span>
+            <span style={{ fontSize: 12, color: '#94a3b8' }}>•</span>
+            <span style={{ fontSize: 12, color: '#64748b' }}>{assessment.timeLimit || 60} min</span>
           </div>
         </div>
       </div>

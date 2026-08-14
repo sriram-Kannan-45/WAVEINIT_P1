@@ -244,27 +244,41 @@ const updateTraining = async (req, res) => {
     }
 
     let finalTrainerIds = [];
-    if (Array.isArray(trainerIds)) {
-      finalTrainerIds = trainerIds.map(tId => parseInt(tId));
-    } else if (trainerId) {
-      finalTrainerIds = [parseInt(trainerId)];
+    let hasTrainerFields = false;
+    if (trainerIds !== undefined) {
+      hasTrainerFields = true;
+      if (Array.isArray(trainerIds)) {
+        finalTrainerIds = trainerIds.map(tId => parseInt(tId, 10)).filter(id => !isNaN(id));
+      }
+    } else if (trainerId !== undefined) {
+      hasTrainerFields = true;
+      if (trainerId) {
+        const parsed = parseInt(trainerId, 10);
+        if (!isNaN(parsed)) finalTrainerIds = [parsed];
+      }
     }
 
-    if (finalTrainerIds.length > 0) {
-      const trainers = await User.findAll({ where: { id: finalTrainerIds, role: 'TRAINER' } });
-      if (trainers.length !== finalTrainerIds.length) {
-        return res.status(400).json({ error: 'One or more trainer IDs are invalid or not trainers' });
+    if (hasTrainerFields) {
+      if (finalTrainerIds.length > 0) {
+        const trainers = await User.findAll({ where: { id: finalTrainerIds, role: 'TRAINER' } });
+        if (trainers.length !== finalTrainerIds.length) {
+          return res.status(400).json({ error: 'One or more trainer IDs are invalid or not trainers' });
+        }
       }
 
       await TrainingTrainerAssignment.destroy({ where: { trainingId: id } });
-      const assignments = finalTrainerIds.map(tId => ({
-        trainingId: id,
-        trainerId: tId
-      }));
-      await TrainingTrainerAssignment.bulkCreate(assignments);
+      if (finalTrainerIds.length > 0) {
+        const assignments = finalTrainerIds.map(tId => ({
+          trainingId: id,
+          trainerId: tId
+        }));
+        await TrainingTrainerAssignment.bulkCreate(assignments);
+      }
     }
 
-    const primaryTrainerId = finalTrainerIds.length > 0 ? finalTrainerIds[0] : (trainerId ? parseInt(trainerId) : training.trainerId);
+    const primaryTrainerId = hasTrainerFields
+      ? (finalTrainerIds[0] || null)
+      : training.trainerId;
 
     await training.update({
       title: title || training.title,
@@ -272,7 +286,7 @@ const updateTraining = async (req, res) => {
       trainerId: primaryTrainerId,
       startDate: startDate ? new Date(startDate) : training.startDate,
       endDate: endDate ? new Date(endDate) : training.endDate,
-      capacity: capacity !== undefined ? (capacity ? parseInt(capacity) : null) : training.capacity,
+      capacity: capacity !== undefined ? (capacity ? parseInt(capacity, 10) : null) : training.capacity,
       sequentialLearning: sequentialLearning !== undefined ? !!sequentialLearning : training.sequentialLearning
     });
 
@@ -295,13 +309,15 @@ const updateTraining = async (req, res) => {
     }
 
     // Sync CourseTrainerAssignment
-    if (finalTrainerIds.length > 0) {
+    if (hasTrainerFields) {
       await CourseTrainerAssignment.destroy({ where: { courseId: course.id } });
-      const courseAssignments = finalTrainerIds.map(tId => ({
-        courseId: course.id,
-        trainerId: tId
-      }));
-      await CourseTrainerAssignment.bulkCreate(courseAssignments);
+      if (finalTrainerIds.length > 0) {
+        const courseAssignments = finalTrainerIds.map(tId => ({
+          courseId: course.id,
+          trainerId: tId
+        }));
+        await CourseTrainerAssignment.bulkCreate(courseAssignments);
+      }
     }
 
     const updatedTraining = await Training.findByPk(id, {

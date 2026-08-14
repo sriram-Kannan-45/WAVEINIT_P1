@@ -51,14 +51,14 @@ export default function LeaderboardSection({ enrollments = [], quizzes = [], cur
   }
 
   return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--space-6)' }}>
-        <div style={{ width: 44, height: 44, borderRadius: 'var(--radius-xl)', background: 'rgba(247,144,9,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <TrendingUp size={20} style={{ color: '#F79009' }} />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', fontFamily: "'Poppins', sans-serif" }}>
+      <div className="reg-admin-header" style={{ marginBottom: 0 }}>
+        <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #F59E0B, #D97706)' }}>
+          <Trophy size={22} color="#fff" />
         </div>
-        <div>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 800, color: 'var(--neutral-900)', letterSpacing: '-0.03em', margin: 0 }}>Leaderboard</h2>
-          <p style={{ color: 'var(--neutral-400)', fontSize: 13, margin: '2px 0 0' }}>Top performers across all quizzes</p>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h2 className="reg-admin-title">Leaderboard</h2>
+          <p className="reg-admin-subtitle">Top performers across all quizzes and learning modules</p>
         </div>
       </div>
 

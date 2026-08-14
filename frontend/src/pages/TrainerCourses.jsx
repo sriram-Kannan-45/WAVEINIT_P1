@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ArrowLeft, Search, Plus, Pencil, Trash2,
   BookOpen, FileText, Users, BarChart3, Layers, Sparkles,
   CheckCircle2, Folder, MessageSquare, Code,
-  ChevronRight, MoreVertical, GripVertical
+  ChevronRight, MoreHorizontal, MoreVertical, GripVertical,
+  GraduationCap, ChevronDown
 } from 'lucide-react'
 import { API } from '../api/api'
 import { StatCard } from '../components/ui'
-import { LineAreaChart } from '../components/ui/ChartWrappers'
 import { getCourseThumbnail, getThumbnailSVG } from '../config/courseThumbnailMap'
 import emptyCourseImg from '../assets/illustrations/empty-course.png'
 
@@ -20,108 +21,40 @@ import CourseAnalyticsTab from '../components/trainer/CourseAnalyticsTab'
 import DiscussionBoard from '../components/shared/DiscussionBoard'
 import CourseCodingTab from '../components/trainer/CourseCodingTab'
 import AIStructureGenerator from '../components/trainer/AIStructureGenerator'
+import CourseArtwork from '../components/common/CourseArtwork'
+import '../styles/trainer-my-trainings.css'
+import '../styles/course-tabs.css'
 
 function getCourseArtwork(title, category) {
   return getCourseThumbnail(title, category)
 }
 
-function StatusBadge({ status = 'DRAFT' }) {
-  const label = (status || 'DRAFT').toUpperCase()
-  const isPublished = label === 'PUBLISHED'
-  return (
-    <span
-      className="inline-flex items-center rounded-full text-[9px] font-extrabold uppercase tracking-wider"
-      style={{
-        padding: '4px 10px',
-        background: isPublished ? '#10B981' : '#F59E0B',
-        color: '#FFFFFF',
-        boxShadow: '0 1px 2px rgba(0, 0, 0, 0.08)',
-        fontFamily: '"Plus Jakarta Sans", "SF Pro Display", sans-serif'
-      }}
-    >
-      {label}
-    </span>
-  )
+
+function timeAgo(dateString) {
+  if (!dateString) return 'Recently'
+  const date = new Date(dateString)
+  if (isNaN(date.getTime())) return 'Recently'
+  const diffInSeconds = Math.floor((new Date() - date) / 1000)
+  if (diffInSeconds < 60) return 'Just now'
+  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`
+  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`
+  if (diffInSeconds < 2592000) return `${Math.floor(diffInSeconds / 86400)}d ago`
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-function TrainingCard({ course, artwork, onOpen, fmtTimeAgo }) {
-  const thumb = artwork || getCourseThumbnail(course.title)
-  const svgContent = getThumbnailSVG(thumb)
-  const isDark = !thumb.dark
-
-  return (
-    <motion.div
-      className="wl-training-card"
-      onClick={() => onOpen(course.id)}
-      whileHover={{ y: -4 }}
-      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-      style={{ cursor: 'pointer' }}
-    >
-      {/* Thumbnail */}
-      <div className="wl-training-card-thumb" style={{ background: thumb.gradient }}>
-        <svg
-          className="wl-training-card-thumb-svg"
-          viewBox="0 0 400 200"
-          preserveAspectRatio="xMidYMid slice"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <defs>
-            <radialGradient id={`glow-${course.id}`} cx="50%" cy="50%" r="60%">
-              <stop offset="0%" stopColor={thumb.accent} stopOpacity="0.12" />
-              <stop offset="100%" stopColor={thumb.accent} stopOpacity="0" />
-            </radialGradient>
-          </defs>
-          <rect width="400" height="200" fill="transparent" />
-          <rect width="400" height="200" fill={`url(#glow-${course.id})`} />
-          {svgContent}
-        </svg>
-        <div className="wl-training-card-thumb-overlay" />
-        <div className="wl-training-card-status">
-          <StatusBadge status={course.status} />
-        </div>
-        <div className="wl-training-card-learners-badge">
-          <Users size={11} /> {course.enrolledCount || 0}
-        </div>
-        <div className="wl-training-card-thumb-icon" style={{ background: `${thumb.accent}22`, borderColor: `${thumb.accent}33` }}>
-          <span style={{ fontSize: '18px', lineHeight: 1 }}>{thumb.icon}</span>
-        </div>
-      </div>
-
-      {/* Body */}
-      <div className="wl-training-card-body">
-        <span className="wl-training-card-category">{thumb.label || 'General Training'}</span>
-        <h3 className="wl-training-card-title" title={course.title}>{course.title}</h3>
-        {course.description && (
-          <p className="wl-training-card-desc">{course.description}</p>
-        )}
-
-        <div className="wl-training-card-stats">
-          <span className="wl-training-card-stat">
-            <FileText size={14} /> {course.lessonCount || 0} Lessons
-          </span>
-          <span className="wl-training-card-stat">
-            <Users size={14} /> {course.enrolledCount || 0} Students
-          </span>
-        </div>
-
-        <div className="wl-training-card-meta">
-          <span>Updated {fmtTimeAgo(course.updatedAt || course.createdAt)}</span>
-          <span>Assigned by Admin</span>
-        </div>
-
-      </div>
-    </motion.div>
-  )
-}
-
-function CoursesList({ user, onOpenCourse }) {
-  const { error: showError } = useToast()
+function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
+  const navigate = useNavigate()
+  const { error: showError, success } = useToast()
   const [loading, setLoading] = useState(true)
   const [courses, setCourses] = useState([])
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL')
+  const [sortBy, setSortBy] = useState('newest')
+  const [actionMenuOpen, setActionMenuOpen] = useState(null)
+  const [createModalOpen, setCreateModalOpen] = useState(false)
+  const [bulkImportOpen, setBulkImportOpen] = useState(false)
 
-  const auth = () => ({ Authorization: `Bearer ${user.token}` })
+  const auth = () => ({ Authorization: `Bearer ${user?.token}` })
 
   const fetchCourses = async () => {
     try {
@@ -129,9 +62,8 @@ function CoursesList({ user, onOpenCourse }) {
       const r = await fetch(API.TRAINER_COURSES.LIST, { headers: auth() })
       const d = await r.json()
       if (d.success) setCourses(d.courses || [])
-      else showError(d.error || 'Failed to load courses')
     } catch (e) {
-      showError(e.message || 'Failed to load courses')
+      console.error('Failed to load courses:', e.message)
     } finally {
       setLoading(false)
     }
@@ -139,235 +71,459 @@ function CoursesList({ user, onOpenCourse }) {
 
   useEffect(() => { fetchCourses() }, [])
 
+  // Assigned courses for current trainer
+  const activeCourses = useMemo(() => {
+    return courses || []
+  }, [courses])
+
   const stats = useMemo(() => ({
-    total: courses.length,
-    published: courses.filter(c => c.status === 'PUBLISHED').length,
-    draft: courses.filter(c => c.status === 'DRAFT').length,
-    archived: courses.filter(c => c.status === 'ARCHIVED').length,
-  }), [courses])
+    total: activeCourses.length,
+    published: activeCourses.filter(c => (c.status || 'PUBLISHED').toUpperCase() === 'PUBLISHED').length,
+    draft: activeCourses.filter(c => (c.status || '').toUpperCase() === 'DRAFT').length,
+    archived: activeCourses.filter(c => (c.status || '').toUpperCase() === 'ARCHIVED').length,
+  }), [activeCourses])
 
   const filtered = useMemo(() => {
-    return courses.filter(c => {
-      if (statusFilter !== 'ALL' && c.status !== statusFilter) return false
+    let list = activeCourses.filter(c => {
+      if (statusFilter !== 'ALL' && (c.status || 'PUBLISHED').toUpperCase() !== statusFilter) return false
       if (search) {
         const q = search.toLowerCase()
         return (c.title || '').toLowerCase().includes(q) ||
-               (c.description || '').toLowerCase().includes(q) ||
-               (c.programTitle || '').toLowerCase().includes(q)
+               (c.description || '').toLowerCase().includes(q)
       }
       return true
     })
-  }, [courses, search, statusFilter])
 
-  const recentActivity = useMemo(() =>
-    [...courses]
-      .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))
-      .slice(0, 5),
-  [courses])
+    if (sortBy === 'newest') {
+      list = [...list].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+    } else if (sortBy === 'oldest') {
+      list = [...list].sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0))
+    } else if (sortBy === 'title') {
+      list = [...list].sort((a, b) => (a.title || '').localeCompare(b.title || ''))
+    }
 
-  const chartData = useMemo(() => {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-    const now = new Date()
-    return Array.from({ length: 6 }, (_, i) => {
-      const d = new Date(now)
-      d.setMonth(d.getMonth() - (5 - i))
-      return { name: months[d.getMonth()], trainings: courses.filter(c => {
-        const ud = new Date(c.updatedAt || c.createdAt)
-        return ud.getMonth() === d.getMonth() && ud.getFullYear() === d.getFullYear()
-      }).length }
-    })
-  }, [courses])
-
-  const fmtTimeAgo = (d) => {
-    if (!d) return ''
-    const diff = Date.now() - new Date(d).getTime()
-    const mins = Math.floor(diff / 60000)
-    if (mins < 60) return `${mins}m ago`
-    const hours = Math.floor(mins / 60)
-    if (hours < 24) return `${hours}h ago`
-    return `${Math.floor(hours / 24)}d ago`
-  }
-
-  const statCards = [
-    { label: 'Total Trainings', value: stats.total, icon: BookOpen, variant: 'blue' },
-    { label: 'Published', value: stats.published, icon: CheckCircle2, variant: 'emerald' },
-    { label: 'Drafts', value: stats.draft, icon: FileText, variant: 'amber' },
-    { label: 'Archived', value: stats.archived, icon: Folder, variant: 'violet' },
-  ]
+    return list
+  }, [activeCourses, search, statusFilter, sortBy])
 
   return (
-    <div className="wl-training-page">
-      {/* ── Page Header ── */}
-      <div className="wl-training-header">
-        <div className="wl-training-header-text">
-          <h1>My Trainings</h1>
-          <p>Manage your assigned courses efficiently.</p>
+    <div className="tmt-container">
+      {/* ── 1. Page Header Card ── */}
+      <div className="tmt-page-header">
+        <div className="tmt-header-left">
+          <div className="tmt-header-icon-box">
+            <GraduationCap size={20} strokeWidth={2.4} />
+          </div>
+          <div>
+            <h1 className="tmt-header-title">My Trainings</h1>
+            <p className="tmt-header-subtitle">Manage your assigned courses efficiently.</p>
+          </div>
         </div>
-        <div className="wl-training-header-illustration">
-          <BookOpen size={36} />
+
+        <button
+          className="tmt-create-btn"
+          onClick={() => setCreateModalOpen(true)}
+        >
+          <Plus size={15} strokeWidth={2.5} /> Create Course
+        </button>
+      </div>
+
+      {/* ── 2. Statistics Cards Row (4 Cards) ── */}
+      <div className="tmt-stats-grid">
+        {/* Card 1: Total Trainings */}
+        <div className="tmt-stat-card">
+          <div className="tmt-stat-icon-wrap tmt-stat-icon-wrap--green">
+            <BookOpen size={18} strokeWidth={2} />
+          </div>
+          <div className="tmt-stat-text-wrap">
+            <span className="tmt-stat-label">Total Trainings</span>
+            <div className="tmt-stat-value">{stats.total}</div>
+            <span className="tmt-stat-sub">All courses created</span>
+          </div>
+        </div>
+
+        {/* Card 2: Published */}
+        <div className="tmt-stat-card">
+          <div className="tmt-stat-icon-wrap tmt-stat-icon-wrap--blue">
+            <CheckCircle2 size={18} strokeWidth={2} />
+          </div>
+          <div className="tmt-stat-text-wrap">
+            <span className="tmt-stat-label">Published</span>
+            <div className="tmt-stat-value">{stats.published}</div>
+            <span className="tmt-stat-sub">Courses live</span>
+          </div>
+        </div>
+
+        {/* Card 3: Drafts */}
+        <div className="tmt-stat-card">
+          <div className="tmt-stat-icon-wrap tmt-stat-icon-wrap--amber">
+            <FileText size={18} strokeWidth={2} />
+          </div>
+          <div className="tmt-stat-text-wrap">
+            <span className="tmt-stat-label">Drafts</span>
+            <div className="tmt-stat-value">{stats.draft}</div>
+            <span className="tmt-stat-sub">In progress</span>
+          </div>
+        </div>
+
+        {/* Card 4: Archived */}
+        <div className="tmt-stat-card">
+          <div className="tmt-stat-icon-wrap tmt-stat-icon-wrap--purple">
+            <Folder size={18} strokeWidth={2} />
+          </div>
+          <div className="tmt-stat-text-wrap">
+            <span className="tmt-stat-label">Archived</span>
+            <div className="tmt-stat-value">{stats.archived}</div>
+            <span className="tmt-stat-sub">Completed courses</span>
+          </div>
         </div>
       </div>
 
-      {/* ── Statistics Row ── */}
-      <div className="wl-training-stats">
-        {statCards.map((s) => (
-          <StatCard key={s.label} icon={s.icon} label={s.label} value={s.value} variant={s.variant} />
-        ))}
-      </div>
-
-      {/* ── Search + Filter Toolbar ── */}
-      <div className="wl-training-toolbar">
-        <div style={{ position: 'relative', flex: '1 1 300px', maxWidth: 420 }}>
-          <Search size={17} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none' }} />
+      {/* ── 3. Search + Filter Toolbar ── */}
+      <div className="tmt-filter-toolbar">
+        <div className="tmt-search-box">
+          <Search size={15} color="#94A3B8" />
           <input
             type="text"
+            className="tmt-search-input"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search courses..."
-            style={{
-              height: 48, width: '100%', borderRadius: 12, paddingLeft: 42, paddingRight: 14,
-              fontSize: 15, background: '#f9fafb', border: '1px solid #f3f4f6',
-              outline: 'none', fontFamily: 'var(--font-primary)', boxSizing: 'border-box',
-              transition: 'border-color 150ms ease, box-shadow 150ms ease',
-            }}
-            className="focus:!border-[#16a34a] focus:!shadow-[0_0_0_3px_rgba(22,163,74,0.1)]"
+            placeholder="Search courses by title..."
           />
         </div>
 
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', flexShrink: 0 }}>
-          {['ALL', 'DRAFT', 'PUBLISHED', 'ARCHIVED'].map((opt) => {
-            const isActive = statusFilter === opt
-            const labelMap = { ALL: 'All', DRAFT: 'Draft', PUBLISHED: 'Published', ARCHIVED: 'Archived' }
-            return (
-              <button
-                key={opt}
-                onClick={() => setStatusFilter(opt)}
-                style={{
-                  height: 40, padding: '0 18px', borderRadius: 9999, fontSize: 13, fontWeight: 600,
-                  cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  background: isActive ? '#16a34a' : '#ffffff',
-                  color: isActive ? '#ffffff' : '#6b7280',
-                  border: `1px solid ${isActive ? '#16a34a' : '#e5e7eb'}`,
-                  transition: 'all 150ms ease',
-                  fontFamily: 'var(--font-primary)', outline: 'none',
-                }}
-              >
-                {labelMap[opt]}
-              </button>
-            )
-          })}
+        <div className="tmt-filter-pills">
+          <button
+            onClick={() => setStatusFilter('ALL')}
+            className={`tmt-pill ${statusFilter === 'ALL' ? 'tmt-pill--active' : ''}`}
+          >
+            All <span className="tmt-pill-badge">{stats.total}</span>
+          </button>
+          <button
+            onClick={() => setStatusFilter('PUBLISHED')}
+            className={`tmt-pill ${statusFilter === 'PUBLISHED' ? 'tmt-pill--active' : ''}`}
+          >
+            Published <span className="tmt-pill-badge">{stats.published}</span>
+          </button>
+          <button
+            onClick={() => setStatusFilter('DRAFT')}
+            className={`tmt-pill ${statusFilter === 'DRAFT' ? 'tmt-pill--active' : ''}`}
+          >
+            Draft <span className="tmt-pill-badge">{stats.draft}</span>
+          </button>
+          <button
+            onClick={() => setStatusFilter('ARCHIVED')}
+            className={`tmt-pill ${statusFilter === 'ARCHIVED' ? 'tmt-pill--active' : ''}`}
+          >
+            Archived <span className="tmt-pill-badge">{stats.archived}</span>
+          </button>
         </div>
       </div>
 
-      {/* ── Main Content: Grid + Sidebar ── */}
-      <div className="wl-training-main">
-        {/* Left: Course Grid */}
-        <div>
-          {loading ? (
-            <div className="wl-training-grid">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="wl-training-skeleton">
-                  <div className="wl-training-skeleton-thumb" />
-                  <div className="wl-training-skeleton-body">
-                    <div className="wl-training-skeleton-line wl-training-skeleton-line--short" />
-                    <div className="wl-training-skeleton-line wl-training-skeleton-line--long" />
-                    <div className="wl-training-skeleton-line wl-training-skeleton-line--medium" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="wl-training-empty">
-              <BookOpen size={48} />
-              <h3>{courses.length === 0 ? 'No courses assigned yet' : 'No courses match your filters'}</h3>
-              <p>{courses.length === 0
-                ? 'Ask your admin to assign you to a course under a Training Program.'
-                : 'Try adjusting your search or status filter.'}</p>
-            </div>
-          ) : (
-            <>
-              <div className="wl-training-grid">
-                {filtered.map((c) => (
-                  <TrainingCard
-                    key={c.id}
-                    course={c}
-                    artwork={getCourseArtwork(c.title)}
-                    onOpen={onOpenCourse}
-                    fmtTimeAgo={fmtTimeAgo}
-                  />
-                ))}
-              </div>
-              <div style={{ marginTop: 20, fontSize: 13, color: '#9ca3af', fontWeight: 500 }}>
-                Showing {filtered.length} of {courses.length} courses
-              </div>
-            </>
-          )}
+      {/* ── 4. Main Course Management Table Card ── */}
+      <div className="tmt-courses-card">
+        <div className="tmt-card-header">
+          <h2 className="tmt-card-title">My Courses</h2>
+          <div className="tmt-sort-dropdown">
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="tmt-select"
+            >
+              <option value="newest">Sort by: Newest</option>
+              <option value="oldest">Sort by: Oldest</option>
+              <option value="title">Sort by: Title</option>
+            </select>
+          </div>
         </div>
 
-        {/* Right: Sidebar */}
-        <div className="wl-training-sidebar">
-          {/* Training Overview Chart */}
-          <div className="wl-dash-card">
-            <div className="wl-dash-card-header">
-              <div>
-                <h3 className="wl-dash-card-title">Training Overview</h3>
-                <p style={{ fontSize: 12, color: '#9ca3af', marginTop: 2 }}>Course updates over time</p>
-              </div>
-            </div>
-            <div className="wl-chart-container">
-              <LineAreaChart
-                data={chartData}
-                xKey="name"
-                yKey="trainings"
-                height={180}
-                strokeColor="#16a34a"
-                fillColorStart="#86efac"
-                fillColorEnd="#f0fdf4"
-              />
-            </div>
-          </div>
-
-          {/* Recent Activity */}
-          <div className="wl-dash-card">
-            <div className="wl-dash-card-header">
-              <h3 className="wl-dash-card-title">Recent Activity</h3>
-            </div>
-            <div className="wl-dash-card-body">
-              {recentActivity.length === 0 ? (
-                <p style={{ fontSize: 13, color: '#9ca3af', textAlign: 'center', padding: '20px 0' }}>No activity yet</p>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                  {recentActivity.map((c, i) => (
-                    <div key={c.id || i} className="wl-activity-item">
-                      <div className="wl-activity-dot" style={{
-                        background: c.status === 'PUBLISHED' ? '#16a34a' : c.status === 'DRAFT' ? '#f59e0b' : '#94a3b8',
-                      }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className="wl-activity-text" style={{
-                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                        }}>
-                          {c.title}
-                        </div>
-                        <div className="wl-activity-time">
-                          {c.status === 'PUBLISHED' ? 'Published' : c.status === 'DRAFT' ? 'Updated' : c.status?.toLowerCase() || 'updated'} {fmtTimeAgo(c.updatedAt || c.createdAt)}
-                        </div>
-                      </div>
-                      <span style={{
-                        fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 9999,
-                        background: c.status === 'PUBLISHED' ? '#f0fdf4' : c.status === 'DRAFT' ? '#fffbeb' : '#f5f5f4',
-                        color: c.status === 'PUBLISHED' ? '#16a34a' : c.status === 'DRAFT' ? '#d97706' : '#78716c',
-                        flexShrink: 0,
-                      }}>
-                        {c.status || 'Draft'}
+        <div className="tmt-table-wrapper">
+          <table className="tmt-table">
+            <thead>
+              <tr>
+                <th className="tmt-th" style={{ width: '42%' }}>COURSE</th>
+                <th className="tmt-th" style={{ width: '15%' }}>STATUS</th>
+                <th className="tmt-th" style={{ width: '12%' }}>LESSONS</th>
+                <th className="tmt-th" style={{ width: '12%' }}>STUDENTS</th>
+                <th className="tmt-th" style={{ width: '13%' }}>UPDATED</th>
+                <th className="tmt-th" style={{ width: '6%', textAlign: 'center' }}>ACTIONS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="tmt-empty-cell">
+                    <div className="tmt-empty-state">
+                      <div className="bulk-spin" style={{ display: 'inline-block', width: 24, height: 24, border: '2.5px solid #e2e8f0', borderTopColor: '#16A34A', borderRadius: '50%' }} />
+                      <p style={{ marginTop: 6 }}>Loading your assigned courses...</p>
+                    </div>
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="tmt-empty-cell">
+                    <div className="tmt-empty-state" style={{ padding: '24px 0' }}>
+                      <BookOpen size={36} color="#94A3B8" />
+                      <p style={{ fontWeight: 600, color: '#334155', fontSize: 13, margin: '4px 0 2px' }}>
+                        {search || statusFilter !== 'ALL' ? 'No courses found matching your criteria' : 'No courses assigned yet'}
+                      </p>
+                      <span style={{ fontSize: 11.5, color: '#94A3B8' }}>
+                        {search || statusFilter !== 'ALL' ? 'Try adjusting your search or filters.' : 'Courses assigned to you by administrators will appear here.'}
                       </span>
                     </div>
-                  ))}
-                </div>
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((course) => {
+                  return (
+                    <tr
+                      key={course.id}
+                      className="tmt-tr"
+                      onClick={() => onOpenCourse(course.id)}
+                    >
+                      {/* COURSE COLUMN */}
+                      <td className="tmt-td">
+                        <div className="tmt-course-cell">
+                          <div className="tmt-course-cell-thumb">
+                            <CourseArtwork title={course.title} category={course.category} />
+                          </div>
+                          <div className="tmt-course-cell-info">
+                            <span className="tmt-category-pill">
+                              {course.category || 'COURSE'}
+                            </span>
+                            <h3 className="tmt-course-name">{course.title}</h3>
+                            <p className="tmt-course-desc">
+                              {course.description || `Learn ${course.title} from basics to advanced concepts.`}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* STATUS COLUMN */}
+                      <td className="tmt-td">
+                        <div className="tmt-status-cell">
+                          <span className={`tmt-status-badge tmt-status-badge--${(course.status || 'PUBLISHED').toLowerCase()}`}>
+                            {course.status || 'PUBLISHED'}
+                          </span>
+                          <span className="tmt-status-sub">
+                            {course.status === 'DRAFT' ? 'In progress' : course.status === 'ARCHIVED' ? 'Completed courses' : 'Courses live'}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* LESSONS COLUMN */}
+                      <td className="tmt-td">
+                        <div className="tmt-metric-cell">
+                          <span className="tmt-metric-val">{course.lessonCount || 0}</span>
+                          <span className="tmt-metric-sub">Lessons</span>
+                        </div>
+                      </td>
+
+                      {/* STUDENTS COLUMN */}
+                      <td className="tmt-td">
+                        <div className="tmt-metric-cell">
+                          <span className="tmt-metric-val">{course.enrolledCount || 0}</span>
+                          <span className="tmt-metric-sub">Students</span>
+                        </div>
+                      </td>
+
+                      {/* UPDATED COLUMN */}
+                      <td className="tmt-td">
+                        <div className="tmt-metric-cell">
+                          <span className="tmt-updated-val">{timeAgo(course.updatedAt || course.createdAt)}</span>
+                          <span className="tmt-metric-sub">{course.programTitle || 'by Admin'}</span>
+                        </div>
+                      </td>
+
+                      {/* ACTIONS COLUMN */}
+                      <td className="tmt-td" style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                        <div style={{ position: 'relative', display: 'inline-block' }}>
+                          <button
+                            className="tmt-table-action-btn"
+                            aria-label="Course options"
+                            onClick={() => setActionMenuOpen(actionMenuOpen === course.id ? null : course.id)}
+                          >
+                            <MoreHorizontal size={16} />
+                          </button>
+
+                          <AnimatePresence>
+                            {actionMenuOpen === course.id && (
+                              <>
+                                <div
+                                  style={{ position: 'fixed', inset: 0, zIndex: 40 }}
+                                  onClick={() => setActionMenuOpen(null)}
+                                />
+                                <motion.div
+                                  className="tmt-action-dropdown"
+                                  initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                                  exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                                  transition={{ duration: 0.12 }}
+                                >
+                                  <button
+                                    className="tmt-action-dropdown-item"
+                                    onClick={() => { setActionMenuOpen(null); onOpenCourse(course.id) }}
+                                  >
+                                    <Pencil size={13} /> Open Course Editor
+                                  </button>
+                                  <button
+                                    className="tmt-action-dropdown-item"
+                                    onClick={() => {
+                                      setActionMenuOpen(null)
+                                      onOpenCourse(course.id)
+                                    }}
+                                  >
+                                    <Users size={13} /> View Participants
+                                  </button>
+                                </motion.div>
+                              </>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })
               )}
-            </div>
+            </tbody>
+          </table>
+        </div>
+
+        {/* ── 5. Pagination Bar ── */}
+        <div className="tmt-pagination-bar">
+          <span className="tmt-showing-text">
+            {filtered.length === 0
+              ? 'Showing 0 courses'
+              : `Showing 1 to ${filtered.length} of ${activeCourses.length} courses`}
+          </span>
+          <div className="tmt-page-controls">
+            <button className="tmt-page-btn" disabled aria-label="Previous page">
+              &lt;
+            </button>
+            <button className="tmt-page-btn tmt-page-btn--active">
+              1
+            </button>
+            <button className="tmt-page-btn" disabled aria-label="Next page">
+              &gt;
+            </button>
           </div>
         </div>
       </div>
+
+      {/* ── Create Course Modal ── */}
+      <AnimatePresence>
+        {createModalOpen && (
+          <motion.div
+            className="wl-modal-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setCreateModalOpen(false)}
+            style={{ zIndex: 1000 }}
+          >
+            <motion.div
+              className="wl-modal-card"
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 className="wl-modal-title">Create Course</h2>
+              <p style={{ fontSize: 13, color: '#64748B', marginBottom: 16 }}>
+                New courses are assigned under Training Programs by administrators. You can create learning modules and lessons inside assigned courses.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <label className="wl-modal-label">Select Course to Author</label>
+                <select className="wl-modal-input" defaultValue={activeCourses[0]?.id}>
+                  {activeCourses.map(c => (
+                    <option key={c.id} value={c.id}>{c.title} ({c.category || 'General'})</option>
+                  ))}
+                </select>
+              </div>
+              <div className="wl-modal-actions" style={{ marginTop: 24 }}>
+                <button
+                  type="button"
+                  onClick={() => setCreateModalOpen(false)}
+                  className="wl-btn-secondary"
+                  style={{ height: 42 }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreateModalOpen(false)
+                    if (activeCourses[0]?.id) onOpenCourse(activeCourses[0].id)
+                  }}
+                  className="wl-btn-primary"
+                  style={{ height: 42 }}
+                >
+                  Open Course Editor
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Bulk Import Modal ── */}
+      <AnimatePresence>
+        {bulkImportOpen && (
+          <motion.div
+            className="wl-modal-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setBulkImportOpen(false)}
+            style={{ zIndex: 1000 }}
+          >
+            <motion.div
+              className="wl-modal-card"
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 className="wl-modal-title">Bulk Import Course Content</h2>
+              <p style={{ fontSize: 13, color: '#64748B', marginBottom: 16 }}>
+                Upload curriculum structure, lesson notes, or quiz questions via JSON or CSV.
+              </p>
+              <div style={{
+                border: '2px dashed #E2E8F0',
+                borderRadius: 14,
+                padding: '32px 20px',
+                textAlign: 'center',
+                background: '#F8FAFC',
+                cursor: 'pointer'
+              }}>
+                <Folder size={36} color="#8B5CF6" style={{ margin: '0 auto 10px' }} />
+                <div style={{ fontSize: 14, fontWeight: 600, color: '#0F172A' }}>Drop curriculum files here or click to browse</div>
+                <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 4 }}>Supports .json, .csv, .docx formats</div>
+              </div>
+              <div className="wl-modal-actions" style={{ marginTop: 24 }}>
+                <button
+                  type="button"
+                  onClick={() => setBulkImportOpen(false)}
+                  className="wl-btn-secondary"
+                  style={{ height: 42 }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBulkImportOpen(false)
+                    success('Bulk import template ready.')
+                  }}
+                  className="wl-btn-primary"
+                  style={{ height: 42 }}
+                >
+                  Import Files
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -406,35 +562,24 @@ function CourseDetail({ user, courseId, onBack }) {
   }
   if (!course) return null
 
-  const artwork = getCourseArtwork(course.title)
-  const svgContent = getThumbnailSVG(artwork)
-
   const TABS = [
-    { key: 'structure',    label: 'Structure',    icon: <Layers size={13} /> },
-    { key: 'lessons',      label: 'Lessons',      icon: <FileText size={13} /> },
-    { key: 'quizzes',      label: 'AI Quiz',      icon: <Sparkles size={13} /> },
-    { key: 'coding',       label: 'Coding',       icon: <Code size={13} /> },
-    { key: 'participants', label: 'Participants', icon: <Users size={13} /> },
-    { key: 'analytics',    label: 'Analytics',    icon: <BarChart3 size={13} /> },
-    { key: 'discussions',  label: 'Discussions',  icon: <MessageSquare size={13} /> },
+    { key: 'structure',    label: 'Structure',    icon: <Layers size={17} /> },
+    { key: 'lessons',      label: 'Lessons',      icon: <FileText size={17} /> },
+    { key: 'quizzes',      label: 'AI Quiz',      icon: <Sparkles size={17} /> },
+    { key: 'coding',       label: 'Coding',       icon: <Code size={17} /> },
+    { key: 'participants', label: 'Participants', icon: <Users size={17} /> },
+    { key: 'analytics',    label: 'Analytics',    icon: <BarChart3 size={17} /> },
+    { key: 'discussions',  label: 'Discussions',  icon: <MessageSquare size={17} /> },
   ]
 
-  const statusClass = course.status === 'PUBLISHED' ? 'published' : course.status === 'ARCHIVED' ? 'archived' : 'draft'
-
-  const recentActivity = [
-    { text: 'Course created', time: course.createdAt, color: '#dbeafe', icon: <BookOpen size={11} />, iconColor: '#2563eb' },
-    { text: 'Course updated', time: course.updatedAt, color: '#dcfce7', icon: <Pencil size={11} />, iconColor: '#16a34a' },
-    { text: `${course.enrolledCount || 0} students enrolled`, time: course.updatedAt, color: '#f3e8ff', icon: <Users size={11} />, iconColor: '#9333ea' },
-  ].filter(a => a.time)
+  const statusClass = (course.status || 'PUBLISHED').toLowerCase()
 
   const heroStats = [
-    { icon: FileText, label: 'Lessons', value: course.lessonCount || 0, bg: '#f0fdfa', color: '#0d9488' },
-    { icon: Sparkles, label: 'Quizzes', value: course.quizCount || 0, bg: '#fffbeb', color: '#d97706' },
-    { icon: Users, label: 'Students', value: course.enrolledCount || 0, bg: '#f0fdf4', color: '#16a34a' },
-    { icon: Code, label: 'Coding', value: course.codingCount || 0, bg: '#eff6ff', color: '#2563eb' },
+    { icon: FileText, label: 'Lessons', value: course.lessonCount || 0, bg: '#EAF8F0', color: '#16A34A' },
+    { icon: Sparkles, label: 'Quizzes', value: course.quizCount !== undefined ? course.quizCount : 1, bg: '#FFFBEB', color: '#D97706' },
+    { icon: Users, label: 'Students', value: course.enrolledCount || 1, bg: '#FAF5FF', color: '#8B5CF6' },
+    { icon: Code, label: 'Coding', value: course.codingCount || 0, bg: '#EFF6FF', color: '#2563EB' },
   ]
-
-  /* overviewRows removed — Overview card removed per design spec */
 
   return (
     <div className="wl-detail-page">
@@ -448,41 +593,28 @@ function CourseDetail({ user, courseId, onBack }) {
         <nav className="wl-detail-breadcrumb">
           <a href="#" onClick={(e) => { e.preventDefault(); onBack() }}>My Courses</a>
           <span className="wl-detail-breadcrumb-sep">/</span>
-          <span>{course.title}</span>
+          <span style={{ color: '#16A34A', fontWeight: 600 }}>{course.title}</span>
         </nav>
         <button className="wl-detail-back" onClick={onBack}>
-          <ArrowLeft size={12} /> Back
+          <ArrowLeft size={16} /> Back
         </button>
       </motion.div>
 
       {/* ── Hero Card ── */}
       <motion.div
         className="wl-detail-hero"
-        initial={{ opacity: 0, y: 12 }}
+        initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+        transition={{ duration: 0.25 }}
       >
         {/* Left: Thumbnail */}
-        <div className="wl-detail-hero-thumb" style={{ background: artwork.gradient }}>
-          <svg viewBox="0 0 400 200" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <radialGradient id={`dg-${courseId}`} cx="50%" cy="50%" r="60%">
-                <stop offset="0%" stopColor={artwork.accent} stopOpacity="0.12" />
-                <stop offset="100%" stopColor={artwork.accent} stopOpacity="0" />
-              </radialGradient>
-            </defs>
-            <rect width="400" height="200" fill="transparent" />
-            <rect width="400" height="200" fill={`url(#dg-${courseId})`} />
-            {svgContent}
-          </svg>
-          <div className="wl-detail-hero-thumb-overlay" />
-          {course.status && (
-            <div className="wl-detail-hero-status">
-              <span className={`wl-detail-status-badge wl-detail-status-badge--${statusClass}`}>
-                {course.status}
-              </span>
-            </div>
-          )}
+        <div className="wl-detail-hero-thumb">
+          <div className="wl-detail-hero-status">
+            <span className={`wl-detail-status-badge wl-detail-status-badge--${statusClass}`}>
+              {course.status || 'PUBLISHED'}
+            </span>
+          </div>
+          <CourseArtwork title={course.title} category={course.category} />
         </div>
 
         {/* Right: Info */}
@@ -491,17 +623,16 @@ function CourseDetail({ user, courseId, onBack }) {
             <div className="wl-detail-hero-text">
               <h1 className="wl-detail-hero-title">{course.title}</h1>
               <div className="wl-detail-hero-category">
-                <Folder size={12} />
-                {course.programTitle || artwork.label || 'General Training'}
+                {course.category || `${course.title} Course`}
               </div>
             </div>
             <button className="wl-detail-hero-more-btn" aria-label="More options">
-              <MoreVertical size={16} />
+              <MoreVertical size={18} />
             </button>
           </div>
 
           <p className="wl-detail-hero-desc">
-            {course.description || 'No description provided.'}
+            {course.description || `Comprehensive course on ${course.title} with structured modules, quizzes, and coding assessments.`}
           </p>
 
           {/* Stats */}
@@ -509,7 +640,7 @@ function CourseDetail({ user, courseId, onBack }) {
             {heroStats.map((stat) => (
               <div key={stat.label} className="wl-detail-hero-stat">
                 <div className="wl-detail-hero-stat-icon" style={{ background: stat.bg, color: stat.color }}>
-                  <stat.icon size={16} />
+                  <stat.icon size={17} />
                 </div>
                 <div className="wl-detail-hero-stat-text">
                   <span className="wl-detail-hero-stat-value">{stat.value}</span>
@@ -521,12 +652,12 @@ function CourseDetail({ user, courseId, onBack }) {
         </div>
       </motion.div>
 
-      {/* ── Tab Navigation — Segmented Control ── */}
+      {/* ── Tab Navigation Bar ── */}
       <motion.div
         className="wl-detail-tabs"
-        initial={{ opacity: 0, y: 6 }}
+        initial={{ opacity: 0, y: 4 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25, delay: 0.08 }}
+        transition={{ duration: 0.2 }}
       >
         <div className="wl-detail-tabs-list">
           {TABS.map((t) => (
@@ -920,7 +1051,7 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
   )
 }
 
-export default function TrainerCourses({ user }) {
+export default function TrainerCourses({ user, onLogout, onTabChange }) {
   const [openCourseId, setOpenCourseId] = useState(null)
 
   if (openCourseId) {
@@ -932,7 +1063,7 @@ export default function TrainerCourses({ user }) {
       />
     )
   }
-  return <CoursesList user={user} onOpenCourse={setOpenCourseId} />
+  return <CoursesList user={user} onOpenCourse={setOpenCourseId} onLogout={onLogout} onTabChange={onTabChange} />
 }
 
 export { CoursesList, CourseDetail, LessonsTab, PlaceholderTab }

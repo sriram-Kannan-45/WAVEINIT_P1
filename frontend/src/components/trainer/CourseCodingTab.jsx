@@ -7,6 +7,8 @@ import {
 import { API } from '../../api/api'
 import { useToast } from '../Toast'
 import { colors, btnPrimary as _btnPrimary, btnSecondary as _btnSecondary, btnDanger as _btnDanger, iconBtn as _iconBtn, STATUS_BADGE as _STATUS_BADGE, lblStyle as _lblStyle, inputStyle as _inputStyle, th as _th, td as _td, skeletonStyle, typography } from '../../theme/tokens'
+import '../../styles/course-tabs.css'
+
 
 function Badge({ value, map }) {
   const v = map[value] || map.DRAFT
@@ -214,98 +216,85 @@ export default function CourseCodingTab({ user, courseId, onCountChange }) {
   }
 
   return (
-    <div>
-      <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        marginBottom: 16, flexWrap: 'wrap', gap: 12,
-      }}>
-        <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0, color: colors.slate[900] }}>
-          {assessments.length} coding assessment{assessments.length !== 1 ? 's' : ''}
+    <div className="cct-container">
+      {/* Header bar */}
+      <div className="cct-header">
+        <h3 className="cct-title">
+          {assessments.length} Coding Assessment{assessments.length !== 1 ? 's' : ''}
         </h3>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="cct-actions">
           <button
             onClick={() => setShowWizard(true)}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '10px 16px', background: `linear-gradient(135deg, ${colors.primary[400]}, ${colors.primary[600]})`,
-              color: colors.text.inverse, border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600,
-              cursor: 'pointer',
-            }}
+            className="cct-btn-ai"
           >
-            <Sparkles size={14} /> Generate with AI
+            <Sparkles size={13} /> Generate with AI
           </button>
           <button
             onClick={handleCreate}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '10px 16px', background: colors.surface.primary, color: colors.secondary[600],
-              border: `1px solid ${colors.secondary[600]}`, borderRadius: 8, fontSize: 13, fontWeight: 600,
-              cursor: 'pointer',
-            }}
+            className="cct-btn-primary"
           >
-            <Plus size={14} /> Create Assessment
+            <Plus size={13} /> Create Assessment
           </button>
         </div>
       </div>
 
       {loading ? (
-        <div style={{ height: 240, background: colors.slate[100], borderRadius: 10 }} />
+        <div style={{ height: 160, background: '#F8FAFC', borderRadius: 12, border: '1px solid #F1F5F9' }} />
       ) : assessments.length === 0 ? (
-        <div style={{
-          padding: '40px 24px', textAlign: 'center',
-          background: colors.surface.primary, border: `1px dashed ${colors.border.dashed}`, borderRadius: 12,
-        }}>
-          <Code size={40} color={colors.slate[300]} style={{ margin: '0 auto 8px' }} />
-          <p style={{ margin: '0 0 6px', color: colors.slate[600], fontWeight: 600 }}>No coding assessments yet</p>
-          <p style={{ margin: 0, color: colors.slate[400], fontSize: 13 }}>
-            Click <strong>Create Assessment</strong> to add the first one.
-          </p>
+        <div className="cct-empty-state">
+          <div className="cct-empty-icon">
+            <Code size={26} color="#16A34A" />
+          </div>
+          <h4>No coding assessments yet</h4>
+          <p>Click <strong>Create Assessment</strong> to add the first one.</p>
         </div>
       ) : (
-        <div style={{
-          background: colors.surface.primary, border: `1px solid ${colors.border.default}`, borderRadius: 12, overflow: 'hidden',
-        }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead style={{ background: colors.slate[50] }}>
+        <div className="cct-table-card">
+          <table className="cct-table">
+            <thead>
               <tr>
-                <th style={_th}>Title</th>
-                <th style={_th}>Problems</th>
-                <th style={_th}>Languages</th>
-                <th style={_th}>Status</th>
-                <th style={_th}>Actions</th>
+                <th>TITLE</th>
+                <th>PROBLEMS</th>
+                <th>LANGUAGES</th>
+                <th>STATUS</th>
+                <th>ACTIONS</th>
               </tr>
             </thead>
             <tbody>
               {assessments.map(a => (
-                <tr key={a.id} style={{ borderTop: `1px solid ${colors.slate[100]}` }}>
-                  <td style={_td}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: colors.slate[900] }}>{a.title || 'Untitled'}</div>
+                <tr key={a.id}>
+                  <td>
+                    <div className="cct-title-cell">{a.title || 'Untitled Assessment'}</div>
                   </td>
-                  <td style={{ ..._td, color: colors.slate[600] }}>{a.problemCount ?? a.problems?.length ?? 0}</td>
-                  <td style={{ ..._td, fontSize: 12, color: colors.slate[500] }}>
+                  <td className="cct-cell-num">{a.problemCount ?? a.problems?.length ?? 0}</td>
+                  <td className="cct-cell-muted">
                     {(a.languages || []).length > 0 ? a.languages.join(', ') : '—'}
                   </td>
-                  <td style={_td}><Badge value={a.status} map={_STATUS_BADGE} /></td>
-                  <td style={_td}>
+                  <td>
+                    <span className={`cct-badge cct-badge--${(a.status || 'DRAFT').toLowerCase()}`}>
+                      {a.status || 'DRAFT'}
+                    </span>
+                  </td>
+                  <td>
                     <div style={{ display: 'flex', gap: 4 }}>
                       <button
                         title="View / Manage"
                         onClick={() => navigate(`/trainer/coding/${a.id}`)}
-                        style={iconBtn(colors.secondary[100], colors.secondary[700])}
+                        className="cct-action-btn"
                       >
                         <Eye size={12} />
                       </button>
                       <button
                         title="Edit"
                         onClick={() => navigate(`/trainer/coding/${a.id}`)}
-                        style={iconBtn(colors.primary[100], colors.primary[600])}
+                        className="cct-action-btn cct-action-btn--edit"
                       >
                         <Pencil size={12} />
                       </button>
                       <button
                         title="Delete"
                         onClick={() => handleDelete(a)}
-                        style={iconBtn(colors.danger[100], colors.danger[600])}
+                        className="cct-action-btn cct-action-btn--delete"
                       >
                         <Trash2 size={12} />
                       </button>

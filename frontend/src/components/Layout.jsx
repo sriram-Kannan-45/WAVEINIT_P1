@@ -1,11 +1,8 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import Sidebar, { navGroups, pageDescriptions } from './saas/Sidebar'
-import TopNavbar from './saas/TopNavbar'
 
 function Layout({ user, children, activeTab, onTabChange, onLogout, headerSlot }) {
-  const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const groups = navGroups[user.role] || []
 
@@ -21,15 +18,6 @@ function Layout({ user, children, activeTab, onTabChange, onLogout, headerSlot }
   })()
 
   const currentPageDescription = pageDescriptions[activeTab] || ''
-
-  const handleOpenCreate = () => {
-    const event = new CustomEvent('open-create-course')
-    window.dispatchEvent(event)
-  }
-
-  const handleProfile = () => {
-    navigate('/my-profile')
-  }
 
   return (
     <div className={`app-layout ${user.role === 'TRAINER' ? 'theme-trainer' : 'theme-academic'}`}>
@@ -57,13 +45,6 @@ function Layout({ user, children, activeTab, onTabChange, onLogout, headerSlot }
       />
 
       <div className="main-content">
-        <TopNavbar
-          user={user}
-          currentPageLabel={currentPageLabel}
-          onOpenCreate={handleOpenCreate}
-          onProfile={handleProfile}
-        />
-
         <motion.main
           id="main-content"
           role="main"

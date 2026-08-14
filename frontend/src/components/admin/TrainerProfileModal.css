@@ -1,0 +1,467 @@
+/* ── WAVE INIT LMS — Trainer Profile View Modal ── */
+
+.tpm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+  z-index: 1050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  box-sizing: border-box;
+}
+
+.tpm-modal {
+  background: #FFFFFF;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 960px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  border: 1px solid #E2E8F0;
+  overflow: hidden;
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, sans-serif;
+  box-sizing: border-box;
+}
+
+/* Modal Header */
+.tpm-header {
+  padding: 16px 24px;
+  border-bottom: 1px solid #EBEFF2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #FFFFFF;
+  flex-shrink: 0;
+}
+
+.tpm-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #0F172A;
+  margin: 0;
+  font-family: 'Poppins', sans-serif;
+}
+
+.tpm-close-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748B;
+  transition: all 150ms ease;
+}
+
+.tpm-close-btn:hover {
+  background: #F1F5F9;
+  color: #0F172A;
+}
+
+/* Modal Body (Scrollable) */
+.tpm-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: #FFFFFF;
+  box-sizing: border-box;
+}
+
+.tpm-body::-webkit-scrollbar {
+  width: 6px;
+}
+.tpm-body::-webkit-scrollbar-track {
+  background: #F8FAFC;
+}
+.tpm-body::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 3px;
+}
+
+/* Hero Section */
+.tpm-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #F1F5F9;
+}
+
+.tpm-hero-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.tpm-avatar-wrap {
+  position: relative;
+  width: 68px;
+  height: 68px;
+  min-width: 68px;
+  min-height: 68px;
+  border-radius: 50%;
+  background: #16A34A;
+  color: #FFFFFF;
+  font-size: 26px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.15);
+}
+
+.tpm-avatar-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.tpm-avatar-cam {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  border: 1px solid #CBD5E1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748B;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.tpm-hero-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tpm-hero-name {
+  font-size: 18px;
+  font-weight: 600;
+  color: #0F172A;
+  margin: 0;
+}
+
+.tpm-hero-role {
+  font-size: 13px;
+  font-weight: 400;
+  color: #64748B;
+  margin: 0;
+}
+
+.tpm-status-pill {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  width: fit-content;
+}
+
+.tpm-status-pill--complete {
+  background: #EAF8F0;
+  color: #16A34A;
+  border: 1px solid #BBF7D0;
+}
+
+.tpm-status-pill--incomplete {
+  background: #FEF3C7;
+  color: #D97706;
+  border: 1px solid #FDE68A;
+}
+
+.tpm-hero-right {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 8px 24px;
+}
+
+.tpm-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: #475569;
+  font-weight: 400;
+}
+
+/* Profile Section Card */
+.tpm-card {
+  background: #FFFFFF;
+  border: 1px solid #EBEFF2;
+  border-radius: 12px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.tpm-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tpm-card-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: #EAF8F0;
+  color: #16A34A;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tpm-card-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #0F172A;
+  margin: 0;
+}
+
+/* Fields Grids */
+.tpm-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px 18px;
+}
+
+.tpm-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr;
+  gap: 14px 18px;
+}
+
+.tpm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tpm-field-label {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #64748B;
+}
+
+.tpm-field-val {
+  font-size: 13px;
+  font-weight: 500;
+  color: #0F172A;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.tpm-field-val--muted {
+  color: #94A3B8;
+  font-weight: 400;
+  font-style: italic;
+}
+
+/* 2-Column Split for Bottom Sections */
+.tpm-split-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.tpm-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Skills Badges */
+.tpm-skills-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tpm-skill-badge {
+  background: #EAF8F0;
+  color: #16A34A;
+  border: 1px solid #BBF7D0;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* Experience & Education Item */
+.tpm-entry-card {
+  border-left: 3px solid #16A34A;
+  padding-left: 12px;
+  margin-bottom: 8px;
+}
+
+.tpm-entry-card:last-child {
+  margin-bottom: 0;
+}
+
+.tpm-entry-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0F172A;
+  margin: 0 0 2px 0;
+}
+
+.tpm-entry-sub {
+  font-size: 12px;
+  font-weight: 400;
+  color: #64748B;
+  margin: 0 0 3px 0;
+}
+
+.tpm-entry-date {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: #94A3B8;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.tpm-entry-desc {
+  font-size: 12px;
+  color: #475569;
+  line-height: 1.45;
+  margin: 0;
+}
+
+/* Bottom Subcards 3-Col */
+.tpm-subcards-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.tpm-subcard {
+  background: #FFFFFF;
+  border: 1px solid #EBEFF2;
+  border-radius: 10px;
+  padding: 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tpm-social-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: #0F172A;
+  text-decoration: none;
+  font-weight: 500;
+  padding: 3px 0;
+  transition: color 150ms;
+}
+
+.tpm-social-link:hover {
+  color: #16A34A;
+  text-decoration: underline;
+}
+
+.tpm-resume-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #BBF7D0;
+  background: #EAF8F0;
+  color: #16A34A;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 150ms;
+  text-decoration: none;
+}
+
+.tpm-resume-btn:hover {
+  background: #16A34A;
+  color: #FFFFFF;
+}
+
+/* Modal Footer */
+.tpm-footer {
+  padding: 14px 24px;
+  border-top: 1px solid #EBEFF2;
+  background: #FFFFFF;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.tpm-btn {
+  height: 38px;
+  padding: 0 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 150ms ease;
+  font-family: 'Poppins', sans-serif;
+}
+
+.tpm-btn--secondary {
+  background: #FFFFFF;
+  border: 1px solid #CBD5E1;
+  color: #334155;
+}
+
+.tpm-btn--secondary:hover {
+  background: #F8FAFC;
+  border-color: #94A3B8;
+}
+
+.tpm-btn--danger {
+  background: #FFF1F2;
+  border: 1px solid #FECDD3;
+  color: #E11D48;
+  font-weight: 600;
+}
+
+.tpm-btn--danger:hover {
+  background: #FEE2E2;
+  border-color: #FDA4AF;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .tpm-grid-3, .tpm-grid-2, .tpm-split-layout, .tpm-subcards-grid {
+    grid-template-columns: 1fr;
+  }
+  .tpm-hero-right {
+    grid-template-columns: 1fr;
+  }
+}

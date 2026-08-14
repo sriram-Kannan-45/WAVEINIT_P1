@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { FileText, Loader2 } from 'lucide-react'
+import { FileText, Loader2, BarChart3, Award } from 'lucide-react'
 import AIQuizList from '../components/AIQuizList'
 import QuizTaking from '../components/QuizTaking'
 import { useToast } from '../components/Toast'
@@ -216,7 +216,7 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
   }
 
   return (
-    <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '24px 32px', minHeight: '100vh', fontFamily: 'var(--font-primary)' }}>
+    <div className="reg-admin" style={{ padding: '24px 28px', maxWidth: '100%', margin: '0', minHeight: '100vh', fontFamily: "'Poppins', sans-serif" }}>
       {tab === 'overview' && (
         <motion.div key="overview" {...fadeVariant} transition={{ duration: 0.25 }}>
           <OverviewSection
@@ -279,17 +279,20 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
 
       {tab === 'reports' && (
         <motion.div key="reports" {...fadeVariant} transition={{ duration: 0.25 }}>
-          <div className="enterprise-card">
-            <div className="enterprise-card__header">
-              <div>
-                <h2 className="enterprise-card__title">My Learning Reports</h2>
-                <p style={{ fontSize: '13px', color: 'var(--neutral-500)', marginTop: '4px' }}>Detailed overview of your academic progress, quiz history, and assessment scores.</p>
-              </div>
-              <button onClick={fetchParticipantReport} className="btn-enterprise btn-enterprise--secondary" style={{ fontSize: '13px' }}>
-                Refresh Report
-              </button>
+          <div className="reg-admin-header">
+            <div className="reg-admin-header-icon" style={{ background: '#f0fdf4', color: '#16a34a' }}>
+              <BarChart3 size={22} />
             </div>
-            <div className="enterprise-card__body">
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <h2 className="reg-admin-title">My Learning Reports</h2>
+              <p className="reg-admin-subtitle">Detailed overview of your academic progress, quiz history, and assessment scores.</p>
+            </div>
+            <button onClick={fetchParticipantReport} className="reg-admin-btn reg-admin-btn--secondary" style={{ cursor: 'pointer' }}>
+              Refresh Report
+            </button>
+          </div>
+          <div className="reg-admin-table-wrap">
+            <div className="reg-card-body">
               {!participantReport ? (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '192px' }}>
                   <div style={{ textAlign: 'center' }}>
@@ -311,7 +314,7 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--neutral-800)' }}>{p.title}</span>
-                                <span className="badge badge--primary" style={{ fontSize: '10px' }}>{p.type}</span>
+                                <span className="reg-admin-badge reg-admin-badge--green" style={{ fontSize: '10px' }}>{p.type}</span>
                               </div>
                               <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--brand-primary)' }}>{p.progressPercent}%</span>
                             </div>
@@ -338,8 +341,8 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
                     {(!participantReport.quizHistory || participantReport.quizHistory.length === 0) ? (
                       <p style={{ color: 'var(--neutral-500)', fontSize: '13px' }}>No quiz attempts recorded yet.</p>
                     ) : (
-                      <div className="enterprise-table-wrapper">
-                        <table className="enterprise-table">
+                      <div className="reg-admin-table-wrap">
+                        <table className="reg-admin-table">
                           <thead>
                             <tr>
                               <th>Quiz Title</th>
@@ -354,13 +357,13 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
                                 <td style={{ fontWeight: 500, color: 'var(--neutral-800)' }}>{q.quizTitle}</td>
                                 <td style={{ textAlign: 'center' }}>
                                   {q.isPublished ? (
-                                    <span className="badge badge--success" style={{ fontWeight: 600 }}>{q.score}%</span>
+                                    <span className="reg-admin-badge reg-admin-badge--green" style={{ fontWeight: 600 }}>{q.score}%</span>
                                   ) : (
-                                    <span className="badge">—</span>
+                                    <span className="reg-admin-badge">—</span>
                                   )}
                                 </td>
                                 <td>
-                                  <span className={`badge ${q.isPublished ? 'badge--success' : ''}`}>
+                                  <span className={`reg-admin-badge ${q.isPublished ? 'reg-admin-badge--green' : ''}`}>
                                     {q.isPublished ? 'Published' : 'Pending'}
                                   </span>
                                 </td>
@@ -381,8 +384,8 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
                     {(!participantReport.assessmentHistory || participantReport.assessmentHistory.length === 0) ? (
                       <p style={{ color: 'var(--neutral-500)', fontSize: '13px' }}>No assessment submissions recorded yet.</p>
                     ) : (
-                      <div className="enterprise-table-wrapper">
-                        <table className="enterprise-table">
+                      <div className="reg-admin-table-wrap">
+                        <table className="reg-admin-table">
                           <thead>
                             <tr>
                               <th>Assessment</th>
@@ -398,15 +401,15 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
                                 <td style={{ fontWeight: 500, color: 'var(--neutral-800)' }}>{ah.assessmentTitle}</td>
                                 <td style={{ textAlign: 'center' }}>
                                   {ah.score !== null ? (
-                                    <span className="badge badge--primary" style={{ fontWeight: 600 }}>
+                                    <span className="reg-admin-badge reg-admin-badge--blue" style={{ fontWeight: 600 }}>
                                       {ah.score} / {ah.maxScore}
                                     </span>
                                   ) : (
-                                    <span className="badge">Pending Grade</span>
+                                    <span className="reg-admin-badge">Pending Grade</span>
                                   )}
                                 </td>
                                 <td>
-                                  <span className={`badge ${ah.status === 'PUBLISHED' || ah.status === 'REVIEWED' ? 'badge--success' : 'badge--primary'}`}>
+                                  <span className={`reg-admin-badge ${ah.status === 'PUBLISHED' || ah.status === 'REVIEWED' ? 'reg-admin-badge--green' : 'reg-admin-badge--blue'}`}>
                                     {ah.status}
                                   </span>
                                 </td>
@@ -432,17 +435,20 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
 
       {tab === 'certificates' && (
         <motion.div key="certificates" {...fadeVariant} transition={{ duration: 0.25 }}>
-          <div className="enterprise-card">
-            <div className="enterprise-card__header">
-              <div>
-                <h2 className="enterprise-card__title">My Certificates</h2>
-                <p style={{ fontSize: '13px', color: 'var(--neutral-500)', marginTop: '4px' }}>View and download your official completion certificates.</p>
-              </div>
-              <button onClick={fetchParticipantReport} className="btn-enterprise btn-enterprise--secondary" style={{ fontSize: '13px' }}>
-                Refresh
-              </button>
+          <div className="reg-admin-header">
+            <div className="reg-admin-header-icon" style={{ background: '#f0fdf4', color: '#16a34a' }}>
+              <Award size={22} />
             </div>
-            <div className="enterprise-card__body">
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <h2 className="reg-admin-title">My Certificates</h2>
+              <p className="reg-admin-subtitle">View and download your official completion certificates.</p>
+            </div>
+            <button onClick={fetchParticipantReport} className="reg-admin-btn reg-admin-btn--secondary" style={{ cursor: 'pointer' }}>
+              Refresh
+            </button>
+          </div>
+          <div className="reg-admin-table-wrap">
+            <div className="reg-card-body">
               {!participantReport ? (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '192px' }}>
                   <div style={{ textAlign: 'center' }}>
@@ -533,8 +539,8 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
                           win.document.write(printContent);
                           win.document.close();
                         }}
-                        className="btn-enterprise btn-enterprise--primary"
-                        style={{ width: '100%', marginTop: '16px' }}
+                        className="reg-admin-btn reg-admin-btn--primary"
+                        style={{ width: '100%', marginTop: '16px', cursor: 'pointer', justifyContent: 'center' }}
                       >
                         Print Certificate
                       </button>

@@ -12,13 +12,14 @@
   --brand-admin-bg: #F0FDF4;
 
   /* Brand Colors — Trainer: Teal Green */
+    /* Brand Colors — Trainer: Teal Green */
   --brand-trainer: #16A34A;
   --brand-trainer-light: #22C55E;
   --brand-trainer-dark: #15803D;
   --brand-trainer-bg: #F0FDF4;
 
   /* Brand Colors — Participant: Emerald */
-  --brand-participant: #22C55E;
+  --brand-participant: #16A34A;
   --brand-participant-light: #4ADE80;
   --brand-participant-dark: #16A34A;
   --brand-participant-bg: #F0FDF4;
@@ -53,9 +54,9 @@
   --status-info-bg: #EFF6FF;
   --status-info-dark: #2563EB;
 
-/* Typography */
---font-primary: 'Poppins', 'Inter', system-ui, -apple-system, sans-serif;
---font-display: 'Poppins', 'Inter', system-ui, -apple-system, sans-serif;
+  /* Typography */
+  --font-primary: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 
   /* Spacing Scale (8px base) */
   --space-0: 0;
@@ -5544,6 +5545,71 @@ h1, h2, h3, h4, h5, h6 {
   line-height: 1.4;
 }
 
+.reg-admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 28px;
+  min-height: 90px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  margin-bottom: 24px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.reg-admin-header-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #16A34A, #15803D);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.2);
+}
+
+.reg-admin-header-icon svg {
+  width: 26px;
+  height: 26px;
+}
+
+.reg-admin-title {
+  font-size: 26px;
+  font-weight: 700;
+  color: #0F172A;
+  margin: 0;
+  line-height: 1.2;
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+}
+
+.reg-admin-subtitle {
+  font-size: 15px;
+  font-weight: 400;
+  color: #64748B;
+  margin: 3px 0 0;
+  line-height: 1.35;
+}
+
+.reg-admin-header .reg-admin-btn--primary {
+  height: 44px;
+  padding: 0 20px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #16A34A, #15803D);
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(22, 163, 74, 0.22);
+  transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
+}
+
+.reg-admin-header .reg-admin-btn--primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.32);
+}
+
 .reg-error-retry {
   display: inline-flex;
   align-items: center;
@@ -6134,6 +6200,11 @@ h1, h2, h3, h4, h5, h6 {
   color: #fff;
 }
 
+.reg-admin-badge--green { background: #dcfce7; color: #15803d; }
+.reg-admin-badge--blue { background: #dbeafe; color: #1d4ed8; }
+.reg-admin-badge--amber { background: #fef3c7; color: #92400e; }
+.reg-admin-badge--red { background: #fee2e2; color: #b91c1c; }
+
 /* Table */
 .reg-admin-table-wrap {
   background: #fff;
@@ -6243,6 +6314,10 @@ h1, h2, h3, h4, h5, h6 {
   border-radius: 6px;
   border: 1px solid;
 }
+
+.reg-admin-status--green { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+.reg-admin-status--amber { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+.reg-admin-status--red { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
 
 .reg-admin-date {
   font-size: 12px;

@@ -8,8 +8,7 @@ import {
 } from 'lucide-react'
 import profileService from '../../services/profileService'
 import { API_BASE, assetUrl } from '../../api/api'
-import { getAuthHeaders } from '../../api/request'
-import '../admin/TrainerProfileModal.css'
+import './TrainerProfileModal.css'
 
 const fmtDate = (d) => {
   if (!d) return '—'
@@ -22,23 +21,19 @@ const fmtDate = (d) => {
 }
 
 const initials = (name) =>
-  name ? name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'PA'
+  name ? name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'TR'
 
-export default function ParticipantProfileView({
+export default function TrainerProfileModal({
   open,
-  userId,
-  participant,
-  fallback,
+  trainer,
   onClose,
-  onDelete,
+  onDelete
 }) {
   const [profileData, setProfileData] = useState(null)
   const [loading, setLoading] = useState(false)
 
-  const targetId = userId || participant?.id || participant?.userId
-
   useEffect(() => {
-    if (!open || !targetId) {
+    if (!open || !trainer?.id) {
       setProfileData(null)
       return
     }
@@ -46,30 +41,18 @@ export default function ParticipantProfileView({
     let isMounted = true
     setLoading(true)
 
-    // Try full profile endpoint first, fallback to participant-profile if needed
-    profileService.getProfileById(targetId)
+    profileService.getProfileById(trainer.id)
       .then(res => {
         if (!isMounted) return
         if (res && res.profile) {
           setProfileData(res.profile)
         } else {
-          return fetch(`${API_BASE}/participant-profile/${targetId}`, { headers: getAuthHeaders() })
-            .then(r => r.json())
-            .then(d => {
-              if (isMounted) setProfileData(d.profile || participant || fallback)
-            })
+          setProfileData(trainer)
         }
       })
       .catch(() => {
         if (!isMounted) return
-        fetch(`${API_BASE}/participant-profile/${targetId}`, { headers: getAuthHeaders() })
-          .then(r => r.json())
-          .then(d => {
-            if (isMounted) setProfileData(d.profile || participant || fallback)
-          })
-          .catch(() => {
-            if (isMounted) setProfileData(participant || fallback)
-          })
+        setProfileData(trainer)
       })
       .finally(() => {
         if (isMounted) setLoading(false)
@@ -78,7 +61,7 @@ export default function ParticipantProfileView({
     return () => {
       isMounted = false
     }
-  }, [open, targetId])
+  }, [open, trainer?.id])
 
   // ESC key listener & body scroll lock
   useEffect(() => {
@@ -96,30 +79,30 @@ export default function ParticipantProfileView({
     }
   }, [open, onClose])
 
-  if (!open) return null
+  if (!open || !trainer) return null
 
   // Merged profile info
-  const userObj = profileData?.user || participant || fallback || {}
-  const prof = profileData || participant?.profile || {}
+  const userObj = profileData?.user || trainer || {}
+  const prof = profileData || trainer.profile || {}
 
-  const fullName = userObj.name || participant?.name || fallback?.name || 'Participant'
-  const email = userObj.email || participant?.email || fallback?.email || '—'
-  const phone = prof.phone || userObj.phone || participant?.phone || '—'
-  const headline = prof.headline || participant?.headline || 'Trainee Software Engineer'
-  const about = prof.about || participant?.about || 'Enthusiastic software engineering trainee focusing on full stack development.'
+  const fullName = userObj.name || trainer.name || 'Trainer'
+  const email = userObj.email || trainer.email || '—'
+  const phone = prof.phone || userObj.phone || trainer.phone || '—'
+  const headline = prof.headline || trainer.headline || 'Senior Software Engineer | React & Node.js Expert'
+  const about = prof.about || trainer.about || 'Passionate about building scalable web applications and mentoring learners.'
   
-  const company = prof.company || participant?.company || 'Wave Init Solutions'
-  const department = prof.department || userObj.department || participant?.department || 'Software Development'
-  const designation = prof.designation || userObj.designation || participant?.designation || 'Trainee'
-  const studentId = prof.studentId || prof.employeeId || userObj.studentId || participant?.studentId || participant?.employeeId || participant?.student_id || 'PAR-1048'
-  const experience = prof.experience || participant?.experience || 'Fresher'
-  const location = prof.location || prof.address || participant?.location || 'Chennai, India'
+  const company = prof.company || trainer.company || 'Wave Init Solutions'
+  const department = prof.department || userObj.department || trainer.department || 'Design'
+  const designation = prof.designation || userObj.designation || trainer.designation || 'Trainer'
+  const employeeId = prof.employeeId || userObj.employeeId || trainer.employeeId || trainer.employee_id || '1'
+  const experience = prof.experience || trainer.experience || 'Fresher'
+  const location = prof.location || prof.address || trainer.location || 'Chennai, India'
   const timezone = prof.timezone || 'Asia/Kolkata (IST)'
   
-  const joinedDate = fmtDate(userObj.created_at || userObj.createdAt || participant?.createdAt || fallback?.createdAt || '2026-08-14')
+  const joinedDate = fmtDate(userObj.created_at || userObj.createdAt || trainer.createdAt || '2025-08-14')
 
   // Avatar / Profile photo
-  const avatarUrl = prof.profileImage || prof.imagePath || userObj.profilePic || participant?.profilePic || null
+  const avatarUrl = prof.profileImage || prof.imagePath || userObj.profilePic || trainer.profilePic || null
 
   // Skills
   let skillsList = []
@@ -129,28 +112,20 @@ export default function ParticipantProfileView({
     skillsList = prof.skills.split(',').map(s => s.trim()).filter(Boolean)
   }
   if (skillsList.length === 0) {
-    skillsList = ['React', 'JavaScript', 'HTML', 'CSS', 'Node.js', 'Express.js', 'Git', 'SQL']
+    skillsList = ['React', 'Node.js', 'JavaScript', 'HTML', 'CSS', 'Git', 'SQL', 'MongoDB', 'REST API', 'Problem Solving']
   }
 
-  // Experiences & Projects
+  // Experiences
   const experiences = Array.isArray(prof.experiences) && prof.experiences.length > 0
     ? prof.experiences
     : [
         {
           id: 1,
-          role: 'Full Stack Web Development Program',
-          company: 'Wave Init LMS',
-          startDate: 'Aug 2026',
+          role: 'Fresher / Trainee',
+          company: 'Wave Init Solutions',
+          startDate: 'Aug 2025',
           endDate: 'Present',
-          description: 'Hands-on training covering React, Node.js, REST APIs and LMS architecture.',
-        },
-        {
-          id: 2,
-          role: 'Frontend Developer Project',
-          company: 'Academic Capstone',
-          startDate: 'Jan 2026',
-          endDate: 'May 2026',
-          description: 'Built responsive web interfaces with modern state management.',
+          description: 'Working on web development projects and learning new technologies.',
         }
       ]
 
@@ -160,19 +135,11 @@ export default function ParticipantProfileView({
     : [
         {
           id: 1,
-          degree: 'Bachelor of Technology (B.Tech)',
-          school: 'Computer Science and Engineering • Anna University',
-          startYear: '2018',
-          endYear: '2022',
-          fieldOfStudy: 'Computer Science',
-        },
-        {
-          id: 2,
-          degree: 'Higher Secondary (12th)',
-          school: 'State Board',
-          startYear: '2016',
-          endYear: '2018',
-          fieldOfStudy: 'Science & Mathematics',
+          degree: 'Bachelor of Engineering',
+          school: 'Anna University',
+          startYear: '2019',
+          endYear: '2023',
+          fieldOfStudy: 'Computer Science and Engineering',
         }
       ]
 
@@ -182,10 +149,10 @@ export default function ParticipantProfileView({
     : [
         {
           id: 1,
-          name: 'Full Stack Web Developer Certificate',
-          issuer: 'Wave Init LMS',
-          issueDate: 'Aug 2026',
-          credentialId: 'WAVE-FS-2026',
+          name: 'Web Development Bootcamp',
+          issuer: 'Udemy',
+          issueDate: 'Aug 2025',
+          credentialId: 'UDEMY12345',
         }
       ]
 
@@ -197,7 +164,7 @@ export default function ParticipantProfileView({
   }
 
   // Resume
-  const resumeUrl = prof.resume || participant?.resume || null
+  const resumeUrl = prof.resume || trainer.resume || null
   const resumeName = resumeUrl ? resumeUrl.split('/').pop() : `${fullName.toLowerCase().replace(/\s+/g, '_')}_resume.pdf`
 
   return createPortal(
@@ -214,7 +181,7 @@ export default function ParticipantProfileView({
           >
             {/* Header */}
             <div className="tpm-header">
-              <h3 className="tpm-title">Participant Profile</h3>
+              <h3 className="tpm-title">Trainer Profile</h3>
               <button className="tpm-close-btn" onClick={onClose} aria-label="Close">
                 <X size={18} />
               </button>
@@ -225,7 +192,7 @@ export default function ParticipantProfileView({
               {loading ? (
                 <div style={{ padding: '60px 0', textAlign: 'center', color: '#16A34A', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
                   <Loader2 size={32} className="bulk-spin" />
-                  <span style={{ fontSize: 13, color: '#64748B' }}>Loading complete participant details...</span>
+                  <span style={{ fontSize: 13, color: '#64748B' }}>Loading complete profile details...</span>
                 </div>
               ) : (
                 <>
@@ -244,7 +211,7 @@ export default function ParticipantProfileView({
                       </div>
                       <div className="tpm-hero-info">
                         <h2 className="tpm-hero-name">{fullName}</h2>
-                        <p className="tpm-hero-role">Participant / Trainee</p>
+                        <p className="tpm-hero-role">Trainer / Senior Trainer</p>
                         <span className="tpm-status-pill tpm-status-pill--complete">
                           Profile Complete
                         </span>
@@ -305,17 +272,17 @@ export default function ParticipantProfileView({
                     </div>
                   </div>
 
-                  {/* Professional / Academic Details Card */}
+                  {/* Professional Details Card */}
                   <div className="tpm-card">
                     <div className="tpm-card-head">
                       <div className="tpm-card-icon">
                         <Briefcase size={14} />
                       </div>
-                      <h4 className="tpm-card-title">Academic & Professional Details</h4>
+                      <h4 className="tpm-card-title">Professional Details</h4>
                     </div>
                     <div className="tpm-grid-3">
                       <div className="tpm-field">
-                        <span className="tpm-field-label">Company / Institute</span>
+                        <span className="tpm-field-label">Company</span>
                         <span className="tpm-field-val">{company}</span>
                       </div>
                       <div className="tpm-field">
@@ -329,8 +296,8 @@ export default function ParticipantProfileView({
                     </div>
                     <div className="tpm-grid-3">
                       <div className="tpm-field">
-                        <span className="tpm-field-label">Participant ID</span>
-                        <span className="tpm-field-val">{studentId}</span>
+                        <span className="tpm-field-label">Employee ID</span>
+                        <span className="tpm-field-val">{employeeId}</span>
                       </div>
                       <div className="tpm-field">
                         <span className="tpm-field-label">Experience</span>
@@ -381,7 +348,7 @@ export default function ParticipantProfileView({
                             <div className="tpm-entry-title">{edu.degree || edu.qualification || 'Degree'}</div>
                             <div className="tpm-entry-sub">{edu.school || edu.institution || 'Anna University'}</div>
                             <div className="tpm-entry-date">
-                              <Calendar size={11} /> {edu.startYear || '2018'} - {edu.endYear || '2022'}
+                              <Calendar size={11} /> {edu.startYear || '2019'} - {edu.endYear || '2023'}
                             </div>
                             {(edu.fieldOfStudy || edu.description) && (
                               <div className="tpm-entry-desc">{edu.fieldOfStudy || edu.description}</div>
@@ -393,20 +360,20 @@ export default function ParticipantProfileView({
 
                     {/* Right Column */}
                     <div className="tpm-col">
-                      {/* Experience & Projects */}
+                      {/* Experience */}
                       <div className="tpm-card">
                         <div className="tpm-card-head">
                           <div className="tpm-card-icon">
                             <Briefcase size={14} />
                           </div>
-                          <h4 className="tpm-card-title">Experience & Projects</h4>
+                          <h4 className="tpm-card-title">Experience</h4>
                         </div>
                         {experiences.map((exp, idx) => (
                           <div key={exp.id || idx} className="tpm-entry-card">
-                            <div className="tpm-entry-title">{exp.role || exp.title || 'Project'}</div>
+                            <div className="tpm-entry-title">{exp.role || exp.title || 'Fresher / Trainee'}</div>
                             <div className="tpm-entry-sub">{exp.company || 'Wave Init Solutions'}</div>
                             <div className="tpm-entry-date">
-                              <Calendar size={11} /> {exp.startDate || 'Aug 2026'} - {exp.endDate || 'Present'}
+                              <Calendar size={11} /> {exp.startDate || 'Aug 2025'} - {exp.endDate || 'Present'}
                             </div>
                             {exp.description && (
                               <div className="tpm-entry-desc">{exp.description}</div>
@@ -427,11 +394,11 @@ export default function ParticipantProfileView({
                           </div>
                           {certifications.map((cert, idx) => (
                             <div key={cert.id || idx}>
-                              <div style={{ fontSize: 11.5, fontWeight: 600, color: '#0F172A' }}>{cert.name || cert.title || 'Certificate'}</div>
-                              <div style={{ fontSize: 11, color: '#64748B' }}>{cert.issuer || cert.organization || 'Wave Init LMS'}</div>
+                              <div style={{ fontSize: 11.5, fontWeight: 600, color: '#0F172A' }}>{cert.name || cert.title || 'Certification'}</div>
+                              <div style={{ fontSize: 11, color: '#64748B' }}>{cert.issuer || cert.organization || 'Udemy'}</div>
                               <div style={{ fontSize: 10.5, color: '#94A3B8', marginTop: 2 }}>
                                 <Calendar size={10} style={{ display: 'inline', marginRight: 3 }} />
-                                {fmtDate(cert.issueDate || '2026-08-14')}
+                                {fmtDate(cert.issueDate || '2025-08-14')}
                               </div>
                               {cert.credentialId && (
                                 <div style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>ID: {cert.credentialId}</div>
@@ -517,17 +484,15 @@ export default function ParticipantProfileView({
               <button className="tpm-btn tpm-btn--secondary" onClick={onClose}>
                 Close
               </button>
-              {onDelete && (
-                <button
-                  className="tpm-btn tpm-btn--danger"
-                  onClick={() => {
-                    onClose?.()
-                    onDelete?.(userObj.id || targetId, fullName)
-                  }}
-                >
-                  <Trash2 size={14} /> Remove Participant
-                </button>
-              )}
+              <button
+                className="tpm-btn tpm-btn--danger"
+                onClick={() => {
+                  onClose?.()
+                  onDelete?.(trainer.id, fullName)
+                }}
+              >
+                <Trash2 size={14} /> Delete Trainer
+              </button>
             </div>
           </motion.div>
         </div>

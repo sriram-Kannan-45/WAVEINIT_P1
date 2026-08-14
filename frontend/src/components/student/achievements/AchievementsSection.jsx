@@ -23,19 +23,14 @@ export default function AchievementsSection({ user, enrollmentsCount = 0 }) {
     .sort((a, b) => b.bestScore - a.bestScore)
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-8)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-        <div style={{
-          width: 44, height: 44, borderRadius: 'var(--radius-xl)',
-          background: 'linear-gradient(135deg, #F79009 0%, #F59E0B 100%)', color: '#fff',
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          boxShadow: '0 8px 18px rgba(247,144,9,0.28)',
-        }}>
-          <Trophy size={20} />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', fontFamily: "'Poppins', sans-serif" }}>
+      <div className="reg-admin-header" style={{ marginBottom: 0 }}>
+        <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
+          <Award size={22} color="#fff" />
         </div>
-        <div>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 800, color: 'var(--neutral-900)', letterSpacing: '-0.03em', margin: 0 }}>Achievements</h2>
-          <p style={{ fontSize: 14, color: 'var(--neutral-500)', margin: '2px 0 0' }}>Badges and certificates you've earned</p>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h2 className="reg-admin-title">Achievements</h2>
+          <p className="reg-admin-subtitle">Badges and certificates earned across your learning journey</p>
         </div>
       </div>
 

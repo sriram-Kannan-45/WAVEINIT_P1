@@ -12,6 +12,8 @@ import {
   colors, btnPrimary, btnSecondary, iconBtn, STATUS_BADGE, RESULT_BADGE,
   lblStyle, lblTiny, inputStyle, th, td, skeletonStyle, typography, DIFF_BADGE,
 } from '../../theme/tokens'
+import '../../styles/course-tabs.css'
+
 
 function Badge({ value, map }) {
   const v = map[value] || map.DRAFT
@@ -611,97 +613,82 @@ export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
   }, [bankQuestions, bankSearch])
 
   return (
-    <div>
-      <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        marginBottom: 16, flexWrap: 'wrap', gap: 12,
-      }}>
-        <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0, color: colors.slate[900] }}>
-          {quizzes.length} quiz{quizzes.length !== 1 ? 'zes' : ''}
+    <div className="cqt-container">
+      {/* Header bar */}
+      <div className="cqt-header">
+        <h3 className="cqt-title">
+          {quizzes.length} Quiz{quizzes.length !== 1 ? 'zes' : ''}
         </h3>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="cqt-actions">
           <button
             onClick={() => setShowGenerator(true)}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '10px 16px', background: `linear-gradient(135deg, ${colors.primary[400]}, ${colors.primary[600]})`,
-              color: colors.surface.primary, border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600,
-              cursor: 'pointer',
-            }}
+            className="cqt-btn-ai"
           >
-            <Sparkles size={14} /> Generate with AI
+            <Sparkles size={13} /> Generate with AI
           </button>
           <button
             onClick={() => setBuilderState({})}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '10px 16px', background: colors.surface.primary, color: colors.primary[600],
-              border: `1px solid ${colors.primary[600]}`, borderRadius: 8, fontSize: 13, fontWeight: 600,
-              cursor: 'pointer',
-            }}
+            className="cqt-btn-manual"
           >
-            <Plus size={14} /> Create Manually
+            <Plus size={13} /> Create Manually
           </button>
         </div>
       </div>
 
       {loading ? (
-        <div style={{ height: 240, background: colors.slate[100], borderRadius: 10 }} />
+        <div style={{ height: 160, background: '#F8FAFC', borderRadius: 12, border: '1px solid #F1F5F9' }} />
       ) : quizzes.length === 0 ? (
-        <div style={{
-          padding: '40px 24px', textAlign: 'center',
-          background: colors.surface.primary, border: `1px dashed ${colors.slate[300]}`, borderRadius: 12,
-        }}>
-          <Sparkles size={40} color={colors.slate[300]} style={{ margin: '0 auto 8px' }} />
-          <p style={{ margin: '0 0 6px', color: colors.slate[600], fontWeight: 600 }}>No quizzes yet</p>
-          <p style={{ margin: 0, color: colors.slate[400], fontSize: 13 }}>
-            Click <strong>Create Manually</strong> to add the first one.
-          </p>
+        <div className="cqt-empty-state">
+          <Sparkles size={32} color="#94A3B8" style={{ margin: '0 auto 6px' }} />
+          <h4>No quizzes yet</h4>
+          <p>Click <strong>Create Manually</strong> or <strong>Generate with AI</strong> to add the first one.</p>
         </div>
       ) : (
-        <div style={{
-          background: colors.surface.primary, border: `1px solid ${colors.slate[200]}`, borderRadius: 12, overflow: 'hidden',
-        }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead style={{ background: colors.surface.secondary }}>
+        <div className="cqt-table-card">
+          <table className="cqt-table">
+            <thead>
               <tr>
-                <th style={th}>Title</th>
-                <th style={th}>Lesson</th>
-                <th style={th}>Questions</th>
-                <th style={th}>Status</th>
-                <th style={th}>Result</th>
-                <th style={th}>Actions</th>
+                <th>TITLE</th>
+                <th>LESSON</th>
+                <th>QUESTIONS</th>
+                <th>STATUS</th>
+                <th>RESULT</th>
+                <th>ACTIONS</th>
               </tr>
             </thead>
             <tbody>
               {quizzes.map(q => (
-                <tr key={q.id} style={{ borderTop: `1px solid ${colors.slate[100]}` }}>
-                  <td style={td}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: colors.slate[900] }}>{q.title}</div>
+                <tr key={q.id}>
+                  <td>
+                    <div className="cqt-quiz-title">{q.title}</div>
                     {q.isMandatory && (
-                      <span style={{ fontSize: 9, color: colors.danger[600], fontWeight: 700, letterSpacing: 0.5 }}>MANDATORY</span>
+                      <span className="cqt-badge-mandatory">MANDATORY</span>
                     )}
                   </td>
-                  <td style={{ ...td, color: colors.slate[500], fontSize: 12 }}>{q.lessonTitle || '— Course-level —'}</td>
-                  <td style={{ ...td, fontSize: 13, color: colors.slate[600] }}>{q.questionCount}</td>
-                  <td style={td}><Badge value={q.status} map={STATUS_BADGE} /></td>
-                  <td style={td}><Badge value={q.resultStatus} map={RESULT_BADGE} /></td>
-                  <td style={td}>
+                  <td className="cqt-cell-muted">{q.lessonTitle || '— Course-level —'}</td>
+                  <td className="cqt-cell-num">{q.questionCount ?? q.questions?.length ?? 0}</td>
+                  <td>
+                    <span className={`cqt-badge cqt-badge--${(q.status || 'DRAFT').toLowerCase()}`}>
+                      {q.status || 'DRAFT'}
+                    </span>
+                  </td>
+                  <td>
+                    <span className={`cqt-badge cqt-badge--${(q.resultStatus || 'HIDDEN').toLowerCase()}`}>
+                      {q.resultStatus || 'HIDDEN'}
+                    </span>
+                  </td>
+                  <td>
                     <div style={{ display: 'flex', gap: 4 }}>
-                      <button title="Preview" onClick={() => openPreview(q)} style={iconBtn(colors.slate[100], colors.slate[600])}>
+                      <button title="Preview" onClick={() => openPreview(q)} className="cqt-action-btn">
                         <Eye size={12} />
                       </button>
-                      <button title="Edit" onClick={() => openEdit(q)} style={iconBtn(colors.primary[50], colors.primary[600])}>
+                      <button title="Edit" onClick={() => openEdit(q)} className="cqt-action-btn cqt-action-btn--edit">
                         <Pencil size={12} />
                       </button>
                       {q.status === 'DRAFT' ? (
                         <button title="Send to participants" onClick={() => sendQuiz(q)}
                           disabled={sendingQuizId === q.id}
-                          style={{
-                            ...iconBtn(colors.success[100], colors.success[700]),
-                            opacity: sendingQuizId === q.id ? 0.5 : 1,
-                            cursor: sendingQuizId === q.id ? 'not-allowed' : 'pointer',
-                          }}
+                          className="cqt-action-btn cqt-action-btn--send"
                         >
                           <Send size={12} />
                         </button>
@@ -710,24 +697,21 @@ export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
                           title={q.resultStatus === 'PUBLISHED' ? 'Already published' : 'Publish results'}
                           onClick={() => q.resultStatus !== 'PUBLISHED' && setPublishQuiz(q)}
                           disabled={q.resultStatus === 'PUBLISHED'}
-                          style={{
-                            ...iconBtn(colors.success[100], colors.success[700]),
-                            opacity: q.resultStatus === 'PUBLISHED' ? 0.4 : 1,
-                            cursor: q.resultStatus === 'PUBLISHED' ? 'not-allowed' : 'pointer',
-                          }}
+                          className="cqt-action-btn cqt-action-btn--send"
+                          style={{ opacity: q.resultStatus === 'PUBLISHED' ? 0.45 : 1 }}
                         >
                           <Send size={12} />
                         </button>
                       )}
-                      <button title="Manage" onClick={() => navigate(`/trainer/quiz/${q.id}`)}
-                        style={iconBtn(colors.primary[100], colors.primary[700])}>
+                      <button title="Manage / Analytics" onClick={() => navigate(`/trainer/quiz/${q.id}`)}
+                        className="cqt-action-btn cqt-action-btn--manage">
                         <BarChart3 size={12} />
                       </button>
                       <button title="Leaderboard" onClick={() => openLeaderboard(q)}
-                        style={iconBtn(colors.warning[100], colors.warning[800])}>
+                        className="cqt-action-btn cqt-action-btn--trophy">
                         <Trophy size={12} />
                       </button>
-                      <button title="Delete" onClick={() => remove(q)} style={iconBtn(colors.danger[100], colors.danger[600])}>
+                      <button title="Delete" onClick={() => remove(q)} className="cqt-action-btn cqt-action-btn--delete">
                         <Trash2 size={12} />
                       </button>
                     </div>
@@ -739,20 +723,19 @@ export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
         </div>
       )}
 
-      <div style={{
-        marginTop: 24, background: colors.surface.primary, border: `1px solid ${colors.slate[200]}`, borderRadius: 12,
-      }}>
+      {/* Question Bank Accordion */}
+      <div className="cqt-bank-card">
         <button
           onClick={() => setBankExpanded(v => !v)}
-          style={{
-            width: '100%', padding: 14, border: 'none', cursor: 'pointer', background: 'transparent',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          }}
+          className="cqt-bank-toggle"
         >
-          <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, color: colors.slate[900] }}>
-            <ListChecks size={16} /> Question Bank ({bankQuestions.length})
-          </span>
-          {bankExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <BookOpen size={14} color="#16A34A" />
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: '#0F172A' }}>
+              Question Bank ({bankQuestions.length})
+            </span>
+          </div>
+          {bankExpanded ? <ChevronUp size={14} color="#64748B" /> : <ChevronDown size={14} color="#64748B" />}
         </button>
         {bankExpanded && (
           <div style={{ borderTop: `1px solid ${colors.slate[200]}`, padding: 14 }}>

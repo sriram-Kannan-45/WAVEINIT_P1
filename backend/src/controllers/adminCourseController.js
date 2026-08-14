@@ -449,20 +449,23 @@ async function updateCourse(req, res) {
 
     // Trainer reassignment — validate and mirror into the assignments table.
     let newTrainerId = course.trainerId;
-    if (trainerId !== undefined && trainerId !== null && trainerId !== course.trainerId) {
-      const trainer = await User.findOne({ where: { id: trainerId, role: 'TRAINER' } });
-      if (!trainer) {
-        return res.status(400).json({ success: false, error: 'Invalid trainer ID' });
-      }
-      newTrainerId = trainer.id;
-      // Add new assignment row. Old one is left in place — by spec, this
-      // table represents history and supports future multi-trainer mode.
-      try {
+    if (trainerId !== undefined) {
+      if (trainerId !== null && trainerId !== '') {
+        const parsedTrainerId = parseInt(trainerId, 10);
+        const trainer = await User.findOne({ where: { id: parsedTrainerId, role: 'TRAINER' } });
+        if (!trainer) {
+          return res.status(400).json({ success: false, error: 'Invalid trainer ID' });
+        }
+        newTrainerId = trainer.id;
+        await CourseTrainerAssignment.destroy({ where: { courseId: course.id } });
         await CourseTrainerAssignment.create({
           courseId: course.id,
           trainerId: newTrainerId,
         });
-      } catch { /* unique — already there */ }
+      } else {
+        newTrainerId = null;
+        await CourseTrainerAssignment.destroy({ where: { courseId: course.id } });
+      }
     }
 
     if (trainingProgramId !== undefined && trainingProgramId !== null && trainingProgramId !== course.trainingProgramId) {

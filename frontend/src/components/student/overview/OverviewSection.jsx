@@ -1,20 +1,80 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { motion } from 'framer-motion'
-import { BookOpen, TrendingUp, Award, Clock, ArrowRight, Sparkles, BarChart3, ChevronRight, Trophy, Target, Video } from 'lucide-react'
+import {
+  BookOpen, TrendingUp, Award, Clock, ArrowRight, Sparkles, BarChart3,
+  ChevronRight, Trophy, Target, Video, Users, CheckCircle, FileText,
+  Star, Plus, Calendar
+} from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import interviewService from '../../../services/interviewService'
 import { useStudentStats } from '../../../hooks/useStudentStats'
 import { useContinueLearning } from '../../../hooks/useContinueLearning'
-import { LineAreaChart } from '../../ui/ChartWrappers'
+import CourseArtwork from '../../common/CourseArtwork'
+import '../../../styles/trainer-my-trainings.css'
 
-const itemVariants = {
-  hidden: { opacity: 0, y: 12 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.3, ease: [0.16, 1, 0.3, 1] } },
-}
+function OverviewAreaChart() {
+  return (
+    <div className="tdb-chart-box">
+      <svg viewBox="0 0 460 120" width="100%" height="120" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="tdb-green-grad-p" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#16A34A" stopOpacity="0.28" />
+            <stop offset="100%" stopColor="#16A34A" stopOpacity="0.0" />
+          </linearGradient>
+        </defs>
 
-const fadeVariant = {
-  hidden: { opacity: 0 },
-  visible: { opacity: 1, transition: { duration: 0.4, ease: [0.16, 1, 0.3, 1] } },
+        {/* Y Axis Grid lines & labels */}
+        {[
+          { label: '100', y: 16 },
+          { label: '75', y: 38 },
+          { label: '50', y: 60 },
+          { label: '25', y: 82 },
+          { label: '0', y: 104 },
+        ].map((g, i) => (
+          <g key={i}>
+            <text x="24" y={g.y + 3.5} fill="#94A3B8" fontSize="9.5" textAnchor="end" fontFamily="inherit" fontWeight="500">
+              {g.label}
+            </text>
+            <line x1="34" y1={g.y} x2="450" y2={g.y} stroke="#F1F5F9" strokeWidth="1" strokeDasharray="3 3" />
+          </g>
+        ))}
+
+        {/* Area fill */}
+        <path
+          d="M 45 104 L 115 104 C 145 104 165 92 185 82 C 205 82 225 82 250 82 C 290 82 335 48 375 28 C 405 18 425 16 440 16 L 440 104 Z"
+          fill="url(#tdb-green-grad-p)"
+        />
+
+        {/* Smooth curve line */}
+        <path
+          d="M 45 104 L 115 104 C 145 104 165 92 185 82 C 205 82 225 82 250 82 C 290 82 335 48 375 28 C 405 18 425 16 440 16"
+          fill="none"
+          stroke="#16A34A"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+        />
+
+        {/* Data point dots */}
+        <circle cx="185" cy="82" r="3.2" fill="#16A34A" stroke="#FFFFFF" strokeWidth="2" />
+        <circle cx="250" cy="82" r="3.2" fill="#16A34A" stroke="#FFFFFF" strokeWidth="2" />
+        <circle cx="440" cy="16" r="3.8" fill="#16A34A" stroke="#FFFFFF" strokeWidth="2" />
+
+        {/* X Axis labels */}
+        {[
+          { label: 'Mar', x: 45 },
+          { label: 'Apr', x: 115 },
+          { label: 'May', x: 185 },
+          { label: 'Jun', x: 250 },
+          { label: 'Jul', x: 360 },
+          { label: 'Aug', x: 440 },
+        ].map((m, i) => (
+          <text key={i} x={m.x} y="118" fill="#94A3B8" fontSize="9.5" textAnchor="middle" fontFamily="inherit" fontWeight="500">
+            {m.label}
+          </text>
+        ))}
+      </svg>
+    </div>
+  )
 }
 
 export default function OverviewSection({
@@ -43,264 +103,314 @@ export default function OverviewSection({
 
   const enrolledCount = enrollments.length
   const completedCount = enrollments.filter(e => e.status === 'COMPLETED').length
-  const quizCount = quizzes.length
+  const inProgressCount = Math.max(0, enrolledCount - completedCount)
   const avgScore = stats?.averageScore ?? 0
 
-  const { continueLearning } = useContinueLearning()
-  const recentItems = (continueLearning || []).slice(0, 4)
+  const participantFirstName = user?.name?.trim().split(' ')[0] || 'Learner'
+  const participantInitials = useMemo(() => {
+    if (!user?.name) return 'LE'
+    return user.name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+  }, [user?.name])
 
-  const chartData = [
-    { name: 'Week 1', score: 45 },
-    { name: 'Week 2', score: 62 },
-    { name: 'Week 3', score: 58 },
-    { name: 'Week 4', score: 78 },
-    { name: 'Week 5', score: 72 },
-    { name: 'Week 6', score: 85 },
-    { name: 'Week 7', score: 88 },
-  ]
-
-  const statCards = [
-    { label: 'Enrolled Courses', value: enrolledCount, icon: BookOpen, bg: '#f0fdf4', color: '#16a34a' },
-    { label: 'Completed Courses', value: completedCount, icon: TrendingUp, bg: '#f0f9ff', color: '#0284c7' },
-    { label: 'Average Score', value: avgScore > 0 ? `${avgScore}%` : '—', icon: BarChart3, bg: '#fffbeb', color: '#d97706' },
-    { label: 'Certificates', value: quizCount, icon: Award, bg: '#faf5ff', color: '#9333ea' },
-  ]
-
-  const recentActivity = [
-    { id: 1, text: 'You completed a lesson in React Fundamentals', time: '2 hours ago', color: '#16a34a' },
-    { id: 2, text: 'New quiz available: Advanced JavaScript', time: '5 hours ago', color: '#3b82f6' },
-    { id: 3, text: 'Certificate earned for Node.js Basics', time: '1 day ago', color: '#9333ea' },
-    { id: 4, text: 'Course progress updated: Python Essentials', time: '2 days ago', color: '#d97706' },
-  ]
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Active'
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      {/* Welcome Section */}
-      <motion.div variants={itemVariants} initial="hidden" animate="visible" className="wl-welcome">
-        <div>
-          <h1 className="wl-welcome-title">
-            Welcome back, {user?.name?.split(' ')[0] || 'Student'} 👋
-          </h1>
-          <p className="wl-welcome-sub">
-            Track your learning progress and continue where you left off.
-          </p>
+    <div className="tdb-dashboard-page" style={{ padding: 0, height: 'auto', background: 'transparent' }}>
+      {/* ── 1. Page Header Card ── */}
+      <div className="tdb-page-header">
+        <div className="tdb-header-left">
+          <div className="tdb-header-icon-box">
+            <TrendingUp size={20} strokeWidth={2.4} />
+          </div>
+          <div>
+            <h1 className="tdb-header-title">Welcome back, {participantFirstName}!</h1>
+            <p className="tdb-header-subtitle">Here's an overview of your training activities.</p>
+          </div>
         </div>
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
+
+        <button
+          className="tdb-create-btn"
           onClick={onGoToCourses}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '10px 20px',
-            borderRadius: 10,
-            border: 'none',
-            background: '#16a34a',
-            color: '#fff',
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: 'pointer',
-            fontFamily: 'var(--font-primary)',
-            transition: 'background 150ms ease',
-            flexShrink: 0,
-          }}
         >
-          <BookOpen size={16} />
-          Browse Courses
-        </motion.button>
-      </motion.div>
+          <Plus size={15} strokeWidth={2.5} /> Explore Courses
+        </button>
+      </div>
 
-      {/* Stat Cards */}
-      <motion.div variants={itemVariants} initial="hidden" animate="visible" className="wl-stat-grid">
-        {statCards.map((s, i) => (
-          <motion.div
-            key={s.label}
-            variants={itemVariants}
-            initial="hidden"
-            animate="visible"
-            transition={{ delay: i * 0.06 }}
-            className="wl-stat-card"
-            whileHover={{ y: -2 }}
-          >
-            <div className="wl-stat-card-icon" style={{ background: s.bg, color: s.color }}>
-              <s.icon size={20} />
-            </div>
-            <div>
-              <div className="wl-stat-card-value">{s.value}</div>
-              <div className="wl-stat-card-label">{s.label}</div>
-            </div>
-          </motion.div>
-        ))}
-      </motion.div>
+      {/* ── 2. Statistics Cards Row (4 Cards) ── */}
+      <div className="tdb-stats-grid">
+        {/* Card 1: Total Trainings */}
+        <div className="tdb-stat-card">
+          <div className="tdb-stat-icon-wrap tdb-stat-icon-wrap--green">
+            <BookOpen size={18} strokeWidth={2} />
+          </div>
+          <div className="tdb-stat-text-wrap">
+            <span className="tdb-stat-label">Total Trainings</span>
+            <div className="tdb-stat-value">{enrolledCount}</div>
+            <span className="tdb-stat-sub">All courses enrolled</span>
+          </div>
+        </div>
 
-      {/* Content Grid: Chart + Activity | Continue Learning */}
-      <div className="wl-content-grid">
-        {/* Left Column */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          {/* Learning Progress Chart */}
-          <motion.div variants={itemVariants} initial="hidden" animate="visible" className="wl-dash-card">
-            <div className="wl-dash-card-header">
-              <h3 className="wl-dash-card-title">Learning Progress</h3>
-              <select style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, background: '#fff', color: '#374151', cursor: 'pointer', outline: 'none' }}>
-                <option>This Month</option>
-                <option>This Week</option>
-                <option>Last Quarter</option>
-              </select>
-            </div>
-            <div className="wl-chart-container">
-              <LineAreaChart
-                data={chartData}
-                xKey="name"
-                yKey="score"
-                height={200}
-                strokeColor="#16a34a"
-                fillColorStart="#bbf7d0"
-                fillColorEnd="#f0fdf4"
-              />
-            </div>
-          </motion.div>
+        {/* Card 2: Published / Active */}
+        <div className="tdb-stat-card">
+          <div className="tdb-stat-icon-wrap tdb-stat-icon-wrap--blue">
+            <CheckCircle size={18} strokeWidth={2} />
+          </div>
+          <div className="tdb-stat-text-wrap">
+            <span className="tdb-stat-label">Published</span>
+            <div className="tdb-stat-value">{inProgressCount > 0 ? inProgressCount : enrolledCount}</div>
+            <span className="tdb-stat-sub">Courses live</span>
+          </div>
+        </div>
 
-          {/* Recent Activity */}
-          <motion.div variants={itemVariants} initial="hidden" animate="visible" className="wl-dash-card">
-            <div className="wl-dash-card-header">
-              <h3 className="wl-dash-card-title">Recent Activity</h3>
-            </div>
-            <div className="wl-dash-card-body">
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                {recentActivity.map((act) => (
-                  <div key={act.id} className="wl-activity-item">
-                    <div className="wl-activity-dot" style={{ background: act.color }} />
-                    <div style={{ flex: 1 }}>
-                      <div className="wl-activity-text">{act.text}</div>
-                      <div className="wl-activity-time">{act.time}</div>
-                    </div>
-                  </div>
-                ))}
+        {/* Card 3: Drafts / In progress */}
+        <div className="tdb-stat-card">
+          <div className="tdb-stat-icon-wrap tdb-stat-icon-wrap--amber">
+            <Clock size={18} strokeWidth={2} />
+          </div>
+          <div className="tdb-stat-text-wrap">
+            <span className="tdb-stat-label">In Progress</span>
+            <div className="tdb-stat-value">{inProgressCount}</div>
+            <span className="tdb-stat-sub">In progress</span>
+          </div>
+        </div>
+
+        {/* Card 4: Total Students / Score */}
+        <div className="tdb-stat-card">
+          <div className="tdb-stat-icon-wrap tdb-stat-icon-wrap--purple">
+            <Users size={18} strokeWidth={2} />
+          </div>
+          <div className="tdb-stat-text-wrap">
+            <span className="tdb-stat-label">Average Score</span>
+            <div className="tdb-stat-value">{avgScore > 0 ? `${avgScore}%` : '85%'}</div>
+            <span className="tdb-stat-sub">Across all courses</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── 3. Main Two-Column Grid ── */}
+      <div className="tdb-main-grid">
+        {/* LEFT COLUMN: Training Overview Card + Metric Strip */}
+        <div className="tdb-card">
+          <div className="tdb-card-header">
+            <h2 className="tdb-card-title">Training Overview</h2>
+            <select className="tdb-select" defaultValue="This Month">
+              <option value="This Month">This Month</option>
+              <option value="Last Month">Last Month</option>
+              <option value="This Year">This Year</option>
+            </select>
+          </div>
+
+          {/* Chart */}
+          <OverviewAreaChart />
+
+          {/* Mini Metric Strip */}
+          <div className="tdb-metric-strip">
+            <div className="tdb-metric-item">
+              <div className="tdb-metric-icon" style={{ background: '#EAF8F0', color: '#16A34A' }}>
+                <Users size={14} strokeWidth={2.2} />
+              </div>
+              <div>
+                <div className="tdb-metric-val">{enrolledCount}</div>
+                <div className="tdb-metric-sub">Active Students</div>
               </div>
             </div>
-          </motion.div>
+
+            <div className="tdb-metric-item">
+              <div className="tdb-metric-icon" style={{ background: '#FFFBEB', color: '#F59E0B' }}>
+                <BookOpen size={14} strokeWidth={2.2} />
+              </div>
+              <div>
+                <div className="tdb-metric-val">{enrolledCount}</div>
+                <div className="tdb-metric-sub">Assigned Courses</div>
+              </div>
+            </div>
+
+            <div className="tdb-metric-item">
+              <div className="tdb-metric-icon" style={{ background: '#EFF6FF', color: '#2563EB' }}>
+                <FileText size={14} strokeWidth={2.2} />
+              </div>
+              <div>
+                <div className="tdb-metric-val">{quizzes.length}</div>
+                <div className="tdb-metric-sub">Feedback Reviews</div>
+              </div>
+            </div>
+
+            <div className="tdb-metric-item">
+              <div className="tdb-metric-icon" style={{ background: '#FAF5FF', color: '#8B5CF6' }}>
+                <Star size={14} strokeWidth={2.2} />
+              </div>
+              <div>
+                <div className="tdb-metric-val">{upcomingInterviews.length}</div>
+                <div className="tdb-metric-sub">Interviews</div>
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* Right Column */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          {/* Continue Learning */}
-          <motion.div variants={itemVariants} initial="hidden" animate="visible" className="wl-dash-card">
-            <div className="wl-dash-card-header">
-              <h3 className="wl-dash-card-title">Continue Learning</h3>
-              <button className="wl-dash-card-link" onClick={onClickCourse}>
-                View all <ArrowRight size={12} />
+        {/* RIGHT COLUMN: Stacked Cards (Recent Trainings + Upcoming Sessions) */}
+        <div className="tdb-right-col">
+          {/* Card 1: Recent Trainings */}
+          <div className="tdb-card" style={{ flex: 1.1 }}>
+            <div className="tdb-card-header">
+              <h2 className="tdb-card-title">Recent Trainings</h2>
+              <button
+                className="tdb-link-btn"
+                onClick={onClickCourse}
+              >
+                View all →
               </button>
             </div>
-            <div className="wl-dash-card-body" style={{ padding: '12px 16px 16px' }}>
-              {recentItems.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '24px 0', color: '#9ca3af', fontSize: 13 }}>
-                  No recent activity yet
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {recentItems.map((item, idx) => (
-                    <div
-                      key={idx}
-                      className="wl-course-card"
-                      onClick={() => onResume?.(item)}
-                    >
-                      <div className="wl-course-card-icon" style={{
-                        background: item.type === 'course' ? '#f0fdf4' : item.type === 'quiz' ? '#f0f9ff' : '#faf5ff',
-                        color: item.type === 'course' ? '#16a34a' : item.type === 'quiz' ? '#3b82f6' : '#9333ea',
-                      }}>
-                        {item.type === 'course' ? <BookOpen size={18} /> : item.type === 'quiz' ? <Sparkles size={18} /> : <FileText size={18} />}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className="wl-course-card-title">{item.title}</div>
-                        <div className="wl-course-card-meta">
-                          {item.type === 'course' ? 'Course' : item.type === 'quiz' ? 'Quiz' : 'Lesson'} · {item.subtitle || ''}
-                        </div>
-                      </div>
-                      <ArrowRight size={14} style={{ color: '#d1d5db', flexShrink: 0 }} />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </motion.div>
 
-          {/* Upcoming Interviews */}
-          <motion.div variants={itemVariants} initial="hidden" animate="visible" className="wl-dash-card">
-            <div className="wl-dash-card-header">
-              <h3 className="wl-dash-card-title">Upcoming Interviews</h3>
-              <button className="wl-dash-card-link" onClick={() => navigate('/interviews')}>
-                View all <ArrowRight size={12} />
+            {enrollments.length === 0 && trainings.length === 0 ? (
+              <div style={{ padding: '32px 16px', textAlign: 'center', color: '#94A3B8' }}>
+                <BookOpen size={30} style={{ margin: '0 auto 8px', color: '#CBD5E1' }} />
+                <p style={{ margin: '0 0 2px', fontWeight: 600, fontSize: 13, color: '#475569' }}>No enrolled trainings yet</p>
+                <span style={{ fontSize: 11.5, color: '#94A3B8' }}>Trainings you enroll in will appear here.</span>
+              </div>
+            ) : (
+              (enrollments.length > 0 ? enrollments : trainings).slice(0, 2).map((tr) => (
+                <div
+                  key={tr.id || tr.courseId || tr.trainingId}
+                  className="tdb-course-row"
+                  onClick={onClickCourse}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <div className="tdb-course-thumb">
+                    <div className="tdb-course-badge-status">{tr.status || 'PUBLISHED'}</div>
+                    <div className="tdb-course-badge-students">
+                      <Users size={9} /> {tr.enrolledCount || 1}
+                    </div>
+                    <CourseArtwork title={tr.title || tr.trainingTitle} category={tr.category} />
+                  </div>
+
+                  <div className="tdb-course-info">
+                    <span className="tdb-category-pill">{tr.category || tr.programTitle || 'TRAINING'}</span>
+                    <h3 className="tdb-course-name">{tr.title || tr.trainingTitle}</h3>
+                    <p className="tdb-course-desc">
+                      {tr.description || `Training curriculum for ${tr.title || tr.trainingTitle}.`}
+                    </p>
+                    <div className="tdb-course-meta">
+                      <span>{tr.capacity ? `${tr.capacity} Max Seats` : '3 Max Seats'}</span>
+                      <span>|</span>
+                      <span>{tr.enrolledCount || 1} Students</span>
+                    </div>
+                    <div className="tdb-course-footer-row">
+                      <div className="tdb-author-avatar">{participantInitials}</div>
+                      <span>{tr.startDate || tr.createdAt ? fmtDate(tr.startDate || tr.createdAt) : 'Aug 14, 2026'}</span>
+                      <span>•</span>
+                      <span>Assigned by Admin</span>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Card 2: Upcoming Sessions */}
+          <div className="tdb-card" style={{ flex: 0.9 }}>
+            <div className="tdb-card-header">
+              <h2 className="tdb-card-title">Upcoming Sessions</h2>
+              <button
+                className="tdb-link-btn"
+                onClick={() => navigate('/interviews')}
+              >
+                View all →
               </button>
             </div>
-            <div className="wl-dash-card-body" style={{ padding: '8px 16px 16px' }}>
-              {upcomingInterviews.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '16px 0', color: '#9ca3af', fontSize: 13 }}>
-                  No upcoming interviews scheduled
-                </div>
-              ) : (
-                upcomingInterviews.map((iv) => {
-                  const d = new Date(iv.scheduled_at)
-                  const month = d.toLocaleString('en-US', { month: 'short' }).toUpperCase()
-                  const date = d.getDate()
-                  const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-                  return (
-                    <div key={iv.id} className="wl-session-card" style={{ cursor: 'pointer' }} onClick={() => navigate(`/interview/${iv.id}/room`)}>
-                      <div className="wl-session-date" style={{ background: '#f0fdf4', color: '#16a34a' }}>
-                        <span className="wl-session-date-month">{month}</span>
-                        <span className="wl-session-date-day">{date}</span>
-                      </div>
-                      <div className="wl-session-info">
-                        <div className="wl-session-title">{iv.title || `${iv.type || 'Technical'} Interview`}</div>
-                        <div className="wl-session-time">{time} · {iv.interviewer?.name || 'Interviewer'}</div>
-                      </div>
-                      <span className="wl-session-badge" style={{ background: '#16a34a', color: '#fff' }}>Join</span>
-                    </div>
-                  )
-                })
-              )}
-            </div>
-          </motion.div>
 
-          {/* Upcoming Classes */}
-          <motion.div variants={itemVariants} initial="hidden" animate="visible" className="wl-dash-card">
-            <div className="wl-dash-card-header">
-              <h3 className="wl-dash-card-title">Upcoming Classes</h3>
-            </div>
-            <div className="wl-dash-card-body" style={{ padding: '8px 16px 16px' }}>
-              {[
-                { date: '16', month: 'JUL', title: 'React Advanced Concepts', time: '10:00 AM - 12:00 PM' },
-                { date: '18', month: 'JUL', title: 'Node.js Best Practices', time: '02:00 PM - 04:00 PM' },
-                { date: '20', month: 'JUL', title: 'Python Data Structures', time: '11:00 AM - 01:00 PM' },
-              ].map((s, idx) => (
-                <div key={idx} className="wl-session-card">
-                  <div className="wl-session-date">
-                    <span className="wl-session-date-month">{s.month}</span>
-                    <span className="wl-session-date-day">{s.date}</span>
+            {upcomingInterviews.length === 0 ? (
+              <div style={{ padding: '32px 16px', textAlign: 'center', color: '#94A3B8' }}>
+                <Calendar size={30} style={{ margin: '0 auto 8px', color: '#CBD5E1' }} />
+                <p style={{ margin: '0 0 2px', fontWeight: 600, fontSize: 13, color: '#475569' }}>No upcoming sessions</p>
+                <span style={{ fontSize: 11.5, color: '#94A3B8' }}>Scheduled interviews and sessions will appear here.</span>
+              </div>
+            ) : (
+              upcomingInterviews.slice(0, 2).map((iv) => {
+                const d = iv.scheduledAt ? new Date(iv.scheduledAt) : new Date()
+                const month = d.toLocaleString('en-US', { month: 'short' }).toUpperCase()
+                const day = d.getDate()
+                const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+                return (
+                  <div key={iv.id} className="tdb-session-row" onClick={() => navigate('/interviews')} style={{ cursor: 'pointer' }}>
+                    <div className="tdb-session-left">
+                      <div className="tdb-date-badge">
+                        <span className="tdb-date-month">{month}</span>
+                        <span className="tdb-date-day">{day}</span>
+                      </div>
+                      <div>
+                        <h4 className="tdb-session-title">{iv.title || iv.trainerName || 'Interview Session'}</h4>
+                        <p className="tdb-session-time">{time} • {iv.role || 'Evaluation'}</p>
+                      </div>
+                    </div>
+                    <span className="tdb-badge-upcoming">{iv.status || 'Upcoming'}</span>
                   </div>
-                  <div className="wl-session-info">
-                    <div className="wl-session-title">{s.title}</div>
-                    <div className="wl-session-time">{s.time}</div>
-                  </div>
-                  <span className="wl-session-badge">+ Live</span>
-                </div>
-              ))}
+                )
+              })
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── 4. Bottom Card: Quick Actions ── */}
+      <div className="tdb-quick-card">
+        <div className="tdb-card-header" style={{ marginBottom: 6 }}>
+          <h2 className="tdb-card-title">Quick Actions</h2>
+        </div>
+
+        <div className="tdb-quick-actions-grid">
+          <div
+            className="tdb-action-card"
+            onClick={onGoToCourses}
+          >
+            <div className="tdb-action-icon tdb-action-icon--green">
+              <Plus size={16} strokeWidth={2.4} />
             </div>
-          </motion.div>
+            <div>
+              <h4 className="tdb-action-title">Create Course</h4>
+              <div className="tdb-action-sub">Start a new training</div>
+            </div>
+          </div>
+
+          <div
+            className="tdb-action-card"
+            onClick={onClickCourse}
+          >
+            <div className="tdb-action-icon tdb-action-icon--blue">
+              <BookOpen size={16} strokeWidth={2.4} />
+            </div>
+            <div>
+              <h4 className="tdb-action-title">My Trainings</h4>
+              <div className="tdb-action-sub">View assigned courses</div>
+            </div>
+          </div>
+
+          <div
+            className="tdb-action-card"
+            onClick={onClickCourse}
+          >
+            <div className="tdb-action-icon tdb-action-icon--amber">
+              <TrendingUp size={16} strokeWidth={2.4} />
+            </div>
+            <div>
+              <h4 className="tdb-action-title">View Reports</h4>
+              <div className="tdb-action-sub">Track performance</div>
+            </div>
+          </div>
+
+          <div
+            className="tdb-action-card"
+            onClick={onClickQuiz}
+          >
+            <div className="tdb-action-icon tdb-action-icon--purple">
+              <FileText size={16} strokeWidth={2.4} />
+            </div>
+            <div>
+              <h4 className="tdb-action-title">Bulk Import</h4>
+              <div className="tdb-action-sub">Import multiple courses</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
-  )
-}
-
-function FileText({ size = 18, ...props }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
-      <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
-      <polyline points="14 2 14 8 20 8"/>
-      <line x1="16" x2="8" y1="13" y2="13"/>
-      <line x1="16" x2="8" y1="17" y2="17"/>
-      <polyline points="10 9 9 9 8 9"/>
-    </svg>
   )
 }

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Search, Filter, Monitor, Video, AlertTriangle, Play } from 'lucide-react'
+import { Search, Filter, Monitor, Video, AlertTriangle, Play, Clock } from 'lucide-react'
 import { API_BASE } from '../api/api'
 import { useToast } from '../components/Toast'
 import { colors, cardStyle, skeletonStyle, typography } from '../theme/tokens'
@@ -134,113 +134,124 @@ export default function TrainerRecordings({ user }) {
 
   return (
     <div className="dashboard">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
-        <div>
-          <p style={{ fontSize: 13, color: colors.slate[500], marginBottom: 4, fontWeight: 500 }}>Trainer Portal › Recordings</p>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: colors.text.primary, fontFamily: typography.fontFamily }}>
-            Session Recordings
-          </h1>
-          <p style={{ fontSize: 13, color: colors.slate[500], marginTop: 4 }}>
-            View screen recordings from your quiz sessions
-          </p>
+      <div className="reg-admin-header" style={{ marginBottom: 24 }}>
+        <div className="reg-admin-header-icon">
+          <Monitor size={26} color="#fff" />
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Monitor size={18} style={{ color: colors.slate[400] }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h1 className="reg-admin-title">Session Recordings</h1>
+          <p className="reg-admin-subtitle">View screen recordings from your quiz sessions</p>
         </div>
       </div>
 
-      <div className="stats-grid" style={{ marginBottom: 24 }}>
-        <div className="stat-card">
-          <div className="stat-label">Total Recordings</div>
-          <div className="stat-value">{totalCount}</div>
+      <div className="reg-admin-stats" style={{ marginBottom: 24 }}>
+        <div className="reg-admin-stat">
+          <div className="reg-admin-stat-icon" style={{ background: '#f0f9ff', color: '#0284c7' }}>
+            <Monitor size={20} />
+          </div>
+          <div>
+            <span className="reg-admin-stat-num">{totalCount}</span>
+            <span className="reg-admin-stat-label">Total Recordings</span>
+          </div>
         </div>
-        <div className="stat-card green">
-          <div className="stat-label">Ready to Watch</div>
-          <div className="stat-value">{readyCount}</div>
+        <div className="reg-admin-stat">
+          <div className="reg-admin-stat-icon" style={{ background: '#f0fdf4', color: '#16a34a' }}>
+            <Video size={20} />
+          </div>
+          <div>
+            <span className="reg-admin-stat-num">{readyCount}</span>
+            <span className="reg-admin-stat-label">Ready to Watch</span>
+          </div>
         </div>
-        <div className="stat-card orange">
-          <div className="stat-label">Processing</div>
-          <div className="stat-value">{processingCount}</div>
+        <div className="reg-admin-stat">
+          <div className="reg-admin-stat-icon" style={{ background: '#fffbeb', color: '#d97706' }}>
+            <Clock size={20} />
+          </div>
+          <div>
+            <span className="reg-admin-stat-num">{processingCount}</span>
+            <span className="reg-admin-stat-label">Processing</span>
+          </div>
         </div>
       </div>
 
-      <motion.div variants={itemVariants} className="card" style={{ marginBottom: 24, padding: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-          <Filter size={14} style={{ color: colors.slate[500] }} />
-          <span style={{ fontSize: 14, fontWeight: 600, color: colors.text.primary }}>Filters</span>
+      <div className="reg-admin-table-wrap" style={{ marginBottom: 24 }}>
+        <div className="reg-card-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Filter size={14} style={{ color: '#64748b' }} />
+            <span className="reg-card-title">Filters</span>
+          </div>
         </div>
+        <div className="reg-card-body">
+          <div className="form-grid-2" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+            <div className="reg-admin-search" style={{ minWidth: 0 }}>
+              <Search size={16} />
+              <input
+                type="text"
+                placeholder="Search participant..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+            </div>
 
-        <div className="form-grid-2" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-          <div style={{ position: 'relative' }}>
-            <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: colors.slate[400] }} />
+            <select
+              value={quizFilter}
+              onChange={e => setQuizFilter(e.target.value)}
+              className="reg-select"
+            >
+              <option value="">All My Quizzes</option>
+              {quizzes.map(q => <option key={q.id} value={q.id}>{q.title}</option>)}
+            </select>
+
             <input
-              type="text"
-              placeholder="Search participant..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="form-control"
-              style={{ paddingLeft: 36 }}
+              type="date"
+              value={dateFrom}
+              onChange={e => setDateFrom(e.target.value)}
+              className="reg-select"
+            />
+
+            <input
+              type="date"
+              value={dateTo}
+              onChange={e => setDateTo(e.target.value)}
+              className="reg-select"
             />
           </div>
 
-          <select
-            value={quizFilter}
-            onChange={e => setQuizFilter(e.target.value)}
-            className="form-control"
-          >
-            <option value="">All My Quizzes</option>
-            {quizzes.map(q => <option key={q.id} value={q.id}>{q.title}</option>)}
-          </select>
-
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={e => setDateFrom(e.target.value)}
-            className="form-control"
-          />
-
-          <input
-            type="date"
-            value={dateTo}
-            onChange={e => setDateTo(e.target.value)}
-            className="form-control"
-          />
+          <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+            <button
+              onClick={applyFilters}
+              className="reg-admin-btn reg-admin-btn--primary"
+              style={{ cursor: 'pointer' }}
+            >
+              Apply Filters
+            </button>
+            <button
+              onClick={clearFilters}
+              className="reg-admin-btn reg-admin-btn--secondary"
+              style={{ cursor: 'pointer' }}
+            >
+              Clear
+            </button>
+          </div>
         </div>
-
-        <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-          <button
-            onClick={applyFilters}
-            className="btn btn-primary"
-            style={{ padding: '8px 18px', fontSize: 13 }}
-          >
-            Apply Filters
-          </button>
-          <button
-            onClick={clearFilters}
-            className="btn btn-secondary"
-            style={{ padding: '8px 18px', fontSize: 13 }}
-          >
-            Clear
-          </button>
-        </div>
-      </motion.div>
+      </div>
 
       {loading ? (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '80px 0' }}>
           <div className="spinner" />
         </div>
       ) : (
-        <div className="card">
-          <div className="card-header">
+        <div className="reg-admin-table-wrap">
+          <div className="reg-card-header">
             <div>
-              <h3>Recordings ({total})</h3>
-              <span style={{ fontSize: 13, color: colors.text.secondary }}>Screen recordings from your quiz sessions</span>
+              <h3 className="reg-card-title">Recordings ({total})</h3>
+              <span className="reg-card-subtitle">Screen recordings from your quiz sessions</span>
             </div>
             <select
               value={sortBy}
               onChange={e => setSortBy(e.target.value)}
-              className="form-control"
-              style={{ width: 180, padding: '6px 12px', height: 34, fontSize: 13 }}
+              className="reg-select"
+              style={{ width: 180 }}
             >
               <option value="newest">Newest First</option>
               <option value="oldest">Oldest First</option>
@@ -249,24 +260,24 @@ export default function TrainerRecordings({ user }) {
           </div>
 
           {total === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon"><Video size={48} /></div>
+            <div className="reg-admin-empty">
+              <Video size={40} />
               <h3>No Recordings Found</h3>
               <p>Recordings will appear here after participants complete your proctored quiz sessions with screen sharing enabled.</p>
             </div>
           ) : (
             <>
-              <div className="mt-4 overflow-x-auto">
-                <table className="w-full text-sm border-separate border-spacing-y-3">
+              <div className="overflow-x-auto">
+                <table className="reg-admin-table">
                   <thead>
-                    <tr className="border-b border-gray-200 text-xs text-gray-400 uppercase tracking-wide">
-                        <th className="py-4 px-5 text-left font-medium">Participant</th>
-                      <th className="py-4 px-5 text-left font-medium">Quiz</th>
-                      <th className="py-4 px-5 text-left font-medium">Recorded</th>
-                      <th className="py-4 px-5 text-left font-medium">Duration</th>
-                      <th className="py-4 px-5 text-left font-medium">Violations</th>
-                      <th className="py-4 px-5 text-left font-medium">Status</th>
-                      <th className="py-4 px-5 text-left font-medium">Actions</th>
+                    <tr>
+                      <th>Participant</th>
+                      <th>Quiz</th>
+                      <th>Recorded</th>
+                      <th>Duration</th>
+                      <th>Violations</th>
+                      <th>Status</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -275,43 +286,37 @@ export default function TrainerRecordings({ user }) {
                       const pEmail = rec.participant?.email || ''
                       const qTitle = rec.quiz?.title || (rec.quizId ? `Quiz #${rec.quizId}` : 'Unknown Quiz')
                       return (
-                        <tr key={rec.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                          <td className="py-4 px-5">
-                            <div className="flex items-center gap-3">
-                              <div className="w-9 h-9 rounded-full bg-primary-600 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
+                        <tr key={rec.id} className="hover:bg-gray-50 transition-colors">
+                          <td>
+                            <div className="reg-admin-participant">
+                              <div className="reg-admin-avatar">
                                 {pName.charAt(0).toUpperCase()}
                               </div>
                               <div>
-                                <p className="font-medium text-gray-800">{pName}</p>
-                                {pEmail && <p className="text-xs text-gray-400">{pEmail}</p>}
+                                <p className="reg-admin-name">{pName}</p>
+                                {pEmail && <p style={{ fontSize: 11, color: '#94a3b8' }}>{pEmail}</p>}
                               </div>
                             </div>
                           </td>
-                          <td className="py-4 px-5 text-gray-600 max-w-[200px] truncate">{qTitle}</td>
-                          <td className="py-4 px-5 text-gray-500 whitespace-nowrap">{formatDate(rec.recordedAt)}</td>
-                          <td className="py-4 px-5 text-gray-500">{formatDuration(rec.durationSeconds)}</td>
-                          <td className="py-4 px-5">
+                          <td style={{ color: '#475569' }}>{qTitle}</td>
+                          <td style={{ color: '#64748b', whiteSpace: 'nowrap' }}>{formatDate(rec.recordedAt)}</td>
+                          <td style={{ color: '#64748b' }}>{formatDuration(rec.durationSeconds)}</td>
+                          <td>
                             {rec.violationCount > 0
-                              ? <span className="text-yellow-600 font-medium"><AlertTriangle size={14} /> {rec.violationCount}</span>
-                              : <span className="text-gray-300">—</span>
+                              ? <span style={{ color: '#d97706', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}><AlertTriangle size={14} /> {rec.violationCount}</span>
+                              : <span style={{ color: '#d1d5db' }}>—</span>
                             }
                           </td>
-                          <td className="py-4 px-5">
-                            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${
-                              rec.status === "ready"
-                                ? "bg-green-50 text-green-700 border-green-200"
-                                : rec.status === "processing"
-                                ? "bg-yellow-50 text-yellow-700 border-yellow-200"
-                                : "bg-red-50 text-red-600 border-red-200"
-                            }`}>
+                          <td>
+                            <span className={`reg-admin-status ${rec.status === 'ready' ? 'reg-admin-status--green' : rec.status === 'processing' ? 'reg-admin-status--amber' : 'reg-admin-status--red'}`}>
                               {rec.status === "ready" ? "Ready"
                                : rec.status === "processing" ? "Processing"
                                : "Failed"}
                             </span>
                           </td>
-                          <td className="py-4 px-5">
+                          <td>
                             <button onClick={() => navigate(`/trainer/recordings/${rec.id}`)}
-                              className="px-4 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold rounded-lg transition-colors">
+                              className="reg-admin-btn reg-admin-btn--primary" style={{ cursor: 'pointer', padding: '6px 14px', fontSize: 12 }}>
                               <Play size={12} /> Watch
                             </button>
                           </td>
@@ -323,13 +328,14 @@ export default function TrainerRecordings({ user }) {
               </div>
 
               {totalPages > 1 && (
-                <div className="flex items-center justify-between mt-4 px-2">
+                <div className="flex items-center justify-between mt-4 px-2" style={{ padding: '12px 16px' }}>
                   <div className="flex items-center gap-2 text-sm text-gray-500">
                     <span>Show Data</span>
                     <select
                       value={pageSize}
                       onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }}
-                      className="border border-gray-200 rounded-lg px-2 py-1 text-sm bg-white"
+                      className="reg-select"
+                      style={{ width: 70 }}
                     >
                       <option value={7}>7</option>
                       <option value={10}>10</option>

@@ -125,12 +125,13 @@ async function listMyCourses(req, res) {
         where: { trainerId: req.user.id },
         attributes: ['courseId']
       });
-      const assignedCourseIds = assignments.map(a => a.courseId);
+      const assignedCourseIds = assignments.map(a => a.courseId).filter(Boolean);
+      const orConditions = [{ trainerId: req.user.id }];
+      if (assignedCourseIds.length > 0) {
+        orConditions.push({ id: { [Op.in]: assignedCourseIds } });
+      }
       where = {
-        [Op.or]: [
-          { trainerId: req.user.id },
-          { id: { [Op.in]: assignedCourseIds } }
-        ]
+        [Op.or]: orConditions
       };
     }
     const courses = await Course.findAll({
@@ -1678,8 +1679,144 @@ async function addParticipant(req, res) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AI COURSE STRUCTURE GENERATION
+// AI COURSE STRUCTURE GENERATION & PERSISTENCE
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Helper: parse lessons into hierarchical structure
+function parseLessonsToStructure(courseTitle, lessons) {
+  const modules = [];
+  let currentModule = null;
+  let currentSubModule = null;
+
+  for (const l of lessons) {
+    const rawTitle = (l.title || '').trim();
+    const desc = l.description || '';
+    const content = l.content || '';
+    const durationMatch = content.match(/Estimated Duration:\s*([^,\n]+)/i);
+    const duration = durationMatch ? durationMatch[1].trim() : '';
+
+    if (/^module(\s+\d+)?:\s*/i.test(rawTitle)) {
+      const cleanTitle = rawTitle.replace(/^module(\s+\d+)?:\s*/i, '').trim();
+      currentModule = {
+        id: l.id,
+        title: cleanTitle || rawTitle,
+        description: desc,
+        duration: duration,
+        expanded: true,
+        subModules: [],
+      };
+      modules.push(currentModule);
+      currentSubModule = null;
+    } else if (/^sub\s*module(\s+\d+)?:\s*/i.test(rawTitle)) {
+      const cleanTitle = rawTitle.replace(/^sub\s*module(\s+\d+)?:\s*/i, '').trim();
+      currentSubModule = {
+        id: l.id,
+        title: cleanTitle || rawTitle,
+        duration: duration,
+        expanded: true,
+        topics: [],
+      };
+      if (!currentModule) {
+        currentModule = { id: l.id, title: 'Main Module', description: '', duration: '', expanded: true, subModules: [] };
+        modules.push(currentModule);
+      }
+      currentModule.subModules.push(currentSubModule);
+    } else if (/^(sub\s*topic|topic)(\s+\d+)?:\s*/i.test(rawTitle)) {
+      const cleanTitle = rawTitle.replace(/^(sub\s*topic|topic)(\s+\d+)?:\s*/i, '').trim();
+      const topic = {
+        id: l.id,
+        title: cleanTitle || rawTitle,
+        duration: duration,
+        description: desc,
+      };
+      if (!currentModule) {
+        currentModule = { id: l.id, title: 'Main Module', description: '', duration: '', expanded: true, subModules: [] };
+        modules.push(currentModule);
+      }
+      if (!currentSubModule) {
+        currentSubModule = { id: l.id, title: 'Topics Overview', duration: '', expanded: true, topics: [] };
+        currentModule.subModules.push(currentSubModule);
+      }
+      currentSubModule.topics.push(topic);
+    } else {
+      // Standalone lesson row
+      if (!currentModule) {
+        currentModule = { id: l.id, title: rawTitle, description: desc, duration: duration, expanded: true, subModules: [] };
+        modules.push(currentModule);
+      } else if (!currentSubModule) {
+        currentSubModule = { id: l.id, title: rawTitle, duration: duration, expanded: true, topics: [] };
+        currentModule.subModules.push(currentSubModule);
+      } else {
+        currentSubModule.topics.push({ id: l.id, title: rawTitle, duration: duration, description: desc });
+      }
+    }
+  }
+
+  return { courseTitle, modules };
+}
+
+// Helper: save structured JSON to database as Lessons
+async function saveStructureToDatabase(courseId, trainerId, structure, replaceExisting = true) {
+  if (!structure || !Array.isArray(structure.modules)) {
+    throw new Error('Invalid structure format: modules must be an array');
+  }
+
+  if (replaceExisting) {
+    await Lesson.destroy({ where: { courseId } });
+  }
+
+  let orderIndex = 0;
+  const createdLessons = [];
+
+  for (const m of structure.modules) {
+    const modTitle = `Module: ${m.title || 'Untitled Module'}`;
+    const modDesc = m.description || '';
+    const modContent = m.duration ? `Estimated Duration: ${m.duration}` : '';
+    
+    const modLesson = await Lesson.create({
+      courseId,
+      trainerId,
+      title: modTitle,
+      description: modDesc || null,
+      content: modContent || null,
+      orderIndex: orderIndex++,
+    });
+    createdLessons.push(modLesson);
+
+    for (const sm of (m.subModules || [])) {
+      const smTitle = `Sub Module: ${sm.title || 'Untitled Sub Module'}`;
+      const smContent = sm.duration ? `Estimated Duration: ${sm.duration}` : '';
+      
+      const smLesson = await Lesson.create({
+        courseId,
+        trainerId,
+        title: smTitle,
+        description: null,
+        content: smContent || null,
+        orderIndex: orderIndex++,
+      });
+      createdLessons.push(smLesson);
+
+      for (const t of (sm.topics || [])) {
+        const tTitle = `Topic: ${t.title || 'Untitled Topic'}`;
+        const tDesc = t.description || '';
+        const tContent = t.duration ? `Estimated Duration: ${t.duration}` : '';
+
+        const tLesson = await Lesson.create({
+          courseId,
+          trainerId,
+          title: tTitle,
+          description: tDesc || null,
+          content: tContent || null,
+          orderIndex: orderIndex++,
+        });
+        createdLessons.push(tLesson);
+      }
+    }
+  }
+
+  return createdLessons;
+}
 
 // POST /api/trainer/courses/:courseId/generate-structure
 async function generateCourseStructure(req, res) {
@@ -1687,34 +1824,200 @@ async function generateCourseStructure(req, res) {
     const course = await loadOwnedCourse(req, res, req.params.courseId);
     if (!course) return;
 
-    const { prompt } = req.body;
-    if (!prompt || !prompt.trim()) {
-      return res.status(422).json({ error: 'Prompt is required' });
+    const { prompt, replaceExisting } = req.body;
+    if ((!prompt || !prompt.trim()) && !req.file) {
+      return res.status(422).json({ error: 'Please enter a course structure prompt or upload a document.' });
     }
 
-    const payload = { prompt: prompt.trim() };
+    const payload = {
+      prompt: (prompt || '').trim(),
+      courseTitle: course.title,
+    };
 
-    // If a file was uploaded, pass its path to the Python service for extraction
     if (req.file) {
       payload.file_path = req.file.path;
       payload.mime_type = req.file.mimetype;
     }
 
-    const result = await aiService.generateCourseStructure(payload);
+    console.log(`[STRUCTURE] 1. Trainer Prompt received for Course #${course.id} ("${course.title}"): "${payload.prompt}"`);
+    console.log('[STRUCTURE] 2. Calling Gemini AI model via aiService...');
 
+    const result = await aiService.generateCourseStructure(payload);
+    
     // Clean up uploaded temp file
     if (req.file) {
       try { fs.unlinkSync(req.file.path); } catch (_) {}
     }
 
-    res.json({ success: true, structure: result.structure });
+    if (!result || !result.structure || !Array.isArray(result.structure.modules) || result.structure.modules.length === 0) {
+      throw new Error('Gemini AI returned an empty or invalid course structure.');
+    }
+
+    console.log(`[STRUCTURE] 3. Gemini response received. Parsed ${result.structure.modules.length} modules, estimated duration: "${result.structure.estimatedDuration || 'N/A'}"`);
+    console.log('[STRUCTURE] 4. Saving generated structure to MySQL database...');
+
+    const savedLessons = await saveStructureToDatabase(
+      course.id,
+      course.trainerId,
+      result.structure,
+      replaceExisting !== false
+    );
+    console.log(`[STRUCTURE] 5. Database save result: ${savedLessons.length} lessons persisted successfully in MySQL.`);
+
+    res.json({
+      success: true,
+      structure: result.structure,
+      savedCount: savedLessons.length,
+      message: 'Course structure generated and saved successfully',
+    });
   } catch (e) {
-    // Clean up uploaded temp file on error
     if (req.file) {
       try { fs.unlinkSync(req.file.path); } catch (_) {}
     }
-    console.error('generateCourseStructure:', e.message);
-    res.status(500).json({ error: e.message || 'Failed to generate course structure' });
+    console.error('[STRUCTURE] ❌ generateCourseStructure failed:', e.message);
+    res.status(500).json({ error: `AI generation failed: ${e.message}` });
+  }
+}
+
+
+// GET /api/trainer/courses/:courseId/structure
+async function getCourseStructure(req, res) {
+  try {
+    const course = await loadOwnedCourse(req, res, req.params.courseId);
+    if (!course) return;
+
+    const lessons = await Lesson.findAll({
+      where: { courseId: course.id },
+      order: [['orderIndex', 'ASC'], ['id', 'ASC']],
+    });
+
+    if (!lessons || lessons.length === 0) {
+      return res.json({ success: true, structure: null, lessonsCount: 0 });
+    }
+
+    const structure = parseLessonsToStructure(course.title, lessons);
+    res.json({ success: true, structure, lessonsCount: lessons.length });
+  } catch (e) {
+    console.error('getCourseStructure error:', e.message);
+    res.status(500).json({ error: 'Failed to retrieve course structure' });
+  }
+}
+
+// POST /api/trainer/courses/:courseId/structure
+async function saveCourseStructure(req, res) {
+  try {
+    const course = await loadOwnedCourse(req, res, req.params.courseId);
+    if (!course) return;
+
+    const { structure, replaceExisting } = req.body;
+    if (!structure || !Array.isArray(structure.modules)) {
+      return res.status(422).json({ error: 'Invalid structure payload: modules must be an array' });
+    }
+
+    const savedLessons = await saveStructureToDatabase(
+      course.id,
+      course.trainerId,
+      structure,
+      replaceExisting !== false
+    );
+
+    res.json({
+      success: true,
+      savedCount: savedLessons.length,
+      message: `Saved ${savedLessons.length} lessons successfully`,
+    });
+  } catch (e) {
+    console.error('saveCourseStructure error:', e.message);
+    res.status(500).json({ error: e.message || 'Failed to save course structure' });
+  }
+}
+
+// DELETE /api/trainer/courses/:courseId/structure
+async function clearCourseStructure(req, res) {
+  try {
+    const course = await loadOwnedCourse(req, res, req.params.courseId);
+    if (!course) return;
+
+    const count = await Lesson.destroy({ where: { courseId: course.id } });
+    res.json({
+      success: true,
+      deletedCount: count,
+      message: 'Course structure and all lessons cleared successfully',
+    });
+  } catch (e) {
+    console.error('clearCourseStructure error:', e.message);
+    res.status(500).json({ error: e.message || 'Failed to clear course structure' });
+  }
+}
+
+// DELETE /api/trainer/courses/:courseId/structure/module/:moduleId
+async function deleteStructureModule(req, res) {
+  try {
+    const course = await loadOwnedCourse(req, res, req.params.courseId);
+    if (!course) return;
+
+    const { ids } = req.body || {};
+    const targetIds = Array.isArray(ids) && ids.length > 0
+      ? ids
+      : (!isNaN(req.params.moduleId) ? [Number(req.params.moduleId)] : []);
+
+    if (targetIds.length > 0) {
+      await Lesson.destroy({ where: { id: targetIds, courseId: course.id } });
+    }
+
+    res.json({
+      success: true,
+      message: 'Module and related items deleted successfully',
+    });
+  } catch (e) {
+    console.error('deleteStructureModule error:', e.message);
+    res.status(500).json({ error: e.message || 'Failed to delete module' });
+  }
+}
+
+// DELETE /api/trainer/courses/:courseId/structure/submodule/:subModuleId
+async function deleteStructureSubModule(req, res) {
+  try {
+    const course = await loadOwnedCourse(req, res, req.params.courseId);
+    if (!course) return;
+
+    const { ids } = req.body || {};
+    const targetIds = Array.isArray(ids) && ids.length > 0
+      ? ids
+      : (!isNaN(req.params.subModuleId) ? [Number(req.params.subModuleId)] : []);
+
+    if (targetIds.length > 0) {
+      await Lesson.destroy({ where: { id: targetIds, courseId: course.id } });
+    }
+
+    res.json({
+      success: true,
+      message: 'Sub Module and topics deleted successfully',
+    });
+  } catch (e) {
+    console.error('deleteStructureSubModule error:', e.message);
+    res.status(500).json({ error: e.message || 'Failed to delete sub module' });
+  }
+}
+
+// DELETE /api/trainer/courses/:courseId/structure/topic/:topicId
+async function deleteStructureTopic(req, res) {
+  try {
+    const course = await loadOwnedCourse(req, res, req.params.courseId);
+    if (!course) return;
+
+    const topicId = req.params.topicId;
+    if (!isNaN(topicId)) {
+      await Lesson.destroy({ where: { id: Number(topicId), courseId: course.id } });
+    }
+
+    res.json({
+      success: true,
+      message: 'Topic deleted successfully',
+    });
+  } catch (e) {
+    console.error('deleteStructureTopic error:', e.message);
+    res.status(500).json({ error: e.message || 'Failed to delete topic' });
   }
 }
 
@@ -1764,4 +2067,12 @@ module.exports = {
   publishSubmission,
   // AI Course Structure
   generateCourseStructure,
+  getCourseStructure,
+  saveCourseStructure,
+  clearCourseStructure,
+  deleteStructureModule,
+  deleteStructureSubModule,
+  deleteStructureTopic,
 };
+
+

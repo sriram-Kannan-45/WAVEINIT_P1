@@ -35,26 +35,30 @@ router.get(
       });
       const assignedCourseIds = courseAssignments.map(a => a.courseId);
 
+      const courseOrConditions = [{ trainerId }];
+      if (assignedCourseIds.length > 0) {
+        courseOrConditions.push({ id: { [Op.in]: assignedCourseIds } });
+      }
+
       const courses = await Course.findAll({
         where: {
-          [Op.or]: [
-            { trainerId },
-            { id: { [Op.in]: assignedCourseIds } }
-          ]
+          [Op.or]: courseOrConditions
         },
         attributes: ['trainingProgramId']
       });
-      const courseTrainingIds = courses.map(c => c.trainingProgramId);
+      const courseTrainingIds = courses.map(c => c.trainingProgramId).filter(Boolean);
 
       // Combine all assigned training IDs
       const allTrainingIds = Array.from(new Set([...assignedTrainingIds, ...courseTrainingIds]));
 
+      const trainingOrConditions = [{ trainerId }];
+      if (allTrainingIds.length > 0) {
+        trainingOrConditions.push({ id: { [Op.in]: allTrainingIds } });
+      }
+
       const trainings = await Training.findAll({
         where: {
-          [Op.or]: [
-            { trainerId },
-            { id: { [Op.in]: allTrainingIds } }
-          ]
+          [Op.or]: trainingOrConditions
         },
         order: [['startDate', 'ASC']]
       });
@@ -98,47 +102,56 @@ router.get(
         where: { trainerId },
         attributes: ['courseId']
       });
-      const assignedCourseIds = courseAssignments.map(a => a.courseId);
+      const assignedCourseIds = courseAssignments.map(a => a.courseId).filter(Boolean);
+
+      const reqCourseOrConditions = [{ trainerId }];
+      if (assignedCourseIds.length > 0) {
+        reqCourseOrConditions.push({ id: { [Op.in]: assignedCourseIds } });
+      }
 
       const courses = await Course.findAll({
         where: {
-          [Op.or]: [
-            { trainerId },
-            { id: { [Op.in]: assignedCourseIds } }
-          ]
+          [Op.or]: reqCourseOrConditions
         },
         attributes: ['id', 'trainingProgramId']
       });
       const courseIds = courses.map(c => c.id);
-      const courseTrainingIds = courses.map(c => c.trainingProgramId);
+      const courseTrainingIds = courses.map(c => c.trainingProgramId).filter(Boolean);
 
       // Resolve Training IDs
       const assignments = await TrainingTrainerAssignment.findAll({
         where: { trainerId },
         attributes: ['trainingId']
       });
-      const assignedTrainingIds = assignments.map(a => a.trainingId);
+      const assignedTrainingIds = assignments.map(a => a.trainingId).filter(Boolean);
 
       const allTrainingIds = Array.from(new Set([...assignedTrainingIds, ...courseTrainingIds]));
 
+      const reqTrainingOrConditions = [{ trainerId }];
+      if (allTrainingIds.length > 0) {
+        reqTrainingOrConditions.push({ id: { [Op.in]: allTrainingIds } });
+      }
+
       const trainings = await Training.findAll({
         where: {
-          [Op.or]: [
-            { trainerId },
-            { id: { [Op.in]: allTrainingIds } }
-          ]
+          [Op.or]: reqTrainingOrConditions
         },
         attributes: ['id']
       });
       const trainingIds = trainings.map(t => t.id);
 
+      const enrollmentOrConditions = [];
+      if (trainingIds.length > 0) enrollmentOrConditions.push({ trainingId: { [Op.in]: trainingIds } });
+      if (courseIds.length > 0) enrollmentOrConditions.push({ courseId: { [Op.in]: courseIds } });
+
+      if (enrollmentOrConditions.length === 0) {
+        return res.json({ success: true, count: 0, requests: [] });
+      }
+
       const pendingEnrollments = await Enrollment.findAll({
         where: {
           status: 'PENDING',
-          [Op.or]: [
-            { trainingId: { [Op.in]: trainingIds } },
-            { courseId: { [Op.in]: courseIds } }
-          ]
+          [Op.or]: enrollmentOrConditions
         },
         include: [
           { model: User, as: 'participant', attributes: ['id', 'name', 'email', 'phone'] },

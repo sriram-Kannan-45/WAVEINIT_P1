@@ -54,17 +54,6 @@ export default function TopNavbar({ user, currentPageLabel, onOpenCreate, onProf
           <span className="wl-topbar-notification-dot" />
         </button>
 
-        {/* Quick Create */}
-        <motion.button
-          className="wl-topbar-create-btn"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={onOpenCreate}
-        >
-          <Plus size={16} strokeWidth={2.5} />
-          <span>Quick Create</span>
-        </motion.button>
-
         {/* Theme Toggle */}
         <button
           className="wl-topbar-icon-btn"

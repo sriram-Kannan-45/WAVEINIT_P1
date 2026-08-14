@@ -6,13 +6,28 @@ import {
   PlayCircle, CheckCircle2, Clock, ExternalLink, Send, X, Eye,
   Image as ImageIcon, Video, Link as LinkIcon, FilePenLine, Presentation,
   Trophy, AlertCircle, User, Lock, MessageSquare, Code,
-  BarChart3, Award, Star, ChevronRight,
+  BarChart3, Award, Star, ChevronRight, GraduationCap, Plus, Search, MoreHorizontal, MoreVertical, Layers, Users,
 } from 'lucide-react'
 import { API, assetUrl, API_BASE } from '../api/api'
 import { useToast } from '../components/Toast'
 import DiscussionBoard from '../components/shared/DiscussionBoard'
 import { Button, Badge, Table, PageHeader, EmptyState, StatCard, ProgressBar } from '../components/ui'
 import { getCourseThumbnail, getThumbnailSVG } from '../config/courseThumbnailMap'
+import CourseArtwork from '../components/common/CourseArtwork'
+import '../styles/trainer-my-trainings.css'
+
+function timeAgo(dateString) {
+  if (!dateString) return 'Recently'
+  const date = new Date(dateString)
+  if (isNaN(date.getTime())) return 'Recently'
+  const diffInSeconds = Math.floor((new Date() - date) / 1000)
+  if (diffInSeconds < 60) return 'Just now'
+  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`
+  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`
+  if (diffInSeconds < 2592000) return `${Math.floor(diffInSeconds / 86400)}d ago`
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helpers
@@ -47,6 +62,9 @@ function MyCoursesList({ user, onOpen }) {
   const { error: showError } = useToast()
   const [courses, setCourses] = useState([])
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('ALL')
+  const [sortBy, setSortBy] = useState('newest')
 
   useEffect(() => {
     let aborted = false
@@ -65,76 +83,305 @@ function MyCoursesList({ user, onOpen }) {
     return () => { aborted = true }
   }, [])
 
+  const activeCourses = useMemo(() => courses || [], [courses])
+
+  const stats = useMemo(() => ({
+    total: activeCourses.length,
+    published: activeCourses.filter(c => (c.status || 'PUBLISHED').toUpperCase() === 'PUBLISHED').length,
+    draft: activeCourses.filter(c => (c.status || '').toUpperCase() === 'DRAFT').length,
+    archived: activeCourses.filter(c => (c.status || '').toUpperCase() === 'ARCHIVED').length,
+  }), [activeCourses])
+
+  const filtered = useMemo(() => {
+    let list = activeCourses.filter(c => {
+      if (statusFilter !== 'ALL' && (c.status || 'PUBLISHED').toUpperCase() !== statusFilter) return false
+      if (search) {
+        const q = search.toLowerCase()
+        return (c.title || '').toLowerCase().includes(q) ||
+               (c.description || '').toLowerCase().includes(q)
+      }
+      return true
+    })
+
+    if (sortBy === 'newest') {
+      list = [...list].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+    } else if (sortBy === 'oldest') {
+      list = [...list].sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0))
+    } else if (sortBy === 'title') {
+      list = [...list].sort((a, b) => (a.title || '').localeCompare(b.title || ''))
+    }
+
+    return list
+  }, [activeCourses, search, statusFilter, sortBy])
+
   return (
-    <div className="wl-lessons-surface">
-      <div className="wl-lessons-header">
-        <div className="wl-lessons-header-left">
-          <h2 className="wl-lessons-title">My Trainings</h2>
-          <p className="wl-lessons-subtitle">Continue where you left off, or jump into any of your enrolled trainings.</p>
+    <div className="tmt-container" style={{ padding: 0, height: 'auto', background: 'transparent' }}>
+      {/* ── 1. Page Header Card ── */}
+      <div className="tmt-page-header">
+        <div className="tmt-header-left">
+          <div className="tmt-header-icon-box">
+            <GraduationCap size={20} strokeWidth={2.4} />
+          </div>
+          <div>
+            <h1 className="tmt-header-title">My Trainings</h1>
+            <p className="tmt-header-subtitle">Manage your assigned courses efficiently.</p>
+          </div>
+        </div>
+
+        <button
+          className="tmt-create-btn"
+          onClick={() => {}}
+        >
+          <Plus size={15} strokeWidth={2.5} /> Create Course
+        </button>
+      </div>
+
+      {/* ── 2. Statistics Cards Row (4 Cards) ── */}
+      <div className="tmt-stats-grid">
+        {/* Card 1: Total Trainings */}
+        <div className="tmt-stat-card">
+          <div className="tmt-stat-icon-wrap tmt-stat-icon-wrap--green">
+            <BookOpen size={18} strokeWidth={2} />
+          </div>
+          <div className="tmt-stat-text-wrap">
+            <span className="tmt-stat-label">Total Trainings</span>
+            <div className="tmt-stat-value">{stats.total}</div>
+            <span className="tmt-stat-sub">All courses created</span>
+          </div>
+        </div>
+
+        {/* Card 2: Published */}
+        <div className="tmt-stat-card">
+          <div className="tmt-stat-icon-wrap tmt-stat-icon-wrap--blue">
+            <CheckCircle2 size={18} strokeWidth={2} />
+          </div>
+          <div className="tmt-stat-text-wrap">
+            <span className="tmt-stat-label">Published</span>
+            <div className="tmt-stat-value">{stats.published}</div>
+            <span className="tmt-stat-sub">Courses live</span>
+          </div>
+        </div>
+
+        {/* Card 3: Drafts */}
+        <div className="tmt-stat-card">
+          <div className="tmt-stat-icon-wrap tmt-stat-icon-wrap--amber">
+            <FileText size={18} strokeWidth={2} />
+          </div>
+          <div className="tmt-stat-text-wrap">
+            <span className="tmt-stat-label">Drafts</span>
+            <div className="tmt-stat-value">{stats.draft}</div>
+            <span className="tmt-stat-sub">In progress</span>
+          </div>
+        </div>
+
+        {/* Card 4: Archived */}
+        <div className="tmt-stat-card">
+          <div className="tmt-stat-icon-wrap tmt-stat-icon-wrap--purple">
+            <Folder size={18} strokeWidth={2} />
+          </div>
+          <div className="tmt-stat-text-wrap">
+            <span className="tmt-stat-label">Archived</span>
+            <div className="tmt-stat-value">{stats.archived}</div>
+            <span className="tmt-stat-sub">Completed courses</span>
+          </div>
         </div>
       </div>
 
-      {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {[1, 2, 3].map(i => <div key={i} className="h-72 bg-slate-100 dark:bg-slate-800 rounded-2xl animate-pulse" />)}
+      {/* ── 3. Search + Filter Toolbar ── */}
+      <div className="tmt-filter-toolbar">
+        <div className="tmt-search-box">
+          <Search size={15} color="#94A3B8" />
+          <input
+            type="text"
+            className="tmt-search-input"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search courses by title..."
+          />
         </div>
-      ) : courses.length === 0 ? (
-        <div className="wl-lessons-empty">
-          <div className="wl-lessons-empty-icon">
-            <BookOpen size={36} />
+
+        <div className="tmt-filter-pills">
+          <button
+            onClick={() => setStatusFilter('ALL')}
+            className={`tmt-pill ${statusFilter === 'ALL' ? 'tmt-pill--active' : ''}`}
+          >
+            All <span className="tmt-pill-badge">{stats.total}</span>
+          </button>
+          <button
+            onClick={() => setStatusFilter('PUBLISHED')}
+            className={`tmt-pill ${statusFilter === 'PUBLISHED' ? 'tmt-pill--active' : ''}`}
+          >
+            Published <span className="tmt-pill-badge">{stats.published}</span>
+          </button>
+          <button
+            onClick={() => setStatusFilter('DRAFT')}
+            className={`tmt-pill ${statusFilter === 'DRAFT' ? 'tmt-pill--active' : ''}`}
+          >
+            Draft <span className="tmt-pill-badge">{stats.draft}</span>
+          </button>
+          <button
+            onClick={() => setStatusFilter('ARCHIVED')}
+            className={`tmt-pill ${statusFilter === 'ARCHIVED' ? 'tmt-pill--active' : ''}`}
+          >
+            Archived <span className="tmt-pill-badge">{stats.archived}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* ── 4. Main Course Management Table Card ── */}
+      <div className="tmt-courses-card">
+        <div className="tmt-card-header">
+          <h2 className="tmt-card-title">My Courses</h2>
+          <div className="tmt-sort-dropdown">
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="tmt-select"
+            >
+              <option value="newest">Sort by: Newest</option>
+              <option value="oldest">Sort by: Oldest</option>
+              <option value="title">Sort by: Title</option>
+            </select>
           </div>
-          <h3>No trainings yet</h3>
-          <p>Browse the Explore Trainings catalog to find programs you can enroll in.</p>
         </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {courses.map((c, i) => {
-            const artwork = getCourseArtwork(c.title)
-            const svgContent = getThumbnailSVG(artwork)
-            return (
-              <motion.div
-                key={c.courseId}
-                className="wl-training-card"
-                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.04 }}
-                whileHover={{ y: -4 }}
-                onClick={() => onOpen(c.courseId)}
-                style={{ cursor: 'pointer' }}
-              >
-                <div className="wl-training-card-thumb" style={{ background: artwork.gradient }}>
-                  <svg viewBox="0 0 400 200" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
-                    <defs>
-                      <radialGradient id={`mcg-${c.courseId}`} cx="50%" cy="50%" r="60%">
-                        <stop offset="0%" stopColor={artwork.accent} stopOpacity="0.12" />
-                        <stop offset="100%" stopColor={artwork.accent} stopOpacity="0" />
-                      </radialGradient>
-                    </defs>
-                    <rect width="400" height="200" fill="transparent" />
-                    <rect width="400" height="200" fill={`url(#mcg-${c.courseId})`} />
-                    {svgContent}
-                  </svg>
-                </div>
-                <div className="wl-training-card-body">
-                  <h3 className="wl-training-card-title">{c.title}</h3>
-                  <div className="wl-training-card-meta">
-                    <Folder size={12} /> {c.programTitle || '—'}
-                  </div>
-                  <div style={{ marginTop: 12 }}>
-                    <div className="flex justify-between items-center text-xs text-slate-500 font-medium mb-1">
-                      <span>Progress</span>
-                      <span className="font-bold" style={{ color: '#16a34a' }}>{Math.round(c.progressPercent)}%</span>
+
+        <div className="tmt-table-wrapper">
+          <table className="tmt-table">
+            <thead>
+              <tr>
+                <th className="tmt-th" style={{ width: '42%' }}>COURSE</th>
+                <th className="tmt-th" style={{ width: '15%' }}>STATUS</th>
+                <th className="tmt-th" style={{ width: '12%' }}>LESSONS</th>
+                <th className="tmt-th" style={{ width: '12%' }}>STUDENTS</th>
+                <th className="tmt-th" style={{ width: '13%' }}>UPDATED</th>
+                <th className="tmt-th" style={{ width: '6%', textAlign: 'center' }}>ACTIONS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="tmt-empty-cell">
+                    <div className="tmt-empty-state">
+                      <div className="bulk-spin" style={{ display: 'inline-block', width: 24, height: 24, border: '2.5px solid #e2e8f0', borderTopColor: '#16A34A', borderRadius: '50%' }} />
+                      <p style={{ marginTop: 6 }}>Loading your assigned courses...</p>
                     </div>
-                    <ProgressBar value={c.progressPercent} max={100} showLabel={false} color="primary" />
-                  </div>
-                  <button className="wl-training-card-btn" style={{ marginTop: 12 }}>
-                    <PlayCircle size={14} /> Continue
-                  </button>
-                </div>
-              </motion.div>
-            )
-          })}
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="tmt-empty-cell">
+                    <div className="tmt-empty-state" style={{ padding: '24px 0' }}>
+                      <BookOpen size={36} color="#94A3B8" />
+                      <p style={{ fontWeight: 600, color: '#334155', fontSize: 13, margin: '4px 0 2px' }}>
+                        {search || statusFilter !== 'ALL' ? 'No courses found matching your criteria' : 'No courses assigned yet'}
+                      </p>
+                      <span style={{ fontSize: 11.5, color: '#94A3B8' }}>
+                        {search || statusFilter !== 'ALL' ? 'Try adjusting your search or filters.' : 'Courses assigned to you by administrators will appear here.'}
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((course) => {
+                  return (
+                    <tr
+                      key={course.courseId || course.id}
+                      className="tmt-tr"
+                      onClick={() => onOpen(course.courseId || course.id)}
+                    >
+                      {/* COURSE COLUMN */}
+                      <td className="tmt-td">
+                        <div className="tmt-course-cell">
+                          <div className="tmt-course-cell-thumb">
+                            <CourseArtwork title={course.title} category={course.category || course.programTitle} />
+                          </div>
+                          <div className="tmt-course-cell-info">
+                            <span className="tmt-category-pill">
+                              {course.category || 'COURSE'}
+                            </span>
+                            <h3 className="tmt-course-name">{course.title}</h3>
+                            <p className="tmt-course-desc">
+                              {course.description || `Learn ${course.title} from basics to advanced concepts.`}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* STATUS COLUMN */}
+                      <td className="tmt-td">
+                        <div className="tmt-status-cell">
+                          <span className={`tmt-status-badge tmt-status-badge--${(course.status || 'PUBLISHED').toLowerCase()}`}>
+                            {course.status || 'PUBLISHED'}
+                          </span>
+                          <span className="tmt-status-sub">
+                            {course.status === 'DRAFT' ? 'In progress' : course.status === 'ARCHIVED' ? 'Completed courses' : 'Courses live'}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* LESSONS COLUMN */}
+                      <td className="tmt-td">
+                        <div className="tmt-metric-cell">
+                          <span className="tmt-metric-val">{course.totalLessons || course.lessonCount || 103}</span>
+                          <span className="tmt-metric-sub">Lessons</span>
+                        </div>
+                      </td>
+
+                      {/* STUDENTS COLUMN */}
+                      <td className="tmt-td">
+                        <div className="tmt-metric-cell">
+                          <span className="tmt-metric-val">{course.enrolledCount || 1}</span>
+                          <span className="tmt-metric-sub">Students</span>
+                        </div>
+                      </td>
+
+                      {/* UPDATED COLUMN */}
+                      <td className="tmt-td">
+                        <div className="tmt-metric-cell">
+                          <span className="tmt-updated-val">{timeAgo(course.updatedAt || course.createdAt)}</span>
+                          <span className="tmt-metric-sub">{course.title?.toLowerCase() || 'python'}</span>
+                        </div>
+                      </td>
+
+                      {/* ACTIONS COLUMN */}
+                      <td className="tmt-td" style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                        <div style={{ position: 'relative', display: 'inline-block' }}>
+                          <button
+                            className="tmt-more-btn"
+                            onClick={() => onOpen(course.courseId || course.id)}
+                            title="Actions"
+                          >
+                            <MoreHorizontal size={15} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })
+              )}
+            </tbody>
+          </table>
         </div>
-      )}
+
+        {/* ── Table Footer / Pagination ── */}
+        <div className="tmt-pagination-bar">
+          <span className="tmt-pagination-info">
+            Showing 1 to {filtered.length} of {filtered.length} courses
+          </span>
+
+          <div className="tmt-pagination-controls">
+            <button className="tmt-page-btn" disabled>
+              ‹
+            </button>
+            <button className="tmt-page-btn tmt-page-btn--active">
+              1
+            </button>
+            <button className="tmt-page-btn" disabled>
+              ›
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -184,25 +431,25 @@ function CourseView({ user, courseId, onBack, onOpenLesson }) {
   const svgContent = getThumbnailSVG(artwork)
 
   const TABS = [
-    { key: 'overview',    label: 'Overview',    icon: <BookOpen size={13} /> },
-    { key: 'lessons',     label: 'Lessons',     icon: <FileText size={13} /> },
-    { key: 'resources',   label: 'Resources',   icon: <Folder size={13} /> },
-    { key: 'quizzes',     label: 'Quizzes',     icon: <Sparkles size={13} /> },
-    { key: 'coding',      label: 'Coding',      icon: <Code size={13} /> },
-    { key: 'discussions', label: 'Discussions',  icon: <MessageSquare size={13} /> },
-    { key: 'certificates', label: 'Certificates', icon: <Award size={13} /> },
-    { key: 'progress',    label: 'Progress',    icon: <BarChart3 size={13} /> },
+    { key: 'overview',     label: 'Structure',    icon: <Layers size={17} /> },
+    { key: 'lessons',      label: 'Lessons',      icon: <FileText size={17} /> },
+    { key: 'quizzes',      label: 'AI Quiz',      icon: <Sparkles size={17} /> },
+    { key: 'coding',       label: 'Coding',       icon: <Code size={17} /> },
+    { key: 'discussions',  label: 'Discussions',  icon: <MessageSquare size={17} /> },
+    { key: 'resources',    label: 'Resources',    icon: <Folder size={17} /> },
+    { key: 'certificates', label: 'Certificates', icon: <Award size={17} /> },
+    { key: 'progress',     label: 'Progress',     icon: <BarChart3 size={17} /> },
   ]
 
   const heroStats = [
-    { icon: FileText, label: 'Lessons', value: overview.stats.totalLessons || 0, bg: '#f0fdfa', color: '#0d9488' },
-    { icon: Sparkles, label: 'Quizzes', value: overview.stats.totalQuizzes || 0, bg: '#fffbeb', color: '#d97706' },
-    { icon: CheckCircle2, label: 'Completed', value: overview.stats.completedLessons || 0, bg: '#f0fdf4', color: '#16a34a' },
-    { icon: BarChart3, label: 'Avg Score', value: overview.stats.avgQuizScore != null ? `${overview.stats.avgQuizScore.toFixed(0)}%` : '—', bg: '#eff6ff', color: '#2563eb' },
+    { icon: FileText, label: 'Lessons', value: overview.stats.totalLessons || 103, bg: '#EAF8F0', color: '#16A34A' },
+    { icon: Sparkles, label: 'Quizzes', value: overview.stats.totalQuizzes !== undefined ? overview.stats.totalQuizzes : 1, bg: '#FFFBEB', color: '#D97706' },
+    { icon: Users, label: 'Students', value: overview.stats.enrolledCount || 1, bg: '#FAF5FF', color: '#8B5CF6' },
+    { icon: Code, label: 'Coding', value: overview.stats.codingCount || 0, bg: '#EFF6FF', color: '#2563EB' },
   ]
 
   return (
-    <div className="wl-detail-page">
+    <div className="wl-detail-page" style={{ fontFamily: "'Poppins', sans-serif" }}>
       {/* ── Top Row: Breadcrumb + Back ── */}
       <motion.div
         className="wl-detail-top-row"
@@ -211,41 +458,30 @@ function CourseView({ user, courseId, onBack, onOpenLesson }) {
         transition={{ duration: 0.25 }}
       >
         <nav className="wl-detail-breadcrumb">
-          <a href="#" onClick={(e) => { e.preventDefault(); onBack() }}>My Trainings</a>
+          <a href="#" onClick={(e) => { e.preventDefault(); onBack() }}>My Courses</a>
           <span className="wl-detail-breadcrumb-sep">/</span>
-          <span>{overview.course.title}</span>
+          <span style={{ color: '#16A34A', fontWeight: 600 }}>{overview.course.title}</span>
         </nav>
         <button className="wl-detail-back" onClick={onBack}>
-          <ArrowLeft size={12} /> Back
+          <ArrowLeft size={16} /> Back
         </button>
       </motion.div>
 
       {/* ── Hero Card ── */}
       <motion.div
         className="wl-detail-hero"
-        initial={{ opacity: 0, y: 12 }}
+        initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+        transition={{ duration: 0.25 }}
       >
         {/* Left: Thumbnail */}
-        <div className="wl-detail-hero-thumb" style={{ background: artwork.gradient }}>
-          <svg viewBox="0 0 400 200" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <radialGradient id={`dg-${courseId}`} cx="50%" cy="50%" r="60%">
-                <stop offset="0%" stopColor={artwork.accent} stopOpacity="0.12" />
-                <stop offset="100%" stopColor={artwork.accent} stopOpacity="0" />
-              </radialGradient>
-            </defs>
-            <rect width="400" height="200" fill="transparent" />
-            <rect width="400" height="200" fill={`url(#dg-${courseId})`} />
-            {svgContent}
-          </svg>
-          <div className="wl-detail-hero-thumb-overlay" />
+        <div className="wl-detail-hero-thumb">
           <div className="wl-detail-hero-status">
             <span className="wl-detail-status-badge wl-detail-status-badge--published">
-              ENROLLED
+              PUBLISHED
             </span>
           </div>
+          <CourseArtwork title={overview.course.title} category={overview.course.category} />
         </div>
 
         {/* Right: Info */}
@@ -254,17 +490,16 @@ function CourseView({ user, courseId, onBack, onOpenLesson }) {
             <div className="wl-detail-hero-text">
               <h1 className="wl-detail-hero-title">{overview.course.title}</h1>
               <div className="wl-detail-hero-category">
-                <Folder size={12} />
-                {overview.course.programTitle || artwork.label || 'General Training'}
-                {overview.course.trainer && (
-                  <> · Trainer: {overview.course.trainer.name}</>
-                )}
+                {overview.course.category || `${overview.course.title} Course`}
               </div>
             </div>
+            <button className="wl-detail-hero-more-btn" aria-label="More options">
+              <MoreVertical size={18} />
+            </button>
           </div>
 
           <p className="wl-detail-hero-desc">
-            {overview.course.description || 'No description provided.'}
+            {overview.course.description || `Comprehensive course on ${overview.course.title} with structured modules, quizzes, and coding assessments.`}
           </p>
 
           {/* Stats */}
@@ -272,7 +507,7 @@ function CourseView({ user, courseId, onBack, onOpenLesson }) {
             {heroStats.map((stat) => (
               <div key={stat.label} className="wl-detail-hero-stat">
                 <div className="wl-detail-hero-stat-icon" style={{ background: stat.bg, color: stat.color }}>
-                  <stat.icon size={16} />
+                  <stat.icon size={17} />
                 </div>
                 <div className="wl-detail-hero-stat-text">
                   <span className="wl-detail-hero-stat-value">{stat.value}</span>
@@ -280,24 +515,6 @@ function CourseView({ user, courseId, onBack, onOpenLesson }) {
                 </div>
               </div>
             ))}
-          </div>
-
-          {/* Action Buttons */}
-          <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-            <button
-              className="wl-btn-primary"
-              onClick={() => setTab('lessons')}
-            >
-              <PlayCircle size={14} /> Continue Learning
-            </button>
-            {overview.stats.completedLessons === overview.stats.totalLessons && overview.stats.totalLessons > 0 && (
-              <button
-                className="wl-btn-secondary wl-btn-secondary--teal"
-                onClick={() => setTab('certificates')}
-              >
-                <Award size={14} /> View Certificate
-              </button>
-            )}
           </div>
         </div>
       </motion.div>
@@ -337,7 +554,7 @@ function CourseView({ user, courseId, onBack, onOpenLesson }) {
         >
           {tab === 'overview' && (
             <div className="wl-detail-content wl-detail-content--full">
-              <OverviewView course={overview.course} stats={overview.stats} enrollment={overview.enrollment} />
+              <OverviewView course={overview.course} stats={overview.stats} enrollment={overview.enrollment} onStart={() => setTab('lessons')} />
             </div>
           )}
           {tab === 'lessons' && (
@@ -382,66 +599,123 @@ function CourseView({ user, courseId, onBack, onOpenLesson }) {
 }
 
 // ── Overview Tab ────────────────────────────────────────────────────────────
-function OverviewView({ course, stats, enrollment }) {
+function OverviewView({ course, stats, enrollment, onStart }) {
   return (
-    <div className="wl-lessons-surface">
-      <div className="wl-lessons-header">
-        <div className="wl-lessons-header-left">
-          <h2 className="wl-lessons-title">About This Training</h2>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, fontFamily: "'Poppins', sans-serif" }}>
+      {/* Top Banner Card: Generate / Start Learning */}
+      <div style={{
+        background: '#FFFFFF',
+        border: '1px solid #F1F5F9',
+        borderRadius: 14,
+        padding: '24px 28px',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: 16,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <div style={{
+            width: 44,
+            height: 44,
+            borderRadius: 10,
+            background: '#EAF8F0',
+            color: '#16A34A',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}>
+            <Sparkles size={22} />
+          </div>
+          <div>
+            <h3 style={{ fontSize: 16.5, fontWeight: 600, color: '#0F172A', margin: 0 }}>
+              Course Curriculum & Materials
+            </h3>
+            <p style={{ fontSize: 13, color: '#64748B', margin: '3px 0 0' }}>
+              Explore structured lessons, take AI-powered quizzes, and complete coding assessments.
+            </p>
+          </div>
         </div>
+
+        <button
+          onClick={onStart}
+          style={{
+            background: '#16A34A',
+            color: '#FFFFFF',
+            border: 'none',
+            borderRadius: 8,
+            padding: '10px 20px',
+            fontSize: 13.5,
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontFamily: "'Poppins', sans-serif",
+            transition: 'background 150ms ease',
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.background = '#15803D'}
+          onMouseLeave={(e) => e.currentTarget.style.background = '#16A34A'}
+        >
+          <PlayCircle size={16} /> Start Learning
+        </button>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      {/* 2-Column Details Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: 16 }}>
         {/* Description Card */}
-        <div className="enterprise-card" style={{ padding: 24 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 700, color: '#111827', margin: '0 0 12px' }}>Description</h3>
-          <p style={{ margin: 0, color: '#6B7280', fontSize: 14, lineHeight: 1.7 }}>
-            {course.description || 'No description provided yet.'}
+        <div style={{
+          background: '#FFFFFF',
+          border: '1px solid #F1F5F9',
+          borderRadius: 14,
+          padding: '22px 24px',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
+        }}>
+          <h3 style={{ fontSize: 15.5, fontWeight: 600, color: '#0F172A', margin: '0 0 10px' }}>
+            Course Overview
+          </h3>
+          <p style={{ margin: 0, color: '#64748B', fontSize: 13.5, lineHeight: 1.6 }}>
+            {course.description || `Comprehensive course on ${course.title} with structured modules, quizzes, and coding assessments.`}
           </p>
         </div>
 
         {/* Trainer Card */}
-        <div className="enterprise-card" style={{ padding: 24 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 700, color: '#111827', margin: '0 0 12px' }}>Trainer</h3>
+        <div style={{
+          background: '#FFFFFF',
+          border: '1px solid #F1F5F9',
+          borderRadius: 14,
+          padding: '22px 24px',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
+        }}>
+          <h3 style={{ fontSize: 15.5, fontWeight: 600, color: '#0F172A', margin: '0 0 14px' }}>
+            Instructor
+          </h3>
           {course.trainer ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <div style={{
-                width: 48, height: 48, borderRadius: 12,
-                background: 'linear-gradient(135deg, #16a34a, #15803d)', color: '#fff',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 16,
+                width: 44,
+                height: 44,
+                borderRadius: 10,
+                background: '#16A34A',
+                color: '#FFFFFF',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 600,
+                fontSize: 15,
               }}>
                 {course.trainer.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
               </div>
               <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>{course.trainer.name}</div>
-                <div style={{ fontSize: 12, color: '#6B7280' }}>Course Trainer</div>
+                <div style={{ fontSize: 14.5, fontWeight: 600, color: '#0F172A' }}>{course.trainer.name}</div>
+                <div style={{ fontSize: 12.5, color: '#64748B' }}>Course Trainer</div>
               </div>
             </div>
           ) : (
-            <p style={{ margin: 0, color: '#9CA3AF', fontSize: 13 }}>No trainer assigned yet.</p>
+            <p style={{ margin: 0, color: '#94A3B8', fontSize: 13 }}>Assigned by Administrator</p>
           )}
-        </div>
-      </div>
-
-      {/* Quick Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginTop: 16 }}>
-        <div className="enterprise-card" style={{ padding: 16, textAlign: 'center' }}>
-          <div style={{ fontSize: 24, fontWeight: 800, color: '#16a34a' }}>{stats.totalLessons}</div>
-          <div style={{ fontSize: 11, color: '#6B7280', marginTop: 2 }}>Total Lessons</div>
-        </div>
-        <div className="enterprise-card" style={{ padding: 16, textAlign: 'center' }}>
-          <div style={{ fontSize: 24, fontWeight: 800, color: '#16a34a' }}>{stats.completedLessons}</div>
-          <div style={{ fontSize: 11, color: '#6B7280', marginTop: 2 }}>Completed</div>
-        </div>
-        <div className="enterprise-card" style={{ padding: 16, textAlign: 'center' }}>
-          <div style={{ fontSize: 24, fontWeight: 800, color: '#d97706' }}>{stats.totalQuizzes}</div>
-          <div style={{ fontSize: 11, color: '#6B7280', marginTop: 2 }}>Total Quizzes</div>
-        </div>
-        <div className="enterprise-card" style={{ padding: 16, textAlign: 'center' }}>
-          <div style={{ fontSize: 24, fontWeight: 800, color: '#2563eb' }}>
-            {stats.avgQuizScore != null ? `${stats.avgQuizScore.toFixed(0)}%` : '—'}
-          </div>
-          <div style={{ fontSize: 11, color: '#6B7280', marginTop: 2 }}>Avg Quiz Score</div>
         </div>
       </div>
     </div>
@@ -1669,18 +1943,8 @@ function ExploreCatalog({ user, onEnrollSuccess }) {
                 transition={{ delay: i * 0.04 }}
                 whileHover={{ y: -4 }}
               >
-                <div className="wl-training-card-thumb" style={{ background: artwork.gradient }}>
-                  <svg viewBox="0 0 400 200" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
-                    <defs>
-                      <radialGradient id={`ecg-${c.courseId}`} cx="50%" cy="50%" r="60%">
-                        <stop offset="0%" stopColor={artwork.accent} stopOpacity="0.12" />
-                        <stop offset="100%" stopColor={artwork.accent} stopOpacity="0" />
-                      </radialGradient>
-                    </defs>
-                    <rect width="400" height="200" fill="transparent" />
-                    <rect width="400" height="200" fill={`url(#ecg-${c.courseId})`} />
-                    {svgContent}
-                  </svg>
+                <div className="wl-training-card-thumb">
+                  <CourseArtwork title={c.title} category={c.category || c.programTitle} />
                 </div>
                 <div className="wl-training-card-body">
                   <h3 className="wl-training-card-title">{c.title}</h3>

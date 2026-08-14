@@ -17,10 +17,15 @@ const { logAudit, ACTIONS } = require('./auditLogger');
 
 // ── Threat patterns ────────────────────────────────────────────────────────
 const SQL_INJECTION_PATTERNS = [
-  /(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|UNION|DECLARE|TRUNCATE)\b)/i,
-  /(--|;|\/\*|\*\/|xp_|sp_)/i,
-  /('.*(\bOR\b|\bAND\b).*')/i,
-  /(\bOR\b\s+\d+\s*=\s*\d+)/i,
+  /(\bUNION\s+(ALL\s+)?SELECT\b)/i,
+  /(\b(DROP|TRUNCATE|ALTER)\s+(TABLE|DATABASE|SCHEMA)\b)/i,
+  /(\bINSERT\s+INTO\b)/i,
+  /(\bSELECT\b[\s\S]+\bFROM\b[\s\S]+\b(WHERE|JOIN|GROUP\s+BY|ORDER\s+BY)\b)/i,
+  /(\bUPDATE\b[\s\S]+\bSET\b[\s\S]+\bWHERE\b)/i,
+  /(\bDELETE\s+FROM\b)/i,
+  /(--|;|\/\*|\*\/|xp_|sp_executesql)/i,
+  /('(\s*--|\s*#|\s*\/\*))/,
+  /(\bOR\b\s+['"\d]+\s*=\s*['"\d]+)/i,
   /(CHAR\(|CONCAT\(|0x[0-9a-f]+)/i,
 ];
 

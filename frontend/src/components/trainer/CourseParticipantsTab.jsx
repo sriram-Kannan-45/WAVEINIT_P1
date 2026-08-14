@@ -7,6 +7,8 @@ import { API } from '../../api/api'
 import { useToast } from '../Toast'
 import { downloadCSV } from '../../utils/export'
 import { LineAreaChart } from '../ui/ChartWrappers'
+import '../../styles/course-tabs.css'
+
 
 const PAGE_SIZE = 10
 
@@ -447,17 +449,25 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
       })
       const d = await r.json()
       if (d.success) {
-        setParticipants(d.participants)
-        setTotal(d.total)
-        if (targetPage > Math.max(1, Math.ceil(d.total / PAGE_SIZE))) setPage(Math.max(1, Math.ceil(d.total / PAGE_SIZE)))
-      } else showError(d.error || 'Failed to load participants')
-    } catch (e) { showError(e.message) }
-    finally { setLoading(false) }
+        const list = Array.isArray(d.participants) ? d.participants : []
+        setParticipants(list)
+        const totalCount = typeof d.total === 'number' ? d.total : list.length
+        setTotal(totalCount)
+        const maxPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+        if (targetPage > maxPages) setPage(maxPages)
+      } else {
+        showError(d.error || 'Failed to load participants')
+      }
+    } catch (e) {
+      showError(e.message)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
     loadParticipants()
-  }, [courseId, user.token])
+  }, [courseId, user?.token])
 
   const handleSearch = (e) => {
     const v = e.target.value
@@ -481,137 +491,193 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
   }
 
   const handleExport = () => {
-    downloadCSV(participants, `participants-${courseId}.csv`)
-    showSuccess('CSV exported')
+    if (participants.length === 0) {
+      showError('No participants to export')
+      return
+    }
+    const rows = participants.map(p => ({
+      Name: p.name || 'Unknown',
+      Email: p.email || '—',
+      'Joined Date': p.joinedAt ? new Date(p.joinedAt).toLocaleDateString() : '—',
+      'Lessons Completed': p.lessonsCompleted ?? 0,
+      'Avg Score': p.avgScore != null ? `${p.avgScore.toFixed(1)}%` : '—',
+      Status: p.status || '—',
+      'Quizzes Attempted': p.quizResults?.length ?? 0,
+    }))
+    downloadCSV(rows, `course-${courseId}-participants.csv`)
+    showSuccess('Exported participants CSV')
   }
 
-  const filtered = useMemo(
-    () => sortParticipants(participants, sortConfig),
-    [participants, sortConfig]
-  )
+  const sortableHeaders = [
+    { key: 'name', label: 'PARTICIPANT', defaultSort: true },
+    { key: 'joinedAt', label: 'JOINED', sortable: true },
+    { key: 'lessonsCompleted', label: 'LESSONS', sortable: true },
+    { key: 'avgScore', label: 'AVG SCORE', sortable: true },
+  ]
 
-  const avgCompletion = participants.length
-    ? (participants.reduce((a, p) => a + (p.lessonsCompleted || 0), 0) / participants.length / Math.max(course?.lessonCount || 1, 1)) * 100
-    : 0
-  const avgScore = participants.length
-    ? participants.reduce((a, p) => a + (p.avgScore || 0), 0) / participants.length
-    : 0
-  const topScore = participants.length
-    ? Math.max(...participants.map(p => p.avgScore || 0))
+  const filtered = useMemo(() => {
+    const arr = [...participants]
+    if (!sortConfig) return arr
+    return arr.sort((a, b) => {
+      const dir = sortConfig.direction === 'asc' ? 1 : -1
+      if (sortConfig.key === 'name') {
+        return dir * (a.name || '').localeCompare(b.name || '')
+      }
+      if (sortConfig.key === 'joinedAt') {
+        return dir * (new Date(a.joinedAt || 0) - new Date(b.joinedAt || 0))
+      }
+      if (sortConfig.key === 'lessonsCompleted') {
+        return dir * ((a.lessonsCompleted || 0) - (b.lessonsCompleted || 0))
+      }
+      if (sortConfig.key === 'avgScore') {
+        return dir * ((a.avgScore || 0) - (b.avgScore || 0))
+      }
+      return 0
+    })
+  }, [participants, sortConfig])
+
+  const totalCount = typeof total === 'number' && !isNaN(total) ? total : filtered.length
+  const avgCompletion = participants.length > 0 && course?.lessonCount
+    ? (participants.reduce((acc, p) => acc + (p.lessonsCompleted || 0), 0) / (participants.length * course.lessonCount)) * 100
     : 0
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const validScores = participants.filter(p => p.avgScore != null).map(p => p.avgScore)
+  const avgScore = validScores.length > 0
+    ? validScores.reduce((a, b) => a + b, 0) / validScores.length
+    : 0
+  const topScore = validScores.length > 0
+    ? Math.max(...validScores)
+    : 0
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div className="reg-admin-stats">
-        <StatCard icon={<Users size={18} />} label="Total Participants" value={total} color="#0d9488" />
-        <StatCard icon={<TrendingUp size={18} />} label="Avg Completion" value={`${avgCompletion.toFixed(1)}%`} color="#16a34a" progress={avgCompletion.toFixed(0)} />
-        <StatCard icon={<Star size={18} />} label="Avg Score" value={avgScore ? `${avgScore.toFixed(1)}%` : '—'} color="#2563eb" />
-        <StatCard icon={<Award size={18} />} label="Top Score" value={topScore ? `${topScore.toFixed(1)}%` : '—'} color="#F59E0B" />
+    <div className="cpt-container">
+      {/* Top 4 Stat Cards */}
+      <div className="cpt-stats-grid">
+        <div className="cpt-stat-card">
+          <div className="cpt-stat-icon" style={{ background: '#EAF8F0', color: '#16A34A' }}>
+            <Users size={16} />
+          </div>
+          <div>
+            <div className="cpt-stat-label">Total Participants</div>
+            <div className="cpt-stat-val">{totalCount}</div>
+          </div>
+        </div>
+        <div className="cpt-stat-card">
+          <div className="cpt-stat-icon" style={{ background: '#F0FDF4', color: '#16A34A' }}>
+            <TrendingUp size={16} />
+          </div>
+          <div>
+            <div className="cpt-stat-label">Avg Completion</div>
+            <div className="cpt-stat-val">{avgCompletion.toFixed(1)}%</div>
+          </div>
+        </div>
+        <div className="cpt-stat-card">
+          <div className="cpt-stat-icon" style={{ background: '#EFF6FF', color: '#2563EB' }}>
+            <Star size={16} />
+          </div>
+          <div>
+            <div className="cpt-stat-label">Avg Score</div>
+            <div className="cpt-stat-val">{avgScore ? `${avgScore.toFixed(1)}%` : '—'}</div>
+          </div>
+        </div>
+        <div className="cpt-stat-card">
+          <div className="cpt-stat-icon" style={{ background: '#FFFBEB', color: '#D97706' }}>
+            <Award size={16} />
+          </div>
+          <div>
+            <div className="cpt-stat-label">Top Score</div>
+            <div className="cpt-stat-val">{topScore ? `${topScore.toFixed(1)}%` : '—'}</div>
+          </div>
+        </div>
       </div>
 
-      <div className="reg-admin-table-wrap">
-        <div className="reg-card-header">
+      {/* Main Table Card */}
+      <div className="cpt-table-card">
+        <div className="cpt-table-header">
           <div>
-            <h3 className="reg-card-title">Participants</h3>
-            <p className="reg-card-subtitle">{total} enrolled participants</p>
+            <h3 className="cpt-table-title">Participants</h3>
+            <p className="cpt-table-subtitle">{totalCount} enrolled participant{totalCount !== 1 ? 's' : ''}</p>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <div className="reg-admin-search">
-              <Search size={14} />
+          <div className="cpt-table-actions">
+            <div className="cpt-search-box">
+              <Search size={13} color="#94A3B8" />
               <input
-                className="reg-admin-search-input"
+                className="cpt-search-input"
                 placeholder="Search participants..."
                 value={search}
                 onChange={handleSearch}
               />
             </div>
             <button
-              className="reg-admin-action"
+              className="cpt-btn-primary"
               onClick={() => setShowInviteModal(true)}
               title="Invite Approved Participants"
-              style={{
-                background: '#16a34a', color: '#ffffff', border: 'none',
-                padding: '0 14px', borderRadius: 8, display: 'flex',
-                alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 12.5,
-                cursor: 'pointer'
-              }}
             >
-              <UserPlus size={14} />
+              <UserPlus size={13} />
               <span>Invite Participants</span>
             </button>
             <button
-              className="reg-admin-action"
+              className="cpt-btn-icon"
               onClick={handleRefresh}
               title="Refresh"
             >
-              <RefreshCw size={14} className={refreshing ? 'bulk-spin' : ''} />
+              <RefreshCw size={13} className={refreshing ? 'bulk-spin' : ''} />
             </button>
             <button
-              className="reg-admin-action"
+              className="cpt-btn-icon"
               onClick={handleExport}
               title="Export CSV"
             >
-              <Download size={14} />
+              <Download size={13} />
             </button>
           </div>
         </div>
 
-        <div style={{ overflowX: 'auto' }}>
-          <table className="reg-admin-table">
+        <div className="cpt-table-wrap">
+          <table className="cpt-table">
             <thead>
               <tr>
                 {sortableHeaders.map(h => (
                   <th key={h.key}>
-                    {h.sortable || h.defaultSort ? (
-                      <button
-                        style={{
-                          display: 'inline-flex', alignItems: 'center', gap: 4,
-                          background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                          textTransform: 'inherit', letterSpacing: 'inherit', fontSize: 'inherit',
-                          fontWeight: 600, color: 'inherit',
-                        }}
-                        onClick={() => h.key !== 'name' && handleSort(h.key)}
-                      >
-                        {h.label}
-                        {sortConfig?.key === h.key && (
-                          sortConfig.direction === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
-                        )}
-                      </button>
-                    ) : h.label}
+                    <button
+                      className="cpt-th-btn"
+                      onClick={() => handleSort(h.key)}
+                    >
+                      {h.label}
+                      {sortConfig?.key === h.key && (
+                        sortConfig.direction === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />
+                      )}
+                    </button>
                   </th>
                 ))}
-                <th>Progress</th>
-                <th>Status</th>
-                <th>Quiz Results</th>
-                <th>Actions</th>
+                <th>PROGRESS</th>
+                <th>STATUS</th>
+                <th>QUIZ RESULTS</th>
+                <th>ACTIONS</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} style={{ textAlign: 'center', padding: 32 }}>
-                    <Loader2 size={20} className="bulk-spin" style={{ color: '#0d9488' }} />
+                  <td colSpan={8} style={{ textAlign: 'center', padding: 28 }}>
+                    <Loader2 size={20} className="bulk-spin" style={{ color: '#16A34A', margin: '0 auto' }} />
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6}>
-                    <div className="reg-admin-empty" style={{ padding: '32px 16px' }}>
-                      <Users size={24} />
-                      <h3>No participants found</h3>
+                  <td colSpan={8}>
+                    <div className="cpt-empty-state">
+                      <Users size={28} color="#94A3B8" />
+                      <h4>No participants found</h4>
                       <p>{search ? 'Try a different search term.' : 'No participants have enrolled yet.'}</p>
                       <button
                         onClick={() => setShowInviteModal(true)}
-                        style={{
-                          marginTop: 12, padding: '8px 16px', borderRadius: 8,
-                          background: '#16a34a', color: '#fff', border: 'none',
-                          fontWeight: 600, fontSize: 13, cursor: 'pointer',
-                          display: 'inline-flex', alignItems: 'center', gap: 6
-                        }}
+                        className="cpt-btn-primary"
+                        style={{ marginTop: 8 }}
                       >
-                        <UserPlus size={15} />
+                        <UserPlus size={13} />
                         <span>Invite Participants</span>
                       </button>
                     </div>
@@ -621,29 +687,29 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
                 filtered.map(p => (
                   <tr key={p.id || p.email}>
                     <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <div className="reg-admin-avatar" style={{ width: 30, height: 30, fontSize: 11, borderRadius: '50%' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div className="cpt-avatar">
                           {initials(p.name)}
                         </div>
                         <div>
-                          <div className="reg-admin-name" style={{ fontSize: 13 }}>{p.name}</div>
-                          <div className="reg-admin-email">{p.email}</div>
+                          <div className="cpt-name">{p.name || 'Participant'}</div>
+                          <div className="cpt-email">{p.email || '—'}</div>
                         </div>
                       </div>
                     </td>
                     <td>
-                      <span className="reg-admin-date">{p.joinedAt ? new Date(p.joinedAt).toLocaleDateString() : '—'}</span>
+                      <span className="cpt-cell-text">{p.joinedAt ? new Date(p.joinedAt).toLocaleDateString() : '—'}</span>
                     </td>
                     <td>
-                      <span className="reg-admin-score">{p.lessonsCompleted ?? '—'}</span>
+                      <span className="cpt-cell-bold">{p.lessonsCompleted ?? 0}</span>
                     </td>
                     <td>
-                      <span className="reg-admin-score">
+                      <span className="cpt-cell-bold">
                         {p.avgScore != null ? `${p.avgScore.toFixed(1)}%` : '—'}
                       </span>
                     </td>
                     <td>
-                      <div style={{ minWidth: 110 }}>
+                      <div style={{ minWidth: 90 }}>
                         <ProgressBar
                           value={course?.lessonCount ? ((p.lessonsCompleted || 0) / course.lessonCount) * 100 : 0}
                         />
@@ -653,17 +719,17 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
                       <StatusBadge status={p.status} />
                     </td>
                     <td>
-                      <span style={{ fontSize: 12, color: p.quizResults?.length ? '#0d9488' : '#94a3b8', fontFamily: 'var(--font-primary)' }}>
+                      <span className="cpt-cell-accent">
                         {p.quizResults?.length ?? 0}
                       </span>
                     </td>
                     <td>
                       <button
-                        className="reg-admin-action"
+                        className="cpt-btn-action"
                         onClick={() => setDetail(p)}
                         title="View details"
                       >
-                        <Eye size={14} />
+                        <Eye size={13} />
                       </button>
                     </td>
                   </tr>
@@ -673,29 +739,36 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
           </table>
         </div>
 
-        <div className="reg-card-footer" style={{
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          padding: '12px 16px', borderTop: '1px solid #e2e8f0', fontSize: 12, color: '#64748b',
-        }}>
+        {/* Footer */}
+        <div className="cpt-footer">
           <span>
-            {total === 0 ? '0 participants' : `Page ${Math.min(page, totalPages)} of ${totalPages} · ${total} total`}
+            {totalCount === 0
+              ? '0 participants'
+              : totalCount === 1
+                ? 'Showing 1 participant'
+                : `Showing 1 to ${filtered.length} of ${totalCount} participants`}
           </span>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              className="reg-admin-action"
-              disabled={page <= 1}
-              onClick={() => { const np = page - 1; setPage(np); loadParticipants(np) }}
-            >
-              Prev
-            </button>
-            <button
-              className="reg-admin-action"
-              disabled={page >= totalPages}
-              onClick={() => { const np = page + 1; setPage(np); loadParticipants(np) }}
-            >
-              Next
-            </button>
-          </div>
+          {totalPages > 1 && (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                className="cpt-page-btn"
+                disabled={page <= 1}
+                onClick={() => { const np = page - 1; setPage(np); loadParticipants(np) }}
+              >
+                Prev
+              </button>
+              <span style={{ fontSize: 11.5, color: '#64748B', alignSelf: 'center' }}>
+                Page {page} of {totalPages}
+              </span>
+              <button
+                className="cpt-page-btn"
+                disabled={page >= totalPages}
+                onClick={() => { const np = page + 1; setPage(np); loadParticipants(np) }}
+              >
+                Next
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

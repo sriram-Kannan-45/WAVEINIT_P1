@@ -1,36 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, CalendarDays, Check, ChevronDown, GraduationCap, Loader2, Pencil, Trash2, X } from 'lucide-react'
+import { ArrowLeft, CalendarDays, Check, ChevronDown, Loader2, X } from 'lucide-react'
 
-const labelStyle = { fontSize: 12, fontWeight: 600, color: '#334155', display: 'block', marginBottom: 5 }
-const inputStyle = { width: '100%', padding: '9px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13, fontFamily: 'Inter, system-ui, sans-serif', outline: 'none', boxSizing: 'border-box' }
-const selectStyle = { ...inputStyle, appearance: 'none', background: '#fff url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%2364748b\' stroke-width=\'2\'%3E%3Cpath d=\'m6 9 6 6 6-6\'/%3E%3C/svg%3E") no-repeat right 10px center', paddingRight: 30 }
+const labelStyle = { fontSize: 12, fontWeight: 600, color: '#334155', display: 'block', marginBottom: 4 }
+const inputStyle = { width: '100%', height: 40, padding: '0 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13, fontFamily: 'Inter, system-ui, sans-serif', outline: 'none', boxSizing: 'border-box' }
 
 const cardHeaderStyle = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
   gap: 12,
-  padding: '16px 20px',
+  padding: '14px 20px',
   borderBottom: '1px solid #e2e8f0',
-}
-
-const fmtDateTime = (d) => d
-  ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-  : '-'
-
-const getTrainingStatus = (t) => {
-  const now = new Date()
-  const start = t.startDate ? new Date(t.startDate) : null
-  const end = t.endDate ? new Date(t.endDate) : null
-  if (start && now < start) return 'UPCOMING'
-  if (end && now > end) return 'COMPLETED'
-  return 'ACTIVE'
-}
-
-const STATUS_STYLES = {
-  ACTIVE: { background: '#d1fae5', color: '#065f46', border: '1px solid #6ee7b7' },
-  UPCOMING: { background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' },
-  COMPLETED: { background: '#f1f5f9', color: '#64748b', border: '1px solid #e2e8f0' },
 }
 
 function TrainerPicker({ trainers, selectedIds, onChange }) {
@@ -73,8 +53,8 @@ function TrainerPicker({ trainers, selectedIds, onChange }) {
           flexWrap: 'wrap',
           alignItems: 'center',
           gap: 6,
-          minHeight: 44,
-          padding: '8px 40px 8px 12px',
+          minHeight: 40,
+          padding: '4px 36px 4px 10px',
           border: `1px solid ${open ? '#16A34A' : '#e2e8f0'}`,
           borderRadius: 8,
           background: '#fff',
@@ -92,12 +72,12 @@ function TrainerPicker({ trainers, selectedIds, onChange }) {
             <span key={id} style={{
               display: 'inline-flex',
               alignItems: 'center',
-              gap: 6,
+              gap: 5,
               background: '#f0fdf4',
               color: '#15803D',
               border: '1px solid #bbf7d0',
               borderRadius: '9999px',
-              padding: '3px 8px 3px 10px',
+              padding: '2px 6px 2px 8px',
               fontSize: 12,
               fontWeight: 600,
               maxWidth: '100%',
@@ -112,8 +92,8 @@ function TrainerPicker({ trainers, selectedIds, onChange }) {
                   display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  width: 16,
-                  height: 16,
+                  width: 14,
+                  height: 14,
                   border: 'none',
                   borderRadius: '50%',
                   background: 'rgba(21, 128, 61, 0.12)',
@@ -126,7 +106,7 @@ function TrainerPicker({ trainers, selectedIds, onChange }) {
                 onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(21, 128, 61, 0.22)' }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(21, 128, 61, 0.12)' }}
               >
-                <X size={12} />
+                <X size={10} />
               </button>
             </span>
           )
@@ -141,7 +121,7 @@ function TrainerPicker({ trainers, selectedIds, onChange }) {
           style={{
             flex: '1 1 120px',
             minWidth: 120,
-            height: 30,
+            height: 28,
             border: 'none',
             outline: 'none',
             background: 'transparent',
@@ -154,14 +134,14 @@ function TrainerPicker({ trainers, selectedIds, onChange }) {
       </div>
       <span style={{
         position: 'absolute',
-        right: 12,
+        right: 10,
         top: '50%',
         transform: 'translateY(-50%)',
         color: '#94a3b8',
         pointerEvents: 'none',
         display: 'flex',
       }} aria-hidden="true">
-        <ChevronDown size={18} />
+        <ChevronDown size={16} />
       </span>
 
       {open && (
@@ -178,16 +158,16 @@ function TrainerPicker({ trainers, selectedIds, onChange }) {
             border: '1px solid #e2e8f0',
             borderRadius: 10,
             boxShadow: '0 10px 30px rgba(15, 23, 42, 0.12)',
-            maxHeight: 240,
+            maxHeight: 200,
             overflowY: 'auto',
             padding: 6,
           }}
         >
           {filtered.length === 0 ? (
             <div style={{
-              padding: '16px 12px',
+              padding: '12px 10px',
               textAlign: 'center',
-              fontSize: 13,
+              fontSize: 12.5,
               color: '#94a3b8',
               fontFamily: 'Inter, system-ui, sans-serif',
             }}>
@@ -205,12 +185,12 @@ function TrainerPicker({ trainers, selectedIds, onChange }) {
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 10,
+                  gap: 8,
                   width: '100%',
-                  padding: '9px 12px',
+                  padding: '7px 10px',
                   border: 'none',
                   background: checked ? '#f0fdf4' : 'transparent',
-                  borderRadius: 8,
+                  borderRadius: 6,
                   cursor: 'pointer',
                   textAlign: 'left',
                   font: 'inherit',
@@ -224,19 +204,19 @@ function TrainerPicker({ trainers, selectedIds, onChange }) {
                   display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  width: 18,
-                  height: 18,
-                  borderRadius: 6,
+                  width: 16,
+                  height: 16,
+                  borderRadius: 4,
                   border: `1px solid ${checked ? '#16A34A' : '#e2e8f0'}`,
                   background: checked ? '#16A34A' : '#fff',
                   color: '#fff',
                   flexShrink: 0,
                   transition: 'background 0.15s, border-color 0.15s',
                 }} aria-hidden="true">
-                  {checked && <Check size={13} />}
+                  {checked && <Check size={11} />}
                 </span>
                 <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, overflowWrap: 'anywhere' }}>{t.name}</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, overflowWrap: 'anywhere' }}>{t.name}</span>
                   <span style={{ fontSize: 11, color: '#64748b', overflowWrap: 'anywhere' }}>{t.email}</span>
                 </span>
               </button>
@@ -250,49 +230,44 @@ function TrainerPicker({ trainers, selectedIds, onChange }) {
 
 export default function CreateTrainingModule({
   trainers = [],
-  trainings = [],
   form,
   onFormChange,
   onSubmit,
-  onEdit,
-  onDelete,
   loading = false,
-  initialLoading = false,
   onBack,
 }) {
   const set = (key) => (e) => onFormChange(p => ({ ...p, [key]: e.target.value }))
-
   const setTrainerIds = (ids) => onFormChange(p => ({ ...p, trainerIds: ids, trainerId: ids[0] || '' }))
 
   return (
-    <div className="reg-admin">
-      {/* Header */}
-      <div className="reg-admin-header">
-        <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-          <CalendarDays size={22} color="#fff" />
+    <div className="reg-admin" style={{ paddingBottom: 0 }}>
+      <div style={{ maxWidth: 920, margin: '0 auto', width: '100%' }}>
+        {/* Header */}
+        <div className="reg-admin-header">
+          <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
+            <CalendarDays size={26} color="#fff" />
+          </div>
+          <div>
+            <h2 className="reg-admin-title">Create Training</h2>
+            <p className="reg-admin-subtitle">Set up a new training session</p>
+          </div>
+          <div style={{ flex: 1 }} />
+          <button className="reg-admin-btn reg-admin-btn--secondary" onClick={onBack} style={{ height: 42, padding: '0 16px', fontSize: 13, borderRadius: 10 }}>
+            <ArrowLeft size={15} /> Back to Trainings
+          </button>
         </div>
-        <div>
-          <h2 className="reg-admin-title">Create Training</h2>
-          <p className="reg-admin-subtitle">Set up a new training session and review your recent sessions</p>
-        </div>
-        <div style={{ flex: 1 }} />
-        <button className="reg-admin-btn reg-admin-btn--secondary" onClick={onBack}>
-          <ArrowLeft size={14} /> Back to Trainings
-        </button>
-      </div>
 
-      <div className="interview-form-grid" style={{ alignItems: 'start' }}>
-        {/* ── Create Training Form ─────────────────────────────────────── */}
+        {/* ── Single Centered Form Card ─────────────────────────────────────── */}
         <div className="reg-admin-table-wrap">
           <div style={cardHeaderStyle}>
             <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#111827' }}>Create Training Session</div>
-              <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 2 }}>Add a new session to the platform</div>
+              <div style={{ fontSize: 14.5, fontWeight: 700, color: '#111827' }}>Create Training Session</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 1 }}>Fill in the session details below</div>
             </div>
           </div>
-          <div style={{ padding: 20 }}>
+          <div style={{ padding: '16px 22px' }}>
             <form onSubmit={onSubmit}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div>
                   <label style={labelStyle}>Training Title *</label>
                   <input
@@ -308,11 +283,11 @@ export default function CreateTrainingModule({
                 <div>
                   <label style={labelStyle}>Description</label>
                   <textarea
-                    rows={4}
+                    rows={2}
                     placeholder="Training objectives and content overview..."
                     value={form.description}
                     onChange={set('description')}
-                    style={{ ...inputStyle, resize: 'vertical', minHeight: 90 }}
+                    style={{ ...inputStyle, height: 68, minHeight: 68, padding: '8px 12px', resize: 'none' }}
                   />
                 </div>
 
@@ -325,7 +300,7 @@ export default function CreateTrainingModule({
                   />
                 </div>
 
-                <div className="interview-form-grid">
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                   <div>
                     <label style={labelStyle}>Start Date & Time *</label>
                     <input
@@ -348,125 +323,46 @@ export default function CreateTrainingModule({
                   </div>
                 </div>
 
-                <div>
-                  <label style={labelStyle}>Capacity</label>
-                  <input
-                    type="number"
-                    value={form.capacity}
-                    onChange={set('capacity')}
-                    placeholder="e.g. 30"
-                    min="1"
-                    style={inputStyle}
-                  />
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <button
-                    type="button"
-                    className={`interview-toggle ${form.sequentialLearning ? 'interview-toggle--active' : ''}`}
-                    onClick={() => onFormChange(p => ({ ...p, sequentialLearning: !p.sequentialLearning }))}
-                  >
-                    <div className="interview-toggle-knob" />
-                  </button>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'center' }}>
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>Enable Sequential Learning Lock</div>
-                    <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>Participants must complete each module before moving to the next</div>
+                    <label style={labelStyle}>Capacity</label>
+                    <input
+                      type="number"
+                      value={form.capacity}
+                      onChange={set('capacity')}
+                      placeholder="e.g. 30"
+                      min="1"
+                      style={inputStyle}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 16 }}>
+                    <button
+                      type="button"
+                      className={`interview-toggle ${form.sequentialLearning ? 'interview-toggle--active' : ''}`}
+                      onClick={() => onFormChange(p => ({ ...p, sequentialLearning: !p.sequentialLearning }))}
+                      style={{ flexShrink: 0 }}
+                    >
+                      <div className="interview-toggle-knob" />
+                    </button>
+                    <div>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, color: '#334155' }}>Enable Sequential Learning Lock</div>
+                      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 1 }}>Require module completion before proceeding</div>
+                    </div>
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: 10, paddingTop: 14, borderTop: '1px solid #e2e8f0' }}>
-                  <button type="button" className="reg-admin-btn reg-admin-btn--secondary" onClick={onBack} style={{ flex: '0 0 auto' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 12, marginTop: 4, borderTop: '1px solid #e2e8f0' }}>
+                  <button type="button" className="reg-admin-btn reg-admin-btn--secondary" onClick={onBack} style={{ height: 38, padding: '0 16px', fontSize: 13 }}>
                     Cancel
                   </button>
-                  <div style={{ flex: 1 }} />
-                  <button type="submit" className="reg-admin-btn reg-admin-btn--primary" disabled={loading}>
+                  <button type="submit" className="reg-admin-btn reg-admin-btn--primary" disabled={loading} style={{ height: 38, padding: '0 20px', fontSize: 13, fontWeight: 600 }}>
                     {loading ? <><Loader2 size={14} className="reg-spin" /> Creating...</> : 'Create Training Session'}
                   </button>
                 </div>
               </div>
             </form>
           </div>
-        </div>
-
-        {/* ── Recent Trainings ─────────────────────────────────────────── */}
-        <div className="reg-admin-table-wrap">
-          <div style={cardHeaderStyle}>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#111827' }}>Recent Trainings</div>
-              <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 2 }}>View, edit or remove recent sessions</div>
-            </div>
-            <span style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              padding: '3px 10px',
-              borderRadius: '999px',
-              background: '#f0fdf4',
-              color: '#15803D',
-              fontSize: 11,
-              fontWeight: 700,
-              whiteSpace: 'nowrap',
-            }}>
-              {trainings.length} session{trainings.length === 1 ? '' : 's'}
-            </span>
-          </div>
-
-          {initialLoading ? (
-            <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading trainings...</p></div>
-          ) : trainings.length === 0 ? (
-            <div className="reg-admin-empty">
-              <GraduationCap size={40} />
-              <h3>No Training Sessions Yet</h3>
-              <p>Create your first training session using the form.</p>
-            </div>
-          ) : (
-            <div>
-              {trainings.slice(0, 10).map(t => {
-                const status = getTrainingStatus(t)
-                return (
-                  <div
-                    key={t.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 12,
-                      padding: '12px 16px',
-                      borderBottom: '1px solid #f1f5f9',
-                      transition: 'background 0.15s',
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = '#f8fafc' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
-                  >
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{
-                        fontWeight: 600,
-                        color: '#111827',
-                        fontSize: 13,
-                        fontFamily: 'Inter, system-ui, sans-serif',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                      }} title={t.title}>
-                        {t.title}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
-                        <span className="reg-admin-status" style={STATUS_STYLES[status]}>{status}</span>
-                        <span style={{ fontSize: 12, color: '#64748b' }}>{t.trainerName || 'Unassigned'}</span>
-                        <span style={{ fontSize: 12, color: '#94a3b8' }}>{fmtDateTime(t.startDate)} — {fmtDateTime(t.endDate)}</span>
-                      </div>
-                    </div>
-                    <div className="reg-admin-actions">
-                      <button type="button" className="reg-admin-action" title="Edit Training" aria-label={`Edit ${t.title}`} onClick={() => onEdit(t)}>
-                        <Pencil size={14} />
-                      </button>
-                      <button type="button" className="reg-admin-action reg-admin-action--reject" title="Delete Training" aria-label={`Delete ${t.title}`} onClick={() => onDelete(t.id, t.title)}>
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
         </div>
       </div>
     </div>

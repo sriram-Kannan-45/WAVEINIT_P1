@@ -20,8 +20,8 @@ export default function Table({
   }
 
   return (
-    <div className="enterprise-table-wrapper">
-      <table className="enterprise-table">
+    <div className="reg-admin-table-wrap">
+      <table className="reg-admin-table">
         <thead>
           <tr>
             {columns.map((col) => (

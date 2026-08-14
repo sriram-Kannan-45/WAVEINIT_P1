@@ -174,7 +174,7 @@ export default function TrainerMonitoringDashboard({ user }) {
       <div className="reg-admin">
         {/* Header */}
         <div className="reg-admin-header">
-          <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}>
+          <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
             <MonitorPlay size={20} />
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>

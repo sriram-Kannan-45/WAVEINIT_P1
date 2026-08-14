@@ -54,3 +54,8 @@ backend/uploads/ai-docs/
 # Recordings & screenshots (binary, generated at runtime)
 backend/storage/recordings/
 backend/uploads/screenshots/
+_pdf_build/
+shots.js
+backend/findpass.js
+backend/resetpass.js
+

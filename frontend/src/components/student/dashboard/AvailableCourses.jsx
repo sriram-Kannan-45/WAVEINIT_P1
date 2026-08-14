@@ -36,23 +36,26 @@ export default function AvailableCourses({
   }, [trainings, enrollments, search, filter])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', fontFamily: "'Poppins', sans-serif" }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--space-4)', flexWrap: 'wrap' }}>
-        <div>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 800, color: 'var(--neutral-900)', letterSpacing: '-0.03em', margin: 0, marginBottom: 4 }}>Explore Trainings</h2>
-          <p style={{ fontSize: 14, color: 'var(--neutral-500)', margin: 0 }}>Discover trainings created by your instructors</p>
+      <div className="reg-admin-header" style={{ marginBottom: 0 }}>
+        <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
+          <BookOpen size={22} color="#fff" />
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h2 className="reg-admin-title">Explore Trainings</h2>
+          <p className="reg-admin-subtitle">Discover trainings created by your instructors</p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <div style={{ position: 'relative', minWidth: 220 }}>
-            <Search size={15} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--neutral-400)' }} />
+            <Search size={15} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: '#94A3B8' }} />
             <input
               type="search"
               placeholder="Search trainings..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="field-input"
-              style={{ paddingLeft: 40, height: 40, fontSize: 13 }}
+              className="reg-input"
+              style={{ paddingLeft: 38, height: 40, fontSize: 13, borderRadius: 8 }}
               aria-label="Search trainings"
             />
           </div>

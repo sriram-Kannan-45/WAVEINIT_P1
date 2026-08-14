@@ -2117,3 +2117,9 @@ textarea:focus-visible,
   border-color: var(--accent);
   box-shadow: 0 4px 12px rgba(13, 148, 136, 0.2);
 }
+
+/* Trainer Module - No Header Layout Adjustment */
+.theme-trainer .page-content {
+  padding-top: 24px;
+}
+

@@ -1,9 +1,7 @@
-import { useState, useRef, useMemo } from 'react'
-import {
-  Camera, Users, Eye, Trash2, UserPlus, ShieldCheck, Search, Loader2,
-} from 'lucide-react'
+import { useState, useRef } from 'react'
+import { Camera, Users, UserPlus, ShieldCheck, Loader2 } from 'lucide-react'
 import { useToast } from '../Toast'
-import { API_BASE, assetUrl } from '../../api/api'
+import { API_BASE } from '../../api/api'
 
 const DEPARTMENTS = [
   'Technology', 'Engineering', 'Design', 'Data Science', 'Marketing',
@@ -34,17 +32,7 @@ const EMPTY_FORM = {
   status: 'APPROVED',
 }
 
-const countPillStyle = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  padding: '3px 10px',
-  borderRadius: '999px',
-  background: '#f0fdf4',
-  color: '#15803D',
-  fontSize: 11,
-  fontWeight: 700,
-  whiteSpace: 'nowrap',
-}
+const labelStyle = { fontSize: 12, fontWeight: 600, color: '#334155', display: 'block', marginBottom: 4 }
 
 const initials = (name) => name ? name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'TR'
 
@@ -55,12 +43,8 @@ function StatusBadge({ status }) {
 }
 
 export default function CreateTrainerModule({
-  trainers = [],
-  initialLoading = false,
   token,
   onCreated,
-  onDelete,
-  onView,
   onBack,
 }) {
   const { success, error: showError } = useToast()
@@ -71,12 +55,8 @@ export default function CreateTrainerModule({
   const [imagePreview, setImagePreview] = useState(null)
   const [imageError, setImageError] = useState('')
 
-  const [search, setSearch] = useState('')
-  const [page, setPage] = useState(1)
-
   const nameInputRef = useRef(null)
   const fileInputRef = useRef(null)
-  const listCardRef = useRef(null)
 
   const isActive = form.status === 'APPROVED'
 
@@ -149,9 +129,7 @@ export default function CreateTrainerModule({
       setForm(EMPTY_FORM)
       setImagePreview(null)
       setErrors({})
-      setPage(1)
       onCreated?.()
-      setTimeout(() => listCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250)
     } catch (err) {
       showError(err.message || 'Something went wrong. Please try again.')
     } finally {
@@ -165,285 +143,201 @@ export default function CreateTrainerModule({
     setErrors({})
   }
 
-  // ── List filtering + pagination ─────────────────────────────────────────
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return trainers
-    return trainers.filter(t =>
-      t.name?.toLowerCase().includes(q) ||
-      t.email?.toLowerCase().includes(q) ||
-      t.department?.toLowerCase().includes(q) ||
-      (t.employeeId || '').toLowerCase().includes(q)
-    )
-  }, [trainers, search])
-
-  const itemsPerPage = 5
-  const totalPages = Math.max(1, Math.ceil(filtered.length / itemsPerPage))
-  const safePage = Math.min(page, totalPages)
-  const paged = filtered.slice((safePage - 1) * itemsPerPage, safePage * itemsPerPage)
-
-  const focusForm = () => nameInputRef.current?.focus()
-
   return (
-    <div className="reg-admin">
-      {/* Header */}
-      <div className="reg-admin-header">
-        <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-          <ShieldCheck size={22} color="#fff" />
+    <div className="reg-admin" style={{ paddingBottom: 0 }}>
+      <div style={{ maxWidth: 920, margin: '0 auto', width: '100%' }}>
+        {/* Header */}
+        <div className="reg-admin-header">
+          <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
+            <ShieldCheck size={26} color="#fff" />
+          </div>
+          <div>
+            <h2 className="reg-admin-title">Create Trainer</h2>
+            <p className="reg-admin-subtitle">Set up a new trainer account</p>
+          </div>
+          <div style={{ flex: 1 }} />
+          <button className="reg-admin-btn reg-admin-btn--secondary" onClick={onBack} style={{ height: 42, padding: '0 16px', fontSize: 13, borderRadius: 10 }}>
+            <Users size={15} /> Back to Trainers
+          </button>
         </div>
-        <div>
-          <h2 className="reg-admin-title">Create Trainer</h2>
-          <p className="reg-admin-subtitle">Set up a new trainer account and manage your trainer roster in one place</p>
-        </div>
-        <div style={{ flex: 1 }} />
-        <button className="reg-admin-btn reg-admin-btn--secondary" onClick={onBack}>
-          <Users size={14} /> Back to Trainers
-        </button>
-      </div>
 
-      <div className="reg-form-grid" style={{ alignItems: 'start' }}>
-        {/* ── Create Trainer Form ───────────────────────────────────────── */}
+        {/* ── Single Centered Form Card ─────────────────────────────────────── */}
         <div className="reg-admin-table-wrap">
-          <div className="reg-card-header">
+          <div className="reg-card-header" style={{ padding: '14px 20px', borderBottom: '1px solid #e2e8f0' }}>
             <div>
-              <div className="reg-card-title">Create Trainer Account</div>
-              <div className="reg-card-subtitle">Add a new trainer to the platform</div>
+              <div className="reg-card-title" style={{ fontSize: 14.5, fontWeight: 700, color: '#111827' }}>Create Trainer Account</div>
+              <div className="reg-card-subtitle" style={{ fontSize: 12, color: '#64748b', marginTop: 1 }}>Fill in the trainer details below</div>
             </div>
           </div>
-          <div className="reg-card-body">
+          <div className="reg-card-body" style={{ padding: '16px 22px' }}>
             <form onSubmit={handleSubmit} noValidate>
-              {/* Profile photo */}
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20,
-                padding: 16, background: '#f8fafc',
-                borderRadius: 12, border: '1px dashed #cbd5e1',
-              }}>
-                <div style={{ position: 'relative', flexShrink: 0 }}>
-                  <div style={{
-                    width: 72, height: 72, borderRadius: '50%',
-                    background: 'linear-gradient(135deg, #16A34A, #15803D)',
-                    color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 22, fontWeight: 700, overflow: 'hidden',
-                  }}>
-                    {imagePreview
-                      ? <img src={imagePreview} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      : initials(form.name)}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    aria-label="Upload profile photo"
-                    title="Upload profile photo"
-                    style={{
-                      position: 'absolute', bottom: 0, right: 0, width: 28, height: 28,
-                      borderRadius: '50%', border: '2px solid #fff',
-                      background: '#16A34A', color: '#fff',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      cursor: 'pointer', boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
-                    }}
-                  >
-                    <Camera size={13} />
-                  </button>
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: '#111827' }}>Profile Photo</div>
-                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>JPG or PNG, up to 5 MB</div>
-                  <button
-                    type="button"
-                    className="reg-admin-btn reg-admin-btn--secondary"
-                    onClick={() => fileInputRef.current?.click()}
-                    style={{ marginTop: 8, fontSize: 12, padding: '5px 12px' }}
-                  >
-                    {imagePreview ? 'Change Photo' : 'Upload Photo'}
-                  </button>
-                  {imageError && (
-                    <div style={{ fontSize: 12, color: '#DC2626', marginTop: 6 }}>{imageError}</div>
-                  )}
-                </div>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/jpeg,image/jpg,image/png"
-                  style={{ display: 'none' }}
-                  onChange={handleImageChange}
-                />
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <div>
-                  <label className="reg-field-label">Full Name<span className="reg-req"> *</span></label>
-                  <input ref={nameInputRef} className="reg-input" type="text" placeholder="e.g. Sarah Johnson" value={form.name} onChange={(e) => setField('name', e.target.value)} />
-                  {errors.name && <div style={{ fontSize: 12, color: '#DC2626', marginTop: 4 }}>{errors.name}</div>}
-                </div>
-                <div>
-                  <label className="reg-field-label">Email Address<span className="reg-req"> *</span></label>
-                  <input className="reg-input" type="email" placeholder="trainer@company.com" value={form.email} onChange={(e) => setField('email', e.target.value)} />
-                  {errors.email && <div style={{ fontSize: 12, color: '#DC2626', marginTop: 4 }}>{errors.email}</div>}
-                </div>
-                <div>
-                  <label className="reg-field-label">Mobile Number</label>
-                  <input className="reg-input" type="tel" placeholder="e.g. +91 98765 43210" value={form.phone} onChange={(e) => setField('phone', e.target.value)} />
-                  <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>Optional</div>
-                  {errors.phone && <div style={{ fontSize: 12, color: '#DC2626', marginTop: 4 }}>{errors.phone}</div>}
-                </div>
-                <div>
-                  <label className="reg-field-label">Employee ID</label>
-                  <input className="reg-input" type="text" placeholder="e.g. EMP-1024" value={form.employeeId} onChange={(e) => setField('employeeId', e.target.value)} />
-                  <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>Optional</div>
-                </div>
-                <div>
-                  <label className="reg-field-label">Department</label>
-                  <select className="reg-select" value={form.department} onChange={(e) => setField('department', e.target.value)}>
-                    <option value="">Select department</option>
-                    {DEPARTMENTS.map(v => <option key={v} value={v}>{v}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="reg-field-label">Designation</label>
-                  <select className="reg-select" value={form.designation} onChange={(e) => setField('designation', e.target.value)}>
-                    <option value="">Select designation</option>
-                    {DESIGNATIONS.map(v => <option key={v} value={v}>{v}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="reg-field-label">Experience</label>
-                  <select className="reg-select" value={form.experience} onChange={(e) => setField('experience', e.target.value)}>
-                    <option value="">Select experience</option>
-                    {EXPERIENCE_LEVELS.map(v => <option key={v} value={v}>{v}</option>)}
-                  </select>
-                </div>
-
-                {/* Status toggle */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {/* Profile photo */}
                 <div style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: 16, background: '#f8fafc',
-                  borderRadius: 12, border: '1px solid #f1f5f9',
+                  display: 'flex', alignItems: 'center', gap: 14, padding: '10px 16px',
+                  background: '#f8fafc', borderRadius: 10, border: '1px dashed #cbd5e1',
                 }}>
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: '#111827' }}>
-                      <ShieldCheck size={16} style={{ color: isActive ? '#16A34A' : '#94a3b8' }} />
-                      Account Status
+                  <div style={{ position: 'relative', flexShrink: 0 }}>
+                    <div style={{
+                      width: 52, height: 52, borderRadius: '50%',
+                      background: 'linear-gradient(135deg, #16A34A, #15803D)',
+                      color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 18, fontWeight: 700, overflow: 'hidden',
+                    }}>
+                      {imagePreview
+                        ? <img src={imagePreview} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        : initials(form.name)}
                     </div>
-                    <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
-                      Immediately activate or deactivate login access
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <StatusBadge status={form.status} />
                     <button
                       type="button"
-                      role="switch"
-                      aria-checked={isActive}
-                      aria-label="Toggle account status"
-                      className={`interview-toggle ${isActive ? 'interview-toggle--active' : ''}`}
-                      onClick={() => setField('status', isActive ? 'INACTIVE' : 'APPROVED')}
+                      onClick={() => fileInputRef.current?.click()}
+                      aria-label="Upload profile photo"
+                      title="Upload profile photo"
+                      style={{
+                        position: 'absolute', bottom: -2, right: -2, width: 22, height: 22,
+                        borderRadius: '50%', border: '2px solid #fff',
+                        background: '#16A34A', color: '#fff',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        cursor: 'pointer', boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                      }}
                     >
-                      <span className="interview-toggle-knob" />
+                      <Camera size={11} />
                     </button>
+                  </div>
+                  <div style={{ minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>Profile Photo</div>
+                      <div style={{ fontSize: 11.5, color: '#64748b' }}>JPG or PNG, up to 5 MB</div>
+                    </div>
+                    <button
+                      type="button"
+                      className="reg-admin-btn reg-admin-btn--secondary"
+                      onClick={() => fileInputRef.current?.click()}
+                      style={{ height: 32, fontSize: 12, padding: '0 12px' }}
+                    >
+                      {imagePreview ? 'Change Photo' : 'Upload Photo'}
+                    </button>
+                  </div>
+                  {imageError && (
+                    <div style={{ fontSize: 12, color: '#DC2626', marginTop: 4 }}>{imageError}</div>
+                  )}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/jpg,image/png"
+                    style={{ display: 'none' }}
+                    onChange={handleImageChange}
+                  />
+                </div>
+
+                {/* Row 1: Name & Email */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14 }}>
+                  <div>
+                    <label className="reg-field-label" style={labelStyle}>Full Name<span className="reg-req"> *</span></label>
+                    <input ref={nameInputRef} className="reg-input" type="text" placeholder="e.g. Sarah Johnson" value={form.name} onChange={(e) => setField('name', e.target.value)} />
+                    {errors.name && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 2 }}>{errors.name}</div>}
+                  </div>
+                  <div>
+                    <label className="reg-field-label" style={labelStyle}>Email Address<span className="reg-req"> *</span></label>
+                    <input className="reg-input" type="email" placeholder="trainer@company.com" value={form.email} onChange={(e) => setField('email', e.target.value)} />
+                    {errors.email && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 2 }}>{errors.email}</div>}
                   </div>
                 </div>
 
-                <div>
-                  <label className="reg-field-label">Password<span className="reg-req"> *</span></label>
-                  <input className="reg-input" type="password" placeholder="Min. 8 characters" value={form.password} onChange={(e) => setField('password', e.target.value)} />
-                  {errors.password && <div style={{ fontSize: 12, color: '#DC2626', marginTop: 4 }}>{errors.password}</div>}
+                {/* Row 2: Phone & Employee ID */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14 }}>
+                  <div>
+                    <label className="reg-field-label" style={labelStyle}>Mobile Number</label>
+                    <input className="reg-input" type="tel" placeholder="e.g. +91 98765 43210" value={form.phone} onChange={(e) => setField('phone', e.target.value)} />
+                    {errors.phone && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 2 }}>{errors.phone}</div>}
+                  </div>
+                  <div>
+                    <label className="reg-field-label" style={labelStyle}>Employee ID</label>
+                    <input className="reg-input" type="text" placeholder="e.g. EMP-1024" value={form.employeeId} onChange={(e) => setField('employeeId', e.target.value)} />
+                  </div>
                 </div>
-                <div>
-                  <label className="reg-field-label">Confirm Password<span className="reg-req"> *</span></label>
-                  <input className="reg-input" type="password" placeholder="Re-enter password" value={form.confirmPassword} onChange={(e) => setField('confirmPassword', e.target.value)} />
-                  {errors.confirmPassword && <div style={{ fontSize: 12, color: '#DC2626', marginTop: 4 }}>{errors.confirmPassword}</div>}
-                </div>
-              </div>
 
-              <div className="reg-form-actions">
-                <button type="submit" className="reg-admin-btn reg-admin-btn--primary" disabled={submitting} style={{ flex: 1 }}>
-                  {submitting ? <><Loader2 size={14} className="reg-spin" /> Creating Trainer...</> : <><UserPlus size={14} /> Create Trainer</>}
-                </button>
-                <button type="button" className="reg-admin-btn reg-admin-btn--secondary" onClick={resetForm} disabled={submitting}>Reset</button>
+                {/* Row 3: Department & Designation */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14 }}>
+                  <div>
+                    <label className="reg-field-label" style={labelStyle}>Department</label>
+                    <select className="reg-select" value={form.department} onChange={(e) => setField('department', e.target.value)}>
+                      <option value="">Select department</option>
+                      {DEPARTMENTS.map(v => <option key={v} value={v}>{v}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="reg-field-label" style={labelStyle}>Designation</label>
+                    <select className="reg-select" value={form.designation} onChange={(e) => setField('designation', e.target.value)}>
+                      <option value="">Select designation</option>
+                      {DESIGNATIONS.map(v => <option key={v} value={v}>{v}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Row 4: Experience & Account Status */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14, alignItems: 'center' }}>
+                  <div>
+                    <label className="reg-field-label" style={labelStyle}>Experience</label>
+                    <select className="reg-select" value={form.experience} onChange={(e) => setField('experience', e.target.value)}>
+                      <option value="">Select experience</option>
+                      {EXPERIENCE_LEVELS.map(v => <option key={v} value={v}>{v}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="reg-field-label" style={labelStyle}>Account Status</label>
+                    <div style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      height: 40, padding: '0 12px', background: '#f8fafc',
+                      borderRadius: 10, border: '1.5px solid #E5E7EB', boxSizing: 'border-box',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 600, color: '#334155' }}>
+                        <ShieldCheck size={14} style={{ color: isActive ? '#16A34A' : '#94a3b8' }} />
+                        <span>{isActive ? 'Active Login' : 'Inactive'}</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <StatusBadge status={form.status} />
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={isActive}
+                          aria-label="Toggle account status"
+                          className={`interview-toggle ${isActive ? 'interview-toggle--active' : ''}`}
+                          onClick={() => setField('status', isActive ? 'INACTIVE' : 'APPROVED')}
+                          style={{ transform: 'scale(0.88)', flexShrink: 0 }}
+                        >
+                          <span className="interview-toggle-knob" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Row 5: Password & Confirm Password */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14 }}>
+                  <div>
+                    <label className="reg-field-label" style={labelStyle}>Password<span className="reg-req"> *</span></label>
+                    <input className="reg-input" type="password" placeholder="Min. 8 characters" value={form.password} onChange={(e) => setField('password', e.target.value)} />
+                    {errors.password && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 2 }}>{errors.password}</div>}
+                  </div>
+                  <div>
+                    <label className="reg-field-label" style={labelStyle}>Confirm Password<span className="reg-req"> *</span></label>
+                    <input className="reg-input" type="password" placeholder="Re-enter password" value={form.confirmPassword} onChange={(e) => setField('confirmPassword', e.target.value)} />
+                    {errors.confirmPassword && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 2 }}>{errors.confirmPassword}</div>}
+                  </div>
+                </div>
+
+                {/* Buttons */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 12, marginTop: 4, borderTop: '1px solid #e2e8f0' }}>
+                  <button type="button" className="reg-admin-btn reg-admin-btn--secondary" onClick={resetForm} disabled={submitting} style={{ height: 38, padding: '0 18px', fontSize: 13 }}>
+                    Reset
+                  </button>
+                  <button type="submit" className="reg-admin-btn reg-admin-btn--primary" disabled={submitting} style={{ height: 38, padding: '0 22px', fontSize: 13, fontWeight: 600 }}>
+                    {submitting ? <><Loader2 size={14} className="reg-spin" /> Creating Trainer...</> : <><UserPlus size={14} /> Create Trainer</>}
+                  </button>
+                </div>
               </div>
             </form>
-          </div>
-        </div>
-
-        {/* ── Trainer List ──────────────────────────────────────────────── */}
-        <div ref={listCardRef} className="reg-admin-table-wrap">
-          <div className="reg-card-header">
-            <div>
-              <div className="reg-card-title">All Trainers</div>
-              <div className="reg-card-subtitle">View, inspect and manage trainer accounts</div>
-            </div>
-            <span style={countPillStyle}>{trainers.length} total</span>
-          </div>
-
-          <div style={{ padding: '14px 16px', borderBottom: '1px solid #e2e8f0' }}>
-            <div className="reg-admin-search">
-              <Search size={16} />
-              <input
-                placeholder="Search by name, email, department or ID..."
-                value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1) }}
-              />
-            </div>
-          </div>
-
-          {initialLoading ? (
-            <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading trainers...</p></div>
-          ) : filtered.length === 0 ? (
-            <div className="reg-admin-empty">
-              <Users size={40} />
-              <h3>{trainers.length === 0 ? 'No Trainers Yet' : 'No Trainers Found'}</h3>
-              <p>
-                {trainers.length === 0
-                  ? 'Create your first trainer account using the form on the left.'
-                  : 'No trainers match your current search. Try a different keyword.'}
-              </p>
-              {trainers.length === 0 && (
-                <button className="reg-admin-btn reg-admin-btn--primary" onClick={focusForm}>+ Add First Trainer</button>
-              )}
-            </div>
-          ) : (
-            <table className="reg-admin-table">
-              <thead>
-                <tr><th>Trainer</th><th>Email</th><th>Department</th><th>Experience</th><th>Status</th><th>Actions</th></tr>
-              </thead>
-              <tbody>
-                {paged.map(t => (
-                  <tr key={t.id}>
-                    <td>
-                      <div className="reg-admin-participant">
-                        <div className="reg-admin-avatar">
-                          {t.profile?.imagePath
-                            ? <img src={assetUrl(t.profile.imagePath)} alt={t.name} style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />
-                            : initials(t.name)}
-                        </div>
-                        <div>
-                          <span className="reg-admin-name">{t.name}</span>
-                          <span className="reg-admin-email">{t.employeeId ? `ID · ${t.employeeId}` : t.username}</span>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="reg-admin-email">{t.email}</td>
-                    <td className="reg-admin-date">{t.department || '—'}</td>
-                    <td className="reg-admin-date">{t.profile?.experience || '—'}</td>
-                    <td><StatusBadge status={t.status} /></td>
-                    <td>
-                      <div className="reg-admin-actions">
-                        <button type="button" className="reg-admin-action" title="View Details" aria-label={`View ${t.name}`} onClick={() => onView?.(t)}><Eye size={14} /></button>
-                        <button type="button" className="reg-admin-action reg-admin-action--reject" title="Delete Trainer" aria-label={`Delete ${t.name}`} onClick={() => onDelete?.(t.id, t.name)}><Trash2 size={14} /></button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid #e2e8f0' }}>
-            <span className="reg-admin-date">Showing {paged.length} of {filtered.length} trainers</span>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button className="reg-admin-btn reg-admin-btn--secondary" style={{ padding: '5px 12px', fontSize: 12 }} disabled={safePage === 1} onClick={() => setPage(safePage - 1)}>Prev</button>
-              <button className="reg-admin-btn reg-admin-btn--secondary" style={{ padding: '5px 12px', fontSize: 12 }} disabled={safePage === totalPages} onClick={() => setPage(safePage + 1)}>Next</button>
-            </div>
           </div>
         </div>
       </div>

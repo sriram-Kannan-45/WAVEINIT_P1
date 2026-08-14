@@ -2108,49 +2108,48 @@ async def generate_course_structure(request: dict):
                 extracted_text = ""
 
         system_prompt = (
-            "You are an LMS curriculum expert.\n"
-            "Using the following course material and the trainer instructions, "
-            "generate a complete enterprise-level course structure.\n\n"
-            "Trainer Instructions:\n"
-            f"{prompt_text}\n\n"
+            "You are an enterprise LMS curriculum architect and master instructional designer.\n"
+            "Your task is to generate a comprehensive, highly customized, and professional course structure based on the EXACT trainer instructions provided below.\n\n"
+            "=== TRAINER INSTRUCTIONS ===\n"
+            f"{prompt_text}\n"
+            "============================\n\n"
+            "CRITICAL ARCHITECTURAL RULES:\n"
+            "1. STRICT DOMAIN RELEVANCE: The generated modules and topics MUST be 100% focused on the subject/technology requested in the Trainer Instructions (e.g., Python must cover Python syntax, data structures, OOP, modules, standard library, databases, testing, capstone; Java Selenium must cover Java OOP, Selenium WebDriver, TestNG/JUnit, Page Object Model, CI/CD; MySQL must cover SQL queries, DDL/DML, joins, indexing, transactions, stored procedures, schema design). NEVER output React or unrelated topics unless explicitly asked.\n"
+            "2. DURATION & PACING CALCULATION: Accurately calculate the total learning hours from the prompt (e.g., '1 month with 7 hours of learning every day' = ~210 hours; '2 weeks with 4 hours/day' = ~40 hours; '10 days with 3 hours/day' = ~30 hours). Appropriately distribute these hours across all modules, sub-modules, and topics. Clearly specify realistic durations on each item.\n"
+            "3. HIERARCHICAL INTEGRITY: Each module must contain relevant sub-modules, and each sub-module must contain granular learning topics with estimated durations.\n"
+            "4. NO GENERIC OR REPETITIVE MODULES: Every module, sub-module, and topic must be unique, substantive, and pedagogical.\n\n"
         )
         if extracted_text.strip():
-            # Truncate to fit within Gemini context safely
             truncated = extracted_text[:80000]
-            system_prompt += f"Course Material:\n{truncated}\n\n"
+            system_prompt += f"Course Reference Material:\n{truncated}\n\n"
         system_prompt += (
             "Return ONLY valid JSON matching this exact schema:\n"
             "{\n"
-            '  "courseTitle": "string",\n'
+            '  "courseTitle": "Specific Course Title Matching Subject",\n'
+            '  "estimatedDuration": "Total Calculated Duration (e.g. 210 Hours / 1 Month)",\n'
             '  "modules": [\n'
             "    {\n"
-            '      "title": "string",\n'
-            '      "duration": "string (e.g. 4 Hours)",\n'
-            '      "description": "string",\n'
+            '      "title": "Module 1: Specific Topic Name",\n'
+            '      "duration": "e.g. 42 Hours",\n'
+            '      "description": "Clear overview of what this module covers",\n'
             '      "subModules": [\n'
             "        {\n"
-            '          "title": "string",\n'
+            '          "title": "Sub Module Name",\n'
+            '          "duration": "e.g. 14 Hours",\n'
             '          "topics": [\n'
             "            {\n"
-            '              "title": "string",\n'
-            '              "duration": "string (e.g. 20 mins)"\n'
+            '              "title": "Topic Name",\n'
+            '              "duration": "e.g. 2 Hours",\n'
+            '              "description": "Topic details"\n'
             "            }\n"
             "          ]\n"
             "        }\n"
             "      ]\n"
             "    }\n"
             "  ]\n"
-            "}\n\n"
-            "Create logical Modules.\n"
-            "Create Sub Modules within each module.\n"
-            "Create Topics within each sub module.\n"
-            "Create learning progression.\n"
-            "Estimate durations for each module, sub module, and topic.\n"
-            "Avoid duplicate topics.\n"
-            "Include a courseTitle.\n"
-            "Each module MUST have at least one subModule.\n"
-            "Each subModule MUST have at least one topic."
+            "}\n"
         )
+
 
         raw_json = gemini_client.generate_content(
             system_prompt,

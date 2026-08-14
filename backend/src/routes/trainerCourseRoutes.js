@@ -36,8 +36,15 @@ router.get(  '/courses/:courseId/lessons/:lessonId',         trainerOrAdmin, c.g
 router.put(  '/courses/:courseId/lessons/:lessonId',         trainerOrAdmin, c.updateLesson);
 router.delete('/courses/:courseId/lessons/:lessonId',        trainerOrAdmin, c.deleteLesson);
 
-// ── AI Course Structure Generation ────────────────────────────────────────
-router.post( '/courses/:courseId/generate-structure',       trainerOrAdmin, uploadAIQuizMaterial.single('file'), c.generateCourseStructure);
+// ── AI Course Structure Generation & Management ─────────────────────────────
+router.get(   '/courses/:courseId/structure',                         trainerOrAdmin, c.getCourseStructure);
+router.post(  '/courses/:courseId/structure',                         trainerOrAdmin, c.saveCourseStructure);
+router.delete('/courses/:courseId/structure',                         trainerOrAdmin, c.clearCourseStructure);
+router.delete('/courses/:courseId/structure/module/:moduleId',         trainerOrAdmin, c.deleteStructureModule);
+router.delete('/courses/:courseId/structure/submodule/:subModuleId',  trainerOrAdmin, c.deleteStructureSubModule);
+router.delete('/courses/:courseId/structure/topic/:topicId',           trainerOrAdmin, c.deleteStructureTopic);
+router.post(  '/courses/:courseId/generate-structure',                trainerOrAdmin, uploadAIQuizMaterial.single('file'), c.generateCourseStructure);
+
 
 // ── Lesson Materials (uploads on POST) ─────────────────────────────────────
 router.put(  '/lessons/:lessonId/materials/reorder',         trainerOrAdmin, c.reorderMaterials);

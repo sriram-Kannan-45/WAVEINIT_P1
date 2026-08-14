@@ -214,15 +214,18 @@ export default function TrainerRecordingDetail({ user }) {
       animate={{ opacity: 1, y: 0 }}
       className="dashboard"
     >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
           <button onClick={() => navigate('/trainer/recordings')}
             className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0">
             <ArrowLeft size={18} />
           </button>
+          <div className="reg-admin-header-icon" style={{ flexShrink: 0 }}>
+            <Video size={22} color="#fff" />
+          </div>
           <div style={{ minWidth: 0 }}>
-            <p style={{ fontSize: 13, color: colors.slate[500], marginBottom: 2, fontWeight: 500 }}>Trainer Portal › Recordings › Detail</p>
-            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: colors.text.primary, fontFamily: typography.fontFamily }} className="truncate">
+            <p className="reg-admin-subtitle" style={{ marginBottom: 2 }}>Trainer Portal › Recordings › Detail</p>
+            <h1 className="reg-admin-title truncate">
               {recording.quiz?.title || 'Quiz Recording'} &mdash; {recording.participant?.name || 'Unknown'}
             </h1>
           </div>

@@ -11,15 +11,13 @@ const COMPLETION_COLORS = { completed: '#16a34a', inProgress: '#F59E0B', notStar
 
 function ChartCard({ title, subtitle, children }) {
   return (
-    <div className="reg-admin-table-wrap">
-      <div className="reg-card-header">
-        <div>
-          <h3 className="reg-card-title">{title}</h3>
-          {subtitle && <p className="reg-card-subtitle">{subtitle}</p>}
-        </div>
+    <div className="cat-chart-card">
+      <div className="cat-chart-header">
+        <h3 className="cat-chart-title">{title}</h3>
+        {subtitle && <p className="cat-chart-subtitle">{subtitle}</p>}
       </div>
-      <div className="reg-card-body" style={{ height: 320, padding: '16px 18px' }}>
-        <div style={{ height: '100%' }}>{children}</div>
+      <div className="cat-chart-body">
+        <div style={{ height: '100%', width: '100%' }}>{children}</div>
       </div>
     </div>
   )
@@ -27,16 +25,13 @@ function ChartCard({ title, subtitle, children }) {
 
 function StatBlock({ icon, label, value, color }) {
   return (
-    <div className="reg-admin-stat" style={{ minWidth: 200 }}>
-      <div className="reg-admin-stat-icon" style={{ background: `${color}22`, color }}>
+    <div className="cat-stat-block">
+      <div className="cat-stat-icon" style={{ background: `${color}18`, color }}>
         {icon}
       </div>
       <div style={{ minWidth: 0 }}>
-        <div className="reg-admin-stat-label">{label}</div>
-        <div className="reg-admin-stat-num" style={{
-          fontSize: 14,
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>
+        <div className="cat-stat-label">{label}</div>
+        <div className="cat-stat-val">
           {value}
         </div>
       </div>
@@ -146,10 +141,8 @@ export default function CourseAnalyticsTab({ user, courseId }) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{
-        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 16,
-      }}>
+    <div className="cat-container">
+      <div className="cat-grid">
         <ChartCard title="Course Completion" subtitle="Distribution of participants by status">
           {pieData.length === 0 ? (
             <NoData />
@@ -158,9 +151,9 @@ export default function CourseAnalyticsTab({ user, courseId }) {
               <PieChart>
                 <Pie
                   data={pieData}
-                  innerRadius={60}
-                  outerRadius={100}
-                  paddingAngle={4}
+                  innerRadius={42}
+                  outerRadius={68}
+                  paddingAngle={3}
                   dataKey="value"
                   nameKey="name"
                   label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
@@ -170,7 +163,7 @@ export default function CourseAnalyticsTab({ user, courseId }) {
                   ))}
                 </Pie>
                 <Tooltip />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
               </PieChart>
             </ResponsiveContainer>
           )}
@@ -181,15 +174,15 @@ export default function CourseAnalyticsTab({ user, courseId }) {
             <NoData />
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={quizScoreData} margin={{ top: 10, right: 10, left: 0, bottom: 30 }}>
+              <BarChart data={quizScoreData} margin={{ top: 8, right: 8, left: -10, bottom: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-20} textAnchor="end" height={60} />
-                <YAxis tick={{ fontSize: 11 }} domain={[0, 100]} />
+                <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-15} textAnchor="end" height={40} />
+                <YAxis tick={{ fontSize: 10 }} domain={[0, 100]} />
                 <Tooltip
                   formatter={(v, n) => n === 'avgScore' ? [`${v}%`, 'Avg Score'] : [v, 'Attempts']}
-                  contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                  contentStyle={{ fontSize: 11, borderRadius: 6 }}
                 />
-                <Bar dataKey="avgScore" fill="#0d9488" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="avgScore" fill="#16A34A" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -197,16 +190,16 @@ export default function CourseAnalyticsTab({ user, courseId }) {
 
         <ChartCard title="Engagement" subtitle="Lessons completed per day (last 14 days)">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={engagementData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
+            <LineChart data={engagementData} margin={{ top: 8, right: 8, left: -10, bottom: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
-              <XAxis dataKey="day" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+              <XAxis dataKey="day" tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+              <Tooltip contentStyle={{ fontSize: 11, borderRadius: 6 }} />
               <Line
                 type="monotone" dataKey="lessonsCompleted"
-                stroke="#16a34a" strokeWidth={3}
-                dot={{ r: 4, fill: '#16a34a' }}
-                activeDot={{ r: 6 }}
+                stroke="#16A34A" strokeWidth={2.5}
+                dot={{ r: 3, fill: '#16A34A' }}
+                activeDot={{ r: 5 }}
               />
             </LineChart>
           </ResponsiveContainer>
@@ -220,16 +213,16 @@ export default function CourseAnalyticsTab({ user, courseId }) {
               <BarChart
                 layout="vertical"
                 data={lessonCompletionData}
-                margin={{ top: 10, right: 30, left: 80, bottom: 10 }}
+                margin={{ top: 8, right: 20, left: 40, bottom: 8 }}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
-                <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11 }} />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={80} />
+                <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10 }} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={50} />
                 <Tooltip
                   formatter={(v) => [`${v}%`, 'Completion rate']}
-                  contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                  contentStyle={{ fontSize: 11, borderRadius: 6 }}
                 />
-                <Bar dataKey="completionRate" fill="#2563eb" radius={[0, 6, 6, 0]} />
+                <Bar dataKey="completionRate" fill="#2563EB" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -277,7 +270,7 @@ export default function CourseAnalyticsTab({ user, courseId }) {
 function NoData() {
   return (
     <div style={{
-      height: '100%', minHeight: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      minHeight: 180, display: 'flex', alignItems: 'center', justifyContent: 'center',
       color: '#94a3b8', fontSize: 12, fontFamily: 'var(--font-primary)',
     }}>
       Not enough data yet.
