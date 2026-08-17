@@ -331,8 +331,24 @@ export default function AssessmentQRPairingModal({
       if (data.connected || data.mobileVerified) {
         setQrScanned(true);
         setParticipantValidated(true);
+        setMobileStreamConnected(true);
+        setMobileCameraReady(true);
+        setIsFullyVerified(true);
+        setIsDisconnected(false);
       } else {
         setIsDisconnected(true);
+      }
+    });
+
+    socket.on('assessment_verif:stream_status', (data) => {
+      console.log('[AssessmentVerification] Stream status update:', data);
+      if (data.streaming) {
+        setQrScanned(true);
+        setParticipantValidated(true);
+        setMobileStreamConnected(true);
+        setMobileCameraReady(true);
+        setIsFullyVerified(true);
+        setIsDisconnected(false);
       }
     });
 
@@ -340,6 +356,10 @@ export default function AssessmentQRPairingModal({
       console.log('[AssessmentVerification] Session unlocked event received');
       setQrScanned(true);
       setParticipantValidated(true);
+      setMobileStreamConnected(true);
+      setMobileCameraReady(true);
+      setIsFullyVerified(true);
+      setIsDisconnected(false);
     });
 
     return () => {
@@ -371,6 +391,12 @@ export default function AssessmentQRPairingModal({
           if (data.status === 'PAIRED' || data.status === 'VERIFIED' || data.mobileVerified) {
             setQrScanned(true);
             setParticipantValidated(true);
+          }
+          if (data.mobileVerified || data.status === 'VERIFIED') {
+            setMobileStreamConnected(true);
+            setMobileCameraReady(true);
+            setIsFullyVerified(true);
+            setIsDisconnected(false);
           }
         }
       } catch (e) {}
