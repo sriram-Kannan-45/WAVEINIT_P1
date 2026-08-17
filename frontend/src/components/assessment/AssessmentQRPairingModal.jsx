@@ -81,6 +81,8 @@ export default function AssessmentQRPairingModal({
   const [participantValidated, setParticipantValidated] = useState(false);
   const [mobileStreamConnected, setMobileStreamConnected] = useState(false);
   const [mobileCameraReady, setMobileCameraReady] = useState(false);
+  const [webRtcConnected, setWebRtcConnected] = useState(false);
+  const [remoteVideoReady, setRemoteVideoReady] = useState(false);
   const [isFullyVerified, setIsFullyVerified] = useState(false);
   const [isDisconnected, setIsDisconnected] = useState(false);
 
@@ -88,12 +90,12 @@ export default function AssessmentQRPairingModal({
   const [remoteStream, setRemoteStream] = useState(null);
   const [hasReceivedFrames, setHasReceivedFrames] = useState(false);
   const [lastFrame, setLastFrame] = useState(null);
-  const [isRealVideoFlowing, setIsRealVideoFlowing] = useState(false);
   const videoRef = useRef(null);
   const previewContainerRef = useRef(null);
   const canvasRef = useRef(null);
   const socketRef = useRef(null);
   const pcRef = useRef(null);
+  const mobileSocketIdRef = useRef(null);
   const candidateQueueRef = useRef([]);
   const pollIntervalRef = useRef(null);
 
@@ -127,15 +129,12 @@ export default function AssessmentQRPairingModal({
         throw new Error(data.error || 'Failed to initialize verification session');
       }
 
+      console.log('[AssessmentVerification] LAPTOP SESSION:', data.sessionId);
+      console.log('[AssessmentVerification] SOCKET ROOM:', `assessment_verif_${data.sessionId}`);
       setSessionData(data);
       if (data.status === 'PAIRED' || data.status === 'VERIFIED' || data.mobileVerified) {
         setQrScanned(true);
         setParticipantValidated(true);
-      }
-      if (data.mobileVerified) {
-        setMobileStreamConnected(true);
-        setMobileCameraReady(true);
-        setIsFullyVerified(true);
       }
       setLoading(false);
     } catch (err) {
@@ -170,35 +169,18 @@ export default function AssessmentQRPairingModal({
   const getOrCreatePeerConnection = useCallback(() => {
     if (pcRef.current) return pcRef.current;
 
-    console.log('[WebRTC Laptop] Initializing RTCPeerConnection with STUN servers');
+    console.log('[WebRTC Laptop] Initializing RTCPeerConnection with STUN/TURN servers');
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     pcRef.current = pc;
 
     pc.ontrack = (event) => {
-      console.log('[WebRTC Laptop] ontrack event fired! Tracks:', event.tracks, 'Streams:', event.streams);
+      console.log('[WebRTC Laptop] ontrack event fired! Streams:', event.streams);
       let stream = event.streams && event.streams[0];
       if (!stream) {
         stream = new MediaStream([event.track]);
       }
+      console.log('[WebRTC Laptop] Remote stream received:', stream, 'tracks:', stream.getTracks());
       setRemoteStream(stream);
-      setQrScanned(true);
-      setParticipantValidated(true);
-      setMobileStreamConnected(true);
-      setMobileCameraReady(true);
-      setIsFullyVerified(true);
-      setIsDisconnected(false);
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.muted = true;
-        videoRef.current.playsInline = true;
-        const playPromise = videoRef.current.play();
-        if (playPromise !== undefined) {
-          playPromise
-            .then(() => console.log('[WebRTC Laptop] Video playback started successfully'))
-            .catch((e) => console.warn('[WebRTC Laptop] Video play promise error:', e));
-        }
-      }
     };
 
     pc.onicecandidate = (event) => {
@@ -206,6 +188,7 @@ export default function AssessmentQRPairingModal({
         console.log('[WebRTC Laptop] Emitting ICE candidate:', event.candidate.candidate?.slice(0, 30));
         socketRef.current.emit('assessment_verif:ice-candidate', {
           sessionId: sessionData?.sessionId,
+          targetSocketId: mobileSocketIdRef.current,
           candidate: event.candidate,
         });
       }
@@ -215,11 +198,13 @@ export default function AssessmentQRPairingModal({
       console.log('[WebRTC Laptop] Connection State changed:', pc.connectionState);
       const state = pc.connectionState;
       if (state === 'connected') {
+        setWebRtcConnected(true);
         setIsDisconnected(false);
-        setMobileStreamConnected(true);
-        setMobileCameraReady(true);
       } else if (state === 'disconnected' || state === 'failed') {
-        console.warn('[WebRTC Laptop] Connection disconnected or failed; fallback frame relay active');
+        console.warn('[WebRTC Laptop] Connection disconnected or failed; checking fallback');
+        setWebRtcConnected(false);
+        setRemoteVideoReady(false);
+        setIsDisconnected(true);
       }
     };
 
@@ -255,8 +240,9 @@ export default function AssessmentQRPairingModal({
       });
     });
 
-    socket.on('assessment_verif:mobile_joined', () => {
-      console.log('[AssessmentVerification] Mobile device paired & joined room');
+    socket.on('assessment_verif:mobile_joined', ({ socketId }) => {
+      console.log('[AssessmentVerification] Mobile device paired & joined room, socketId:', socketId);
+      mobileSocketIdRef.current = socketId;
       setQrScanned(true);
       setParticipantValidated(true);
       setIsDisconnected(false);
@@ -266,6 +252,7 @@ export default function AssessmentQRPairingModal({
     socket.on('assessment_verif:offer', async ({ offer, fromSocketId }) => {
       try {
         console.log('[WebRTC Laptop] Received offer from mobile socket:', fromSocketId);
+        mobileSocketIdRef.current = fromSocketId;
         setQrScanned(true);
         setParticipantValidated(true);
         const pc = getOrCreatePeerConnection();
@@ -285,7 +272,7 @@ export default function AssessmentQRPairingModal({
 
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        console.log('[WebRTC Laptop] Created answer, emitting to mobile');
+        console.log('[WebRTC Laptop] Created answer, emitting to mobile socket:', fromSocketId);
 
         socket.emit('assessment_verif:answer', {
           sessionId: sessionData.sessionId,
@@ -328,6 +315,7 @@ export default function AssessmentQRPairingModal({
       if (data.mobileReady || data.connected || data.mobileVerified) {
         setQrScanned(true);
         setParticipantValidated(true);
+        setMobileCameraReady(true);
         setIsDisconnected(false);
       } else {
         setIsDisconnected(true);
@@ -339,6 +327,7 @@ export default function AssessmentQRPairingModal({
       if (data.streaming) {
         setQrScanned(true);
         setParticipantValidated(true);
+        setMobileCameraReady(true);
         setIsDisconnected(false);
       }
     });
@@ -359,15 +348,35 @@ export default function AssessmentQRPairingModal({
     };
   }, [sessionData?.sessionId, activeToken, getOrCreatePeerConnection]);
 
+  // Video attachment & actual playback trigger
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !remoteStream) return;
+
+    if (video.srcObject !== remoteStream) {
+      video.srcObject = remoteStream;
+    }
+    video.muted = true;
+    video.playsInline = true;
+    video.autoplay = true;
+
+    const playPromise = video.play();
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => console.log('[WebRTC Laptop] Remote video playing'))
+        .catch((error) => console.error('[WebRTC Laptop] Remote video play failed:', error));
+    }
+  }, [remoteStream]);
+
   // Real video or frame arrival confirms true connectivity
   useEffect(() => {
-    if (isRealVideoFlowing || lastFrame) {
+    if (remoteVideoReady || lastFrame) {
       setMobileStreamConnected(true);
       setMobileCameraReady(true);
       setIsFullyVerified(true);
       setIsDisconnected(false);
     }
-  }, [isRealVideoFlowing, lastFrame]);
+  }, [remoteVideoReady, lastFrame]);
 
   // 5. Polling Fallback
   useEffect(() => {
@@ -397,21 +406,6 @@ export default function AssessmentQRPairingModal({
     pollIntervalRef.current = setInterval(pollStatus, 1500);
     return () => clearInterval(pollIntervalRef.current);
   }, [sessionData?.sessionId, isFullyVerified, activeToken]);
-
-  // Video attachment
-  useEffect(() => {
-    if (remoteStream && videoRef.current) {
-      if (videoRef.current.srcObject !== remoteStream) {
-        videoRef.current.srcObject = remoteStream;
-      }
-      videoRef.current.muted = true;
-      videoRef.current.playsInline = true;
-      const playPromise = videoRef.current.play();
-      if (playPromise !== undefined) {
-        playPromise.catch((e) => console.warn('[WebRTC Laptop] Play error:', e));
-      }
-    }
-  }, [remoteStream]);
 
   // 6. Refresh QR Helper
   const handleRefreshQr = async () => {
@@ -517,7 +511,7 @@ export default function AssessmentQRPairingModal({
   const allChecksPassed =
     qrScanned &&
     participantValidated &&
-    (isRealVideoFlowing || lastFrame !== null) &&
+    (remoteVideoReady || lastFrame !== null) &&
     !isDisconnected;
   const canStart = allChecksPassed && !isExpired;
 
@@ -770,18 +764,20 @@ export default function AssessmentQRPairingModal({
                   <div className="px-2 py-1 flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2">
                       <div className="w-6 h-6 rounded-lg bg-emerald-50 border border-emerald-200/70 flex items-center justify-center text-emerald-600 shrink-0">
-                        {mobileStreamConnected && !isDisconnected ? <Check size={12} strokeWidth={2.5} className="text-emerald-700" /> : <Video size={12} />}
+                        {remoteVideoReady || lastFrame ? <Check size={12} strokeWidth={2.5} className="text-emerald-700" /> : <Video size={12} />}
                       </div>
                       <span className="font-semibold text-slate-800 text-[11px]">Mobile Camera Stream</span>
                     </div>
                     <span
                       className={`text-[9.5px] px-2 py-0.5 rounded-full font-medium transition ${
-                        mobileStreamConnected && !isDisconnected
+                        (remoteVideoReady || lastFrame) && !isDisconnected
                           ? 'bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold'
+                          : mobileCameraReady && !isDisconnected
+                          ? 'bg-amber-50 text-amber-700 border border-amber-200 font-semibold'
                           : 'bg-slate-100 text-slate-500 border border-slate-200/60'
                       }`}
                     >
-                      {mobileStreamConnected && !isDisconnected ? '✓ Connected' : 'Waiting...'}
+                      {(remoteVideoReady || lastFrame) && !isDisconnected ? '✓ Connected' : mobileCameraReady && !isDisconnected ? 'Connecting...' : 'Waiting...'}
                     </span>
                   </div>
 
@@ -789,18 +785,20 @@ export default function AssessmentQRPairingModal({
                   <div className="px-2 py-1 flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2">
                       <div className="w-6 h-6 rounded-lg bg-emerald-50 border border-emerald-200/70 flex items-center justify-center text-emerald-600 shrink-0">
-                        {mobileCameraReady && !isDisconnected ? <Check size={12} strokeWidth={2.5} className="text-emerald-700" /> : <Smartphone size={12} />}
+                        {remoteVideoReady || lastFrame ? <Check size={12} strokeWidth={2.5} className="text-emerald-700" /> : <Smartphone size={12} />}
                       </div>
                       <span className="font-semibold text-slate-800 text-[11px]">Mobile Camera Connected</span>
                     </div>
                     <span
                       className={`text-[9.5px] px-2 py-0.5 rounded-full font-medium transition ${
-                        mobileCameraReady && !isDisconnected
+                        (remoteVideoReady || lastFrame) && !isDisconnected
                           ? 'bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold'
+                          : mobileCameraReady && !isDisconnected
+                          ? 'bg-amber-50 text-amber-700 border border-amber-200 font-semibold'
                           : 'bg-slate-100 text-slate-500 border border-slate-200/60'
                       }`}
                     >
-                      {mobileCameraReady && !isDisconnected ? '✓ Connected' : 'Waiting...'}
+                      {(remoteVideoReady || lastFrame) && !isDisconnected ? '✓ Connected' : mobileCameraReady && !isDisconnected ? 'Connecting...' : 'Waiting...'}
                     </span>
                   </div>
                 </div>
@@ -818,46 +816,32 @@ export default function AssessmentQRPairingModal({
                 >
                   {/* Real Live WebRTC Video */}
                   <video
-                    ref={(el) => {
-                      videoRef.current = el;
-                      if (el && remoteStream && el.srcObject !== remoteStream) {
-                        console.log('[WebRTC Laptop] Setting videoElement.srcObject = remoteStream, tracks:', remoteStream.getTracks());
-                        el.srcObject = remoteStream;
-                        el.muted = true;
-                        el.playsInline = true;
-                        const playPromise = el.play();
-                        if (playPromise !== undefined) {
-                          playPromise
-                            .then(() => console.log('[WebRTC Laptop] el.play() resolved successfully'))
-                            .catch((err) => console.warn('[WebRTC Laptop] el.play() error:', err));
-                        }
-                      }
-                    }}
+                    ref={videoRef}
                     autoPlay
                     playsInline
                     muted
                     onLoadedMetadata={(e) => {
                       console.log('[WebRTC Laptop] onLoadedMetadata -> videoWidth:', e.target.videoWidth, 'videoHeight:', e.target.videoHeight);
-                      if (e.target.videoWidth > 0) setIsRealVideoFlowing(true);
+                      if (e.target.videoWidth > 0 && e.target.videoHeight > 0) setRemoteVideoReady(true);
                     }}
                     onPlaying={(e) => {
                       console.log('[WebRTC Laptop] onPlaying fired -> videoWidth:', e.target.videoWidth, 'videoHeight:', e.target.videoHeight);
-                      if (e.target.videoWidth > 0) setIsRealVideoFlowing(true);
+                      if (e.target.videoWidth > 0 && e.target.videoHeight > 0) setRemoteVideoReady(true);
                     }}
                     onTimeUpdate={(e) => {
-                      if (e.target.videoWidth > 0 && !isRealVideoFlowing) {
-                        setIsRealVideoFlowing(true);
+                      if (e.target.videoWidth > 0 && e.target.videoHeight > 0 && !remoteVideoReady) {
+                        setRemoteVideoReady(true);
                       }
                     }}
                     className={`w-full h-full object-cover z-10 transition-opacity duration-200 ${
-                      isRealVideoFlowing && remoteStream && !isDisconnected
+                      remoteVideoReady && remoteStream && !isDisconnected
                         ? 'opacity-100 block'
                         : 'opacity-0 absolute pointer-events-none'
                     }`}
                   />
 
                   {/* High-speed Direct Mobile Camera Frame Feed */}
-                  {lastFrame && !isRealVideoFlowing && !isDisconnected && (
+                  {lastFrame && !remoteVideoReady && !isDisconnected && (
                     <img
                       src={lastFrame}
                       alt="Live Mobile Camera Feed"
@@ -866,7 +850,7 @@ export default function AssessmentQRPairingModal({
                   )}
 
                   {/* Connected Overlay Badges */}
-                  {(isRealVideoFlowing || lastFrame || (mobileStreamConnected && mobileCameraReady)) && !isDisconnected ? (
+                  {(remoteVideoReady || lastFrame) && !isDisconnected ? (
                     <>
                       <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-slate-950/80 backdrop-blur border border-slate-700 text-[9px] font-mono text-emerald-400 flex items-center gap-1 z-20 shadow-xs">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -899,6 +883,16 @@ export default function AssessmentQRPairingModal({
                         Assessment is locked. Reconnecting mobile camera stream automatically...
                       </p>
                       <Loader2 size={13} className="animate-spin text-emerald-400 mt-0.5" />
+                    </div>
+                  ) : mobileCameraReady ? (
+                    <div className="p-3 flex flex-col items-center justify-center text-center space-y-1.5">
+                      <Loader2 size={20} className="animate-spin text-emerald-400 mx-auto" />
+                      <div className="text-[11.5px] font-bold text-white">
+                        Connecting to mobile camera...
+                      </div>
+                      <p className="text-[9.5px] text-slate-400 max-w-[200px] leading-tight">
+                        Establishing secure WebRTC stream with your mobile device.
+                      </p>
                     </div>
                   ) : (
                     /* Waiting Empty State matching reference */

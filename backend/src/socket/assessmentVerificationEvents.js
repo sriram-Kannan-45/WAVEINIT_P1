@@ -145,9 +145,8 @@ module.exports = (io, socket) => {
 
     io.to(`assessment_verif_${targetSessionId}`).emit('assessment_verif:mobile_status', {
       sessionId: targetSessionId,
-      connected: true,
-      mobileVerified: true,
-      isFullyVerified: true,
+      connected: false,
+      mobileReady: true,
       timestamp: Date.now(),
     });
     logger.info(`Assessment verification mobile ready for session ${targetSessionId}`);

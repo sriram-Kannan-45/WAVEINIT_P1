@@ -65,11 +65,11 @@ export default function AssessmentMobileJoin() {
   const [peerConnected, setPeerConnected] = useState(false);
 
   const videoRef = useRef(null);
-  const captureVideoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const socketRef = useRef(null);
   const pcRef = useRef(null);
+  const laptopSocketIdRef = useRef(null);
   const mobileCandidateQueueRef = useRef([]);
   const frameIntervalRef = useRef(null);
 
@@ -95,6 +95,8 @@ export default function AssessmentMobileJoin() {
           return;
         }
 
+        console.log('[AssessmentMobileJoin] MOBILE SESSION:', data.sessionId);
+        console.log('[AssessmentMobileJoin] SOCKET ROOM:', `assessment_verif_${data.sessionId}`);
         setInfo(data);
         setPhase(PHASE.CAMERA_REQUEST);
       } catch (err) {
@@ -112,40 +114,27 @@ export default function AssessmentMobileJoin() {
     };
   }, [token]);
 
-  // WebRTC Helper: Initiate Offer to Laptop Peer
-  const sendWebRtcOffer = useCallback(async (targetSocketId = null) => {
-    if (!pcRef.current || !streamRef.current || !socketRef.current?.connected) return;
+  // WebRTC Helper: Exactly ONE controlled WebRTC negotiation function
+  const startWebRTCOffer = useCallback(async (targetSocketId = null) => {
+    const target = targetSocketId || laptopSocketIdRef.current;
+    if (!socketRef.current?.connected || !streamRef.current || !info?.sessionId) {
+      console.log('[WebRTC Mobile] Cannot start WebRTC: socket, stream, or session not ready');
+      return;
+    }
+
     try {
-      console.log('[WebRTC Mobile] Creating offer...');
-      const offer = await pcRef.current.createOffer({
-        offerToReceiveAudio: false,
-        offerToReceiveVideo: false,
-      });
-      await pcRef.current.setLocalDescription(offer);
-      console.log('[WebRTC Mobile] Emitting offer to laptop:', targetSocketId || 'room');
-      socketRef.current.emit('assessment_verif:offer', {
-        sessionId: info?.sessionId,
-        targetSocketId,
-        offer: pcRef.current.localDescription,
-      });
-    } catch (err) {
-      console.warn('[WebRTC Mobile] createOffer error:', err);
-    }
-  }, [info?.sessionId]);
+      if (pcRef.current) {
+        try { pcRef.current.close(); } catch (e) {}
+        pcRef.current = null;
+      }
 
-  // WebRTC Helper: Setup Peer Connection
-  const initPeerConnection = useCallback(() => {
-    if (pcRef.current) {
-      try { pcRef.current.close(); } catch (e) {}
-    }
+      console.log('[WebRTC Mobile] Initializing RTCPeerConnection for target laptop socket:', target || 'room');
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      pcRef.current = pc;
 
-    console.log('[WebRTC Mobile] Initializing RTCPeerConnection with STUN/TURN');
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-    pcRef.current = pc;
-
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => {
-        console.log('[WebRTC Mobile] Adding track to PeerConnection:', {
+      // Add every live camera track
+      streamRef.current.getVideoTracks().forEach((track) => {
+        console.log('[WebRTC Mobile] Adding track to PC:', {
           id: track.id,
           kind: track.kind,
           label: track.label,
@@ -155,44 +144,48 @@ export default function AssessmentMobileJoin() {
         });
         pc.addTrack(track, streamRef.current);
       });
-      console.log('[WebRTC Mobile] Total active senders:', pc.getSenders().length);
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate && socketRef.current?.connected) {
+          console.log('[WebRTC Mobile] Emitting ICE candidate to laptop:', event.candidate.candidate?.slice(0, 35));
+          socketRef.current.emit('assessment_verif:ice-candidate', {
+            sessionId: info.sessionId,
+            targetSocketId: target || laptopSocketIdRef.current,
+            candidate: event.candidate,
+          });
+        }
+      };
+
+      pc.onconnectionstatechange = () => {
+        console.log('[WebRTC Mobile] Connection state change:', pc.connectionState);
+        if (pc.connectionState === 'connected') {
+          setPeerConnected(true);
+        } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+          setPeerConnected(false);
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        console.log('[WebRTC Mobile] ICE connection state:', pc.iceConnectionState);
+      };
+
+      pc.onsignalingstatechange = () => {
+        console.log('[WebRTC Mobile] Signaling state:', pc.signalingState);
+      };
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      console.log('[WebRTC Mobile] Emitting single SDP offer to laptop:', target || 'room');
+      socketRef.current.emit('assessment_verif:offer', {
+        sessionId: info.sessionId,
+        targetSocketId: target || laptopSocketIdRef.current,
+        offer: pc.localDescription,
+      });
+    } catch (err) {
+      console.error('[WebRTC Mobile] startWebRTCOffer error:', err);
     }
-
-    pc.onnegotiationneeded = async () => {
-      console.log('[WebRTC Mobile] onnegotiationneeded triggered');
-      await sendWebRtcOffer();
-    };
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate && socketRef.current?.connected) {
-        console.log('[WebRTC Mobile] Emitting ICE candidate:', event.candidate.candidate?.slice(0, 40));
-        socketRef.current.emit('assessment_verif:ice-candidate', {
-          sessionId: info?.sessionId,
-          candidate: event.candidate,
-        });
-      }
-    };
-
-    pc.onconnectionstatechange = () => {
-      console.log('[WebRTC Mobile] Connection state change:', pc.connectionState);
-      const state = pc.connectionState;
-      if (state === 'connected') {
-        setPeerConnected(true);
-      } else if (state === 'disconnected' || state === 'failed') {
-        setPeerConnected(false);
-      }
-    };
-
-    pc.oniceconnectionstatechange = () => {
-      console.log('[WebRTC Mobile] ICE connection state:', pc.iceConnectionState);
-    };
-
-    pc.onsignalingstatechange = () => {
-      console.log('[WebRTC Mobile] Signaling state:', pc.signalingState);
-    };
-
-    return pc;
-  }, [info?.sessionId, sendWebRtcOffer]);
+  }, [info?.sessionId]);
 
   // Frame Fallback Relay Stream (Bandwidth-efficient canvas capture)
   const startFrameCapture = useCallback(() => {
@@ -208,7 +201,7 @@ export default function AssessmentMobileJoin() {
     const isSlowConnection =
       navigator.connection?.saveData ||
       (navigator.connection?.downlink && navigator.connection.downlink < 1.0);
-    const intervalMs = isSlowConnection ? 200 : 100; // 5 fps on low bandwidth, 10 fps normal
+    const intervalMs = isSlowConnection ? 200 : 100;
 
     const captureAndEmit = () => {
       const vid = videoRef.current;
@@ -226,7 +219,7 @@ export default function AssessmentMobileJoin() {
     };
 
     frameIntervalRef.current = setInterval(captureAndEmit, intervalMs);
-    console.log(`[AssessmentMobileJoin] Frame capture relay active (${Math.round(1000 / intervalMs)} fps, ${canvas.width}x${canvas.height})`);
+    console.log(`[AssessmentMobileJoin] Frame capture relay active (${Math.round(1000 / intervalMs)} fps)`);
   }, [info?.sessionId]);
 
   // 2. Setup Socket Connection for real-time synchronization with Laptop
@@ -248,12 +241,6 @@ export default function AssessmentMobileJoin() {
         sessionId: info.sessionId,
         role: 'mobile_camera',
       });
-
-      // If stream already exists, setup WebRTC (onnegotiationneeded sends offer)
-      if (streamRef.current) {
-        initPeerConnection();
-        startFrameCapture();
-      }
     });
 
     socket.on('disconnect', () => {
@@ -262,12 +249,12 @@ export default function AssessmentMobileJoin() {
       setPeerConnected(false);
     });
 
-    // Laptop joined room → re-init PeerConnection (onnegotiationneeded handles offer automatically)
+    // Laptop joined room → store socket ID & start negotiation if camera is active
     socket.on('assessment_verif:laptop_joined', ({ socketId }) => {
-      console.log('[AssessmentMobileJoin] Laptop joined event received:', socketId);
-      if (streamRef.current) {
-        initPeerConnection();
-        startFrameCapture();
+      console.log('[AssessmentMobileJoin] Laptop joined room, socketId:', socketId);
+      laptopSocketIdRef.current = socketId;
+      if (streamRef.current && cameraActive) {
+        startWebRTCOffer(socketId);
       }
     });
 
@@ -277,7 +264,7 @@ export default function AssessmentMobileJoin() {
       if (pcRef.current && answer) {
         try {
           await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-          console.log('[WebRTC Mobile] Set remote description successfully');
+          console.log('[WebRTC Mobile] Remote description set successfully');
 
           // Flush queued candidates
           if (mobileCandidateQueueRef.current.length > 0) {
@@ -319,7 +306,7 @@ export default function AssessmentMobileJoin() {
         try { pcRef.current.close(); } catch (e) {}
       }
     };
-  }, [info, initPeerConnection, startFrameCapture]);
+  }, [info, cameraActive, startWebRTCOffer, startFrameCapture]);
 
   // 3. Request Mobile Camera Access
   const enableCamera = useCallback(async () => {
@@ -339,28 +326,32 @@ export default function AssessmentMobileJoin() {
         audio: false,
       });
 
-      console.log('[AssessmentMobileJoin] getUserMedia succeeded. Tracks:');
-      stream.getVideoTracks().forEach((track, i) => {
-        console.log(`[AssessmentMobileJoin] Track ${i}:`, {
-          id: track.id,
-          label: track.label,
-          enabled: track.enabled,
-          muted: track.muted,
-          readyState: track.readyState,
-        });
+      const videoTracks = stream.getVideoTracks();
+      if (videoTracks.length === 0 || videoTracks[0].readyState !== 'live') {
+        throw new Error('No live video track available from mobile camera.');
+      }
+
+      console.log('[AssessmentMobileJoin] getUserMedia succeeded. Live Track:', {
+        id: videoTracks[0].id,
+        label: videoTracks[0].label,
+        enabled: videoTracks[0].enabled,
+        muted: videoTracks[0].muted,
+        readyState: videoTracks[0].readyState,
       });
 
       streamRef.current = stream;
       setCameraActive(true);
       setPhase(PHASE.STREAMING);
 
-      // Start WebRTC Peer Connection (onnegotiationneeded sends offer automatically)
-      initPeerConnection();
+      // Start WebRTC Peer Connection if socket is connected
+      if (socketRef.current?.connected) {
+        startWebRTCOffer(laptopSocketIdRef.current);
+      }
 
       // Start Fallback Frame Streaming
       startFrameCapture();
 
-      // Notify backend via HTTP
+      // Notify backend via HTTP that mobile camera permission was granted
       await fetch(`${API_BASE}/assessment-verification/mobile-connected`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -380,7 +371,7 @@ export default function AssessmentMobileJoin() {
           : err.message || 'Unable to access mobile camera.'
       );
     }
-  }, [token, initPeerConnection, startFrameCapture]);
+  }, [token, startWebRTCOffer, startFrameCapture]);
 
   // Bind and play stream when video element renders
   useEffect(() => {
