@@ -96,6 +96,7 @@ export default function AssessmentQRPairingModal({
   const socketRef = useRef(null);
   const pcRef = useRef(null);
   const mobileSocketIdRef = useRef(null);
+  const sessionIdRef = useRef(null);
   const candidateQueueRef = useRef([]);
   const pollIntervalRef = useRef(null);
 
@@ -131,6 +132,7 @@ export default function AssessmentQRPairingModal({
 
       console.log('[AssessmentVerification] LAPTOP SESSION:', data.sessionId);
       console.log('[AssessmentVerification] SOCKET ROOM:', `assessment_verif_${data.sessionId}`);
+      sessionIdRef.current = data.sessionId;
       setSessionData(data);
       if (data.status === 'PAIRED' || data.status === 'VERIFIED' || data.mobileVerified) {
         setQrScanned(true);
@@ -177,7 +179,10 @@ export default function AssessmentQRPairingModal({
       console.log('[LAPTOP] ===== REMOTE TRACK RECEIVED =====');
       console.log('[LAPTOP] Track:', event.track);
       console.log('[LAPTOP] Streams:', event.streams);
-      const stream = event.streams?.[0] || new MediaStream([event.track]);
+      let stream = event.streams && event.streams[0];
+      if (!stream) {
+        stream = new MediaStream([event.track]);
+      }
       console.log('[LAPTOP] REMOTE STREAM:', stream);
       console.log('[LAPTOP] REMOTE TRACKS:', stream.getTracks());
       setRemoteStream(stream);
@@ -186,8 +191,9 @@ export default function AssessmentQRPairingModal({
     pc.onicecandidate = (event) => {
       if (event.candidate && socketRef.current?.connected) {
         console.log('[LAPTOP] ICE candidate emitted:', event.candidate.candidate?.slice(0, 35));
+        const targetSessionId = sessionIdRef.current || sessionData?.sessionId;
         socketRef.current.emit('assessment_verif:ice-candidate', {
-          sessionId: sessionData?.sessionId,
+          sessionId: targetSessionId,
           targetSocketId: mobileSocketIdRef.current,
           candidate: event.candidate,
         });
@@ -221,10 +227,11 @@ export default function AssessmentQRPairingModal({
 
   // 4. Socket.IO Synchronization
   useEffect(() => {
-    if (!sessionData?.sessionId) return;
+    const currentSessionId = sessionData?.sessionId || sessionIdRef.current;
+    if (!currentSessionId) return;
 
     const wsUrl = BACKEND_ORIGIN || window.location.origin;
-    console.log('[LAPTOP] Connecting to socket:', wsUrl, 'sessionId:', sessionData.sessionId);
+    console.log('[LAPTOP] Connecting to socket:', wsUrl, 'sessionId:', currentSessionId);
     const socket = io(wsUrl, {
       auth: { token: activeToken },
       transports: ['websocket', 'polling'],
@@ -233,10 +240,10 @@ export default function AssessmentQRPairingModal({
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('[LAPTOP] sessionId:', sessionData.sessionId);
+      console.log('[LAPTOP] sessionId:', currentSessionId);
       console.log('[LAPTOP] socket.id:', socket.id);
       socket.emit('assessment_verif:join', {
-        sessionId: sessionData.sessionId,
+        sessionId: currentSessionId,
         role: 'laptop',
       });
     });
@@ -251,8 +258,9 @@ export default function AssessmentQRPairingModal({
       getOrCreatePeerConnection();
 
       // Immediately inform mobile about laptop socket ID
+      const targetSessionId = currentSessionId || sessionIdRef.current;
       socket.emit('assessment_verif:laptop_joined', {
-        sessionId: sessionData.sessionId,
+        sessionId: targetSessionId,
         socketId: socket.id,
       });
     });
@@ -284,8 +292,9 @@ export default function AssessmentQRPairingModal({
         await pc.setLocalDescription(answer);
         console.log('[LAPTOP] ANSWER SENT to socket:', fromSocketId);
 
+        const targetSessionId = sessionId || currentSessionId || sessionIdRef.current;
         socket.emit('assessment_verif:answer', {
-          sessionId: sessionData.sessionId,
+          sessionId: targetSessionId,
           targetSocketId: fromSocketId,
           answer: pc.localDescription,
         });
