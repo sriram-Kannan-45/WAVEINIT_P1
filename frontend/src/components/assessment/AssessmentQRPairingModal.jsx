@@ -319,21 +319,15 @@ export default function AssessmentQRPairingModal({
         setHasReceivedFrames(true);
         setQrScanned(true);
         setParticipantValidated(true);
-        setMobileStreamConnected(true);
-        setMobileCameraReady(true);
-        setIsFullyVerified(true);
         setIsDisconnected(false);
       }
     });
 
     socket.on('assessment_verif:mobile_status', (data) => {
       console.log('[AssessmentVerification] Mobile status update:', data);
-      if (data.connected || data.mobileVerified) {
+      if (data.mobileReady || data.connected || data.mobileVerified) {
         setQrScanned(true);
         setParticipantValidated(true);
-        setMobileStreamConnected(true);
-        setMobileCameraReady(true);
-        setIsFullyVerified(true);
         setIsDisconnected(false);
       } else {
         setIsDisconnected(true);
@@ -345,9 +339,6 @@ export default function AssessmentQRPairingModal({
       if (data.streaming) {
         setQrScanned(true);
         setParticipantValidated(true);
-        setMobileStreamConnected(true);
-        setMobileCameraReady(true);
-        setIsFullyVerified(true);
         setIsDisconnected(false);
       }
     });
@@ -356,9 +347,6 @@ export default function AssessmentQRPairingModal({
       console.log('[AssessmentVerification] Session unlocked event received');
       setQrScanned(true);
       setParticipantValidated(true);
-      setMobileStreamConnected(true);
-      setMobileCameraReady(true);
-      setIsFullyVerified(true);
       setIsDisconnected(false);
     });
 
@@ -370,6 +358,16 @@ export default function AssessmentQRPairingModal({
       }
     };
   }, [sessionData?.sessionId, activeToken, getOrCreatePeerConnection]);
+
+  // Real video or frame arrival confirms true connectivity
+  useEffect(() => {
+    if (isRealVideoFlowing || lastFrame) {
+      setMobileStreamConnected(true);
+      setMobileCameraReady(true);
+      setIsFullyVerified(true);
+      setIsDisconnected(false);
+    }
+  }, [isRealVideoFlowing, lastFrame]);
 
   // 5. Polling Fallback
   useEffect(() => {
@@ -391,12 +389,6 @@ export default function AssessmentQRPairingModal({
           if (data.status === 'PAIRED' || data.status === 'VERIFIED' || data.mobileVerified) {
             setQrScanned(true);
             setParticipantValidated(true);
-          }
-          if (data.mobileVerified || data.status === 'VERIFIED') {
-            setMobileStreamConnected(true);
-            setMobileCameraReady(true);
-            setIsFullyVerified(true);
-            setIsDisconnected(false);
           }
         }
       } catch (e) {}
@@ -523,8 +515,9 @@ export default function AssessmentQRPairingModal({
   const startButtonLabel = assessmentType === 'CODING' ? 'Start / Resume Coding Assessment →' : 'Start / Resume Quiz →';
 
   const allChecksPassed =
-    (isFullyVerified ||
-      (qrScanned && participantValidated && mobileStreamConnected && mobileCameraReady)) &&
+    qrScanned &&
+    participantValidated &&
+    (isRealVideoFlowing || lastFrame !== null) &&
     !isDisconnected;
   const canStart = allChecksPassed && !isExpired;
 

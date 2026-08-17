@@ -194,16 +194,21 @@ export default function AssessmentMobileJoin() {
     return pc;
   }, [info?.sessionId, sendWebRtcOffer]);
 
-  // Frame Fallback Relay Stream (High-frequency lightweight canvas capture)
+  // Frame Fallback Relay Stream (Bandwidth-efficient canvas capture)
   const startFrameCapture = useCallback(() => {
     if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
     if (!canvasRef.current) {
       canvasRef.current = document.createElement('canvas');
-      canvasRef.current.width = 480;
-      canvasRef.current.height = 360;
+      canvasRef.current.width = 320;
+      canvasRef.current.height = 240;
     }
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
+
+    const isSlowConnection =
+      navigator.connection?.saveData ||
+      (navigator.connection?.downlink && navigator.connection.downlink < 1.0);
+    const intervalMs = isSlowConnection ? 200 : 100; // 5 fps on low bandwidth, 10 fps normal
 
     const captureAndEmit = () => {
       const vid = videoRef.current;
@@ -211,7 +216,7 @@ export default function AssessmentMobileJoin() {
       if (vid && vid.videoWidth > 0 && socket && socket.connected) {
         try {
           ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
-          const frame = canvas.toDataURL('image/jpeg', 0.6);
+          const frame = canvas.toDataURL('image/jpeg', 0.45);
           socket.emit('assessment_verif:frame', {
             sessionId: info?.sessionId,
             frame,
@@ -220,8 +225,8 @@ export default function AssessmentMobileJoin() {
       }
     };
 
-    frameIntervalRef.current = setInterval(captureAndEmit, 70);
-    console.log('[AssessmentMobileJoin] Live frame capture relay started (14 fps)');
+    frameIntervalRef.current = setInterval(captureAndEmit, intervalMs);
+    console.log(`[AssessmentMobileJoin] Frame capture relay active (${Math.round(1000 / intervalMs)} fps, ${canvas.width}x${canvas.height})`);
   }, [info?.sessionId]);
 
   // 2. Setup Socket Connection for real-time synchronization with Laptop
@@ -244,14 +249,10 @@ export default function AssessmentMobileJoin() {
         role: 'mobile_camera',
       });
 
-      // If stream already exists, setup WebRTC and send offer
+      // If stream already exists, setup WebRTC (onnegotiationneeded sends offer)
       if (streamRef.current) {
         initPeerConnection();
-        sendWebRtcOffer();
         startFrameCapture();
-        socket.emit('assessment_verif:mobile_ready', {
-          sessionId: info.sessionId,
-        });
       }
     });
 
@@ -261,12 +262,11 @@ export default function AssessmentMobileJoin() {
       setPeerConnected(false);
     });
 
-    // Laptop joined room → re-send WebRTC offer & ensure frame capture
+    // Laptop joined room → re-init PeerConnection (onnegotiationneeded handles offer automatically)
     socket.on('assessment_verif:laptop_joined', ({ socketId }) => {
       console.log('[AssessmentMobileJoin] Laptop joined event received:', socketId);
       if (streamRef.current) {
         initPeerConnection();
-        sendWebRtcOffer(socketId);
         startFrameCapture();
       }
     });
@@ -319,7 +319,7 @@ export default function AssessmentMobileJoin() {
         try { pcRef.current.close(); } catch (e) {}
       }
     };
-  }, [info, initPeerConnection, sendWebRtcOffer, startFrameCapture]);
+  }, [info, initPeerConnection, startFrameCapture]);
 
   // 3. Request Mobile Camera Access
   const enableCamera = useCallback(async () => {
@@ -339,26 +339,23 @@ export default function AssessmentMobileJoin() {
         audio: false,
       });
 
+      console.log('[AssessmentMobileJoin] getUserMedia succeeded. Tracks:');
+      stream.getVideoTracks().forEach((track, i) => {
+        console.log(`[AssessmentMobileJoin] Track ${i}:`, {
+          id: track.id,
+          label: track.label,
+          enabled: track.enabled,
+          muted: track.muted,
+          readyState: track.readyState,
+        });
+      });
+
       streamRef.current = stream;
       setCameraActive(true);
       setPhase(PHASE.STREAMING);
 
-      // Create dedicated capture video element
-      if (!captureVideoRef.current) {
-        const vid = document.createElement('video');
-        vid.muted = true;
-        vid.playsInline = true;
-        vid.autoplay = true;
-        vid.width = 480;
-        vid.height = 360;
-        captureVideoRef.current = vid;
-      }
-      captureVideoRef.current.srcObject = stream;
-      captureVideoRef.current.play().catch(() => {});
-
-      // Start WebRTC Peer Connection
+      // Start WebRTC Peer Connection (onnegotiationneeded sends offer automatically)
       initPeerConnection();
-      sendWebRtcOffer();
 
       // Start Fallback Frame Streaming
       startFrameCapture();
@@ -375,13 +372,6 @@ export default function AssessmentMobileJoin() {
           },
         }),
       }).catch((err) => console.warn('[AssessmentMobileJoin] HTTP notify error:', err));
-
-      // Notify laptop via Socket.io fast-path
-      if (socketRef.current && socketRef.current.connected) {
-        socketRef.current.emit('assessment_verif:mobile_ready', {
-          sessionId: info?.sessionId,
-        });
-      }
     } catch (err) {
       console.error('[AssessmentMobileJoin] Camera permission error:', err);
       setError(
@@ -390,7 +380,7 @@ export default function AssessmentMobileJoin() {
           : err.message || 'Unable to access mobile camera.'
       );
     }
-  }, [token, info, initPeerConnection, sendWebRtcOffer, startFrameCapture]);
+  }, [token, initPeerConnection, startFrameCapture]);
 
   // Bind and play stream when video element renders
   useEffect(() => {
