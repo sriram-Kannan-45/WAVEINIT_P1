@@ -289,10 +289,13 @@ function ParticipantQuizAttemptPageInner({ user }) {
         assessmentType="QUIZ"
         assessmentId={parseInt(quizId, 10)}
         attemptId={parseInt(attemptId, 10)}
-        assessmentTitle={quizData.title || 'AI Quiz'}
-        participantName={user?.name || 'Participant'}
+        assessmentTitle={quizData.title || 'Background Verification Declaration Quiz'}
+        participantName={user?.name || 'Sriram Titoo'}
         userToken={user?.token}
-        onVerified={() => setQrVerified(true)}
+        onVerified={() => {
+          setQrVerified(true);
+          setConsented(true);
+        }}
         onCancel={() => navigate('/participant')}
       />
     )

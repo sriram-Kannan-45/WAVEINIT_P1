@@ -389,7 +389,10 @@ function ParticipantCodingAttemptInner({ user }) {
         participantName={user?.name || 'Participant'}
         userToken={user?.token}
         laptopStreamActive={true}
-        onVerified={() => setQrVerified(true)}
+        onVerified={() => {
+          setQrVerified(true);
+          setConsented(true);
+        }}
         onCancel={() => navigate(`/trainings/${trainingId}`)}
       />
     )
