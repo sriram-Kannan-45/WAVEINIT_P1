@@ -36,6 +36,23 @@ const ICE_SERVERS = [
   { urls: 'stun:stun2.l.google.com:19302' },
   { urls: 'stun:stun3.l.google.com:19302' },
   { urls: 'stun:stun4.l.google.com:19302' },
+  { urls: 'stun:global.stun.twilio.com:3478' },
+  { urls: 'stun:stun.relay.metered.ca:80' },
+  {
+    urls: 'turn:standard.relay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:standard.relay.metered.ca:443',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:standard.relay.metered.ca:443?transport=tcp',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
 ];
 
 export default function AssessmentQRPairingModal({
@@ -782,27 +799,28 @@ export default function AssessmentQRPairingModal({
                 >
                   {/* Real Live WebRTC Video */}
                   <video
-                    ref={videoRef}
+                    ref={(el) => {
+                      videoRef.current = el;
+                      if (el && remoteStream && el.srcObject !== remoteStream) {
+                        el.srcObject = remoteStream;
+                        el.muted = true;
+                        el.play().catch(() => {});
+                      }
+                    }}
                     autoPlay
                     playsInline
                     muted
-                    onPlaying={() => setIsVideoPlaying(true)}
-                    onLoadedData={() => setIsVideoPlaying(true)}
-                    className={`w-full h-full object-cover transition-opacity duration-200 ${
-                      remoteStream && isVideoPlaying && !isDisconnected
-                        ? 'opacity-100 block z-10'
-                        : 'opacity-0 absolute hidden'
+                    className={`w-full h-full object-cover z-10 transition-opacity duration-200 ${
+                      remoteStream && !isDisconnected ? 'opacity-100 block' : 'opacity-0 absolute'
                     }`}
                   />
 
                   {/* High-speed Direct Mobile Camera Frame Feed */}
-                  {lastFrame && !isDisconnected && (
+                  {lastFrame && !remoteStream && !isDisconnected && (
                     <img
                       src={lastFrame}
                       alt="Live Mobile Camera Feed"
-                      className={`w-full h-full object-cover block ${
-                        remoteStream && isVideoPlaying ? 'opacity-0 absolute hidden' : 'opacity-100 z-10'
-                      }`}
+                      className="w-full h-full object-cover block z-10"
                     />
                   )}
 

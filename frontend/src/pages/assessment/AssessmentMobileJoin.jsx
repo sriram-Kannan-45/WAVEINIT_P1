@@ -36,6 +36,23 @@ const ICE_SERVERS = [
   { urls: 'stun:stun2.l.google.com:19302' },
   { urls: 'stun:stun3.l.google.com:19302' },
   { urls: 'stun:stun4.l.google.com:19302' },
+  { urls: 'stun:global.stun.twilio.com:3478' },
+  { urls: 'stun:stun.relay.metered.ca:80' },
+  {
+    urls: 'turn:standard.relay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:standard.relay.metered.ca:443',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:standard.relay.metered.ca:443?transport=tcp',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
 ];
 
 export default function AssessmentMobileJoin() {
@@ -121,20 +138,25 @@ export default function AssessmentMobileJoin() {
       try { pcRef.current.close(); } catch (e) {}
     }
 
-    console.log('[WebRTC Mobile] Initializing RTCPeerConnection');
+    console.log('[WebRTC Mobile] Initializing RTCPeerConnection with STUN/TURN');
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     pcRef.current = pc;
 
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => {
-        console.log('[WebRTC Mobile] Adding track:', track.kind, track.label);
+        console.log('[WebRTC Mobile] Adding track to PeerConnection:', track.kind, track.label);
         pc.addTrack(track, streamRef.current);
       });
     }
 
+    pc.onnegotiationneeded = async () => {
+      console.log('[WebRTC Mobile] onnegotiationneeded triggered');
+      await sendWebRtcOffer();
+    };
+
     pc.onicecandidate = (event) => {
       if (event.candidate && socketRef.current?.connected) {
-        console.log('[WebRTC Mobile] Emitting ICE candidate:', event.candidate.candidate?.slice(0, 30));
+        console.log('[WebRTC Mobile] Emitting ICE candidate:', event.candidate.candidate?.slice(0, 40));
         socketRef.current.emit('assessment_verif:ice-candidate', {
           sessionId: info?.sessionId,
           candidate: event.candidate,
@@ -156,8 +178,12 @@ export default function AssessmentMobileJoin() {
       console.log('[WebRTC Mobile] ICE connection state:', pc.iceConnectionState);
     };
 
+    pc.onsignalingstatechange = () => {
+      console.log('[WebRTC Mobile] Signaling state:', pc.signalingState);
+    };
+
     return pc;
-  }, [info?.sessionId]);
+  }, [info?.sessionId, sendWebRtcOffer]);
 
   // Frame Fallback Relay Stream (High-frequency lightweight canvas capture)
   const startFrameCapture = useCallback(() => {
