@@ -392,9 +392,6 @@ export default function AssessmentMobileJoin() {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
       }
-      if (captureVideoRef.current) {
-        captureVideoRef.current.srcObject = null;
-      }
       if (pcRef.current) {
         try { pcRef.current.close(); } catch (e) {}
       }
