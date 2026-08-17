@@ -69,11 +69,13 @@ export default function AssessmentQRPairingModal({
 
   // Media & Sockets
   const [remoteStream, setRemoteStream] = useState(null);
+  const [hasReceivedFrames, setHasReceivedFrames] = useState(false);
   const videoRef = useRef(null);
   const previewContainerRef = useRef(null);
   const canvasRef = useRef(null);
   const socketRef = useRef(null);
   const pcRef = useRef(null);
+  const candidateQueueRef = useRef([]);
   const pollIntervalRef = useRef(null);
 
   const activeToken =
@@ -167,7 +169,10 @@ export default function AssessmentQRPairingModal({
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.play().catch(() => {});
+        const playPromise = videoRef.current.play();
+        if (playPromise !== undefined) {
+          playPromise.catch((e) => console.warn('[AssessmentVerification] Play error:', e));
+        }
       }
     };
 
@@ -229,6 +234,17 @@ export default function AssessmentQRPairingModal({
         setParticipantValidated(true);
         const pc = getOrCreatePeerConnection();
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
+
+        // Process any queued candidates
+        if (candidateQueueRef.current.length > 0) {
+          for (const cand of candidateQueueRef.current) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(cand));
+            } catch (e) {}
+          }
+          candidateQueueRef.current = [];
+        }
+
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
 
@@ -246,7 +262,11 @@ export default function AssessmentQRPairingModal({
       try {
         const pc = getOrCreatePeerConnection();
         if (pc && candidate) {
-          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+          if (pc.remoteDescription && pc.remoteDescription.type) {
+            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+          } else {
+            candidateQueueRef.current.push(candidate);
+          }
         }
       } catch (err) {
         console.warn('[AssessmentVerification] Candidate error:', err);
@@ -260,6 +280,7 @@ export default function AssessmentQRPairingModal({
         const img = new Image();
         img.onload = () => {
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          setHasReceivedFrames(true);
           setQrScanned(true);
           setParticipantValidated(true);
           setMobileStreamConnected(true);
@@ -341,9 +362,14 @@ export default function AssessmentQRPairingModal({
 
   // Video attachment
   useEffect(() => {
-    if (remoteStream && videoRef.current && videoRef.current.srcObject !== remoteStream) {
-      videoRef.current.srcObject = remoteStream;
-      videoRef.current.play().catch(() => {});
+    if (remoteStream && videoRef.current) {
+      if (videoRef.current.srcObject !== remoteStream) {
+        videoRef.current.srcObject = remoteStream;
+      }
+      const playPromise = videoRef.current.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((e) => console.warn('[AssessmentVerification] Play error:', e));
+      }
     }
   }, [remoteStream, mobileCameraReady]);
 
@@ -749,36 +775,40 @@ export default function AssessmentQRPairingModal({
                   ref={previewContainerRef}
                   className="relative rounded-xl overflow-hidden bg-[#0b1329] border border-slate-800 aspect-[16/10] flex items-center justify-center shadow-inner group"
                 >
-                  {/* Real Live Video */}
+                  {/* Real Live WebRTC Video */}
                   <video
                     ref={videoRef}
                     autoPlay
                     playsInline
                     muted
-                    className={`w-full h-full object-cover transition-opacity duration-300 ${
-                      mobileCameraReady && !isDisconnected ? 'opacity-100' : 'opacity-0 absolute'
+                    className={`w-full h-full object-cover transition-opacity duration-200 ${
+                      remoteStream && mobileCameraReady && !isDisconnected
+                        ? 'opacity-100 block z-10'
+                        : 'opacity-0 absolute hidden'
                     }`}
                   />
 
-                  {/* Fallback Canvas Stream */}
+                  {/* Fallback Live Canvas Stream */}
                   <canvas
                     ref={canvasRef}
                     width={480}
                     height={360}
-                    className={`w-full h-full object-cover transition-opacity duration-300 ${
-                      !remoteStream && mobileCameraReady && !isDisconnected ? 'opacity-100' : 'opacity-0 absolute'
+                    className={`w-full h-full object-cover transition-opacity duration-200 ${
+                      !remoteStream && hasReceivedFrames && mobileCameraReady && !isDisconnected
+                        ? 'opacity-100 block z-10'
+                        : 'opacity-0 absolute hidden'
                     }`}
                   />
 
                   {/* Connected Overlay Badges */}
-                  {mobileCameraReady && !isDisconnected ? (
+                  {(remoteStream || hasReceivedFrames || mobileCameraReady) && !isDisconnected ? (
                     <>
-                      <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-slate-950/80 backdrop-blur border border-slate-700 text-[9px] font-mono text-emerald-400 flex items-center gap-1 z-10 shadow-xs">
+                      <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-slate-950/80 backdrop-blur border border-slate-700 text-[9px] font-mono text-emerald-400 flex items-center gap-1 z-20 shadow-xs">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                         <span className="font-bold text-white">LIVE</span>
                       </div>
 
-                      <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded-lg bg-slate-950/85 backdrop-blur border border-slate-700 text-white z-10 shadow-xs flex items-center gap-1 text-[11px] font-semibold">
+                      <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded-lg bg-slate-950/85 backdrop-blur border border-slate-700 text-white z-20 shadow-xs flex items-center gap-1 text-[11px] font-semibold">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                         <span>Camera Connected</span>
                       </div>
@@ -787,13 +817,13 @@ export default function AssessmentQRPairingModal({
                         type="button"
                         onClick={toggleFullscreenVideo}
                         title="Toggle Fullscreen"
-                        className="absolute bottom-2 right-2 w-6 h-6 rounded-lg bg-slate-950/80 hover:bg-slate-900 border border-slate-700 text-white flex items-center justify-center transition z-10 shadow-xs cursor-pointer"
+                        className="absolute bottom-2 right-2 w-6 h-6 rounded-lg bg-slate-950/80 hover:bg-slate-900 border border-slate-700 text-white flex items-center justify-center transition z-20 shadow-xs cursor-pointer"
                       >
                         {isFullscreenVideo ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
                       </button>
                     </>
                   ) : isDisconnected ? (
-                    <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-xs flex flex-col items-center justify-center p-3 text-center space-y-1 z-10">
+                    <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-xs flex flex-col items-center justify-center p-3 text-center space-y-1 z-20">
                       <div className="w-8 h-8 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-400 flex items-center justify-center">
                         <AlertTriangle size={16} />
                       </div>

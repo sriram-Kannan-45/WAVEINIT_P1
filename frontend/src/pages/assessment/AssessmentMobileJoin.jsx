@@ -208,7 +208,9 @@ export default function AssessmentMobileJoin() {
     socket.on('assessment_verif:ice-candidate', async ({ candidate }) => {
       if (pcRef.current && candidate) {
         try {
-          await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+          if (pcRef.current.remoteDescription && pcRef.current.remoteDescription.type) {
+            await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+          }
         } catch (err) {
           console.warn('[AssessmentMobileJoin] addIceCandidate error:', err);
         }
@@ -223,7 +225,7 @@ export default function AssessmentMobileJoin() {
     };
   }, [info, initPeerConnection, sendWebRtcOffer]);
 
-  // Frame Fallback Relay Stream (5 fps lightweight canvas capture)
+  // Frame Fallback Relay Stream (10 fps lightweight canvas capture)
   const startFrameCapture = useCallback(() => {
     if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
     if (!canvasRef.current) {
@@ -234,18 +236,21 @@ export default function AssessmentMobileJoin() {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
 
-    frameIntervalRef.current = setInterval(() => {
-      if (videoRef.current && videoRef.current.readyState >= 2 && socketRef.current?.connected) {
+    const captureAndEmit = () => {
+      const vid = videoRef.current;
+      if (vid && vid.videoWidth > 0 && socketRef.current?.connected) {
         try {
-          ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-          const frame = canvas.toDataURL('image/jpeg', 0.55);
+          ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+          const frame = canvas.toDataURL('image/jpeg', 0.6);
           socketRef.current.emit('assessment_verif:frame', {
             sessionId: info?.sessionId,
             frame,
           });
         } catch (e) {}
       }
-    }, 200);
+    };
+
+    frameIntervalRef.current = setInterval(captureAndEmit, 100);
   }, [info?.sessionId]);
 
   // 3. Request Mobile Camera Access
