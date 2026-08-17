@@ -382,44 +382,19 @@ function ParticipantCodingAttemptInner({ user }) {
 
   if (!qrVerified && assessment) {
     return (
-      <div className="relative min-h-screen bg-[#f8fafc] flex">
-        <div className="flex-1 flex flex-col min-w-0">
-          <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200/60 bg-white">
-            <div className="flex items-center gap-2 text-sm text-slate-500 font-medium">
-              <span>My Courses</span>
-              <span>/</span>
-              <span className="text-emerald-700 font-semibold">{assessment.title ? assessment.title.toLowerCase() : 'coding'}</span>
-            </div>
-            <button
-              onClick={() => navigate(`/trainings/${trainingId}`)}
-              className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-            >
-              <span>← Back</span>
-            </button>
-          </div>
-          <div className="p-8 space-y-4 max-w-5xl">
-            <div className="h-8 bg-slate-200/60 rounded-xl w-64" />
-            <div className="h-36 bg-white rounded-2xl border border-slate-200/60 p-6 space-y-3">
-              <div className="h-6 bg-slate-100 rounded-lg w-1/3" />
-              <div className="h-4 bg-slate-100 rounded-lg w-2/3" />
-            </div>
-          </div>
-        </div>
-
-        <AssessmentQRPairingModal
-          assessmentType="CODING"
-          assessmentId={Number(assessmentId)}
-          attemptId={Number(attemptId)}
-          assessmentTitle={assessment.title || 'Coding Assessment'}
-          participantName={user?.name || 'Sriram Titoo'}
-          userToken={user?.token}
-          onVerified={() => {
-            setQrVerified(true);
-            setConsented(true);
-          }}
-          onCancel={() => navigate(`/trainings/${trainingId}`)}
-        />
-      </div>
+      <AssessmentQRPairingModal
+        assessmentType="CODING"
+        assessmentId={Number(assessmentId)}
+        attemptId={Number(attemptId)}
+        assessmentTitle={assessment.title || 'Coding Assessment'}
+        participantName={user?.name || 'Sriram Titoo'}
+        userToken={user?.token}
+        onVerified={() => {
+          setQrVerified(true);
+          setConsented(true);
+        }}
+        onCancel={() => navigate(`/trainings/${trainingId}`)}
+      />
     )
   }
 
