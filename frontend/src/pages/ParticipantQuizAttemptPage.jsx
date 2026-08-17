@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import QuizTaking from '../components/QuizTaking'
 import AssessmentConsentGate from '../components/ai-quizzes/AssessmentConsentGate'
+import AssessmentQRPairingModal from '../components/assessment/AssessmentQRPairingModal'
 import { API_BASE } from '../api/api'
 import { useToast } from '../components/Toast'
 import { Loader2, AlertCircle } from 'lucide-react'
@@ -67,6 +68,7 @@ function ParticipantQuizAttemptPageInner({ user }) {
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState(null)
   const [quizData, setQuizData] = useState(null)
+  const [qrVerified, setQrVerified] = useState(false)
   const [consented, setConsented] = useState(false)
   const [screenStream, setScreenStream] = useState(null)
   const [sessionError, setSessionError] = useState(null)
@@ -278,6 +280,21 @@ function ParticipantQuizAttemptPageInner({ user }) {
           Return to Dashboard
         </button>
       </div>
+    )
+  }
+
+  if (!qrVerified && quizData) {
+    return (
+      <AssessmentQRPairingModal
+        assessmentType="QUIZ"
+        assessmentId={parseInt(quizId, 10)}
+        attemptId={parseInt(attemptId, 10)}
+        assessmentTitle={quizData.title || 'AI Quiz'}
+        participantName={user?.name || 'Participant'}
+        userToken={user?.token}
+        onVerified={() => setQrVerified(true)}
+        onCancel={() => navigate('/participant')}
+      />
     )
   }
 

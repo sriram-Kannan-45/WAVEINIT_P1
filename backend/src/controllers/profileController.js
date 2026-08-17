@@ -108,7 +108,7 @@ const getPublicProfile = async (req, res) => {
 const getAllTrainers = async (req, res) => {
   try {
     const trainers = await User.findAll({
-      where: { role: 'TRAINER' },
+      where: { role: 'TRAINER', isDeleted: false, status: 'APPROVED' },
       attributes: ['id', 'name', 'email', 'username'],
       include: [{
         model: TrainerProfile,

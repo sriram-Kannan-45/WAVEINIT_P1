@@ -177,7 +177,7 @@ router.get('/training-stats', authenticateToken, roleMiddleware('ADMIN'), (req, 
 router.get('/pending-participants', authenticateToken, roleMiddleware('ADMIN'), async (req, res) => {
   try {
     const participants = await User.findAll({
-      where: { role: 'PARTICIPANT', status: 'PENDING' },
+      where: { role: 'PARTICIPANT', status: 'PENDING', isDeleted: false },
       attributes: ['id', 'name', 'email', 'phone', 'created_at']
     });
     res.json({ participants });
@@ -251,7 +251,7 @@ router.get('/search-participants', authenticateToken, roleMiddleware('ADMIN'), a
     const { Op } = require('sequelize');
     const { q = '', status = '', limit = 20, offset = 0 } = req.query;
     
-    const where = { role: 'PARTICIPANT' };
+    const where = { role: 'PARTICIPANT', isDeleted: false };
     
     // Search query
     if (q) {

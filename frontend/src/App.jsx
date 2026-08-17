@@ -37,12 +37,15 @@ const CodingAssessmentResultPage = lazy(() => import('./pages/CodingAssessmentRe
 const TrainerCourses = lazy(() => import('./pages/TrainerCourses'))
 const ProfilePage = lazy(() => import('./pages/Profile/ProfilePage'))
 
-// Interview Module
+// Interview Module (Read-only reference)
 const InterviewDashboard = lazy(() => import('./pages/interview/InterviewDashboard'))
 const ScheduleInterview = lazy(() => import('./pages/interview/ScheduleInterview'))
 const InterviewRoom = lazy(() => import('./pages/interview/InterviewRoom'))
 const MobileJoin = lazy(() => import('./pages/interview/MobileJoin'))
 const InterviewEvaluation = lazy(() => import('./pages/interview/InterviewEvaluation'))
+
+// Assessment Verification (Quiz & Coding)
+const AssessmentMobileJoin = lazy(() => import('./pages/assessment/AssessmentMobileJoin'))
 
 function PageLoader() {
   return (
@@ -148,12 +151,13 @@ function App() {
 
       const response = await originalFetch(url, mergedOptions)
 
-      if (response.status === 401 || response.status === 403) {
+      if (response.status === 401) {
         const urlStr = response.url || ''
         const isAuthEndpoint = urlStr.includes('/api/auth/login') || urlStr.includes('/api/auth/register')
         const isRefreshEndpoint = urlStr.includes('/api/auth/refresh')
+        const isVerifEndpoint = urlStr.includes('/api/assessment-verification')
 
-        if (!isAuthEndpoint && !isRefreshEndpoint) {
+        if (!isAuthEndpoint && !isRefreshEndpoint && !isVerifEndpoint) {
           const newToken = await doRefresh()
           if (newToken) {
             const retryOptions = {
@@ -611,6 +615,16 @@ function AppRoutes({ user, onLogin, onLogout }) {
       <Route
         path="/interview/mobile/:token"
         element={<MobileJoin />}
+      />
+
+      {/* Assessment Verification Mobile Pairing (Quiz & Coding) */}
+      <Route
+        path="/assessment/mobile-join/:token"
+        element={<AssessmentMobileJoin />}
+      />
+      <Route
+        path="/assessment/mobile/:token"
+        element={<AssessmentMobileJoin />}
       />
 
       <Route path="*" element={<Navigate to="/login" />} />

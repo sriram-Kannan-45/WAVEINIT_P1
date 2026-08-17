@@ -17,6 +17,9 @@ const requireUserId = require('../middleware/requireUserId');
 const sessionLock = require('../middleware/sessionLock');
 const ctrl = require('../controllers/proctoringController');
 
+// Objective Monitoring Events (Python monitor + browser events) - Supports JWT auth and attempt-scoped verification
+router.post('/events', ctrl.recordMonitoringEvent);
+
 router.use(auth);
 router.use(requireUserId);
 
@@ -36,6 +39,11 @@ router.post('/sessions/:sessionId/terminate', sessionLock, ctrl.terminate);
 router.get('/sessions/:sessionId/exam',     sessionLock, ctrl.getExamData);
 router.post('/sessions/:sessionId/answers', sessionLock, ctrl.saveAnswers);
 router.post('/sessions/:sessionId/finalize', sessionLock, ctrl.finalize);
+
+// Proctoring Reports (Strictly TRAINER & ADMIN)
+router.get('/reports/:attemptId', ctrl.getAttemptProctoringReport);
+router.post('/reports/:attemptId/regenerate', ctrl.regenerateAttemptProctoringReport);
+router.get('/admin/reports', ctrl.getAdminProctoringReports);
 
 // Read + Trainer ops
 router.get('/sessions/:sessionId',                   ctrl.getSession);

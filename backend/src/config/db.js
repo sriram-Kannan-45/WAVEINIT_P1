@@ -482,6 +482,9 @@ const connectDB = async () => {
           { name: 'assessment_sessions', columns: ['quiz_id', 'attempt_id'] },
           { name: 'exam_sessions',        columns: ['quiz_id', 'attempt_id'] },
           { name: 'proctor_violations',   columns: ['quiz_id'] },
+          { name: 'proctoring_events',    columns: ['quiz_id', 'attempt_id'] },
+          { name: 'proctoring_reports',   columns: ['quiz_id', 'attempt_id'] },
+          { name: 'proctoring_sessions',  columns: ['quiz_id', 'attempt_id'] },
         ];
 
         for (const { name: tbl, columns: fkCols } of tables) {
@@ -721,9 +724,116 @@ const connectDB = async () => {
         logger.error('⚠️ Error relaxing interview_notes.session_id', { error: inErr.message });
       }
 
+      // Manual migration for quiz_attempts.monitoring_session_id
+      try {
+        const [qaCols] = await sequelize.query("SHOW COLUMNS FROM `quiz_attempts` WHERE `Field` = 'monitoring_session_id'");
+        if (qaCols.length === 0) {
+          logger.info('➕ Adding monitoring_session_id column to quiz_attempts...');
+          await sequelize.query("ALTER TABLE `quiz_attempts` ADD COLUMN `monitoring_session_id` VARCHAR(255) NULL");
+        }
+      } catch (qaErr) {
+        logger.error('⚠️ Error adding monitoring_session_id to quiz_attempts', { error: qaErr.message });
+      }
+
+      // Manual creation for proctoring_sessions, proctoring_events, and proctoring_reports
+      try {
+        await sequelize.query(`
+          CREATE TABLE IF NOT EXISTS \`proctoring_sessions\` (
+            \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+            \`session_id\` VARCHAR(255) NOT NULL UNIQUE,
+            \`attempt_id\` INT NOT NULL,
+            \`participant_id\` INT NOT NULL,
+            \`quiz_id\` INT NOT NULL,
+            \`started_at\` DATETIME NOT NULL,
+            \`ended_at\` DATETIME NULL,
+            \`status\` ENUM('ACTIVE', 'COMPLETED', 'TERMINATED', 'FAILED') DEFAULT 'ACTIVE',
+            \`final_risk_score\` FLOAT NULL,
+            \`final_risk_level\` ENUM('LOW', 'MEDIUM', 'HIGH', 'CRITICAL') NULL,
+            \`total_events\` INT DEFAULT 0,
+            \`warning_events\` INT DEFAULT 0,
+            \`high_events\` INT DEFAULT 0,
+            \`critical_events\` INT DEFAULT 0,
+            \`created_at\` DATETIME NOT NULL,
+            \`updated_at\` DATETIME NOT NULL,
+            INDEX \`idx_ps_attempt\` (\`attempt_id\`),
+            INDEX \`idx_ps_participant\` (\`participant_id\`),
+            INDEX \`idx_ps_quiz\` (\`quiz_id\`)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        `);
+
+        await sequelize.query(`
+          CREATE TABLE IF NOT EXISTS \`proctoring_events\` (
+            \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+            \`monitoring_session_id\` VARCHAR(255) NOT NULL,
+            \`attempt_id\` INT NOT NULL,
+            \`participant_id\` INT NOT NULL,
+            \`quiz_id\` INT NOT NULL,
+            \`event_type\` VARCHAR(100) NOT NULL,
+            \`severity\` ENUM('INFO', 'WARNING', 'HIGH', 'CRITICAL') DEFAULT 'INFO',
+            \`confidence\` FLOAT DEFAULT 1.0,
+            \`duration\` FLOAT DEFAULT 0.0,
+            \`timestamp\` DATETIME NOT NULL,
+            \`metadata\` JSON NULL,
+            \`idempotency_key\` VARCHAR(255) NULL UNIQUE,
+            \`created_at\` DATETIME NOT NULL,
+            \`updated_at\` DATETIME NOT NULL,
+            INDEX \`idx_pe_attempt\` (\`attempt_id\`),
+            INDEX \`idx_pe_session\` (\`monitoring_session_id\`),
+            INDEX \`idx_pe_type\` (\`event_type\`),
+            INDEX \`idx_pe_time\` (\`timestamp\`)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        `);
+
+        await sequelize.query(`
+          CREATE TABLE IF NOT EXISTS \`proctoring_reports\` (
+            \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+            \`attempt_id\` INT NOT NULL UNIQUE,
+            \`monitoring_session_id\` VARCHAR(255) NOT NULL,
+            \`status\` ENUM('GENERATED', 'GENERATION_FAILED', 'PENDING') DEFAULT 'GENERATED',
+            \`risk_score\` FLOAT NOT NULL DEFAULT 0.0,
+            \`risk_level\` ENUM('LOW', 'MEDIUM', 'HIGH', 'CRITICAL') NOT NULL DEFAULT 'LOW',
+            \`summary\` JSON NOT NULL,
+            \`timeline\` JSON NOT NULL,
+            \`generated_at\` DATETIME NOT NULL,
+            \`created_at\` DATETIME NOT NULL,
+            \`updated_at\` DATETIME NOT NULL,
+            INDEX \`idx_pr_attempt\` (\`attempt_id\`),
+            INDEX \`idx_pr_risk\` (\`risk_level\`)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        `);
+
+        // Ensure Foreign Keys have ON DELETE CASCADE
+        try {
+          const [fks] = await sequelize.query(`
+            SELECT kcu.CONSTRAINT_NAME, kcu.TABLE_NAME, rc.DELETE_RULE
+            FROM information_schema.KEY_COLUMN_USAGE kcu
+            JOIN information_schema.REFERENTIAL_CONSTRAINTS rc 
+              ON rc.CONSTRAINT_SCHEMA = kcu.CONSTRAINT_SCHEMA 
+             AND rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+            WHERE kcu.TABLE_SCHEMA = DATABASE() 
+              AND kcu.TABLE_NAME IN ('proctoring_reports', 'proctoring_events', 'proctoring_sessions')
+              AND kcu.REFERENCED_TABLE_NAME = 'quiz_attempts'
+          `);
+          for (const fk of fks) {
+            if (fk.DELETE_RULE !== 'CASCADE') {
+              await sequelize.query(`ALTER TABLE \`${fk.TABLE_NAME}\` DROP FOREIGN KEY \`${fk.CONSTRAINT_NAME}\``);
+              await sequelize.query(`
+                ALTER TABLE \`${fk.TABLE_NAME}\`
+                ADD CONSTRAINT \`${fk.CONSTRAINT_NAME}\`
+                FOREIGN KEY (\`attempt_id\`) REFERENCES \`quiz_attempts\` (\`id\`)
+                ON DELETE CASCADE ON UPDATE CASCADE
+              `);
+              logger.info(`✅ Updated FK ${fk.CONSTRAINT_NAME} on ${fk.TABLE_NAME} to ON DELETE CASCADE`);
+            }
+          }
+        } catch (_) {}
+      } catch (pErr) {
+        logger.error('⚠️ Error creating proctoring tables', { error: pErr.message });
+      }
+
       logger.info('✅ Manual schema migration checks completed successfully');
     } catch (migError) {
-      logger.error('⚠️ Error applying manual schema migrations to ai_questions', { error: migError.message });
+      logger.error('⚠️ Error applying manual schema migrations', { error: migError.message });
     }
     
   } catch (error) {

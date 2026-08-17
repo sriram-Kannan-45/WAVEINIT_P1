@@ -62,9 +62,9 @@ const updateTraining = async (req, res) => {
     }
 
     if (finalTrainerIds.length > 0) {
-      const trainers = await User.findAll({ where: { id: finalTrainerIds, role: 'TRAINER' } });
+      const trainers = await User.findAll({ where: { id: finalTrainerIds, role: 'TRAINER', isDeleted: false, status: 'APPROVED' } });
       if (trainers.length !== finalTrainerIds.length) {
-        return res.status(400).json({ error: 'One or more trainer IDs are invalid or not trainers' });
+        return res.status(400).json({ error: 'One or more trainer IDs are invalid, inactive, or not trainers' });
       }
 
       const { TrainingTrainerAssignment } = require('../models');
@@ -351,7 +351,7 @@ const updateTrainer = async (req, res) => {
     const { id } = req.params;
     const { name, email } = req.body;
 
-    const trainer = await User.findOne({ where: { id, role: 'TRAINER' } });
+    const trainer = await User.findOne({ where: { id, role: 'TRAINER', isDeleted: false } });
     if (!trainer) return res.status(404).json({ error: 'Trainer not found' });
 
     if (email && email !== trainer.email) {
@@ -404,50 +404,23 @@ const deleteTrainer = async (req, res) => {
     } = require('../models');
     const { Op } = require('sequelize');
 
-    // 1. Check if trainer is assigned to trainings or sessions (requires soft delete)
+    // 1. Check if trainer is assigned to trainings, courses, sessions, or referenced by child records (lessons, quizzes, materials)
     const [
       assignedTrainings,
       assignedCourses,
       assignedTrainingAssignments,
       assignedCourseAssignments,
-      assignedLiveSessions
-    ] = await Promise.all([
-      Training.findOne({ where: { trainerId: id }, transaction: t }),
-      Course.findOne({ where: { trainerId: id }, transaction: t }),
-      TrainingTrainerAssignment.findOne({ where: { trainerId: id }, transaction: t }),
-      CourseTrainerAssignment.findOne({ where: { trainerId: id }, transaction: t }),
-      LiveSession.findOne({ where: { trainerId: id }, transaction: t })
-    ]);
-
-    if (
-      assignedTrainings ||
-      assignedCourses ||
-      assignedTrainingAssignments ||
-      assignedCourseAssignments ||
-      assignedLiveSessions
-    ) {
-      console.log('[deleteTrainer] Trainer has active trainings or sessions. Implementing soft delete for trainer id:', id);
-      const [affectedRows] = await User.update(
-        { isDeleted: true, status: 'INACTIVE', deletedAt: new Date() },
-        { where: { id }, transaction: t }
-      );
-      console.log('[deleteTrainer] Soft delete completed. Affected rows:', affectedRows);
-      
-      await t.commit();
-      logger.info(`[deleteTrainer] Trainer #${id} soft-deleted successfully.`);
-      return res.json({
-        success: true,
-        message: 'Trainer soft-deleted successfully.'
-      });
-    }
-
-    // 2. Check if trainer is referenced by other child records
-    const [
+      assignedLiveSessions,
       referencedLessons,
       referencedQuizzes,
       referencedNotes,
       referencedAIDocuments
     ] = await Promise.all([
+      Training.findOne({ where: { trainerId: id }, transaction: t }),
+      Course.findOne({ where: { trainerId: id }, transaction: t }),
+      TrainingTrainerAssignment.findOne({ where: { trainerId: id }, transaction: t }),
+      CourseTrainerAssignment.findOne({ where: { trainerId: id }, transaction: t }),
+      LiveSession.findOne({ where: { trainerId: id }, transaction: t }),
       Lesson.findOne({ where: { trainerId: id }, transaction: t }),
       AIQuiz.findOne({
         where: {
@@ -462,17 +435,37 @@ const deleteTrainer = async (req, res) => {
       AIDocument.findOne({ where: { trainerId: id }, transaction: t })
     ]);
 
-    if (
+    const hasReferences =
+      assignedTrainings ||
+      assignedCourses ||
+      assignedTrainingAssignments ||
+      assignedCourseAssignments ||
+      assignedLiveSessions ||
       referencedLessons ||
       referencedQuizzes ||
       referencedNotes ||
-      referencedAIDocuments
-    ) {
-      await t.rollback();
-      console.warn(`[deleteTrainer] Trainer #${id} cannot be hard-deleted because they are referenced by other records.`);
-      return res.status(409).json({
-        success: false,
-        message: 'Trainer cannot be deleted because they are referenced by other records (lessons, quizzes, or materials).'
+      referencedAIDocuments;
+
+    if (hasReferences) {
+      console.log('[deleteTrainer] Trainer is referenced by existing courses, lessons, quizzes, or materials. Soft-deleting trainer id:', id);
+      
+      // Cleanup active assignment links so trainer is unassigned from active course management
+      await Promise.all([
+        CourseTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t }).catch(() => {}),
+        TrainingTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t }).catch(() => {}),
+      ]);
+
+      const [affectedRows] = await User.update(
+        { isDeleted: true, status: 'INACTIVE', deletedAt: new Date() },
+        { where: { id }, transaction: t }
+      );
+      console.log('[deleteTrainer] Soft delete completed. Affected rows:', affectedRows);
+      
+      await t.commit();
+      logger.info(`[deleteTrainer] Trainer #${id} soft-deleted successfully.`);
+      return res.json({
+        success: true,
+        message: 'Trainer deleted successfully.'
       });
     }
 
@@ -573,14 +566,14 @@ const deleteTrainer = async (req, res) => {
 const getStats = async (req, res) => {
   try {
     const totalTrainings = await Training.count();
-    const totalTrainers = await User.count({ where: { role: 'TRAINER' } });
-    const totalParticipants = await User.count({ where: { role: 'PARTICIPANT' } });
+    const totalTrainers = await User.count({ where: { role: 'TRAINER', isDeleted: false, status: 'APPROVED' } });
+    const totalParticipants = await User.count({ where: { role: 'PARTICIPANT', isDeleted: false } });
     const totalEnrollments = await Enrollment.count({ where: { status: 'ENROLLED' } });
     const totalFeedbacks = await Feedback.count();
     
     // Pending counts
     const pendingParticipants = await User.count({ 
-      where: { role: 'PARTICIPANT', status: 'PENDING' } 
+      where: { role: 'PARTICIPANT', status: 'PENDING', isDeleted: false } 
     });
     const { Note } = require('../models');
     const pendingNotes = await Note.count({ where: { status: 'PENDING' } });
@@ -667,7 +660,7 @@ const getParticipants = async (req, res) => {
     const { Op } = require('sequelize');
     const { search = '', status = '', limit = 50, offset = 0 } = req.query;
     
-    const where = { role: 'PARTICIPANT' };
+    const where = { role: 'PARTICIPANT', isDeleted: false };
     
     // Search filter
     if (search) {
@@ -783,7 +776,8 @@ const deleteParticipant = async (req, res) => {
       QuizCopyViolation, QuizAssignment, AssessmentSubmission,
       MonitorAttempt, MonitorViolation, MonitorScreenshot,
       CodingAttempt, CodingSubmission, CodingResult,
-      QuizRecording, QuizResultsAudit
+      QuizRecording, QuizResultsAudit,
+      ProctoringSession, ProctoringEvent, ProctoringReport
     } = require('../models');
 
     // 1. Quiz attempt related cleanup — child tables before QuizAttempt
@@ -793,6 +787,15 @@ const deleteParticipant = async (req, res) => {
     const attemptIds = attempts.map(a => a.id);
 
     if (attemptIds.length > 0) {
+      await ProctoringReport.destroy({
+        where: { attemptId: { [Op.in]: attemptIds } }, transaction: t
+      }).catch(() => {});
+      await ProctoringEvent.destroy({
+        where: { attemptId: { [Op.in]: attemptIds } }, transaction: t
+      }).catch(() => {});
+      await ProctoringSession.destroy({
+        where: { attemptId: { [Op.in]: attemptIds } }, transaction: t
+      }).catch(() => {});
       await QuizCopyViolation.destroy({
         where: { attemptId: { [Op.in]: attemptIds } }, transaction: t
       });
@@ -990,7 +993,7 @@ const getTrainingStats = async (req, res) => {
 const getPendingParticipants = async (req, res) => {
   try {
     const pendingParticipants = await User.findAll({
-      where: { role: 'PARTICIPANT', status: 'PENDING' },
+      where: { role: 'PARTICIPANT', status: 'PENDING', isDeleted: false },
       attributes: { exclude: ['password'] },
       order: [['id', 'DESC']]
     });
@@ -1219,7 +1222,7 @@ const rejectTrainer = async (req, res) => {
 const getPendingTrainers = async (req, res) => {
   try {
     const trainers = await User.findAll({
-      where: { role: 'TRAINER', status: 'PENDING' },
+      where: { role: 'TRAINER', status: 'PENDING', isDeleted: false },
       attributes: ['id', 'name', 'email', 'phone', 'created_at']
     });
     res.json({ trainers });

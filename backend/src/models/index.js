@@ -27,6 +27,7 @@ const QuizResult = require('./quizResult');
 
 const PasswordResetOtp = require('./PasswordResetOtp');
 const AssessmentSession = require('./AssessmentSession');
+const AssessmentVerificationSession = require('./AssessmentVerificationSession');
 
 // Security models
 const RefreshToken = require('./RefreshToken');
@@ -56,6 +57,11 @@ const Screenshot = require('./screenshot');
 const MonitorAttempt = require('./monitorAttempt');
 const MonitorViolation = require('./monitorViolation');
 const MonitorScreenshot = require('./monitorScreenshot');
+
+// Unified LMS Proctoring & Participant Monitoring models
+const ProctoringSession = require('./proctoringSession');
+const ProctoringEvent = require('./proctoringEvent');
+const ProctoringReport = require('./proctoringReport');
 
 // New Enhancements
 const TrainingTrainerAssignment = require('./trainingTrainerAssignment');
@@ -276,6 +282,27 @@ DeviceFingerprint.belongsTo(User, { foreignKey: 'userId', as: 'user' });
 User.hasMany(DeviceFingerprint, { foreignKey: 'userId', as: 'devices' });
 User.hasMany(ExamSession, { foreignKey: 'participantId', as: 'examSessions' });
 
+// --- Unified LMS Proctoring & Participant Monitoring Associations ---
+ProctoringSession.belongsTo(User, { foreignKey: 'participantId', as: 'participant', constraints: false });
+ProctoringSession.belongsTo(AIQuiz, { foreignKey: 'quizId', as: 'quiz', constraints: false });
+ProctoringSession.belongsTo(QuizAttempt, { foreignKey: 'attemptId', as: 'attempt', constraints: false });
+QuizAttempt.hasOne(ProctoringSession, { foreignKey: 'attemptId', as: 'proctoringSession', constraints: false });
+User.hasMany(ProctoringSession, { foreignKey: 'participantId', as: 'proctoringSessions', constraints: false });
+AIQuiz.hasMany(ProctoringSession, { foreignKey: 'quizId', as: 'proctoringSessions', constraints: false });
+
+ProctoringEvent.belongsTo(User, { foreignKey: 'participantId', as: 'participant', constraints: false });
+ProctoringEvent.belongsTo(AIQuiz, { foreignKey: 'quizId', as: 'quiz', constraints: false });
+ProctoringEvent.belongsTo(QuizAttempt, { foreignKey: 'attemptId', as: 'attempt', constraints: false });
+QuizAttempt.hasMany(ProctoringEvent, { foreignKey: 'attemptId', as: 'proctoringEvents', constraints: false });
+User.hasMany(ProctoringEvent, { foreignKey: 'participantId', as: 'proctoringEvents', constraints: false });
+
+ProctoringReport.belongsTo(QuizAttempt, { foreignKey: 'attemptId', as: 'attempt', constraints: false });
+QuizAttempt.hasOne(ProctoringReport, { foreignKey: 'attemptId', as: 'proctoringReport', constraints: false });
+
+CodingAttempt.hasOne(ProctoringSession, { foreignKey: 'attemptId', as: 'proctoringSession', constraints: false });
+CodingAttempt.hasMany(ProctoringEvent, { foreignKey: 'attemptId', as: 'proctoringEvents', constraints: false });
+CodingAttempt.hasOne(ProctoringReport, { foreignKey: 'attemptId', as: 'proctoringReport', constraints: false });
+
 // --- Secure Assessment Session lock (separate from proctoring module) ---
 AssessmentSession.belongsTo(QuizAttempt, { foreignKey: 'attemptId', as: 'attempt', constraints: false });
 AssessmentSession.belongsTo(CodingAttempt, { foreignKey: 'codingAttemptId', as: 'codingAttempt', constraints: false });
@@ -336,7 +363,8 @@ User.hasMany(QuizRecording, { foreignKey: 'trainerId', as: 'trainerRecordings' }
 
 // ── Coding Assessment Module Associations ──
 CodingAssessment.belongsTo(User, { foreignKey: 'trainerId', as: 'trainer' });
-CodingAssessment.belongsTo(Training, { foreignKey: 'trainingId', as: 'training' });
+CodingAssessment.belongsTo(Training, { foreignKey: 'trainingId', as: 'training', constraints: false });
+CodingAssessment.belongsTo(Course, { foreignKey: 'courseId', as: 'course', constraints: false });
 CodingAssessment.hasMany(CodingProblem, { foreignKey: 'assessmentId', as: 'problems' });
 CodingAssessment.hasMany(CodingAttempt, { foreignKey: 'assessmentId', as: 'attempts' });
 
@@ -360,6 +388,7 @@ CodingResult.belongsTo(User, { foreignKey: 'participantId', as: 'participant' })
 
 User.hasMany(CodingAssessment, { foreignKey: 'trainerId', as: 'codingAssessments' });
 Training.hasMany(CodingAssessment, { foreignKey: 'trainingId', as: 'codingAssessments' });
+Course.hasMany(CodingAssessment, { foreignKey: 'courseId', as: 'codingAssessments' });
 
 // RegistrationApplication associations
 RegistrationApplication.belongsTo(Training, { foreignKey: 'trainingId', as: 'training' });
@@ -384,6 +413,10 @@ UserProfile.hasOne(ProfileContactLink, { foreignKey: 'profileId', as: 'contactLi
 ProfileContactLink.belongsTo(UserProfile, { foreignKey: 'profileId', as: 'profile' });
 UserProfile.hasMany(ProfileActivityLog, { foreignKey: 'profileId', as: 'activityLogs' });
 ProfileActivityLog.belongsTo(UserProfile, { foreignKey: 'profileId', as: 'profile' });
+
+// --- Assessment Verification Session (Quiz & Coding) Associations ---
+AssessmentVerificationSession.belongsTo(User, { foreignKey: 'participant_id', as: 'participant' });
+User.hasMany(AssessmentVerificationSession, { foreignKey: 'participant_id', as: 'assessmentVerificationSessions' });
 
 // --- Interview Module Associations ---
 Interview.belongsTo(User, { foreignKey: 'candidate_id', as: 'candidate' });
@@ -463,6 +496,10 @@ module.exports = {
   DeviceFingerprint,
   ProctorActivity,
   Screenshot,
+  // Unified LMS Proctoring & Participant Monitoring
+  ProctoringSession,
+  ProctoringEvent,
+  ProctoringReport,
   // Parallel monitor system
   MonitorAttempt,
   MonitorViolation,
@@ -470,6 +507,8 @@ module.exports = {
   PasswordResetOtp,
   // Secure Assessment session lock
   AssessmentSession,
+  // Dedicated Quiz & Coding QR Verification Session
+  AssessmentVerificationSession,
   // Lesson workflow module
   Lesson,
   LessonQuiz,

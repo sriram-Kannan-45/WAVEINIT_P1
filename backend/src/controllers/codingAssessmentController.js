@@ -889,6 +889,14 @@ exports.submitAssessment = async (req, res) => {
       return codingResult;
     });
 
+    // Auto-generate proctoring report in background for coding attempt
+    try {
+      const proctoringReportService = require('../services/proctoringReportService');
+      proctoringReportService.generateFinalProctoringReport(result.attemptId).catch(err => {
+        logger.warn('Failed to auto-generate proctoring report for coding attempt', { attemptId: result.attemptId, error: err.message });
+      });
+    } catch (_) {}
+
     ok(res, { result });
   } catch (err) {
     if (err.status) return fail(res, err.status, err.message);

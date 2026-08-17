@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useState, useRef } from 'react'
+import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Plus, Pencil, Trash2, Eye, Send, Sparkles, ListChecks, Search,
   X, Save, Check, AlertTriangle, ChevronDown, ChevronUp, BookOpen, Trophy,
-  BarChart3, FileText, Upload,
+  BarChart3, FileText, Upload, Clock, HelpCircle, Users, Star, Settings,
+  Shield, CheckCircle2, RefreshCw, MoreVertical, ArrowLeft, ArrowRight, Loader2, AlertCircle,
+  Calendar, Award, Activity, CheckSquare, Code, BarChart2, Info
 } from 'lucide-react'
+import { SingleAttemptProctoringModal } from '../../proctoring/components/TrainerMonitoringReport'
 import { API } from '../../api/api'
 import { useToast } from '../Toast'
 import {
@@ -14,12 +18,6 @@ import {
 } from '../../theme/tokens'
 import '../../styles/course-tabs.css'
 
-
-function Badge({ value, map }) {
-  const v = map[value] || map.DRAFT
-  return <span style={v}>{value}</span>
-}
-
 const blankQuestion = () => ({
   question: '',
   options: ['', '', '', ''],
@@ -27,229 +25,1240 @@ const blankQuestion = () => ({
   explanation: '',
 })
 
-function QuizBuilder({ user, courseId, lessons, existingQuiz, onClose, onSaved }) {
+export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
   const { success, error: showError } = useToast()
-  const [title, setTitle] = useState(existingQuiz?.title || '')
-  const [lessonId, setLessonId] = useState(existingQuiz?.lessonId || '')
-  const [isMandatory, setIsMandatory] = useState(existingQuiz?.isMandatory ?? true)
-  const [status, setStatus] = useState(existingQuiz?.status || 'DRAFT')
-  const [questions, setQuestions] = useState(() => {
-    if (!existingQuiz?.questions?.length) return [blankQuestion()]
-    return existingQuiz.questions.map(q => {
-      const opts = Array.isArray(q.options) ? q.options.slice(0, 4) : ['', '', '', '']
-      while (opts.length < 4) opts.push('')
-      const correctIndex = Math.max(0, opts.findIndex(o => o === q.correctAnswer))
-      return { question: q.questionText || '', options: opts, correctIndex, explanation: q.explanation || '' }
-    })
-  })
-  const [saving, setSaving] = useState(false)
+  const navigate = useNavigate()
+  const [quizzes, setQuizzes] = useState([])
+  const [lessons, setLessons] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [builderState, setBuilderState] = useState(null)
+  const [viewingQuizId, setViewingQuizId] = useState(null)
+  const [publishQuiz, setPublishQuiz] = useState(null)
+  const [sendingQuizId, setSendingQuizId] = useState(null)
+  const [leaderboardQuiz, setLeaderboardQuiz] = useState(null)
+  const [leaderboardData, setLeaderboardData] = useState([])
+  const [bankExpanded, setBankExpanded] = useState(false)
+  const [bankSearch, setBankSearch] = useState('')
+  const [showGenerator, setShowGenerator] = useState(false)
 
-  const auth = () => ({ Authorization: `Bearer ${user.token}`, 'Content-Type': 'application/json' })
+  const auth = () => ({ Authorization: `Bearer ${user.token}` })
 
-  const addQ = () => setQuestions([...questions, blankQuestion()])
-  const removeQ = (i) => setQuestions(questions.filter((_, x) => x !== i))
-  const updateQ = (i, patch) => setQuestions(questions.map((q, x) => x === i ? { ...q, ...patch } : q))
-  const updateOption = (qi, oi, val) => {
-    const next = [...questions]
-    next[qi].options[oi] = val
-    setQuestions(next)
-  }
-
-  const validate = () => {
-    if (!title.trim()) return 'Title is required'
-    if (questions.length === 0) return 'Add at least one question'
-    for (let i = 0; i < questions.length; i++) {
-      const q = questions[i]
-      if (!q.question.trim()) return `Question ${i + 1} text is empty`
-      if (q.options.some(o => !String(o).trim())) return `Question ${i + 1}: all 4 options are required`
-      if (q.correctIndex < 0 || q.correctIndex > 3) return `Question ${i + 1}: pick the correct answer`
-    }
-    return null
-  }
-
-  const submit = async () => {
-    const err = validate()
-    if (err) { showError(err); return }
+  const fetchAll = async () => {
+    if (!courseId) return
     try {
-      setSaving(true)
-      const url = existingQuiz
-        ? API.TRAINER_COURSES.QUIZ(courseId, existingQuiz.id)
-        : API.TRAINER_COURSES.QUIZ_MANUAL(courseId)
-
-      const body = {
-        title: title.trim(),
-        lessonId: lessonId || null,
-        isMandatory,
-        questions,
-      }
-      if (existingQuiz) body.status = status
-
-      const r = await fetch(url, {
-        method: existingQuiz ? 'PUT' : 'POST',
-        headers: auth(),
-        body: JSON.stringify(body),
-      })
-      const d = await r.json()
-      if (!r.ok || d.success === false) { showError(d.error || 'Save failed'); return }
-      success(existingQuiz ? 'Quiz updated' : 'Quiz created (DRAFT)')
-      onSaved?.()
-      onClose()
-    } catch (e) { showError(e.message) }
-    finally { setSaving(false) }
+      setLoading(true)
+      const [qr, lr] = await Promise.all([
+        fetch(API.TRAINER_COURSES.QUIZZES(courseId), { headers: auth() })
+          .then(async r => {
+            if (!r.ok) return { success: false, quizzes: [] }
+            const t = await r.text()
+            try { return JSON.parse(t) } catch { return { success: false, quizzes: [] } }
+          })
+          .catch(() => ({ success: false, quizzes: [] })),
+        fetch(API.TRAINER_COURSES.LESSONS(courseId), { headers: auth() })
+          .then(async r => {
+            if (!r.ok) return { success: false, lessons: [] }
+            const t = await r.text()
+            try { return JSON.parse(t) } catch { return { success: false, lessons: [] } }
+          })
+          .catch(() => ({ success: false, lessons: [] })),
+      ])
+      if (qr && qr.success) setQuizzes(qr.quizzes || [])
+      if (lr && lr.success) setLessons(lr.lessons || [])
+    } catch {
+      // Ignore network errors gracefully
+    } finally {
+      setLoading(false)
+    }
   }
+  useEffect(() => { fetchAll() }, [courseId])
+
+  const fetchQuizForEdit = async (quizId) => {
+    try {
+      const r = await fetch(API.TRAINER_COURSES.QUIZ(courseId, quizId), { headers: auth() })
+      const text = await r.text()
+      let d = {}
+      try { d = JSON.parse(text) } catch { d = {} }
+      if (d.success && d.quiz) return d.quiz
+      showError(d.error || 'Failed to load quiz')
+      return null
+    } catch (e) { showError(e.message); return null }
+  }
+
+  const remove = async (q) => {
+    if (!window.confirm(`Delete quiz "${q.title}"? This cannot be undone.`)) return
+    try {
+      const r = await fetch(API.TRAINER_COURSES.QUIZ(courseId, q.id), { method: 'DELETE', headers: auth() })
+      const text = await r.text()
+      let d = {}
+      try { d = JSON.parse(text) } catch { d = {} }
+      if (!r.ok || d.success === false) { showError(d.message || d.error || 'Delete failed'); return }
+      success('Quiz deleted')
+      await fetchAll()
+      onCountChange?.()
+    } catch (e) { showError(e.message) }
+  }
+
+  const openEdit = async (q) => {
+    const full = await fetchQuizForEdit(q.id)
+    if (full) setBuilderState({ quiz: full })
+  }
+
+  const sendQuiz = async (q) => {
+    if (!window.confirm(`Send "${q.title}" to enrolled participants?`)) return
+    setSendingQuizId(q.id)
+    try {
+      const r = await fetch(API.TRAINER_COURSES.SEND_QUIZ(q.id), { method: 'POST', headers: auth() })
+      const text = await r.text()
+      let d = {}
+      try { d = JSON.parse(text) } catch { d = {} }
+      if (!r.ok || d.success === false) { showError(d.error || d.message || 'Send failed'); return }
+      success(`Quiz sent to ${d.assignedCount || 0} participant(s)`)
+      await fetchAll()
+    } catch (e) { showError(e.message) }
+    finally { setSendingQuizId(null) }
+  }
+
+  const openLeaderboard = async (q) => {
+    try {
+      const r = await fetch(API.TRAINER_COURSES.QUIZ_LEADERBOARD(q.id), { headers: auth() })
+      const text = await r.text()
+      let d = {}
+      try { d = JSON.parse(text) } catch { d = {} }
+      if (d.success) setLeaderboardData(d.leaderboard || [])
+      else setLeaderboardData([])
+    } catch { setLeaderboardData([]) }
+    setLeaderboardQuiz(q)
+  }
+
+  const [bankQuestions, setBankQuestions] = useState([])
+  useEffect(() => {
+    if (!bankExpanded) return
+    let aborted = false
+    ;(async () => {
+      const collected = []
+      for (const q of quizzes) {
+        try {
+          const r = await fetch(API.TRAINER_COURSES.QUIZ(courseId, q.id), { headers: auth() })
+          const d = await r.json()
+          if (d.success && d.quiz?.questions) {
+            d.quiz.questions.forEach(qq => collected.push({
+              ...qq, sourceQuizId: d.quiz.id, sourceQuizTitle: d.quiz.title,
+            }))
+          }
+        } catch {}
+      }
+      if (!aborted) setBankQuestions(collected)
+    })()
+    return () => { aborted = true }
+  }, [bankExpanded, quizzes])
+
+  const filteredBank = useMemo(() => {
+    if (!bankSearch) return bankQuestions
+    const q = bankSearch.toLowerCase()
+    return bankQuestions.filter(qq =>
+      (qq.questionText || '').toLowerCase().includes(q) ||
+      (qq.sourceQuizTitle || '').toLowerCase().includes(q)
+    )
+  }, [bankQuestions, bankSearch])
 
   return (
+    <div className="cqt-container">
+      {/* Header bar */}
+      <div className="cqt-header">
+        <h3 className="cqt-title">
+          {quizzes.length} Quiz{quizzes.length !== 1 ? 'zes' : ''}
+        </h3>
+        <div className="cqt-actions">
+          <button
+            onClick={() => setShowGenerator(true)}
+            className="cqt-btn-ai"
+          >
+            <Sparkles size={13} /> Generate with AI
+          </button>
+          <button
+            onClick={() => setBuilderState({})}
+            className="cqt-btn-manual"
+          >
+            <Plus size={13} /> Create Manually
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ height: 160, background: '#F8FAFC', borderRadius: 12, border: '1px solid #F1F5F9' }} />
+      ) : quizzes.length === 0 ? (
+        <div className="cqt-empty-state">
+          <Sparkles size={32} color="#94A3B8" style={{ margin: '0 auto 6px' }} />
+          <h4>No quizzes yet</h4>
+          <p>Click <strong>Create Manually</strong> or <strong>Generate with AI</strong> to add the first one.</p>
+        </div>
+      ) : (
+        <div className="cqt-table-card">
+          <table className="cqt-table">
+            <thead>
+              <tr>
+                <th>TITLE</th>
+                <th>LESSON</th>
+                <th>QUESTIONS</th>
+                <th>STATUS</th>
+                <th>RESULT</th>
+                <th>ACTIONS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {quizzes.map(q => (
+                <tr key={q.id}>
+                  <td>
+                    <div className="cqt-quiz-title">{q.title}</div>
+                    {q.isMandatory && (
+                      <span className="cqt-badge-mandatory">MANDATORY</span>
+                    )}
+                  </td>
+                  <td className="cqt-cell-muted">{q.lessonTitle || '— Course-level —'}</td>
+                  <td className="cqt-cell-num">{q.questionCount ?? q.questions?.length ?? 0}</td>
+                  <td>
+                    <span className={`cqt-badge cqt-badge--${(q.status || 'DRAFT').toLowerCase()}`}>
+                      {q.status || 'DRAFT'}
+                    </span>
+                  </td>
+                  <td>
+                    <span className={`cqt-badge cqt-badge--${(q.resultStatus || 'HIDDEN').toLowerCase()}`}>
+                      {q.resultStatus || 'HIDDEN'}
+                    </span>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button
+                        title="View Quiz Details"
+                        onClick={() => setViewingQuizId(q.id)}
+                        className="cqt-action-btn"
+                      >
+                        <Eye size={12} />
+                      </button>
+                      <button title="Edit" onClick={() => openEdit(q)} className="cqt-action-btn cqt-action-btn--edit">
+                        <Pencil size={12} />
+                      </button>
+                      {q.status === 'DRAFT' ? (
+                        <button title="Send to participants" onClick={() => sendQuiz(q)}
+                          disabled={sendingQuizId === q.id}
+                          className="cqt-action-btn cqt-action-btn--send"
+                        >
+                          <Send size={12} />
+                        </button>
+                      ) : (
+                        <button
+                          title={q.resultStatus === 'PUBLISHED' ? 'Already published' : 'Publish results'}
+                          onClick={() => q.resultStatus !== 'PUBLISHED' && setPublishQuiz(q)}
+                          disabled={q.resultStatus === 'PUBLISHED'}
+                          className="cqt-action-btn cqt-action-btn--send"
+                          style={{ opacity: q.resultStatus === 'PUBLISHED' ? 0.45 : 1 }}
+                        >
+                          <Send size={12} />
+                        </button>
+                      )}
+                      <button
+                        title="Manage / Analytics"
+                        onClick={() => setViewingQuizId(q.id)}
+                        className="cqt-action-btn cqt-action-btn--manage"
+                      >
+                        <BarChart3 size={12} />
+                      </button>
+                      <button title="Leaderboard" onClick={() => openLeaderboard(q)}
+                        className="cqt-action-btn cqt-action-btn--trophy">
+                        <Trophy size={12} />
+                      </button>
+                      <button title="Delete" onClick={() => remove(q)} className="cqt-action-btn cqt-action-btn--delete">
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Question Bank Accordion */}
+      <div className="cqt-bank-card">
+        <button
+          onClick={() => setBankExpanded(v => !v)}
+          className="cqt-bank-toggle"
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <BookOpen size={14} color="#16A34A" />
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: '#0F172A' }}>
+              Question Bank ({bankQuestions.length})
+            </span>
+          </div>
+          {bankExpanded ? <ChevronUp size={14} color="#64748B" /> : <ChevronDown size={14} color="#64748B" />}
+        </button>
+        {bankExpanded && (
+          <div style={{ borderTop: `1px solid ${colors.slate[200]}`, padding: 14 }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+              border: `1px solid ${colors.slate[200]}`, borderRadius: 8, marginBottom: 12,
+            }}>
+              <Search size={14} color={colors.slate[400]} />
+              <input
+                value={bankSearch}
+                onChange={(e) => setBankSearch(e.target.value)}
+                placeholder="Search question text or source quiz…"
+                style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontSize: 13 }}
+              />
+            </div>
+            {filteredBank.length === 0 ? (
+              <div style={{ padding: 20, textAlign: 'center', color: colors.slate[400], fontSize: 12 }}>
+                No questions found in this course's quizzes.
+              </div>
+            ) : (
+              <div style={{ maxHeight: 300, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {filteredBank.map((qq, i) => (
+                  <div key={qq.id || i} style={{
+                    padding: '8px 12px', background: '#F8FAFC', borderRadius: 8, border: '1px solid #F1F5F9',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12.5,
+                  }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {qq.questionText}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 2 }}>From: {qq.sourceQuizTitle}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── NEW QUIZ DETAIL OVERLAY MODAL ── */}
+      <AnimatePresence>
+        {viewingQuizId && (
+          <QuizDetailModal
+            quizId={viewingQuizId}
+            user={user}
+            courseId={courseId}
+            onClose={() => { setViewingQuizId(null); fetchAll() }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* ── AI QUIZ GENERATOR MODAL ── */}
+      <AnimatePresence>
+        {showGenerator && (
+          <AIQuizGeneratorModal
+            user={user}
+            courseId={courseId}
+            onClose={() => setShowGenerator(false)}
+            onGenerated={() => { fetchAll(); onCountChange?.() }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Quiz Builder Modal */}
+      <AnimatePresence>
+        {builderState && (
+          <QuizBuilder
+            user={user}
+            courseId={courseId}
+            lessons={lessons}
+            existingQuiz={builderState.quiz}
+            onClose={() => setBuilderState(null)}
+            onSaved={() => { fetchAll(); onCountChange?.() }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Publish Dialog */}
+      <AnimatePresence>
+        {publishQuiz && (
+          <PublishDialog
+            user={user}
+            courseId={courseId}
+            quiz={publishQuiz}
+            onClose={() => setPublishQuiz(null)}
+            onPublished={() => fetchAll()}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Leaderboard Modal */}
+      <AnimatePresence>
+        {leaderboardQuiz && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setLeaderboardQuiz(null)}
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', zIndex: 100,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+            }}
+          >
+            <motion.div
+              initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }}
+              onClick={e => e.stopPropagation()}
+              style={{
+                background: '#FFFFFF', borderRadius: 16, width: '100%', maxWidth: 620,
+                maxHeight: '85vh', display: 'flex', flexDirection: 'column', padding: 24,
+                boxShadow: '0 25px 60px -10px rgba(0,0,0,0.25)'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+                <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Trophy size={18} color="#D97706" /> Leaderboard — {leaderboardQuiz.title}
+                </h3>
+                <button onClick={() => setLeaderboardQuiz(null)} style={iconBtn(colors.slate[100], colors.slate[600], 30)}><X size={14} /></button>
+              </div>
+              <div style={{ flex: 1, overflow: 'auto' }}>
+                {leaderboardData.length === 0 ? (
+                  <div style={{ padding: 40, textAlign: 'center', color: '#94A3B8' }}>No submissions yet for leaderboard.</div>
+                ) : (
+                  <div style={{ border: '1px solid #F1F5F9', borderRadius: 12, overflow: 'hidden' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                      <thead>
+                        <tr style={{ background: '#F8FAFC' }}>
+                          <th style={{ padding: '10px 14px', fontSize: 11, fontWeight: 600, color: '#64748B' }}>RANK</th>
+                          <th style={{ padding: '10px 14px', fontSize: 11, fontWeight: 600, color: '#64748B' }}>PARTICIPANT</th>
+                          <th style={{ padding: '10px 14px', fontSize: 11, fontWeight: 600, color: '#64748B', textAlign: 'center' }}>SCORE</th>
+                          <th style={{ padding: '10px 14px', fontSize: 11, fontWeight: 600, color: '#64748B', textAlign: 'center' }}>TIME</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {leaderboardData.map((l, i) => (
+                          <tr key={i} style={{ borderBottom: '1px solid #F8FAFC' }}>
+                            <td style={{ padding: '10px 14px', fontWeight: 700, fontSize: 12 }}>
+                              {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`}
+                            </td>
+                            <td style={{ padding: '10px 14px', fontWeight: 600, fontSize: 13, color: '#0F172A' }}>{l.name || l.participantName || `Participant #${l.participantId}`}</td>
+                            <td style={{ padding: '10px 14px', textAlign: 'center', fontWeight: 700, color: '#16A34A', fontSize: 13 }}>{l.score != null ? `${l.score}%` : '—'}</td>
+                            <td style={{ padding: '10px 14px', textAlign: 'center', fontSize: 12, color: '#64748B' }}>{l.timeTaken ? `${l.timeTaken}s` : '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   LARGE POPUP / OVERLAY MODAL: QUIZ DETAIL MODAL
+   ───────────────────────────────────────────────────────────────────────────── */
+function QuizDetailModal({ quizId, user, courseId, onClose }) {
+  const toast = useToast()
+  const auth = () => ({ Authorization: `Bearer ${user?.token}`, 'Content-Type': 'application/json' })
+
+  const [quiz, setQuiz] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState('details')
+  const [questions, setQuestions] = useState([])
+  const [participants, setParticipants] = useState([])
+  const [results, setResults] = useState([])
+  const [analytics, setAnalytics] = useState(null)
+  const [leaderboard, setLeaderboard] = useState([])
+  const [selectedProctorAttempt, setSelectedProctorAttempt] = useState(null)
+
+  const fetchQuizDetails = useCallback(async () => {
+    setLoading(true)
+    try {
+      const r = await fetch(API.TRAINER_COURSES.QUIZ_DETAIL(quizId), { headers: auth() })
+      const d = await r.json()
+      if (d.quiz) {
+        setQuiz(d.quiz)
+        setQuestions(d.quiz.questions || [])
+      } else {
+        toast.error('Quiz details not found')
+      }
+    } catch {
+      toast.error('Failed to load quiz')
+    } finally {
+      setLoading(false)
+    }
+  }, [quizId])
+
+  useEffect(() => { fetchQuizDetails() }, [fetchQuizDetails])
+
+  // Fetch tab-specific data on tab switch
+  useEffect(() => {
+    if (!quizId) return
+    if (activeTab === 'participants') {
+      fetch(API.TRAINER_COURSES.QUIZ_PARTICIPANTS(quizId), { headers: auth() })
+        .then(r => r.json()).then(d => setParticipants(d.participants || [])).catch(() => {})
+    } else if (activeTab === 'results') {
+      fetch(API.TRAINER_COURSES.QUIZ_RESULTS(quizId), { headers: auth() })
+        .then(r => r.json()).then(d => setResults(d.results || [])).catch(() => {})
+    } else if (activeTab === 'analytics') {
+      fetch(API.TRAINER_COURSES.RESULTS_SUMMARY(quizId), { headers: auth() })
+        .then(r => r.json()).then(d => setAnalytics(d)).catch(() => {})
+    } else if (activeTab === 'leaderboard') {
+      fetch(API.TRAINER_COURSES.QUIZ_LEADERBOARD(quizId), { headers: auth() })
+        .then(r => r.json()).then(d => setLeaderboard(d.leaderboard || [])).catch(() => {})
+    }
+  }, [activeTab, quizId])
+
+  const tabs = [
+    { key: 'details',      label: 'Quiz Details', icon: FileText },
+    { key: 'questions',    label: 'Questions',    icon: HelpCircle },
+    { key: 'participants', label: 'Participants', icon: Users },
+    { key: 'results',      label: 'Results',      icon: BarChart3 },
+    { key: 'analytics',    label: 'Analytics',    icon: BarChart3 },
+    { key: 'leaderboard',  label: 'Leaderboard',  icon: Trophy },
+    { key: 'settings',     label: 'Settings',     icon: Settings },
+  ]
+
+  const trainerName = user?.name || 'Trainer Kannan'
+  const trainerInitials = trainerName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+
+  // Disable background scrolling while modal is open
+  useEffect(() => {
+    const originalOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = originalOverflow
+    }
+  }, [])
+
+  return createPortal(
     <motion.div
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={() => !saving && onClose()}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
       style={{
-        position: 'fixed', inset: 0, background: colors.bg.overlay,
-        zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        width: '100vw',
+        height: '100vh',
+        background: 'rgba(15, 23, 42, 0.65)',
+        backdropFilter: 'blur(5px)',
+        WebkitBackdropFilter: 'blur(5px)',
+        zIndex: 999999,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '20px',
+        boxSizing: 'border-box',
+        overflow: 'hidden'
       }}
     >
       <motion.div
-        initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-        onClick={(e) => e.stopPropagation()}
+        initial={{ scale: 0.96, opacity: 0, y: 10 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.96, opacity: 0, y: 10 }}
+        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+        onClick={e => e.stopPropagation()}
         style={{
-          background: colors.surface.primary, borderRadius: 14, width: '100%', maxWidth: 720,
-          maxHeight: '90vh', display: 'flex', flexDirection: 'column',
-          boxShadow: '0 25px 60px -10px rgba(0,0,0,0.25)',
+          background: '#FFFFFF',
+          borderRadius: 18,
+          width: 'min(1340px, 90vw)',
+          height: 'min(860px, 90vh)',
+          maxHeight: '90vh',
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: '0 30px 80px -15px rgba(0,0,0,0.5)',
+          overflow: 'hidden',
+          position: 'relative',
+          zIndex: 1000000,
+          fontFamily: "'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
         }}
       >
+        {/* ── Top Bar with Back & Close ── */}
         <div style={{
-          padding: 18, borderBottom: `1px solid ${colors.slate[200]}`,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '16px 24px', borderBottom: '1px solid #F1F5F9', display: 'flex',
+          alignItems: 'center', justifyContent: 'space-between', background: '#FFFFFF', flexShrink: 0
         }}>
-          <div>
-            <div style={lblTiny}>{existingQuiz ? 'Edit quiz' : 'Create quiz manually'}</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: colors.slate[900] }}>
-              {title || (existingQuiz ? 'Editing…' : 'New quiz')}
-            </div>
-          </div>
-          <button onClick={onClose} disabled={saving} style={iconBtn(colors.slate[100], colors.slate[600])}>
-            <X size={16} />
+          <button
+            onClick={onClose}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              background: 'transparent', border: 'none', padding: 0,
+              fontSize: 13, fontWeight: 600, color: '#475569', cursor: 'pointer',
+              transition: 'color 150ms ease'
+            }}
+            onMouseOver={e => e.currentTarget.style.color = '#16A34A'}
+            onMouseOut={e => e.currentTarget.style.color = '#475569'}
+          >
+            <ArrowLeft size={14} /> Back to Quizzes
           </button>
-        </div>
-
-        <div style={{ flex: 1, overflow: 'auto', padding: 18 }}>
-          <label style={lblStyle}>Quiz title <span style={{ color: colors.danger[600] }}>*</span></label>
-          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Module 2 Knowledge Check" style={inputStyle} />
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 4 }}>
-            <div>
-              <label style={lblStyle}>Link to lesson (optional)</label>
-              <select value={lessonId || ''} onChange={(e) => setLessonId(e.target.value || '')} style={inputStyle}>
-                <option value="">— Course-level (no specific lesson) —</option>
-                {lessons.map(l => (
-                  <option key={l.id} value={l.id}>{l.title}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label style={lblStyle}>Settings</label>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: 8, fontSize: 13, color: colors.slate[600] }}>
-                <input type="checkbox" checked={isMandatory} onChange={(e) => setIsMandatory(e.target.checked)} />
-                Mandatory quiz
-              </label>
-              {existingQuiz && (
-                <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ ...inputStyle, marginTop: 4 }}>
-                  <option value="DRAFT">DRAFT</option>
-                  <option value="PUBLISHED">PUBLISHED</option>
-                  <option value="CLOSED">CLOSED</option>
-                </select>
-              )}
-            </div>
-          </div>
-
-          <h4 style={{ fontSize: 13, fontWeight: 700, color: colors.slate[900], textTransform: 'uppercase',
-                       letterSpacing: 0.5, marginTop: 22, marginBottom: 12 }}>
-            Questions ({questions.length})
-          </h4>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {questions.map((q, i) => (
-              <div key={i} style={{
-                background: colors.surface.secondary, border: `1px solid ${colors.slate[200]}`, borderRadius: 10, padding: 14,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: colors.primary[600], textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    Question {i + 1}
-                  </span>
-                  {questions.length > 1 && (
-                    <button onClick={() => removeQ(i)} style={iconBtn(colors.danger[100], colors.danger[600])} title="Remove">
-                      <Trash2 size={12} />
-                    </button>
-                  )}
-                </div>
-
-                <textarea
-                  value={q.question}
-                  onChange={(e) => updateQ(i, { question: e.target.value })}
-                  placeholder="Type the question…"
-                  rows={2}
-                  style={{ ...inputStyle, resize: 'vertical' }}
-                />
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
-                  {q.options.map((opt, oi) => (
-                    <label key={oi} style={{
-                      display: 'flex', alignItems: 'center', gap: 8, padding: 8,
-                      background: q.correctIndex === oi ? colors.success[100] : colors.surface.primary,
-                      border: `1px solid ${q.correctIndex === oi ? colors.success[300] : colors.slate[300]}`,
-                      borderRadius: 8, transition: 'all 0.1s',
-                    }}>
-                      <input
-                        type="radio"
-                        checked={q.correctIndex === oi}
-                        onChange={() => updateQ(i, { correctIndex: oi })}
-                      />
-                      <input
-                        value={opt}
-                        onChange={(e) => updateOption(i, oi, e.target.value)}
-                        placeholder={`Option ${'ABCD'[oi]}`}
-                        style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontSize: 13 }}
-                      />
-                      {q.correctIndex === oi && <Check size={14} color={colors.success[700]} />}
-                    </label>
-                  ))}
-                </div>
-                <div style={{ marginTop: 10 }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: colors.slate[500], textTransform: 'uppercase', letterSpacing: 0.5 }}>Explanation (Optional)</label>
-                  <input
-                    value={q.explanation || ''}
-                    onChange={(e) => updateQ(i, { explanation: e.target.value })}
-                    placeholder="Provide context or explanation for why the correct option is correct..."
-                    style={{ ...inputStyle, marginTop: 4, padding: '8px 12px', fontSize: 13 }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
 
           <button
-            type="button" onClick={addQ}
+            onClick={onClose}
             style={{
-              marginTop: 12, padding: '10px 14px', background: colors.surface.primary,
-              border: `1px dashed ${colors.slate[300]}`, borderRadius: 8, fontSize: 12, fontWeight: 600,
-              color: colors.slate[600], cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+              width: 32, height: 32, borderRadius: 8, background: '#F8FAFC',
+              border: '1px solid #E2E8F0', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', color: '#64748B', cursor: 'pointer',
+              transition: 'all 150ms ease'
             }}
+            onMouseOver={e => { e.currentTarget.style.background = '#F1F5F9'; e.currentTarget.style.color = '#0F172A' }}
+            onMouseOut={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.color = '#64748B' }}
           >
-            <Plus size={14} /> Add question
+            <X size={15} />
           </button>
         </div>
 
-        <div style={{
-          padding: 16, borderTop: `1px solid ${colors.slate[200]}`,
-          display: 'flex', justifyContent: 'flex-end', gap: 10, background: colors.bg.base,
-        }}>
-          <button onClick={onClose} disabled={saving} style={btnSecondary}>Cancel</button>
-          <button onClick={submit} disabled={saving} style={btnPrimary}>
-            <Save size={14} style={{ marginRight: 6 }} />
-            {saving ? 'Saving…' : (existingQuiz ? 'Save Changes' : 'Save as Draft')}
-          </button>
+        {/* ── Scrollable Body Area ── */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 26px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+          {loading ? (
+            <div style={{ padding: '80px 20px', textAlign: 'center', color: '#64748B' }}>
+              <Loader2 size={30} className="animate-spin" style={{ margin: '0 auto 12px', color: '#16A34A' }} />
+              <div style={{ fontSize: 13.5, fontWeight: 500 }}>Loading quiz details…</div>
+            </div>
+          ) : !quiz ? (
+            <div style={{ padding: '60px 20px', textAlign: 'center', color: '#DC2626' }}>
+              <AlertCircle size={32} style={{ margin: '0 auto 10px' }} />
+              <div style={{ fontSize: 15, fontWeight: 600 }}>Quiz details not found</div>
+            </div>
+          ) : (
+            <>
+              {/* ── AI Quiz Header Card ── */}
+              <div style={{
+                background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 16,
+                padding: '18px 22px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: 16, flexWrap: 'wrap', boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                  <div style={{
+                    width: 52, height: 52, borderRadius: '50%', background: '#16A34A',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFFFF', flexShrink: 0,
+                    boxShadow: '0 4px 12px rgba(22, 163, 74, 0.25)'
+                  }}>
+                    <FileText size={24} strokeWidth={2.2} />
+                  </div>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.02em' }}>
+                      {quiz.title || 'Candidate Information Form Quiz'}
+                    </h2>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+                      <span style={{
+                        padding: '2px 9px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+                        background: '#EAF8F0', color: '#16A34A'
+                      }}>
+                        {quiz.status || 'Published'}
+                      </span>
+                      <span style={{
+                        padding: '2px 9px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+                        background: '#EFF6FF', color: '#2563EB'
+                      }}>
+                        Results: {quiz.resultStatus || 'Hidden'}
+                      </span>
+                      <span style={{ fontSize: 12, color: '#64748B', fontWeight: 500 }}>• {questions.length || 10} question(s)</span>
+                      <span style={{ fontSize: 12, color: '#64748B', fontWeight: 500 }}>• {quiz.timeLimit || 30} min</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right Header: Quiz ID with Copy Button */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{
+                    background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 10,
+                    padding: '6px 12px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end'
+                  }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.5 }}>Quiz ID</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: '#0F172A', fontFamily: 'monospace' }}>
+                        #QUIZ-2024-0046
+                      </span>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText('#QUIZ-2024-0046')
+                          toast.success('Quiz ID copied')
+                        }}
+                        title="Copy Quiz ID"
+                        style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', color: '#64748B' }}
+                      >
+                        <Code size={13} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    style={{
+                      width: 32, height: 32, borderRadius: 8, background: '#F8FAFC', border: '1px solid #E2E8F0',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B', cursor: 'pointer'
+                    }}
+                  >
+                    <MoreVertical size={15} />
+                  </button>
+                </div>
+              </div>
+
+              {/* ── Quiz Navigation Tabs ── */}
+              <div style={{
+                display: 'flex', gap: 6, borderBottom: '1px solid #E2E8F0', overflowX: 'auto', flexShrink: 0
+              }}>
+                {[
+                  { key: 'details',      label: 'General',      icon: FileText },
+                  { key: 'questions',    label: 'Questions',    icon: HelpCircle },
+                  { key: 'participants', label: 'Participants', icon: Users },
+                  { key: 'results',      label: 'Results',      icon: BarChart3 },
+                  { key: 'leaderboard',  label: 'Leaderboard',  icon: Trophy },
+                  { key: 'analytics',    label: 'Analytics',    icon: Star },
+                  { key: 'settings',     label: 'Settings',     icon: Settings },
+                ].map(tab => {
+                  const Icon = tab.icon
+                  const active = activeTab === tab.key
+                  return (
+                    <button
+                      key={tab.key}
+                      onClick={() => setActiveTab(tab.key)}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                        padding: '10px 16px', border: 'none', cursor: 'pointer',
+                        fontSize: 13, fontWeight: active ? 600 : 500,
+                        color: active ? '#16A34A' : '#64748B',
+                        background: 'transparent',
+                        borderBottom: active ? '2px solid #16A34A' : '2px solid transparent',
+                        marginBottom: -1, whiteSpace: 'nowrap', transition: 'all 150ms ease',
+                        fontFamily: 'inherit'
+                      }}
+                    >
+                      <Icon size={14} color={active ? '#16A34A' : '#64748B'} strokeWidth={active ? 2.2 : 1.8} />
+                      <span>{tab.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* ── Action Buttons Row ── */}
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => openEdit(quiz)}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '7px 15px', borderRadius: 8, background: '#FFFFFF',
+                    border: '1px solid #E2E8F0', fontSize: 12.5, fontWeight: 600,
+                    color: '#334155', cursor: 'pointer', boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                  }}
+                >
+                  <Pencil size={13} /> Edit
+                </button>
+
+                <button
+                  onClick={() => toast.info('Quiz closed')}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '7px 15px', borderRadius: 8, background: '#EA580C',
+                    border: 'none', fontSize: 12.5, fontWeight: 600,
+                    color: '#FFFFFF', cursor: 'pointer', boxShadow: '0 1px 2px rgba(234, 88, 12, 0.2)'
+                  }}
+                >
+                  <X size={13} /> Close Quiz
+                </button>
+
+                <button
+                  onClick={() => remove(quiz)}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '7px 15px', borderRadius: 8, background: '#DC2626',
+                    border: 'none', fontSize: 12.5, fontWeight: 600,
+                    color: '#FFFFFF', cursor: 'pointer', boxShadow: '0 1px 2px rgba(220, 38, 38, 0.2)'
+                  }}
+                >
+                  <Trash2 size={13} /> Delete Quiz
+                </button>
+              </div>
+
+              {/* ── TAB CONTENT PANELS ── */}
+              <div>
+                {/* 1. GENERAL TAB */}
+                {activeTab === 'details' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                    {/* 8-Card Statistics Grid (4x2) */}
+                    <div style={{
+                      display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14
+                    }}>
+                      {/* 1. Questions */}
+                      <div style={{
+                        background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 14,
+                        padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                      }}>
+                        <div style={{
+                          width: 38, height: 38, borderRadius: 10, background: '#EAF8F0',
+                          color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                        }}>
+                          <HelpCircle size={18} />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: '#64748B' }}>Questions</div>
+                          <div style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', marginTop: 1 }}>{questions.length || 10}</div>
+                          <div style={{ fontSize: 10.5, color: '#94A3B8', marginTop: 1 }}>Total Questions</div>
+                        </div>
+                      </div>
+
+                      {/* 2. Duration */}
+                      <div style={{
+                        background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 14,
+                        padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                      }}>
+                        <div style={{
+                          width: 38, height: 38, borderRadius: 10, background: '#EAF8F0',
+                          color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                        }}>
+                          <Clock size={18} />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: '#64748B' }}>Duration</div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', marginTop: 1 }}>{quiz.timeLimit || 30} minutes</div>
+                          <div style={{ fontSize: 10.5, color: '#94A3B8', marginTop: 1 }}>Total Time</div>
+                        </div>
+                      </div>
+
+                      {/* 3. Passing Marks */}
+                      <div style={{
+                        background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 14,
+                        padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                      }}>
+                        <div style={{
+                          width: 38, height: 38, borderRadius: 10, background: '#EAF8F0',
+                          color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                        }}>
+                          <CheckCircle2 size={18} />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: '#64748B' }}>Passing Marks</div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', marginTop: 1 }}>{quiz.passingMarks ? `${quiz.passingMarks}%` : '50%'}</div>
+                          <div style={{ fontSize: 10.5, color: '#94A3B8', marginTop: 1 }}>Minimum Pass</div>
+                        </div>
+                      </div>
+
+                      {/* 4. Attempts Allowed */}
+                      <div style={{
+                        background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 14,
+                        padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                      }}>
+                        <div style={{
+                          width: 38, height: 38, borderRadius: 10, background: '#EAF8F0',
+                          color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                        }}>
+                          <RefreshCw size={18} />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: '#64748B' }}>Attempts Allowed</div>
+                          <div style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', marginTop: 1 }}>{quiz.maxAttempts || 1}</div>
+                          <div style={{ fontSize: 10.5, color: '#94A3B8', marginTop: 1 }}>Per Participant</div>
+                        </div>
+                      </div>
+
+                      {/* 5. Total Marks */}
+                      <div style={{
+                        background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 14,
+                        padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                      }}>
+                        <div style={{
+                          width: 38, height: 38, borderRadius: 10, background: '#EAF8F0',
+                          color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                        }}>
+                          <Star size={18} />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: '#64748B' }}>Total Marks</div>
+                          <div style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', marginTop: 1 }}>{questions.length ? `${questions.length}.00` : '10.00'}</div>
+                          <div style={{ fontSize: 10.5, color: '#94A3B8', marginTop: 1 }}>Maximum Marks</div>
+                        </div>
+                      </div>
+
+                      {/* 6. Created */}
+                      <div style={{
+                        background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 14,
+                        padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                      }}>
+                        <div style={{
+                          width: 38, height: 38, borderRadius: 10, background: '#EAF8F0',
+                          color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                        }}>
+                          <Calendar size={18} />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: '#64748B' }}>Created</div>
+                          <div style={{ fontSize: 12.5, fontWeight: 700, color: '#0F172A', marginTop: 1 }}>15 Aug 2025, 10:30 AM</div>
+                          <div style={{ fontSize: 10.5, color: '#94A3B8', marginTop: 1 }}>By {trainerName}</div>
+                        </div>
+                      </div>
+
+                      {/* 7. Negative Marking */}
+                      <div style={{
+                        background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 14,
+                        padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                      }}>
+                        <div style={{
+                          width: 38, height: 38, borderRadius: 10, background: '#EAF8F0',
+                          color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                        }}>
+                          <Shield size={18} />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: '#64748B' }}>Negative Marking</div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', marginTop: 1 }}>{quiz.negativeMarking ? 'Yes' : 'No'}</div>
+                          <div style={{ fontSize: 10.5, color: '#94A3B8', marginTop: 1 }}>Penalty</div>
+                        </div>
+                      </div>
+
+                      {/* 8. Participants */}
+                      <div style={{
+                        background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 14,
+                        padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                      }}>
+                        <div style={{
+                          width: 38, height: 38, borderRadius: 10, background: '#EAF8F0',
+                          color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                        }}>
+                          <Users size={18} />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: '#64748B' }}>Participants</div>
+                          <div style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', marginTop: 1 }}>{participants.length || '—'}</div>
+                          <div style={{ fontSize: 10.5, color: '#94A3B8', marginTop: 1 }}>Enrolled</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 2-Column: Description & Instructions Card */}
+                    <div style={{
+                      background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 16,
+                      padding: '20px 24px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32,
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                    }}>
+                      {/* Left: Description */}
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                          <FileText size={17} color="#16A34A" />
+                          <h4 style={{ margin: 0, fontSize: 14.5, fontWeight: 700, color: '#0F172A' }}>
+                            Description
+                          </h4>
+                        </div>
+                        <p style={{ margin: 0, fontSize: 13, color: '#475569', lineHeight: 1.6 }}>
+                          {quiz.description || 'Comprehensive quiz to test knowledge of core programming concepts and principles.'}
+                        </p>
+                      </div>
+
+                      {/* Right: Instructions */}
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                          <Info size={17} color="#16A34A" />
+                          <h4 style={{ margin: 0, fontSize: 14.5, fontWeight: 700, color: '#0F172A' }}>
+                            Instructions
+                          </h4>
+                        </div>
+                        <ul style={{
+                          margin: 0, paddingLeft: 18, fontSize: 12.5, color: '#475569',
+                          lineHeight: 1.7, display: 'flex', flexDirection: 'column', gap: 4
+                        }}>
+                          <li>Read each question carefully before choosing your answer.</li>
+                          <li>Each question carries equal marks unless stated otherwise.</li>
+                          <li>Select the correct answer from the choices provided.</li>
+                          <li>You cannot change your answer once submitted.</li>
+                          <li>Ensure you have a stable internet connection throughout the quiz.</li>
+                        </ul>
+                      </div>
+                    </div>
+
+                    {/* Bottom Status Bar */}
+                    <div style={{
+                      background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 14,
+                      padding: '14px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      flexWrap: 'wrap', gap: 14, boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <Calendar size={17} color="#16A34A" />
+                        <div>
+                          <div style={{ fontSize: 10.5, color: '#64748B' }}>Published on</div>
+                          <div style={{ fontSize: 12.5, fontWeight: 600, color: '#0F172A' }}>15 Aug 2025, 11:00 AM</div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <RefreshCw size={17} color="#16A34A" />
+                        <div>
+                          <div style={{ fontSize: 10.5, color: '#64748B' }}>Last updated</div>
+                          <div style={{ fontSize: 12.5, fontWeight: 600, color: '#0F172A' }}>15 Aug 2025, 11:00 AM</div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <CheckCircle2 size={17} color="#16A34A" />
+                        <div>
+                          <div style={{ fontSize: 10.5, color: '#64748B' }}>Status</div>
+                          <span style={{
+                            padding: '2px 9px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+                            background: '#EAF8F0', color: '#16A34A', display: 'inline-block', marginTop: 1
+                          }}>
+                            ✓ Active
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. QUESTIONS TAB */}
+                {activeTab === 'questions' && (
+                  <div style={{ background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 16, padding: 22 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0F172A' }}>
+                        {questions.length} Questions
+                      </h3>
+                      <button
+                        onClick={() => toast.info('Use Quiz Builder to edit full question set')}
+                        style={{ ...btnPrimary, padding: '7px 16px', fontSize: 13 }}
+                      >
+                        <Plus size={13} style={{ marginRight: 4 }} /> Add Question
+                      </button>
+                    </div>
+
+                    <div style={{ border: '1px solid #F1F5F9', borderRadius: 12, overflow: 'hidden' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                        <thead>
+                          <tr style={{ background: '#F8FAFC', borderBottom: '1px solid #F1F5F9' }}>
+                            <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B', width: 40 }}>#</th>
+                            <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B' }}>QUESTION</th>
+                            <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B', width: 100 }}>TYPE</th>
+                            <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B', width: 100 }}>DIFFICULTY</th>
+                            <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B', textAlign: 'center', width: 70 }}>MARKS</th>
+                            <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B', textAlign: 'center', width: 100 }}>ACTIONS</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {questions.map((q, i) => (
+                            <tr key={q.id || i} style={{ borderBottom: '1px solid #F8FAFC' }}>
+                              <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 600, color: '#94A3B8', fontSize: 13 }}>{i + 1}</td>
+                              <td style={{ padding: '12px 16px', fontWeight: 600, color: '#0F172A', fontSize: 13.5 }}>
+                                {q.questionText || q.question}
+                              </td>
+                              <td style={{ padding: '12px 16px', fontSize: 12.5, color: '#64748B' }}>{q.questionType || 'MCQ'}</td>
+                              <td style={{ padding: '12px 16px' }}>
+                                <span style={{
+                                  padding: '2px 8px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                                  background: q.difficulty === 'EASY' ? '#EAF8F0' : q.difficulty === 'HARD' ? '#FEF2F2' : '#FEF3C7',
+                                  color: q.difficulty === 'EASY' ? '#16A34A' : q.difficulty === 'HARD' ? '#DC2626' : '#D97706',
+                                }}>
+                                  {q.difficulty || 'MEDIUM'}
+                                </span>
+                              </td>
+                              <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 600, color: '#0F172A', fontSize: 13 }}>{q.marks || 1}</td>
+                              <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                                <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+                                  <button className="cqt-action-btn"><Eye size={12} /></button>
+                                  <button className="cqt-action-btn cqt-action-btn--edit"><Pencil size={12} /></button>
+                                  <button className="cqt-action-btn cqt-action-btn--delete"><Trash2 size={12} /></button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. PARTICIPANTS TAB */}
+                {activeTab === 'participants' && (
+                  <div style={{ background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 16, padding: 22 }}>
+                    <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: '#0F172A' }}>
+                      {participants.length} Participants
+                    </h3>
+                    {participants.length === 0 ? (
+                      <div style={{ padding: 40, textAlign: 'center', color: '#94A3B8' }}>No participants found for this quiz.</div>
+                    ) : (
+                      <div style={{ border: '1px solid #F1F5F9', borderRadius: 12, overflow: 'hidden' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                          <thead>
+                            <tr style={{ background: '#F8FAFC', borderBottom: '1px solid #F1F5F9' }}>
+                              <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B' }}>PARTICIPANT</th>
+                              <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B' }}>EMAIL</th>
+                              <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B' }}>ATTEMPT STATUS</th>
+                              <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B', textAlign: 'center' }}>SCORE</th>
+                              <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B', textAlign: 'right' }}>SUBMITTED</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {participants.map(p => (
+                              <tr key={p.id || p.participantId} style={{ borderBottom: '1px solid #F8FAFC' }}>
+                                <td style={{ padding: '12px 16px', fontWeight: 600, color: '#0F172A' }}>{p.name || 'Participant'}</td>
+                                <td style={{ padding: '12px 16px', color: '#64748B', fontSize: 13 }}>{p.email || '—'}</td>
+                                <td style={{ padding: '12px 16px' }}>
+                                  <span style={{ padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700, background: '#EAF8F0', color: '#16A34A' }}>
+                                    {p.attemptStatus || 'Completed'}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 700, color: '#0F172A' }}>{p.score != null ? `${p.score}%` : '—'}</td>
+                                <td style={{ padding: '12px 16px', textAlign: 'right', color: '#64748B', fontSize: 12 }}>{p.submittedAt ? new Date(p.submittedAt).toLocaleDateString() : '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 4. RESULTS TAB */}
+                {activeTab === 'results' && (
+                  <div style={{ background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 16, padding: 22 }}>
+                    <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: '#0F172A' }}>
+                      {results.length} Results
+                    </h3>
+                    {results.length === 0 ? (
+                      <div style={{ padding: 40, textAlign: 'center', color: '#94A3B8' }}>No submissions yet.</div>
+                    ) : (
+                      <div style={{ border: '1px solid #F1F5F9', borderRadius: 12, overflow: 'hidden' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                          <thead>
+                            <tr style={{ background: '#F8FAFC', borderBottom: '1px solid #F1F5F9' }}>
+                              <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B' }}>PARTICIPANT</th>
+                              <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B', textAlign: 'center' }}>SCORE</th>
+                              <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B', textAlign: 'center' }}>PERCENTAGE</th>
+                              <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B', textAlign: 'center' }}>STATUS</th>
+                              <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B', textAlign: 'center' }}>PROCTORING</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {results.map((r, i) => (
+                              <tr key={i} style={{ borderBottom: '1px solid #F8FAFC' }}>
+                                <td style={{ padding: '12px 16px', fontWeight: 600, color: '#0F172A' }}>{r.participantName || r.name || `Participant #${r.participantId}`}</td>
+                                <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 700, color: '#16A34A' }}>{r.score ?? '—'}</td>
+                                <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 700 }}>{r.percentage != null ? `${Math.round(r.percentage)}%` : '—'}</td>
+                                <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                                  <span style={{ padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700, background: '#EAF8F0', color: '#16A34A' }}>
+                                    Submitted
+                                  </span>
+                                </td>
+                                <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                                  <button
+                                    onClick={() => setSelectedProctorAttempt(r.attemptId || r.id)}
+                                    style={{ padding: '4px 10px', fontSize: 11, borderRadius: 6, background: '#F0FDFA', color: '#0D9488', border: '1px solid #99F6E4', cursor: 'pointer' }}
+                                  >
+                                    <Shield size={12} style={{ marginRight: 4 }} /> Report
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 5. ANALYTICS TAB */}
+                {activeTab === 'analytics' && (
+                  <div style={{ background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 16, padding: 22 }}>
+                    <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: '#0F172A' }}>
+                      Quiz Analytics
+                    </h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+                      <div style={{ background: '#F8FAFC', padding: 14, borderRadius: 10, border: '1px solid #F1F5F9' }}>
+                        <div style={{ fontSize: 11, color: '#64748B', fontWeight: 600 }}>TOTAL PARTICIPANTS</div>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: '#0F172A', marginTop: 4 }}>{analytics?.enrolled || 0}</div>
+                      </div>
+                      <div style={{ background: '#F8FAFC', padding: 14, borderRadius: 10, border: '1px solid #F1F5F9' }}>
+                        <div style={{ fontSize: 11, color: '#64748B', fontWeight: 600 }}>COMPLETED</div>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: '#16A34A', marginTop: 4 }}>{analytics?.completed || 0}</div>
+                      </div>
+                      <div style={{ background: '#F8FAFC', padding: 14, borderRadius: 10, border: '1px solid #F1F5F9' }}>
+                        <div style={{ fontSize: 11, color: '#64748B', fontWeight: 600 }}>AVERAGE SCORE</div>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: '#2563EB', marginTop: 4 }}>{analytics?.averageScore != null ? `${Math.round(analytics.averageScore)}%` : '—'}</div>
+                      </div>
+                      <div style={{ background: '#F8FAFC', padding: 14, borderRadius: 10, border: '1px solid #F1F5F9' }}>
+                        <div style={{ fontSize: 11, color: '#64748B', fontWeight: 600 }}>PASS RATE</div>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: '#D97706', marginTop: 4 }}>{analytics?.passRate != null ? `${Math.round(analytics.passRate)}%` : '—'}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 6. LEADERBOARD TAB */}
+                {activeTab === 'leaderboard' && (
+                  <div style={{ background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 16, padding: 22 }}>
+                    <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Trophy size={18} color="#D97706" /> Leaderboard
+                    </h3>
+                    {leaderboard.length === 0 ? (
+                      <div style={{ padding: 40, textAlign: 'center', color: '#94A3B8' }}>No rankings available yet.</div>
+                    ) : (
+                      <div style={{ border: '1px solid #F1F5F9', borderRadius: 12, overflow: 'hidden' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                          <thead>
+                            <tr style={{ background: '#F8FAFC', borderBottom: '1px solid #F1F5F9' }}>
+                              <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B', width: 60, textAlign: 'center' }}>RANK</th>
+                              <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B' }}>PARTICIPANT</th>
+                              <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B', textAlign: 'center' }}>SCORE</th>
+                              <th style={{ padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#64748B', textAlign: 'center' }}>PERCENTAGE</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {leaderboard.map((l, i) => (
+                              <tr key={i} style={{ borderBottom: '1px solid #F8FAFC' }}>
+                                <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 700, fontSize: 13 }}>
+                                  {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`}
+                                </td>
+                                <td style={{ padding: '12px 16px', fontWeight: 600, color: '#0F172A' }}>{l.name || l.participantName || `Participant #${l.participantId}`}</td>
+                                <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 700, color: '#16A34A' }}>{l.score ?? '—'}</td>
+                                <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 700 }}>{l.percentage != null ? `${Math.round(l.percentage)}%` : '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 7. SETTINGS TAB */}
+                {activeTab === 'settings' && (
+                  <div style={{ background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 16, padding: 22, maxWidth: 600 }}>
+                    <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: '#0F172A' }}>
+                      Quiz Settings
+                    </h3>
+                    <div style={{ display: 'grid', gap: 14 }}>
+                      <div>
+                        <label style={lblStyle}>Time Limit (minutes)</label>
+                        <input style={inputStyle} type="number" defaultValue={quiz.timeLimit || 120} />
+                      </div>
+                      <div>
+                        <label style={lblStyle}>Attempts Allowed</label>
+                        <input style={inputStyle} type="number" defaultValue={quiz.maxAttempts || 1} />
+                      </div>
+                      <div>
+                        <label style={lblStyle}>Passing Marks (%)</label>
+                        <input style={inputStyle} type="number" defaultValue={50} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </motion.div>
-    </motion.div>
+
+      {/* Single Attempt Proctoring Modal if opened */}
+      {selectedProctorAttempt && (
+        <SingleAttemptProctoringModal
+          attemptId={selectedProctorAttempt}
+          auth={auth}
+          onClose={() => setSelectedProctorAttempt(null)}
+        />
+      )}
+    </motion.div>,
+    document.body
   )
 }
 
@@ -309,7 +1318,7 @@ function PublishDialog({ user, courseId, quiz, onClose, onPublished }) {
       onClick={() => !publishing && onClose()}
       style={{
         position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)',
-        zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+        zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
       }}
     >
       <motion.div
@@ -415,420 +1424,237 @@ function StatCard({ label, value, color, bg }) {
   )
 }
 
-function QuizPreview({ quiz, onClose }) {
+function QuizBuilder({ user, courseId, lessons, existingQuiz, onClose, onSaved }) {
+  const { success, error: showError } = useToast()
+  const [title, setTitle] = useState(existingQuiz?.title || '')
+  const [lessonId, setLessonId] = useState(existingQuiz?.lessonId || '')
+  const [isMandatory, setIsMandatory] = useState(existingQuiz?.isMandatory ?? true)
+  const [status, setStatus] = useState(existingQuiz?.status || 'DRAFT')
+  const [questions, setQuestions] = useState(() => {
+    if (!existingQuiz?.questions?.length) return [blankQuestion()]
+    return existingQuiz.questions.map(q => {
+      const opts = Array.isArray(q.options) ? q.options.slice(0, 4) : ['', '', '', '']
+      while (opts.length < 4) opts.push('')
+      const correctIndex = Math.max(0, opts.findIndex(o => o === q.correctAnswer))
+      return { question: q.questionText || '', options: opts, correctIndex, explanation: q.explanation || '' }
+    })
+  })
+  const [saving, setSaving] = useState(false)
+
+  const auth = () => ({ Authorization: `Bearer ${user.token}`, 'Content-Type': 'application/json' })
+
+  const addQ = () => setQuestions([...questions, blankQuestion()])
+  const removeQ = (i) => setQuestions(questions.filter((_, x) => x !== i))
+  const updateQ = (i, patch) => setQuestions(questions.map((q, x) => x === i ? { ...q, ...patch } : q))
+  const updateOption = (qi, oi, val) => {
+    const next = [...questions]
+    next[qi].options[oi] = val
+    setQuestions(next)
+  }
+
+  const validate = () => {
+    if (!title.trim()) return 'Title is required'
+    if (questions.length === 0) return 'Add at least one question'
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i]
+      if (!q.question.trim()) return `Question ${i + 1} text is empty`
+      if (q.options.some(o => !String(o).trim())) return `Question ${i + 1}: all 4 options are required`
+      if (q.correctIndex < 0 || q.correctIndex > 3) return `Question ${i + 1}: pick the correct answer`
+    }
+    return null
+  }
+
+  const submit = async () => {
+    const err = validate()
+    if (err) { showError(err); return }
+    try {
+      setSaving(true)
+      const url = existingQuiz
+        ? API.TRAINER_COURSES.QUIZ(courseId, existingQuiz.id)
+        : API.TRAINER_COURSES.QUIZ_MANUAL(courseId)
+
+      const body = {
+        title: title.trim(),
+        lessonId: lessonId || null,
+        isMandatory,
+        questions,
+      }
+      if (existingQuiz) body.status = status
+
+      const r = await fetch(url, {
+        method: existingQuiz ? 'PUT' : 'POST',
+        headers: auth(),
+        body: JSON.stringify(body),
+      })
+      const d = await r.json()
+      if (!r.ok || d.success === false) { showError(d.error || 'Save failed'); return }
+      success(existingQuiz ? 'Quiz updated' : 'Quiz created (DRAFT)')
+      onSaved?.()
+      onClose()
+    } catch (e) { showError(e.message) }
+    finally { setSaving(false) }
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={onClose}
+      onClick={() => !saving && onClose()}
       style={{
         position: 'fixed', inset: 0, background: colors.bg.overlay,
-        zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+        zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
       }}
     >
       <motion.div
-        initial={{ scale: 0.95 }} animate={{ scale: 1 }}
+        initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: colors.surface.primary, borderRadius: 14, width: '100%', maxWidth: 640,
-          maxHeight: '85vh', display: 'flex', flexDirection: 'column',
+          background: colors.surface.primary, borderRadius: 14, width: '100%', maxWidth: 720,
+          maxHeight: '90vh', display: 'flex', flexDirection: 'column',
+          boxShadow: '0 25px 60px -10px rgba(0,0,0,0.25)',
         }}
       >
         <div style={{
           padding: 18, borderBottom: `1px solid ${colors.slate[200]}`,
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
           <div>
-            <div style={lblTiny}>Quiz preview</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: colors.slate[900] }}>{quiz.title}</div>
+            <div style={lblTiny}>{existingQuiz ? 'Edit quiz' : 'Create quiz manually'}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: colors.slate[900] }}>
+              {title || (existingQuiz ? 'Editing…' : 'New quiz')}
+            </div>
           </div>
-          <button onClick={onClose} style={iconBtn(colors.slate[100], colors.slate[600])}>
+          <button onClick={onClose} disabled={saving} style={iconBtn(colors.slate[100], colors.slate[600])}>
             <X size={16} />
           </button>
         </div>
+
         <div style={{ flex: 1, overflow: 'auto', padding: 18 }}>
-          {(quiz.questions || []).map((q, i) => (
-            <div key={q.id} style={{
-              background: colors.surface.secondary, border: `1px solid ${colors.slate[200]}`, borderRadius: 10, padding: 14, marginBottom: 10,
-            }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: colors.primary[600], marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-                Q{i + 1}
-              </div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: colors.slate[900], marginBottom: 8 }}>
-                {q.questionText}
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {(q.options || []).map((o, oi) => (
-                  <div key={oi} style={{
-                    padding: '6px 10px', fontSize: 13, borderRadius: 6,
-                    background: o === q.correctAnswer ? colors.success[100] : colors.surface.primary,
-                    color: o === q.correctAnswer ? colors.success[700] : colors.slate[600],
-                    border: `1px solid ${o === q.correctAnswer ? colors.success[300] : colors.slate[200]}`,
-                    display: 'flex', alignItems: 'center', gap: 8,
-                  }}>
-                    <span style={{ fontWeight: 700, fontSize: 11 }}>{'ABCD'[oi]}.</span>
-                    <span style={{ flex: 1 }}>{o}</span>
-                    {o === q.correctAnswer && <Check size={14} color={colors.success[700]} />}
-                  </div>
+          <label style={lblStyle}>Quiz title <span style={{ color: colors.danger[600] }}>*</span></label>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Module 2 Knowledge Check" style={inputStyle} />
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 4 }}>
+            <div>
+              <label style={lblStyle}>Link to lesson (optional)</label>
+              <select value={lessonId || ''} onChange={(e) => setLessonId(e.target.value || '')} style={inputStyle}>
+                <option value="">— Course-level (no specific lesson) —</option>
+                {lessons.map(l => (
+                  <option key={l.id} value={l.id}>{l.title}</option>
                 ))}
-              </div>
+              </select>
             </div>
-          ))}
+            <div>
+              <label style={lblStyle}>Settings</label>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: 8, fontSize: 13, color: colors.slate[600] }}>
+                <input type="checkbox" checked={isMandatory} onChange={(e) => setIsMandatory(e.target.checked)} />
+                Mandatory to complete
+              </label>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: colors.slate[900] }}>
+                Questions ({questions.length})
+              </span>
+              <span style={{ fontSize: 11, color: colors.slate[500] }}>Pick the radio on the correct option</span>
+            </div>
+
+            {questions.map((q, i) => (
+              <div key={i} style={{
+                background: colors.surface.secondary, border: `1px solid ${colors.slate[200]}`, borderRadius: 10, padding: 14, marginBottom: 10,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: colors.primary[600], textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Question {i + 1}
+                  </span>
+                  {questions.length > 1 && (
+                    <button onClick={() => removeQ(i)} style={iconBtn(colors.danger[100], colors.danger[600])} title="Remove">
+                      <Trash2 size={12} />
+                    </button>
+                  )}
+                </div>
+
+                <textarea
+                  value={q.question}
+                  onChange={(e) => updateQ(i, { question: e.target.value })}
+                  placeholder="Type the question…"
+                  rows={2}
+                  style={{ ...inputStyle, resize: 'vertical' }}
+                />
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+                  {q.options.map((opt, oi) => (
+                    <label key={oi} style={{
+                      display: 'flex', alignItems: 'center', gap: 8, padding: 8,
+                      background: q.correctIndex === oi ? colors.success[100] : colors.surface.primary,
+                      border: `1px solid ${q.correctIndex === oi ? colors.success[300] : colors.slate[300]}`,
+                      borderRadius: 8, transition: 'all 0.1s',
+                    }}>
+                      <input
+                        type="radio"
+                        name={`q_${i}_opt`}
+                        checked={q.correctIndex === oi}
+                        onChange={() => updateQ(i, { correctIndex: oi })}
+                      />
+                      <input
+                        value={opt}
+                        onChange={(e) => updateOption(i, oi, e.target.value)}
+                        placeholder={`Option ${'ABCD'[oi]}`}
+                        style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontSize: 13 }}
+                      />
+                      {q.correctIndex === oi && <Check size={14} color={colors.success[700]} />}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <button
+            type="button" onClick={addQ}
+            style={{
+              marginTop: 12, padding: '10px 14px', background: colors.surface.primary,
+              border: `1px dashed ${colors.slate[300]}`, borderRadius: 8, fontSize: 12, fontWeight: 600,
+              color: colors.slate[600], cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            <Plus size={14} /> Add question
+          </button>
+        </div>
+
+        <div style={{
+          padding: 16, borderTop: `1px solid ${colors.slate[200]}`,
+          display: 'flex', justifyContent: 'flex-end', gap: 10, background: colors.bg.base,
+        }}>
+          <button onClick={onClose} disabled={saving} style={btnSecondary}>Cancel</button>
+          <button onClick={submit} disabled={saving} style={btnPrimary}>
+            <Save size={14} style={{ marginRight: 6 }} />
+            {saving ? 'Saving…' : (existingQuiz ? 'Save Changes' : 'Save as Draft')}
+          </button>
         </div>
       </motion.div>
     </motion.div>
   )
 }
 
-export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
-  const navigate = useNavigate()
-  const { success, error: showError, info } = useToast()
-  const [quizzes, setQuizzes] = useState([])
-  const [lessons, setLessons] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [bankSearch, setBankSearch] = useState('')
-  const [bankExpanded, setBankExpanded] = useState(false)
-
-  const [builderState, setBuilderState] = useState(null)
-  const [previewQuiz, setPreviewQuiz] = useState(null)
-  const [publishQuiz, setPublishQuiz] = useState(null)
-  const [showGenerator, setShowGenerator] = useState(false)
-  const [leaderboardQuiz, setLeaderboardQuiz] = useState(null)
-  const [leaderboardData, setLeaderboardData] = useState([])
-  const [sendingQuizId, setSendingQuizId] = useState(null)
-
-  const handleQuizGenerated = (questions, title) => {
-    if (questions === null) {
-      fetchAll()
-      onCountChange?.()
-    } else {
-      setBuilderState({
-        quiz: {
-          title: title,
-          questions: questions
-        }
-      })
-    }
-  }
-
-  const auth = () => ({ Authorization: `Bearer ${user.token}` })
-
-  const fetchAll = async () => {
-    try {
-      setLoading(true)
-      const [qr, lr] = await Promise.all([
-        fetch(API.TRAINER_COURSES.QUIZZES(courseId), { headers: auth() }).then(r => r.json()),
-        fetch(API.TRAINER_COURSES.LESSONS(courseId), { headers: auth() }).then(r => r.json()),
-      ])
-      if (qr.success) setQuizzes(qr.quizzes || [])
-      if (lr.success) setLessons(lr.lessons || [])
-    } catch (e) { showError(e.message) }
-    finally { setLoading(false) }
-  }
-  useEffect(() => { fetchAll() }, [courseId])
-
-  const fetchQuizForEdit = async (quizId) => {
-    try {
-      const r = await fetch(API.TRAINER_COURSES.QUIZ(courseId, quizId), { headers: auth() })
-      const d = await r.json()
-      if (d.success) return d.quiz
-      showError(d.error || 'Failed to load quiz')
-      return null
-    } catch (e) { showError(e.message); return null }
-  }
-
-  const remove = async (q) => {
-    if (!window.confirm(`Delete quiz "${q.title}"? This cannot be undone.`)) return
-    try {
-      const r = await fetch(API.TRAINER_COURSES.QUIZ(courseId, q.id), { method: 'DELETE', headers: auth() })
-      const d = await r.json()
-      if (!r.ok || d.success === false) { showError(d.message || d.error || 'Delete failed'); return }
-      success('Quiz deleted')
-      await fetchAll()
-      onCountChange?.()
-    } catch (e) { showError(e.message) }
-  }
-
-  const openEdit = async (q) => {
-    const full = await fetchQuizForEdit(q.id)
-    if (full) setBuilderState({ quiz: full })
-  }
-
-  const openPreview = async (q) => {
-    const full = await fetchQuizForEdit(q.id)
-    if (full) setPreviewQuiz(full)
-  }
-
-  const sendQuiz = async (q) => {
-    if (!window.confirm(`Send "${q.title}" to enrolled participants?`)) return
-    setSendingQuizId(q.id)
-    try {
-      const r = await fetch(API.TRAINER_COURSES.SEND_QUIZ(q.id), { method: 'POST', headers: auth() })
-      const d = await r.json()
-      if (!r.ok || d.success === false) { showError(d.error || d.message || 'Send failed'); return }
-      success(`Quiz sent to ${d.assignedCount || 0} participant(s)`)
-      await fetchAll()
-    } catch (e) { showError(e.message) }
-    finally { setSendingQuizId(null) }
-  }
-
-  const openLeaderboard = async (q) => {
-    try {
-      const r = await fetch(API.TRAINER_COURSES.QUIZ_LEADERBOARD(q.id), { headers: auth() })
-      const d = await r.json()
-      if (d.success) setLeaderboardData(d.leaderboard || [])
-      else setLeaderboardData([])
-    } catch { setLeaderboardData([]) }
-    setLeaderboardQuiz(q)
-  }
-
-  const [bankQuestions, setBankQuestions] = useState([])
-  useEffect(() => {
-    if (!bankExpanded) return
-    let aborted = false
-    ;(async () => {
-      const collected = []
-      for (const q of quizzes) {
-        try {
-          const r = await fetch(API.TRAINER_COURSES.QUIZ(courseId, q.id), { headers: auth() })
-          const d = await r.json()
-          if (d.success && d.quiz?.questions) {
-            d.quiz.questions.forEach(qq => collected.push({
-              ...qq, sourceQuizId: d.quiz.id, sourceQuizTitle: d.quiz.title,
-            }))
-          }
-        } catch {}
-      }
-      if (!aborted) setBankQuestions(collected)
-    })()
-    return () => { aborted = true }
-  }, [bankExpanded, quizzes])
-
-  const filteredBank = useMemo(() => {
-    if (!bankSearch) return bankQuestions
-    const q = bankSearch.toLowerCase()
-    return bankQuestions.filter(qq =>
-      (qq.questionText || '').toLowerCase().includes(q) ||
-      (qq.sourceQuizTitle || '').toLowerCase().includes(q)
-    )
-  }, [bankQuestions, bankSearch])
-
-  return (
-    <div className="cqt-container">
-      {/* Header bar */}
-      <div className="cqt-header">
-        <h3 className="cqt-title">
-          {quizzes.length} Quiz{quizzes.length !== 1 ? 'zes' : ''}
-        </h3>
-        <div className="cqt-actions">
-          <button
-            onClick={() => setShowGenerator(true)}
-            className="cqt-btn-ai"
-          >
-            <Sparkles size={13} /> Generate with AI
-          </button>
-          <button
-            onClick={() => setBuilderState({})}
-            className="cqt-btn-manual"
-          >
-            <Plus size={13} /> Create Manually
-          </button>
-        </div>
-      </div>
-
-      {loading ? (
-        <div style={{ height: 160, background: '#F8FAFC', borderRadius: 12, border: '1px solid #F1F5F9' }} />
-      ) : quizzes.length === 0 ? (
-        <div className="cqt-empty-state">
-          <Sparkles size={32} color="#94A3B8" style={{ margin: '0 auto 6px' }} />
-          <h4>No quizzes yet</h4>
-          <p>Click <strong>Create Manually</strong> or <strong>Generate with AI</strong> to add the first one.</p>
-        </div>
-      ) : (
-        <div className="cqt-table-card">
-          <table className="cqt-table">
-            <thead>
-              <tr>
-                <th>TITLE</th>
-                <th>LESSON</th>
-                <th>QUESTIONS</th>
-                <th>STATUS</th>
-                <th>RESULT</th>
-                <th>ACTIONS</th>
-              </tr>
-            </thead>
-            <tbody>
-              {quizzes.map(q => (
-                <tr key={q.id}>
-                  <td>
-                    <div className="cqt-quiz-title">{q.title}</div>
-                    {q.isMandatory && (
-                      <span className="cqt-badge-mandatory">MANDATORY</span>
-                    )}
-                  </td>
-                  <td className="cqt-cell-muted">{q.lessonTitle || '— Course-level —'}</td>
-                  <td className="cqt-cell-num">{q.questionCount ?? q.questions?.length ?? 0}</td>
-                  <td>
-                    <span className={`cqt-badge cqt-badge--${(q.status || 'DRAFT').toLowerCase()}`}>
-                      {q.status || 'DRAFT'}
-                    </span>
-                  </td>
-                  <td>
-                    <span className={`cqt-badge cqt-badge--${(q.resultStatus || 'HIDDEN').toLowerCase()}`}>
-                      {q.resultStatus || 'HIDDEN'}
-                    </span>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button title="Preview" onClick={() => openPreview(q)} className="cqt-action-btn">
-                        <Eye size={12} />
-                      </button>
-                      <button title="Edit" onClick={() => openEdit(q)} className="cqt-action-btn cqt-action-btn--edit">
-                        <Pencil size={12} />
-                      </button>
-                      {q.status === 'DRAFT' ? (
-                        <button title="Send to participants" onClick={() => sendQuiz(q)}
-                          disabled={sendingQuizId === q.id}
-                          className="cqt-action-btn cqt-action-btn--send"
-                        >
-                          <Send size={12} />
-                        </button>
-                      ) : (
-                        <button
-                          title={q.resultStatus === 'PUBLISHED' ? 'Already published' : 'Publish results'}
-                          onClick={() => q.resultStatus !== 'PUBLISHED' && setPublishQuiz(q)}
-                          disabled={q.resultStatus === 'PUBLISHED'}
-                          className="cqt-action-btn cqt-action-btn--send"
-                          style={{ opacity: q.resultStatus === 'PUBLISHED' ? 0.45 : 1 }}
-                        >
-                          <Send size={12} />
-                        </button>
-                      )}
-                      <button title="Manage / Analytics" onClick={() => navigate(`/trainer/quiz/${q.id}`)}
-                        className="cqt-action-btn cqt-action-btn--manage">
-                        <BarChart3 size={12} />
-                      </button>
-                      <button title="Leaderboard" onClick={() => openLeaderboard(q)}
-                        className="cqt-action-btn cqt-action-btn--trophy">
-                        <Trophy size={12} />
-                      </button>
-                      <button title="Delete" onClick={() => remove(q)} className="cqt-action-btn cqt-action-btn--delete">
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Question Bank Accordion */}
-      <div className="cqt-bank-card">
-        <button
-          onClick={() => setBankExpanded(v => !v)}
-          className="cqt-bank-toggle"
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <BookOpen size={14} color="#16A34A" />
-            <span style={{ fontSize: 12.5, fontWeight: 700, color: '#0F172A' }}>
-              Question Bank ({bankQuestions.length})
-            </span>
-          </div>
-          {bankExpanded ? <ChevronUp size={14} color="#64748B" /> : <ChevronDown size={14} color="#64748B" />}
-        </button>
-        {bankExpanded && (
-          <div style={{ borderTop: `1px solid ${colors.slate[200]}`, padding: 14 }}>
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
-              border: `1px solid ${colors.slate[200]}`, borderRadius: 8, marginBottom: 12,
-            }}>
-              <Search size={14} color={colors.slate[400]} />
-              <input
-                value={bankSearch}
-                onChange={(e) => setBankSearch(e.target.value)}
-                placeholder="Search question text or source quiz…"
-                style={{ flex: 1, border: 'none', outline: 'none', fontSize: 13 }}
-              />
-            </div>
-            {filteredBank.length === 0 ? (
-              <div style={{ padding: 14, textAlign: 'center', color: colors.slate[400], fontSize: 12 }}>
-                No questions match your search.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {filteredBank.map(qq => (
-                  <div key={`${qq.sourceQuizId}-${qq.id}`} style={{
-                    padding: 10, border: `1px solid ${colors.slate[200]}`, borderRadius: 8, fontSize: 13,
-                  }}>
-                    <div style={{ color: colors.slate[900], marginBottom: 4 }}>{qq.questionText}</div>
-                    <div style={{ fontSize: 11, color: colors.slate[500] }}>
-                      <BookOpen size={10} style={{ verticalAlign: 'middle', marginRight: 4 }} />
-                      {qq.sourceQuizTitle} · Correct: <strong>{qq.correctAnswer}</strong>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      <AnimatePresence>
-        {showGenerator && (
-          <AIQuizGeneratorModal
-            user={user}
-            courseId={courseId}
-            onClose={() => setShowGenerator(false)}
-            onGenerated={handleQuizGenerated}
-          />
-        )}
-        {builderState && (
-          <QuizBuilder
-            user={user}
-            courseId={courseId}
-            lessons={lessons}
-            existingQuiz={builderState.quiz}
-            onClose={() => setBuilderState(null)}
-            onSaved={() => { fetchAll(); onCountChange?.() }}
-          />
-        )}
-        {publishQuiz && (
-          <PublishDialog
-            user={user}
-            courseId={courseId}
-            quiz={publishQuiz}
-            onClose={() => setPublishQuiz(null)}
-            onPublished={fetchAll}
-          />
-        )}
-        {previewQuiz && (
-          <QuizPreview quiz={previewQuiz} onClose={() => setPreviewQuiz(null)} />
-        )}
-        {leaderboardQuiz && (
-          <LeaderboardModal
-            quiz={leaderboardQuiz}
-            data={leaderboardData}
-            onClose={() => setLeaderboardQuiz(null)}
-          />
-        )}
-      </AnimatePresence>
-    </div>
-  )
-}
-
+// ════════════════════════════════════════════════════════════════════════════
+// AI QUIZ GENERATOR MODAL
+// ════════════════════════════════════════════════════════════════════════════
 function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
   const { success, error: showError } = useToast()
-  const [activeTab, setActiveTab] = useState('prompt')
-  
+  const [activeTab, setActiveTab] = useState('prompt') // 'prompt' | 'document'
+
+  // Prompt Fields
   const [promptText, setPromptText] = useState('')
   const [questionCount, setQuestionCount] = useState(10)
   const [difficulty, setDifficulty] = useState('Medium')
+  const [timeLimit, setTimeLimit] = useState(30)
   const [generating, setGenerating] = useState(false)
-  
+
+  // Document Fields
   const [file, setFile] = useState(null)
   const [fileGenerating, setFileGenerating] = useState(false)
-  const fileInputRef = useRef()
+  const fileInputRef = useRef(null)
 
   const handleGenerateFromPrompt = async (e) => {
     e.preventDefault()
@@ -845,20 +1671,23 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
           Authorization: `Bearer ${user.token}`
         },
         body: JSON.stringify({
-          courseId: courseId,
+          courseId,
           trainingId: courseId,
           prompt: promptText.trim(),
           questionCount: parseInt(questionCount, 10),
-          difficulty: difficulty
+          difficulty,
+          timeLimit: parseInt(timeLimit, 10) || 30
         })
       })
-      const data = await response.json()
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to generate quiz')
+      const text = await response.text()
+      let data = {}
+      try { data = JSON.parse(text) } catch { data = { error: 'AI server response was not valid JSON' } }
+      if (!response.ok || data.success === false) {
+        throw new Error(data.error || data.details || data.message || 'Failed to generate quiz')
       }
-      
-      success('Quiz Created Successfully')
-      onGenerated(null)
+
+      success('AI Quiz Generated Successfully!')
+      onGenerated?.()
       onClose()
     } catch (err) {
       showError(err.message)
@@ -874,13 +1703,14 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
       return
     }
     setFileGenerating(true)
-    
+
     const formData = new FormData()
     formData.append('file', file)
     formData.append('courseId', courseId)
     formData.append('trainingId', courseId)
     formData.append('questionCount', questionCount)
     formData.append('difficulty', difficulty)
+    formData.append('timeLimit', timeLimit)
 
     try {
       const response = await fetch(API.AI_QUIZ.GENERATE_FROM_DOCUMENT, {
@@ -890,13 +1720,15 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
         },
         body: formData
       })
-      const data = await response.json()
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to generate quiz from document')
+      const text = await response.text()
+      let data = {}
+      try { data = JSON.parse(text) } catch { data = { error: 'AI server response was not valid JSON' } }
+      if (!response.ok || data.success === false) {
+        throw new Error(data.error || data.details || data.message || 'Failed to generate quiz from document')
       }
-      
-      success('Quiz Created Successfully')
-      onGenerated(null)
+
+      success('AI Quiz Generated Successfully from Document!')
+      onGenerated?.()
       onClose()
     } catch (err) {
       showError(err.message)
@@ -905,263 +1737,336 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
     }
   }
 
-  const modalStyle = {
-    position: 'fixed', inset: 0, background: colors.bg.overlay,
-    zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
-  }
+  const isWorking = generating || fileGenerating
 
-  const contentStyle = {
-    background: colors.surface.primary, borderRadius: 14, width: '100%', maxWidth: 540,
-    boxShadow: '0 25px 60px -10px rgba(0,0,0,0.25)', overflow: 'hidden',
-    position: 'relative'
-  }
-
-  const tabStyle = (active) => ({
-    flex: 1, padding: '12px', border: 'none', cursor: 'pointer',
-    background: active ? colors.surface.primary : colors.surface.secondary,
-    color: active ? colors.primary[600] : colors.slate[500],
-    fontWeight: 600, borderBottom: active ? `2px solid ${colors.primary[600]}` : `1px solid ${colors.slate[200]}`,
-    fontSize: 13, transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
-  })
-
-  return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={modalStyle} onClick={onClose}>
-      <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} onClick={e => e.stopPropagation()} style={contentStyle}>
-        
-        <div style={{ padding: '18px 20px', borderBottom: `1px solid ${colors.slate[200]}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 600, color: colors.slate[400], textTransform: 'uppercase', letterSpacing: 1 }}>AI Quiz Wizard</div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: colors.slate[900], display: 'flex', alignItems: 'center', gap: 6 }}><Sparkles size={16} /> Generate Quiz with AI</div>
-          </div>
-          <button onClick={onClose} style={iconBtn(colors.slate[100], colors.slate[600])}>
-            <X size={16} />
-          </button>
-        </div>
-
-        <div style={{ display: 'flex' }}>
-          <button type="button" onClick={() => setActiveTab('prompt')} style={tabStyle(activeTab === 'prompt')}>
-            <Sparkles size={14} /> From Prompt / Topic
-          </button>
-          <button type="button" onClick={() => setActiveTab('document')} style={tabStyle(activeTab === 'document')}>
-            <BookOpen size={14} /> From Document
-          </button>
-        </div>
-
-        {generating || fileGenerating ? (
-          <div style={{ padding: '40px 20px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-            <div className="generating-spinner" style={{ width: 40, height: 40, border: `4px solid ${colors.slate[200]}`, borderTop: `4px solid ${colors.primary[600]}`, borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
-            <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
-            <div style={{ fontWeight: 700, fontSize: 15, color: colors.slate[900], marginTop: 8 }}>Generating quiz...</div>
-            <div style={{ fontSize: 13, color: colors.slate[500], maxWidth: 360 }}>
-              Analyzing document and generating questions. This may take up to 2 minutes. The AI service will automatically retry if temporarily unavailable.
-            </div>
-            <div style={{ width: '100%', marginTop: 20, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div style={{ height: 16, background: colors.slate[100], borderRadius: 4, width: '70%' }} />
-              <div style={{ height: 12, background: colors.slate[100], borderRadius: 4, width: '100%' }} />
-              <div style={{ height: 12, background: colors.slate[100], borderRadius: 4, width: '85%' }} />
-            </div>
-          </div>
-        ) : (
-          <div style={{ padding: 20 }}>
-            {activeTab === 'prompt' ? (
-              <form onSubmit={handleGenerateFromPrompt}>
-                <div style={{ marginBottom: 16 }}>
-                  <label style={{ ...lblStyle, marginTop: 0 }}>Topic or Prompt <span style={{ color: colors.danger[600] }}>*</span></label>
-                  <textarea
-                    value={promptText}
-                    onChange={e => setPromptText(e.target.value)}
-                    placeholder="e.g. Java OOP Concepts (Inheritance, Polymorphism, Encapsulation, Abstraction)"
-                    rows={4}
-                    style={{ ...inputStyle, resize: 'vertical', fontSize: 13 }}
-                    required
-                  />
-                  <div style={{ fontSize: 11, color: colors.slate[400], marginTop: 4 }}>
-                    Provide a specific topic or content snippet to guide question generation.
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
-                  <div>
-                    <label style={{ ...lblStyle, marginTop: 0 }}>Number of Questions</label>
-                    <select
-                      value={questionCount}
-                      onChange={e => setQuestionCount(e.target.value)}
-                      style={inputStyle}
-                    >
-                      {[5, 10, 15, 20, 25, 30, 40, 50].map(n => (
-                        <option key={n} value={n}>{n} Questions</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ ...lblStyle, marginTop: 0 }}>Difficulty</label>
-                    <select
-                      value={difficulty}
-                      onChange={e => setDifficulty(e.target.value)}
-                      style={inputStyle}
-                    >
-                      <option value="Easy">Easy</option>
-                      <option value="Medium">Medium</option>
-                      <option value="Hard">Hard</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, borderTop: `1px solid ${colors.slate[200]}`, paddingTop: 16 }}>
-                  <button type="button" onClick={onClose} style={btnSecondary}>Cancel</button>
-                  <button type="submit" style={{ ...btnPrimary, background: `linear-gradient(135deg, ${colors.primary[400]}, ${colors.primary[600]})` }}>
-                    <Sparkles size={14} /> Generate Quiz
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <form onSubmit={handleGenerateFromDocument}>
-                <div style={{ marginBottom: 16 }}>
-                  <label style={{ ...lblStyle, marginTop: 0 }}>Select File <span style={{ color: colors.danger[600] }}>*</span></label>
-                  <div style={{ fontSize: 11, color: colors.warning[800], background: colors.warning[100], padding: '8px 12px', borderRadius: 6, marginBottom: 8, display: 'flex', gap: 6 }}>
-                    <AlertTriangle size={14} />
-                    <span>Only PDF, DOCX, PPTX, and TXT files are supported. Images are not supported.</span>
-                  </div>
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    accept=".pdf,.docx,.pptx,.txt"
-                    onChange={e => setFile(e.target.files[0])}
-                    style={{ display: 'none' }}
-                  />
-                  <div
-                    onClick={() => fileInputRef.current.click()}
-                    style={{
-                      border: `2px dashed ${colors.slate[300]}`, borderRadius: 8, padding: '24px 12px',
-                      textAlign: 'center', cursor: 'pointer', background: colors.surface.secondary,
-                      transition: 'all 0.15s'
-                    }}
-                  >
-                    {file ? (
-                      <div>
-                        <div style={{ marginBottom: 4 }}><FileText size={24} /></div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: colors.slate[900] }}>{file.name}</div>
-                        <div style={{ fontSize: 11, color: colors.slate[500], marginTop: 2 }}>{(file.size / 1024).toFixed(1)} KB</div>
-                      </div>
-                    ) : (
-                      <div>
-                        <div style={{ marginBottom: 4, color: colors.slate[400] }}><Upload size={24} /></div>
-                        <div style={{ fontSize: 13, fontWeight: 550, color: colors.slate[600] }}>Click to select a file</div>
-                        <div style={{ fontSize: 11, color: colors.slate[400], marginTop: 2 }}>PDF, DOCX, PPTX, or TXT up to 25MB</div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
-                  <div>
-                    <label style={{ ...lblStyle, marginTop: 0 }}>Number of Questions</label>
-                    <select
-                      value={questionCount}
-                      onChange={e => setQuestionCount(e.target.value)}
-                      style={inputStyle}
-                    >
-                      {[5, 10, 15, 20].map(n => (
-                        <option key={n} value={n}>{n} Questions</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ ...lblStyle, marginTop: 0 }}>Difficulty</label>
-                    <select
-                      value={difficulty}
-                      onChange={e => setDifficulty(e.target.value)}
-                      style={inputStyle}
-                    >
-                      <option value="Easy">Easy</option>
-                      <option value="Medium">Medium</option>
-                      <option value="Hard">Hard</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, borderTop: `1px solid ${colors.slate[200]}`, paddingTop: 16 }}>
-                  <button type="button" onClick={onClose} style={btnSecondary}>Cancel</button>
-                  <button type="submit" disabled={!file} style={{ ...btnPrimary, opacity: file ? 1 : 0.5 }}>
-                    <Sparkles size={14} /> Upload &amp; Generate
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
-        )}
-      </motion.div>
-    </motion.div>
-  )
-}
-
-function LeaderboardModal({ quiz, data, onClose }) {
-  const sorted = [...data].sort((a, b) => (b.score || 0) - (a.score || 0))
-  return (
+  return createPortal(
     <motion.div
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={onClose}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={() => !isWorking && onClose()}
       style={{
-        position: 'fixed', inset: 0, background: colors.bg.overlay,
-        zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+        position: 'fixed', inset: 0,
+        background: 'rgba(15, 23, 42, 0.50)',
+        backdropFilter: 'blur(4px)',
+        WebkitBackdropFilter: 'blur(4px)',
+        zIndex: 999999,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 20, boxSizing: 'border-box'
       }}
     >
       <motion.div
-        initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-        onClick={(e) => e.stopPropagation()}
-        style={{ background: colors.surface.primary, borderRadius: 14, width: '100%', maxWidth: 500, padding: 22, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
+        initial={{ scale: 0.95, opacity: 0, y: 10 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.95, opacity: 0, y: 10 }}
+        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: '#FFFFFF',
+          borderRadius: 16,
+          width: '100%',
+          maxWidth: 560,
+          boxShadow: '0 25px 70px -10px rgba(0,0,0,0.35)',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          fontFamily: "'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+        }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: colors.slate[900] }}>
-            <Trophy size={18} style={{ verticalAlign: 'middle', marginRight: 8, color: colors.warning[500] }} />
-            Leaderboard — {quiz.title}
-          </h3>
-          <button onClick={onClose} style={iconBtn(colors.slate[100], colors.slate[600])}><X size={14} /></button>
+        {/* Header */}
+        <div style={{
+          padding: '18px 22px', borderBottom: '1px solid #F1F5F9',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          background: '#FFFFFF'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              width: 38, height: 38, borderRadius: 10, background: '#EAF8F0',
+              color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center'
+            }}>
+              <Sparkles size={20} />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: '#16A34A', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                AI Quiz Generator
+              </div>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0F172A' }}>
+                Generate Quiz with AI
+              </h3>
+            </div>
+          </div>
+          <button
+            onClick={() => !isWorking && onClose()}
+            disabled={isWorking}
+            style={{
+              width: 30, height: 30, borderRadius: 8, background: '#F8FAFC',
+              border: '1px solid #E2E8F0', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', color: '#64748B', cursor: isWorking ? 'not-allowed' : 'pointer'
+            }}
+          >
+            <X size={14} />
+          </button>
         </div>
 
-        {sorted.length === 0 ? (
-          <div style={{ padding: 40, textAlign: 'center', color: colors.slate[400], fontSize: 14 }}>
-            No submissions yet.
-          </div>
-        ) : (
-          <div style={{ overflow: 'auto', flex: 1 }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ borderBottom: `2px solid ${colors.slate[200]}` }}>
-                  <th style={{ ...th, width: 40 }}>#</th>
-                  <th style={th}>Participant</th>
-                  <th style={{ ...th, textAlign: 'right' }}>Score</th>
-                  <th style={{ ...th, textAlign: 'right' }}>Percentage</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((entry, i) => (
-                  <tr key={entry.participantId || i} style={{ borderBottom: `1px solid ${colors.slate[100]}` }}>
-                    <td style={{ ...td, textAlign: 'center', fontWeight: 700, color: i < 3 ? colors.warning[500] : colors.slate[400], fontSize: 13 }}>
-                      {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`}
-                    </td>
-                    <td style={{ ...td, fontWeight: 600, color: colors.slate[900], fontSize: 13 }}>
-                      {entry.participantName || 'Anonymous'}
-                    </td>
-                    <td style={{ ...td, textAlign: 'right', fontWeight: 600, color: colors.slate[600], fontSize: 13 }}>
-                      {entry.score ?? '-'}
-                    </td>
-                    <td style={{ ...td, textAlign: 'right' }}>
-                      <span style={{
-                        padding: '2px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-                        background: (entry.percentage || 0) >= 80 ? colors.success[100] : (entry.percentage || 0) >= 50 ? colors.warning[100] : colors.danger[100],
-                        color: (entry.percentage || 0) >= 80 ? colors.success[700] : (entry.percentage || 0) >= 50 ? colors.warning[800] : colors.danger[600],
-                      }}>
-                        {entry.percentage != null ? `${Math.round(entry.percentage)}%` : '-'}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {/* Mode Tabs */}
+        {!isWorking && (
+          <div style={{ display: 'flex', borderBottom: '1px solid #F1F5F9', background: '#F8FAFC' }}>
+            <button
+              onClick={() => setActiveTab('prompt')}
+              style={{
+                flex: 1, padding: '12px 16px', border: 'none', cursor: 'pointer',
+                background: activeTab === 'prompt' ? '#FFFFFF' : 'transparent',
+                color: activeTab === 'prompt' ? '#16A34A' : '#64748B',
+                fontWeight: 600, fontSize: 13,
+                borderBottom: activeTab === 'prompt' ? '2px solid #16A34A' : '2px solid transparent',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                transition: 'all 150ms ease'
+              }}
+            >
+              <Sparkles size={14} /> Topic / Prompt
+            </button>
+            <button
+              onClick={() => setActiveTab('document')}
+              style={{
+                flex: 1, padding: '12px 16px', border: 'none', cursor: 'pointer',
+                background: activeTab === 'document' ? '#FFFFFF' : 'transparent',
+                color: activeTab === 'document' ? '#16A34A' : '#64748B',
+                fontWeight: 600, fontSize: 13,
+                borderBottom: activeTab === 'document' ? '2px solid #16A34A' : '2px solid transparent',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                transition: 'all 150ms ease'
+              }}
+            >
+              <Upload size={14} /> Document / File Upload
+            </button>
           </div>
         )}
+
+        {/* Modal Body */}
+        {isWorking ? (
+          <div style={{
+            padding: '50px 24px', textAlign: 'center', display: 'flex',
+            flexDirection: 'column', alignItems: 'center', gap: 14
+          }}>
+            <div style={{
+              width: 48, height: 48, borderRadius: '50%', background: '#EAF8F0',
+              color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 4px 16px rgba(22, 163, 74, 0.2)'
+            }}>
+              <Loader2 size={26} className="animate-spin" />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 16, color: '#0F172A' }}>
+                AI is generating your quiz questions...
+              </div>
+              <div style={{ fontSize: 13, color: '#64748B', marginTop: 4, maxWidth: 380, lineHeight: 1.5 }}>
+                Creating question stems, distractors, correct answers, and explanations. This usually takes 10–25 seconds.
+              </div>
+            </div>
+          </div>
+        ) : activeTab === 'prompt' ? (
+          <form onSubmit={handleGenerateFromPrompt} style={{ padding: '20px 24px' }}>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
+                Topic / Subject Prompt <span style={{ color: '#DC2626' }}>*</span>
+              </label>
+              <textarea
+                value={promptText}
+                onChange={(e) => setPromptText(e.target.value)}
+                placeholder="e.g. Python list comprehensions, lambda functions, generators, and exception handling..."
+                rows={3}
+                style={{
+                  width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #CBD5E1',
+                  fontSize: 13, outline: 'none', resize: 'vertical', boxSizing: 'border-box',
+                  fontFamily: 'inherit'
+                }}
+                required
+              />
+              <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 4 }}>
+                Describe what specific topics, skills, or lesson areas you want the quiz to test.
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
+                  Questions
+                </label>
+                <select
+                  value={questionCount}
+                  onChange={(e) => setQuestionCount(e.target.value)}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5 }}
+                >
+                  {[5, 10, 15, 20, 25, 30].map(n => (
+                    <option key={n} value={n}>{n} Questions</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
+                  Difficulty
+                </label>
+                <select
+                  value={difficulty}
+                  onChange={(e) => setDifficulty(e.target.value)}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5 }}
+                >
+                  <option value="Easy">Easy</option>
+                  <option value="Medium">Medium</option>
+                  <option value="Hard">Hard</option>
+                  <option value="Mixed">Mixed</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
+                  Time Limit
+                </label>
+                <select
+                  value={timeLimit}
+                  onChange={(e) => setTimeLimit(e.target.value)}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5 }}
+                >
+                  <option value={15}>15 minutes</option>
+                  <option value={30}>30 minutes</option>
+                  <option value={45}>45 minutes</option>
+                  <option value={60}>60 minutes</option>
+                  <option value={90}>90 minutes</option>
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, borderTop: '1px solid #F1F5F9', paddingTop: 16 }}>
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  padding: '8px 16px', borderRadius: 8, background: '#FFFFFF', border: '1px solid #E2E8F0',
+                  fontSize: 13, fontWeight: 600, color: '#475569', cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '8px 18px', borderRadius: 8, background: '#16A34A', border: 'none',
+                  fontSize: 13, fontWeight: 600, color: '#FFFFFF', cursor: 'pointer',
+                  boxShadow: '0 2px 6px rgba(22, 163, 74, 0.25)'
+                }}
+              >
+                <Sparkles size={14} /> Generate Quiz
+              </button>
+            </div>
+          </form>
+        ) : (
+          <form onSubmit={handleGenerateFromDocument} style={{ padding: '20px 24px' }}>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
+                Upload Syllabus or Course Material <span style={{ color: '#DC2626' }}>*</span>
+              </label>
+
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={(e) => setFile(e.target.files[0] || null)}
+                accept=".pdf,.docx,.txt,.md"
+                style={{ display: 'none' }}
+              />
+
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                style={{
+                  border: '2px dashed #CBD5E1', borderRadius: 10, padding: 24, textAlign: 'center',
+                  background: '#F8FAFC', cursor: 'pointer', transition: 'all 150ms ease'
+                }}
+              >
+                <Upload size={24} color="#16A34A" style={{ margin: '0 auto 8px' }} />
+                {file ? (
+                  <div>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, color: '#0F172A' }}>{file.name}</div>
+                    <div style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                      {(file.size / 1024).toFixed(1)} KB — Click to change
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>
+                      Click to upload document (PDF, Word, Text)
+                    </div>
+                    <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 2 }}>
+                      AI will analyze the file and generate matching questions
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
+                  Questions
+                </label>
+                <select
+                  value={questionCount}
+                  onChange={(e) => setQuestionCount(e.target.value)}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5 }}
+                >
+                  {[5, 10, 15, 20].map(n => (
+                    <option key={n} value={n}>{n} Questions</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
+                  Difficulty
+                </label>
+                <select
+                  value={difficulty}
+                  onChange={(e) => setDifficulty(e.target.value)}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5 }}
+                >
+                  <option value="Easy">Easy</option>
+                  <option value="Medium">Medium</option>
+                  <option value="Hard">Hard</option>
+                  <option value="Mixed">Mixed</option>
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, borderTop: '1px solid #F1F5F9', paddingTop: 16 }}>
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  padding: '8px 16px', borderRadius: 8, background: '#FFFFFF', border: '1px solid #E2E8F0',
+                  fontSize: 13, fontWeight: 600, color: '#475569', cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!file}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '8px 18px', borderRadius: 8,
+                  background: file ? '#16A34A' : '#94A3B8', border: 'none',
+                  fontSize: 13, fontWeight: 600, color: '#FFFFFF',
+                  cursor: file ? 'pointer' : 'not-allowed',
+                  boxShadow: file ? '0 2px 6px rgba(22, 163, 74, 0.25)' : 'none'
+                }}
+              >
+                <Sparkles size={14} /> Generate from File
+              </button>
+            </div>
+          </form>
+        )}
       </motion.div>
-    </motion.div>
+    </motion.div>,
+    document.body
   )
 }

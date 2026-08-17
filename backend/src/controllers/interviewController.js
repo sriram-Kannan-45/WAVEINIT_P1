@@ -105,15 +105,12 @@ class InterviewController {
       }
 
       const [candidate, interviewer] = await Promise.all([
-        User.findByPk(candidateId),
-        User.findByPk(interviewerId),
+        User.findOne({ where: { id: candidateId, role: 'PARTICIPANT', isDeleted: false, status: 'APPROVED' } }),
+        User.findOne({ where: { id: interviewerId, isDeleted: false, status: { [Op.ne]: 'INACTIVE' } } }),
       ]);
 
-      if (!candidate) return res.status(404).json({ error: 'Candidate not found' });
-      if (!interviewer) return res.status(404).json({ error: 'Interviewer not found' });
-      if (candidate.role !== 'PARTICIPANT') {
-        return res.status(400).json({ error: 'Selected candidate is not an eligible participant' });
-      }
+      if (!candidate) return res.status(404).json({ error: 'Eligible candidate not found or inactive' });
+      if (!interviewer) return res.status(404).json({ error: 'Eligible interviewer not found or inactive' });
       if (!['TRAINER', 'ADMIN'].includes(interviewer.role)) {
         return res.status(400).json({ error: 'Selected interviewer is not an eligible interviewer (Trainer/HR)' });
       }
@@ -1119,7 +1116,7 @@ class InterviewController {
   async getCandidates(req, res) {
     try {
       const participants = await User.findAll({
-        where: { role: 'PARTICIPANT', status: 'APPROVED' },
+        where: { role: 'PARTICIPANT', status: 'APPROVED', isDeleted: false },
         attributes: ['id', 'name', 'email', 'phone'],
         include: [
           {
@@ -1166,12 +1163,12 @@ class InterviewController {
 
   /**
    * GET /interviews/interviewers
-   * Returns users with TRAINER role who can conduct interviews.
+   * Returns active users with TRAINER role who can conduct interviews.
    */
   async getInterviewers(req, res) {
     try {
       const interviewers = await User.findAll({
-        where: { role: 'TRAINER' },
+        where: { role: 'TRAINER', isDeleted: false, status: 'APPROVED' },
         attributes: ['id', 'name', 'email', 'phone'],
         order: [['name', 'ASC']],
       });
@@ -1312,15 +1309,16 @@ class InterviewController {
       const finalCandidateId = updates.candidate_id !== undefined ? updates.candidate_id : interview.candidate_id;
       const finalInterviewerId = updates.interviewer_id !== undefined ? updates.interviewer_id : interview.interviewer_id;
       if (updates.candidate_id !== undefined) {
-        const candidate = await User.findByPk(updates.candidate_id);
-        if (!candidate) return res.status(404).json({ error: 'Candidate not found' });
-        if (candidate.role !== 'PARTICIPANT') {
-          return res.status(400).json({ error: 'Selected candidate is not an eligible participant' });
-        }
+        const candidate = await User.findOne({
+          where: { id: updates.candidate_id, role: 'PARTICIPANT', isDeleted: false, status: 'APPROVED' },
+        });
+        if (!candidate) return res.status(404).json({ error: 'Eligible candidate not found or inactive' });
       }
       if (updates.interviewer_id !== undefined) {
-        const interviewer = await User.findByPk(updates.interviewer_id);
-        if (!interviewer) return res.status(404).json({ error: 'Interviewer not found' });
+        const interviewer = await User.findOne({
+          where: { id: updates.interviewer_id, isDeleted: false, status: { [Op.ne]: 'INACTIVE' } },
+        });
+        if (!interviewer) return res.status(404).json({ error: 'Eligible interviewer not found or inactive' });
         if (!['TRAINER', 'ADMIN'].includes(interviewer.role)) {
           return res.status(400).json({ error: 'Selected interviewer is not an eligible interviewer (Trainer/HR)' });
         }

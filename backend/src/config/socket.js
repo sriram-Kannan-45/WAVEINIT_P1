@@ -16,6 +16,8 @@ const logger = require('../utils/logger');
  * @param {http.Server} server - HTTP server instance
  * @returns {Object} Socket.IO instance
  */
+let ioInstance = null;
+
 const initializeSocket = (server) => {
   const isDev = process.env.NODE_ENV !== 'production';
   const isLanOrigin = (origin) => /^https?:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$/.test(origin);
@@ -84,6 +86,17 @@ const initializeSocket = (server) => {
         socket.sessionId = decoded.sessionId || result.device.session_id;
         socket.currentInterviewId = decoded.interviewId || null;
         logger.info('Mobile socket connected', { userId, sessionId: socket.sessionId });
+        return next();
+      }
+
+      // Assessment verification mobile camera socket (Quiz / Coding)
+      if (decoded.role === 'mobile_camera' && decoded.sessionId) {
+        socket.userId = decoded.participantId || 0;
+        socket.userRole = 'PARTICIPANT';
+        socket.userName = 'Assessment Mobile Camera';
+        socket.sessionId = decoded.sessionId;
+        socket.verifRole = 'mobile_camera';
+        logger.info('Assessment verification mobile camera connected', { sessionId: socket.sessionId });
         return next();
       }
 
@@ -206,11 +219,14 @@ const initializeSocket = (server) => {
     require('../socket/events/monitorEvents')(io, socket);
     // Register coding assessment events
     require('../socket/codingEvents')(io, socket);
+    // Register assessment verification events (Quiz & Coding QR pairing)
+    require('../socket/assessmentVerificationEvents')(io, socket);
     // Register interview module events (WebRTC signalling, room management)
     const { registerInterviewEvents } = require('../socket/interviewEvents');
     registerInterviewEvents(io, socket);
   });
 
+  ioInstance = io;
   return io;
 };
 
@@ -232,23 +248,17 @@ const setupRedisAdapter = async (io) => {
 
     // Attach Redis adapter to Socket.IO
     io.adapter(createAdapter(pubClient, subClient));
-
-    logger.info('Redis adapter attached to Socket.IO', { redisUrl });
-
-    // Store clients for later cleanup
     io.redisClients = { pubClient, subClient };
-
-    return io;
+    logger.info('Socket.IO Redis adapter connected');
   } catch (error) {
-    logger.error('Failed to setup Redis adapter', { error: error.message });
-    throw error;
+    logger.error('Failed to setup Redis adapter for Socket.IO', { error: error.message });
   }
 };
 
 /**
  * Emit event to specific user
  * @param {Object} io - Socket.IO instance
- * @param {number} userId - Target user ID
+ * @param {string|number} userId - User ID
  * @param {string} event - Event name
  * @param {Object} data - Event data
  */
@@ -257,9 +267,9 @@ const emitToUser = (io, userId, event, data) => {
 };
 
 /**
- * Emit event to role
+ * Emit event to users with specific role
  * @param {Object} io - Socket.IO instance
- * @param {string} role - Target role
+ * @param {string} role - User role (ADMIN, TRAINER, PARTICIPANT)
  * @param {string} event - Event name
  * @param {Object} data - Event data
  */
@@ -298,6 +308,7 @@ const cleanupSocket = async (io) => {
 
 module.exports = {
   initializeSocket,
+  getIO: () => ioInstance,
   setupRedisAdapter,
   emitToUser,
   emitToRole,

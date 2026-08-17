@@ -19,8 +19,12 @@ const {
   CourseTrainerAssignment,
   TrainingTrainerAssignment,
   QuizAssignment,
-  QuizCopyViolation
+  QuizCopyViolation,
+  ProctoringSession,
+  ProctoringEvent,
+  ProctoringReport
 } = require('../models');
+const proctoringReportService = require('../services/proctoringReportService');
 const authenticateToken = require('../middleware/auth');
 const roleMiddleware = require('../middleware/roles');
 const NotificationService = require('../services/notificationService');
@@ -1304,9 +1308,29 @@ const startQuizAttempt = async (req, res) => {
           console.log(`[startQuizAttempt] Successfully created new session #${session.id} for attempt #${attempt.id}`);
         }
 
+        // Ensure ProctoringSession exists & is active
+        let [proctorSession] = await ProctoringSession.findOrCreate({
+          where: { attemptId: attempt.id },
+          defaults: {
+            sessionId: `psess_${attempt.id}_${Date.now()}`,
+            attemptId: attempt.id,
+            participantId,
+            quizId: quiz.id,
+            startedAt: new Date(),
+            status: 'ACTIVE'
+          }
+        });
+        if (proctorSession.status !== 'ACTIVE') {
+          await proctorSession.update({ status: 'ACTIVE' });
+        }
+        if (!attempt.monitoringSessionId) {
+          await attempt.update({ monitoringSessionId: proctorSession.sessionId });
+        }
+
         const apiResponse = {
           success: true,
           attemptId: attempt.id,
+          monitoringSessionId: proctorSession.sessionId,
           sessionToken: session.sessionToken,
           quiz: {
             id: quiz.id,
@@ -1327,15 +1351,28 @@ const startQuizAttempt = async (req, res) => {
       }
     }
 
+    const monitoringSessionId = `psess_${quiz.id}_${participantId}_${Date.now()}`;
+
     // Since no attempt exists, create a new in-progress attempt
     attempt = await QuizAttempt.create({
       quizId: quiz.id,
       participantId,
       status: 'IN_PROGRESS',
-      startedAt: new Date()
+      startedAt: new Date(),
+      monitoringSessionId
     });
     console.log(`[startQuizAttempt] Created new attempt #${attempt.id} for participant #${participantId}`);
     console.log(`[ATTEMPT_STATUS_CHANGE] Attempt #${attempt.id} status set to IN_PROGRESS at ${new Date().toISOString()}`);
+
+    // Create active ProctoringSession
+    await ProctoringSession.create({
+      sessionId: monitoringSessionId,
+      attemptId: attempt.id,
+      participantId,
+      quizId: quiz.id,
+      startedAt: new Date(),
+      status: 'ACTIVE'
+    });
 
     // Handle AssessmentSession lock
     const crypto = require('crypto');
@@ -1389,6 +1426,7 @@ const startQuizAttempt = async (req, res) => {
     const apiResponse = {
       success: true,
       attemptId: attempt.id,
+      monitoringSessionId,
       sessionToken: session.sessionToken,
       quiz: {
         id: quiz.id,
@@ -1588,17 +1626,29 @@ router.post('/:quizId/attempts/:attemptId/submit', async (req, res) => {
       if (sessionToken) {
         await AssessmentSession.update(
           { status: 'EXPIRED' },
-          { where: { sessionToken, attemptId, status: 'ACTIVE' } }
+          { where: { sessionToken, attemptId: attempt.id, status: 'ACTIVE' } }
         );
       }
     } catch (sessionErr) {
       console.warn('Failed to expire assessment session:', sessionErr.message);
     }
 
+    // Step 8 & 16: Close ProctoringSession and generate Final Proctoring Report
+    // Transaction-safe: if report generation fails, quiz submission is NOT affected
+    try {
+      await proctoringReportService.generateFinalProctoringReport(attempt.id);
+    } catch (reportErr) {
+      console.error('[submit] Non-blocking proctoring report generation failure:', reportErr.message);
+    }
+
+    // Participant-safe response: NEVER leak internal proctoring reports or risk scores
     return res.json({
       success: true,
       message: 'Quiz submitted successfully. Please wait for trainer to publish results.',
-      status: 'PENDING_RESULT'
+      status: 'PENDING_RESULT',
+      attemptId: attempt.id,
+      quizId: quiz.id,
+      submittedAt: new Date()
     });
   } catch (err) {
     console.error('Error submitting quiz attempt:', err);

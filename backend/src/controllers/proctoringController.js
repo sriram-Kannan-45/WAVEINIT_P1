@@ -5,7 +5,8 @@
  * events for trainer monitoring side-channels.
  */
 const proctoring = require('../services/proctoringService');
-const { ExamSession, AIQuiz, AIQuestion, QuizAnswer, QuizAttempt, QuizResult, User, Screenshot } = require('../models');
+const proctoringReportService = require('../services/proctoringReportService');
+const { ExamSession, AIQuiz, AIQuestion, QuizAnswer, QuizAttempt, QuizResult, CodingAssessment, CodingAttempt, CodingResult, User, Screenshot, ProctoringSession, ProctoringEvent, ProctoringReport, Course, Training, CourseTrainerAssignment, TrainingTrainerAssignment } = require('../models');
 const aiService = require('../services/aiService');
 const logger = require('../utils/logger');
 
@@ -689,3 +690,301 @@ exports.getScreenshots = async (req, res, next) => {
     ok(res, screenshots);
   } catch (err) { next(err); }
 };
+
+/**
+ * POST /api/proctoring/events & /api/proctor/events
+ * Ingests an objective monitoring event from Python monitor or frontend client.
+ */
+exports.recordMonitoringEvent = async (req, res, next) => {
+  try {
+    const {
+      monitoringSessionId,
+      attemptId,
+      participantId: bodyParticipantId,
+      quizId,
+      eventType,
+      severity = 'INFO',
+      confidence = 1.0,
+      duration = 0.0,
+      timestamp = new Date(),
+      metadata = {},
+      idempotencyKey,
+    } = req.body;
+
+    // Decode token if present
+    let user = req.user;
+    if (!user && req.headers && req.headers['authorization'] && req.headers['authorization'].startsWith('Bearer ')) {
+      try {
+        const { verifyAccessToken } = require('../security/tokenService');
+        const token = req.headers['authorization'].split(' ')[1];
+        user = verifyAccessToken(token);
+      } catch (_) {}
+    }
+
+    // Use JWT user identity if participant or fallback to body if server-to-server with attempt check
+    const participantId = user?.role === 'PARTICIPANT' ? user.id : (bodyParticipantId || user?.id);
+
+    if (!attemptId || !eventType) {
+      return fail(res, 400, 'attemptId and eventType are required');
+    }
+
+    // Resolve quizId & participantId from attempt if not provided
+    let resolvedQuizId = quizId;
+    let resolvedParticipantId = participantId;
+    let resolvedSessionId = monitoringSessionId;
+
+    let attempt = await QuizAttempt.findByPk(attemptId);
+    let isCoding = false;
+    let codingAttempt = null;
+
+    if (attempt) {
+      resolvedQuizId = resolvedQuizId || attempt.quizId;
+      resolvedParticipantId = resolvedParticipantId || attempt.participantId;
+      resolvedSessionId = resolvedSessionId || attempt.monitoringSessionId || `session_${attempt.id}`;
+    } else {
+      codingAttempt = await CodingAttempt.findByPk(attemptId);
+      if (codingAttempt) {
+        isCoding = true;
+        resolvedQuizId = resolvedQuizId || codingAttempt.assessmentId;
+        resolvedParticipantId = resolvedParticipantId || codingAttempt.participantId;
+        resolvedSessionId = resolvedSessionId || codingAttempt.monitoringSessionId || `session_${codingAttempt.id}`;
+      }
+    }
+
+    if (!resolvedSessionId) {
+      resolvedSessionId = `session_${attemptId}`;
+    }
+
+    const event = await proctoringReportService.recordMonitoringEvent({
+      monitoringSessionId: resolvedSessionId,
+      attemptId,
+      participantId: resolvedParticipantId || 1,
+      quizId: resolvedQuizId,
+      eventType,
+      severity,
+      confidence,
+      duration,
+      timestamp,
+      metadata,
+      idempotencyKey,
+    });
+
+    emitTrainerUpdate(req, resolvedQuizId, {
+      type: 'monitoring_event',
+      event: {
+        id: event.id,
+        attemptId: event.attemptId,
+        participantId: event.participantId,
+        eventType: event.eventType,
+        severity: event.severity,
+        confidence: event.confidence,
+        duration: event.duration,
+        timestamp: event.timestamp,
+        metadata: event.metadata,
+      }
+    });
+
+    ok(res, { eventId: event.id, status: 'RECORDED' });
+  } catch (err) {
+    logger.error(`[recordMonitoringEvent] Failed: ${err.message}`);
+    next(err);
+  }
+};
+
+/**
+ * GET /api/proctoring/reports/:attemptId & /api/proctor/reports/:attemptId
+ * Returns complete Proctoring Report (Risk Score, Risk Level, Category Summary, Timeline).
+ * PROTECTED: Strictly TRAINER and ADMIN only. Returns 403 for PARTICIPANT.
+ */
+exports.getAttemptProctoringReport = async (req, res, next) => {
+  try {
+    const { role, id: userId } = req.user;
+
+    // Hard requirement: Participant is strictly forbidden
+    if (role === 'PARTICIPANT') {
+      return fail(res, 403, 'Participants are not authorized to view proctoring reports');
+    }
+
+    const { attemptId } = req.params;
+    let attempt = await QuizAttempt.findByPk(attemptId, {
+      include: [
+        { model: User, as: 'participant', attributes: ['id', 'name', 'email', 'profilePic'] },
+        {
+          model: AIQuiz,
+          as: 'quiz',
+          include: [
+            { model: Course, as: 'course', attributes: ['id', 'title', 'trainerId'] },
+            { model: Training, as: 'training', attributes: ['id', 'title', 'trainerId'] }
+          ]
+        },
+        { model: QuizResult, as: 'result' }
+      ]
+    });
+
+    let isCoding = false;
+    let codingAttempt = null;
+
+    if (!attempt) {
+      codingAttempt = await CodingAttempt.findByPk(attemptId, {
+        include: [
+          { model: User, as: 'participant', attributes: ['id', 'name', 'email', 'profilePic'] },
+          {
+            model: CodingAssessment,
+            as: 'assessment',
+            include: [
+              { model: Course, as: 'course', attributes: ['id', 'title', 'trainerId'] },
+              { model: Training, as: 'training', attributes: ['id', 'title', 'trainerId'] }
+            ]
+          },
+          { model: CodingResult, as: 'result' }
+        ]
+      });
+      if (codingAttempt) {
+        isCoding = true;
+      }
+    }
+
+    if (!attempt && !codingAttempt) {
+      return fail(res, 404, 'Assessment attempt not found');
+    }
+
+    // IDOR / Permission check for Trainer
+    if (role === 'TRAINER') {
+      const assessmentObj = isCoding ? codingAttempt.assessment : attempt.quiz;
+      const isDirectOwner = assessmentObj && (assessmentObj.trainerId === userId || assessmentObj.createdBy === userId);
+      let isAssigned = isDirectOwner;
+
+      if (!isAssigned && assessmentObj?.courseId) {
+        const cAssign = await CourseTrainerAssignment.findOne({
+          where: { courseId: assessmentObj.courseId, trainerId: userId }
+        });
+        if (cAssign) isAssigned = true;
+      }
+
+      if (!isAssigned && assessmentObj?.trainingId) {
+        const tAssign = await TrainingTrainerAssignment.findOne({
+          where: { trainingId: assessmentObj.trainingId, trainerId: userId }
+        });
+        if (tAssign) isAssigned = true;
+      }
+
+      if (!isAssigned && !isDirectOwner) {
+        return fail(res, 403, 'You are not authorized to access this attempt proctoring report');
+      }
+    }
+
+    let report = await proctoringReportService.getProctoringReportByAttempt(attemptId);
+
+    // If report has not been generated yet or was failed, generate now on demand
+    if (!report || report.status === 'GENERATION_FAILED') {
+      report = await proctoringReportService.generateFinalProctoringReport(attemptId);
+      if (report) {
+        report = await proctoringReportService.getProctoringReportByAttempt(attemptId);
+      }
+    }
+
+    if (!report) {
+      return fail(res, 404, 'Proctoring report could not be found or generated');
+    }
+
+    const activeParticipant = isCoding ? codingAttempt.participant : attempt.participant;
+    const activeObj = isCoding ? codingAttempt.assessment : attempt.quiz;
+    const activeResult = isCoding ? codingAttempt.result : attempt.result;
+
+    return res.json({
+      success: true,
+      data: {
+        attemptId: isCoding ? codingAttempt.id : attempt.id,
+        participant: {
+          id: activeParticipant?.id,
+          name: activeParticipant?.name || 'Participant',
+          email: activeParticipant?.email || '',
+          profilePic: activeParticipant?.profilePic || null,
+        },
+        quiz: {
+          id: activeObj?.id,
+          title: activeObj?.title || (isCoding ? 'Coding Assessment' : 'Quiz'),
+          timeLimit: activeObj?.timeLimit,
+        },
+        score: activeResult ? Number(activeResult.percentage) : null,
+        totalScore: activeResult ? Number(activeResult.totalScore) : null,
+        maxScore: activeResult ? Number(activeResult.maxScore) : null,
+        proctoring: {
+          id: report.id,
+          monitoringSessionId: report.monitoringSessionId,
+          status: report.status,
+          riskScore: report.riskScore,
+          riskLevel: report.riskLevel,
+          generatedAt: report.generatedAt,
+          summary: report.summary || {},
+          timeline: report.timeline || [],
+        }
+      }
+    });
+  } catch (err) {
+    logger.error(`[getAttemptProctoringReport] Failed: ${err.message}`);
+    next(err);
+  }
+};
+
+/**
+ * POST /api/proctoring/reports/:attemptId/regenerate
+ * Force-regenerate proctoring report (Trainer/Admin).
+ */
+exports.regenerateAttemptProctoringReport = async (req, res, next) => {
+  try {
+    if (req.user.role !== 'TRAINER' && req.user.role !== 'ADMIN') {
+      return fail(res, 403, 'Trainer or Admin only');
+    }
+
+    const { attemptId } = req.params;
+    const report = await proctoringReportService.generateFinalProctoringReport(attemptId);
+    if (!report) {
+      return fail(res, 500, 'Failed to regenerate report');
+    }
+
+    ok(res, { report });
+  } catch (err) { next(err); }
+};
+
+/**
+ * GET /api/proctoring/admin/reports
+ * Admin-only list of proctoring reports with filtering.
+ */
+exports.getAdminProctoringReports = async (req, res, next) => {
+  try {
+    if (req.user.role !== 'ADMIN') {
+      return fail(res, 403, 'Admin only');
+    }
+
+    const { quizId, participantId, riskLevel, page = 1, limit = 50 } = req.query;
+    const where = {};
+    if (riskLevel) where.riskLevel = riskLevel;
+
+    const offset = (Math.max(1, parseInt(page, 10)) - 1) * parseInt(limit, 10);
+
+    const includeAttempt = {
+      model: QuizAttempt,
+      as: 'attempt',
+      required: true,
+      include: [
+        { model: User, as: 'participant', attributes: ['id', 'name', 'email'] },
+        { model: AIQuiz, as: 'quiz', attributes: ['id', 'title', 'courseId', 'trainingId'] }
+      ]
+    };
+
+    if (quizId) includeAttempt.where = { ...(includeAttempt.where || {}), quizId };
+    if (participantId) includeAttempt.where = { ...(includeAttempt.where || {}), participantId };
+
+    const { rows: reports, count } = await ProctoringReport.findAndCountAll({
+      where,
+      include: [includeAttempt],
+      order: [['generatedAt', 'DESC']],
+      limit: parseInt(limit, 10),
+      offset,
+    });
+
+    ok(res, { reports, total: count, page: parseInt(page, 10), limit: parseInt(limit, 10) });
+  } catch (err) { next(err); }
+};
+

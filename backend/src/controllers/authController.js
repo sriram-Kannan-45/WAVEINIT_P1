@@ -523,7 +523,7 @@ const changePassword = async (req, res) => {
 const getTrainers = async (req, res) => {
   try {
     const trainers = await User.findAll({
-      where: { role: 'TRAINER' },
+      where: { role: 'TRAINER', isDeleted: false, status: 'APPROVED' },
       attributes: ['id', 'name', 'email', 'username']
     });
     res.json({ trainers });

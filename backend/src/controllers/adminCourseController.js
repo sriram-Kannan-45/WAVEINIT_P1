@@ -347,9 +347,9 @@ async function createCourse(req, res) {
       return res.status(404).json({ success: false, error: 'Training program not found' });
     }
 
-    const trainer = await User.findOne({ where: { id: trainerId, role: 'TRAINER' } });
+    const trainer = await User.findOne({ where: { id: trainerId, role: 'TRAINER', isDeleted: false, status: 'APPROVED' } });
     if (!trainer) {
-      return res.status(400).json({ success: false, error: 'Invalid trainer ID' });
+      return res.status(400).json({ success: false, error: 'Invalid or inactive trainer ID' });
     }
 
     const course = await Course.create({
@@ -452,9 +452,9 @@ async function updateCourse(req, res) {
     if (trainerId !== undefined) {
       if (trainerId !== null && trainerId !== '') {
         const parsedTrainerId = parseInt(trainerId, 10);
-        const trainer = await User.findOne({ where: { id: parsedTrainerId, role: 'TRAINER' } });
+        const trainer = await User.findOne({ where: { id: parsedTrainerId, role: 'TRAINER', isDeleted: false, status: 'APPROVED' } });
         if (!trainer) {
-          return res.status(400).json({ success: false, error: 'Invalid trainer ID' });
+          return res.status(400).json({ success: false, error: 'Invalid or inactive trainer ID' });
         }
         newTrainerId = trainer.id;
         await CourseTrainerAssignment.destroy({ where: { courseId: course.id } });

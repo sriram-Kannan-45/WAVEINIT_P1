@@ -18,9 +18,9 @@ const createTraining = async (req, res) => {
       finalTrainerIds = [parseInt(trainerId)];
     }
 
-    const trainers = await User.findAll({ where: { id: finalTrainerIds, role: 'TRAINER' } });
+    const trainers = await User.findAll({ where: { id: finalTrainerIds, role: 'TRAINER', isDeleted: false, status: 'APPROVED' } });
     if (trainers.length !== finalTrainerIds.length) {
-      return res.status(400).json({ error: 'One or more trainer IDs are invalid' });
+      return res.status(400).json({ error: 'One or more trainer IDs are invalid, inactive, or not trainers' });
     }
 
     const start = new Date(startDate);
@@ -260,9 +260,9 @@ const updateTraining = async (req, res) => {
 
     if (hasTrainerFields) {
       if (finalTrainerIds.length > 0) {
-        const trainers = await User.findAll({ where: { id: finalTrainerIds, role: 'TRAINER' } });
+        const trainers = await User.findAll({ where: { id: finalTrainerIds, role: 'TRAINER', isDeleted: false, status: 'APPROVED' } });
         if (trainers.length !== finalTrainerIds.length) {
-          return res.status(400).json({ error: 'One or more trainer IDs are invalid or not trainers' });
+          return res.status(400).json({ error: 'One or more trainer IDs are invalid, inactive, or not trainers' });
         }
       }
 

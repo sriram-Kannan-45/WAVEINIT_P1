@@ -44,6 +44,12 @@ const QuizAttempt = sequelize.define('QuizAttempt', {
     allowNull: true,
     field: 'time_taken',
     comment: 'Time taken in seconds'
+  },
+  monitoringSessionId: {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    field: 'monitoring_session_id',
+    comment: 'Linked ProctoringSession.session_id'
   }
 }, {
   tableName: 'quiz_attempts',

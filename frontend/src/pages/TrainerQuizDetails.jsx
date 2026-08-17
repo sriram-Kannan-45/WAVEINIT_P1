@@ -4,10 +4,12 @@ import {
   ArrowLeft, Settings, Users, BarChart3, Trophy, FileText,
   Plus, Pencil, Trash2, Save, X, Send, Loader2, AlertTriangle, Eye, Star,
   Search, Clock, HelpCircle, CheckCircle2, AlertCircle, RefreshCw, Monitor, Ban, XCircle,
+  Shield, ShieldCheck, ShieldAlert,
 } from 'lucide-react'
 import { API, API_BASE } from '../api/api'
 import { useToast } from '../components/Toast'
 import { TrainerProctoringDashboard } from '../proctoring'
+import { SingleAttemptProctoringModal } from '../proctoring/components/TrainerMonitoringReport'
 
 const STATUS_LABELS = {
   DRAFT: 'Draft', PUBLISHED: 'Published', CLOSED: 'Closed',
@@ -445,5 +447,584 @@ function QuestionsTab({ quiz, onRefresh, auth, toast }) {
     </div>
   )
 }
+function ParticipantsTab({ quiz, auth, toast }) {
+  const [participants, setParticipants] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
 
-/* __NEXT__ */
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch(API.TRAINER_COURSES.QUIZ_PARTICIPANTS(quiz.id), { headers: auth() })
+        const d = await r.json()
+        setParticipants(d.participants || [])
+      } catch { /* ignore */ }
+      finally { setLoading(false) }
+    })()
+  }, [quiz.id])
+
+  const filtered = participants.filter(p =>
+    (p.name || '').toLowerCase().includes(search.toLowerCase()) ||
+    (p.email || '').toLowerCase().includes(search.toLowerCase())
+  )
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12 }}>
+        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#111827', fontFamily: 'var(--font-primary)' }}>
+          {participants.length} Participants
+        </h3>
+        <div style={{ position: 'relative', width: 240 }}>
+          <Search size={14} style={{ position: 'absolute', left: 10, top: 10, color: '#94a3b8' }} />
+          <input
+            type="text"
+            placeholder="Search participants…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{
+              width: '100%', padding: '6px 12px 6px 32px', borderRadius: 8,
+              border: '1px solid #e2e8f0', fontSize: 12, outline: 'none'
+            }}
+          />
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>
+          <Loader2 size={20} className="reg-spin" style={{ margin: '0 auto 8px' }} />
+          <p style={{ fontSize: 13 }}>Loading participants…</p>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="reg-admin-empty" style={{ border: '2px dashed #e2e8f0', borderRadius: 12 }}>
+          <Users size={32} style={{ opacity: 0.5 }} />
+          <h3>No participants found</h3>
+          <p>Assigned course/training participants will appear here</p>
+        </div>
+      ) : (
+        <div className="reg-admin-table-wrap">
+          <table className="reg-admin-table">
+            <thead>
+              <tr>
+                <th>Participant</th>
+                <th>Email</th>
+                <th>Attempt Status</th>
+                <th style={{ textAlign: 'center' }}>Score</th>
+                <th style={{ textAlign: 'right' }}>Submitted</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(p => {
+                const statusMeta = ATTEMPT_STATUS[p.attemptStatus] || ATTEMPT_STATUS.NOT_STARTED
+                return (
+                  <tr key={p.id || p.participantId}>
+                    <td style={{ fontWeight: 600, color: '#111827' }}>{p.name || 'Participant'}</td>
+                    <td style={{ color: '#64748b', fontSize: 12 }}>{p.email || '—'}</td>
+                    <td>
+                      <span style={{
+                        padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+                        background: statusMeta.bg || '#f1f5f9', color: statusMeta.fg || '#64748b'
+                      }}>
+                        {statusMeta.label}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'center', fontWeight: 700, color: '#0f172a' }}>
+                      {p.percentage != null ? `${Math.round(p.percentage)}%` : '—'}
+                    </td>
+                    <td style={{ textAlign: 'right', color: '#64748b', fontSize: 12 }}>
+                      {p.submittedAt ? new Date(p.submittedAt).toLocaleDateString() : '—'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ResultsTab({ quiz, onRefresh, auth, toast }) {
+  const [results, setResults] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [publishing, setPublishing] = useState(false)
+  const [selectedProctorAttempt, setSelectedProctorAttempt] = useState(null)
+
+  const loadResults = async () => {
+    setLoading(true)
+    try {
+      const r = await fetch(API.TRAINER_COURSES.QUIZ_RESULTS(quiz.id), { headers: auth() })
+      const d = await r.json()
+      setResults(d.results || [])
+    } catch { /* ignore */ }
+    finally { setLoading(false) }
+  }
+
+  useEffect(() => { loadResults() }, [quiz.id])
+
+  const handlePublishResults = async () => {
+    setPublishing(true)
+    try {
+      const r = await fetch(API.TRAINER_COURSES.PUBLISH_QUIZ_RESULTS(quiz.id), {
+        method: 'POST', headers: auth()
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || 'Failed to publish results')
+      toast.success('Results published to participants')
+      onRefresh?.()
+      loadResults()
+    } catch (e) { toast.error(e.message) }
+    finally { setPublishing(false) }
+  }
+
+  const handleHideResults = async () => {
+    setPublishing(true)
+    try {
+      const r = await fetch(API.TRAINER_COURSES.HIDE_QUIZ_RESULTS(quiz.id), {
+        method: 'POST', headers: auth()
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || 'Failed to hide results')
+      toast.success('Results hidden from participants')
+      onRefresh?.()
+      loadResults()
+    } catch (e) { toast.error(e.message) }
+    finally { setPublishing(false) }
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#111827', fontFamily: 'var(--font-primary)' }}>
+          {results.length} Participant Submissions
+        </h3>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {quiz.resultStatus === 'HIDDEN' && results.length > 0 && (
+            <button
+              className="reg-admin-btn reg-admin-btn--primary"
+              onClick={handlePublishResults}
+              disabled={publishing}
+              style={{ cursor: 'pointer' }}
+            >
+              <Send size={14} /> Publish All Results
+            </button>
+          )}
+          {quiz.resultStatus === 'PUBLISHED' && (
+            <button
+              className="reg-admin-btn reg-admin-btn--secondary"
+              onClick={handleHideResults}
+              disabled={publishing}
+              style={{ cursor: 'pointer' }}
+            >
+              <X size={14} /> Hide Results
+            </button>
+          )}
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>
+          <Loader2 size={20} className="reg-spin" style={{ margin: '0 auto 8px' }} />
+          <p style={{ fontSize: 13 }}>Loading quiz results…</p>
+        </div>
+      ) : results.length === 0 ? (
+        <div className="reg-admin-empty" style={{ border: '2px dashed #e2e8f0', borderRadius: 12 }}>
+          <BarChart3 size={32} style={{ opacity: 0.5 }} />
+          <h3>No results submitted yet</h3>
+          <p>Participant attempts and monitoring reports will appear here</p>
+        </div>
+      ) : (
+        <div className="reg-admin-table-wrap">
+          <table className="reg-admin-table">
+            <thead>
+              <tr>
+                <th>Participant</th>
+                <th style={{ textAlign: 'center' }}>Score</th>
+                <th style={{ textAlign: 'center' }}>%</th>
+                <th style={{ textAlign: 'center' }}>Pass / Fail</th>
+                <th style={{ textAlign: 'center' }}>Submitted</th>
+                <th style={{ textAlign: 'right', paddingRight: 20 }}>Monitoring &amp; Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {results.map((entry, idx) => {
+                const pct = entry.percentage
+                const passed = pct != null && pct >= (quiz.passingPercentage || 50)
+                const isDisqualified = entry.attemptStatus === 'disqualified_copy_violation' || entry.attemptStatus === 'disqualified_policy_violation'
+
+                return (
+                  <tr key={entry.id || entry.attemptId || idx}>
+                    <td style={{ fontWeight: 600, color: '#111827' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <span>{entry.participantName || entry.participant?.name || `Participant #${entry.participantId}`}</span>
+                        {entry.participant?.email && (
+                          <span style={{ fontSize: 11, color: '#64748b' }}>{entry.participant.email}</span>
+                        )}
+                        {isDisqualified && (
+                          <span style={{
+                            padding: '2px 6px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+                            background: '#fee2e2', color: '#dc2626', width: 'fit-content'
+                          }}>
+                            🚫 Disqualified
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td style={{ textAlign: 'center', fontWeight: 700, color: '#0f172a' }}>
+                      {entry.totalScore != null ? `${entry.totalScore}/${entry.maxScore || quiz.totalMarks || 100}` : '—'}
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span style={{
+                        padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+                        background: pct >= 80 ? '#dcfce7' : pct >= 50 ? '#fef3c7' : '#fee2e2',
+                        color: pct >= 80 ? '#15803d' : pct >= 50 ? '#92400e' : '#dc2626'
+                      }}>
+                        {pct != null ? `${Math.round(pct)}%` : '—'}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      {pct != null ? (
+                        <span style={{ fontSize: 11, fontWeight: 700, color: passed ? '#15803d' : '#dc2626' }}>
+                          {passed ? '✅ Pass' : '❌ Fail'}
+                        </span>
+                      ) : '—'}
+                    </td>
+                    <td style={{ textAlign: 'center', color: '#64748b', fontSize: 12 }}>
+                      {entry.evaluatedAt || entry.submittedAt ? new Date(entry.evaluatedAt || entry.submittedAt).toLocaleDateString() : '—'}
+                    </td>
+                    <td style={{ textAlign: 'right', paddingRight: 20 }}>
+                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
+                        {entry.attemptId && (
+                          <button
+                            onClick={() => setSelectedProctorAttempt(entry.attemptId)}
+                            style={{
+                              padding: '5px 10px',
+                              borderRadius: 6,
+                              background: '#eff6ff',
+                              color: '#1d4ed8',
+                              border: '1px solid #bfdbfe',
+                              fontSize: 11,
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4
+                            }}
+                            title="View full automated proctoring & risk report"
+                          >
+                            <Shield size={12} /> Proctoring Report
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Single Attempt Proctoring Report Modal */}
+      {selectedProctorAttempt && (
+        <SingleAttemptProctoringModal
+          attemptId={selectedProctorAttempt}
+          auth={auth}
+          onClose={() => setSelectedProctorAttempt(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function LeaderboardTab({ quiz, auth }) {
+  const [leaders, setLeaders] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch(API.TRAINER_COURSES.QUIZ_LEADERBOARD(quiz.id), { headers: auth() })
+        const d = await r.json()
+        setLeaders(d.leaderboard || [])
+      } catch { /* ignore */ }
+      finally { setLoading(false) }
+    })()
+  }, [quiz.id])
+
+  return (
+    <div>
+      <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: '#111827', fontFamily: 'var(--font-primary)' }}>
+        Quiz Leaderboard
+      </h3>
+      {loading ? (
+        <div style={{ padding: 40, textAlign: 'center', color: '#64748b' }}><Loader2 size={20} className="reg-spin" /></div>
+      ) : leaders.length === 0 ? (
+        <div className="reg-admin-empty" style={{ border: '2px dashed #e2e8f0', borderRadius: 12 }}>
+          <Trophy size={32} style={{ opacity: 0.5 }} />
+          <h3>No submissions yet</h3>
+          <p>Top performers will be ranked here</p>
+        </div>
+      ) : (
+        <div className="reg-admin-table-wrap">
+          <table className="reg-admin-table">
+            <thead>
+              <tr>
+                <th style={{ width: 60, textAlign: 'center' }}>Rank</th>
+                <th>Participant</th>
+                <th style={{ textAlign: 'center' }}>Score</th>
+                <th style={{ textAlign: 'center' }}>Percentage</th>
+                <th style={{ textAlign: 'right' }}>Time Taken</th>
+              </tr>
+            </thead>
+            <tbody>
+              {leaders.map((entry, idx) => (
+                <tr key={entry.participantId || idx}>
+                  <td style={{ textAlign: 'center', fontWeight: 800, color: idx < 3 ? PODIUM_COLORS[idx] : '#64748b' }}>
+                    {idx === 0 ? '🥇 1' : idx === 1 ? '🥈 2' : idx === 2 ? '🥉 3' : `#${idx + 1}`}
+                  </td>
+                  <td style={{ fontWeight: 600, color: '#111827' }}>{entry.participantName || `Participant #${entry.participantId}`}</td>
+                  <td style={{ textAlign: 'center', fontWeight: 700, color: '#16a34a' }}>{entry.totalScore}</td>
+                  <td style={{ textAlign: 'center', fontWeight: 700 }}>{Math.round(entry.percentage)}%</td>
+                  <td style={{ textAlign: 'right', color: '#64748b', fontSize: 12 }}>
+                    {entry.timeTaken ? `${entry.timeTaken}s` : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AnalyticsTab({ quiz, auth }) {
+  const [stats, setStats] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch(API.TRAINER_COURSES.QUIZ_ANALYTICS(quiz.id), { headers: auth() })
+        const d = await r.json()
+        setStats(d.analytics || null)
+      } catch { /* ignore */ }
+      finally { setLoading(false) }
+    })()
+  }, [quiz.id])
+
+  if (loading) return <div style={{ padding: 40, textAlign: 'center' }}><Loader2 size={20} className="reg-spin" /></div>
+
+  return (
+    <div>
+      <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: '#111827', fontFamily: 'var(--font-primary)' }}>
+        Performance Analytics
+      </h3>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14, marginBottom: 24 }}>
+        <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, padding: '16px' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Avg Score</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: '#0f172a', marginTop: 4 }}>{stats?.avgScore != null ? `${Math.round(stats.avgScore)}%` : '—'}</div>
+        </div>
+        <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, padding: '16px' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Pass Rate</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: '#16a34a', marginTop: 4 }}>{stats?.passRate != null ? `${Math.round(stats.passRate)}%` : '—'}</div>
+        </div>
+        <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, padding: '16px' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Total Attempts</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: '#2563eb', marginTop: 4 }}>{stats?.totalAttempts || 0}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SettingsTab({ quiz, onRefresh, auth, toast }) {
+  const [form, setForm] = useState({
+    proctoringEnabled: !!quiz.proctoringEnabled,
+    copyProtection: !!quiz.copyProtection,
+    shuffleQuestions: !!quiz.shuffleQuestions,
+    maxAttempts: quiz.maxAttempts || 1,
+    passingPercentage: quiz.passingPercentage || 50,
+  })
+  const [saving, setSaving] = useState(false)
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const r = await fetch(API.TRAINER_COURSES.QUIZ(quiz.courseId || 0, quiz.id), {
+        method: 'PUT', headers: auth(),
+        body: JSON.stringify(form)
+      })
+      if (!r.ok) throw new Error('Failed to update settings')
+      toast.success('Quiz settings saved')
+      onRefresh?.()
+    } catch (e) { toast.error(e.message) }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div style={{ maxWidth: 640 }}>
+      <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: '#111827', fontFamily: 'var(--font-primary)' }}>
+        Assessment Settings
+      </h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: 20 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={form.proctoringEnabled}
+            onChange={e => setForm({ ...form, proctoringEnabled: e.target.checked })}
+            style={{ width: 16, height: 16, accentColor: '#16a34a' }}
+          />
+          <div>
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>Enable Automated Proctoring &amp; Upper-Body Monitoring</span>
+            <p style={{ margin: 0, fontSize: 12, color: '#64748b' }}>Requires camera calibration, eye &amp; head tracking, and integrity reporting.</p>
+          </div>
+        </label>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={form.copyProtection}
+            onChange={e => setForm({ ...form, copyProtection: e.target.checked })}
+            style={{ width: 16, height: 16, accentColor: '#16a34a' }}
+          />
+          <div>
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>Enable Copy/Paste &amp; Clipboard Protection</span>
+            <p style={{ margin: 0, fontSize: 12, color: '#64748b' }}>Prevents right clicking, copying quiz text, and taking screenshots.</p>
+          </div>
+        </label>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={form.shuffleQuestions}
+            onChange={e => setForm({ ...form, shuffleQuestions: e.target.checked })}
+            style={{ width: 16, height: 16, accentColor: '#16a34a' }}
+          />
+          <div>
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>Shuffle Question Order</span>
+            <p style={{ margin: 0, fontSize: 12, color: '#64748b' }}>Randomizes order of questions for each participant attempt.</p>
+          </div>
+        </label>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 8 }}>
+          <div>
+            <label className="reg-field-label">Passing Percentage (%)</label>
+            <input
+              className="reg-input"
+              type="number"
+              min={1}
+              max={100}
+              value={form.passingPercentage}
+              onChange={e => setForm({ ...form, passingPercentage: parseInt(e.target.value) || 50 })}
+            />
+          </div>
+          <div>
+            <label className="reg-field-label">Max Attempts Allowed</label>
+            <input
+              className="reg-input"
+              type="number"
+              min={1}
+              max={10}
+              value={form.maxAttempts}
+              onChange={e => setForm({ ...form, maxAttempts: parseInt(e.target.value) || 1 })}
+            />
+          </div>
+        </div>
+
+        <button
+          className="reg-admin-btn reg-admin-btn--primary"
+          onClick={handleSave}
+          disabled={saving}
+          style={{ marginTop: 12, alignSelf: 'flex-start', cursor: 'pointer' }}
+        >
+          <Save size={14} /> {saving ? 'Saving…' : 'Save Settings'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function QuestionForm({ question, onSave, onClose, saving }) {
+  const [form, setForm] = useState({
+    questionText: question?.questionText || '',
+    questionType: question?.questionType || 'MCQ',
+    difficulty: question?.difficulty || 'MEDIUM',
+    marks: question?.marks || 1,
+    options: question?.options || ['', '', '', ''],
+    correctAnswer: question?.correctAnswer || '',
+    explanation: question?.explanation || '',
+  })
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    onSave(form)
+  }
+
+  return (
+    <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: 20, marginBottom: 20 }}>
+      <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, color: '#111827', fontFamily: 'var(--font-primary)' }}>
+        {question ? 'Edit Question' : 'New Question'}
+      </h3>
+      <form onSubmit={handleSubmit}>
+        <div style={{ marginBottom: 12 }}>
+          <label className="reg-field-label">Question Text</label>
+          <textarea
+            className="reg-textarea"
+            required
+            value={form.questionText}
+            onChange={e => setForm({ ...form, questionText: e.target.value })}
+          />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 12 }}>
+          <div>
+            <label className="reg-field-label">Type</label>
+            <select className="reg-input" value={form.questionType} onChange={e => setForm({ ...form, questionType: e.target.value })}>
+              {QUESTION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="reg-field-label">Difficulty</label>
+            <select className="reg-input" value={form.difficulty} onChange={e => setForm({ ...form, difficulty: e.target.value })}>
+              {DIFFICULTIES.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="reg-field-label">Marks</label>
+            <input className="reg-input" type="number" min={1} value={form.marks} onChange={e => setForm({ ...form, marks: parseInt(e.target.value) || 1 })} />
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+          <button type="button" className="reg-admin-btn reg-admin-btn--secondary" onClick={onClose}>Cancel</button>
+          <button type="submit" className="reg-admin-btn reg-admin-btn--primary" disabled={saving}>
+            <Save size={14} /> {saving ? 'Saving…' : 'Save Question'}
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+function QuestionPreview({ questions, onClose }) {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.5)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20
+    }}>
+      <div style={{ background: '#fff', borderRadius: 14, maxWidth: 680, width: '100%', maxHeight: '80vh', overflowY: 'auto', padding: 24 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Quiz Preview ({questions.length} Questions)</h3>
+          <button onClick={onClose} style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}><X size={18} /></button>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {questions.map((q, idx) => (
+            <div key={q.id || idx} style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 14 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: '#0f172a' }}>{idx + 1}. {q.questionText}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -833,7 +833,7 @@ async function getApplicationStats(req, res) {
 async function getAvailableTrainers(req, res) {
   try {
     const { trainingId } = req.query;
-    const where = { role: 'TRAINER' };
+    const where = { role: 'TRAINER', isDeleted: false, status: 'APPROVED' };
 
     if (trainingId) {
       const assignedTrainerIds = (await TrainingTrainerAssignment.findAll({

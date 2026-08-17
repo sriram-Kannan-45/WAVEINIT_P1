@@ -202,12 +202,14 @@ const userProfileRoutes = require('./routes/userProfileRoutes');
 app.use('/api/user-profile', userProfileRoutes);
 app.use('/api/participant-profile', participantProfileRoutes);
 app.use('/api/proctor', proctoringRoutes);
+app.use('/api/proctoring', proctoringRoutes);
 app.use('/api', monitorRoutes);
 app.use('/api/lessons', lessonRoutes);
 app.use('/api/discussion', discussionRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/recordings', recordingRoutes);
 app.use('/api/coding', codingAssessmentRoutes);
+app.use('/api/assessment-verification', require('./routes/assessmentVerificationRoutes'));
 app.use('/api/interviews', interviewRoutes);
 
 // Health check for AI service (separate path to avoid conflict with router)
@@ -549,6 +551,15 @@ const startServer = async () => {
       logger.info('coding_assessment tables ready');
     } catch (e) {
       logger.error('Could not sync coding_assessment tables', { error: e.message });
+    }
+
+    // Assessment Verification Session (Quiz & Coding QR pairing)
+    try {
+      const { AssessmentVerificationSession } = require('./models');
+      await AssessmentVerificationSession.sync({ alter: true });
+      logger.info('assessment_verification_sessions table ready');
+    } catch (e) {
+      logger.error('Could not sync assessment_verification_sessions table', { error: e.message });
     }
 
     // Interview Module tables — additive sync, scoped to module

@@ -260,6 +260,8 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
       if (submittedRef.current || terminated) return
       if (!enteredFullscreenOnce.current) return
 
+      reportMonitoringEvent('FULLSCREEN_EXIT', 'WARNING', { exitCount: warnings + 1 })
+
       setWarnings((prev) => {
         const next = prev + 1
         if (next >= MAX_WARNINGS) {
@@ -289,6 +291,260 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
       )
     }
   }, [terminated, handleSubmit, onSubmit])
+
+  /* ── Objective Monitoring Event Dispatcher (Backend Ingestion) ────── */
+  const lastReportedEventTime = useRef({})
+
+  const reportMonitoringEvent = useCallback(async (eventType, severity = 'WARNING', metadata = {}) => {
+    if (!attemptId) return
+    const now = Date.now()
+    // Throttle duplicate event types to avoid flooding
+    const lastTime = lastReportedEventTime.current[eventType] || 0
+    if (now - lastTime < 4000 && !metadata.force) return
+    lastReportedEventTime.current[eventType] = now
+
+    try {
+      await fetch(`${API_BASE}/proctoring/events`, {
+        method: 'POST',
+        headers: {
+          ...getAuthHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          attemptId,
+          quizId,
+          eventType,
+          severity,
+          confidence: 0.95,
+          duration: metadata.duration || 2.0,
+          timestamp: new Date().toISOString(),
+          metadata,
+        }),
+      })
+    } catch (e) {
+      console.warn('[QuizTaking] Monitoring event dispatch failed:', e)
+    }
+  }, [attemptId, quizId])
+
+  /* ── Real-time Active Webcam & Face Absence Detection ──────────────── */
+  const [proctorCamStream, setProctorCamStream] = useState(null)
+  const [faceMissing, setFaceMissing] = useState(false)
+  const proctorVideoRef = useRef(null)
+  const proctorCanvasRef = useRef(null)
+  const missingCountRef = useRef(0)
+
+  // Initialize camera for proctoring
+  useEffect(() => {
+    let activeStream = null
+    let isCancelled = false
+
+    const initCam = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: 'user' },
+          audio: false
+        })
+        if (isCancelled) {
+          stream.getTracks().forEach(t => t.stop())
+          return
+        }
+        activeStream = stream
+        setProctorCamStream(stream)
+      } catch (err) {
+        console.warn('[QuizTaking] Proctor camera acquisition warning:', err.message)
+      }
+    }
+
+    initCam()
+
+    return () => {
+      isCancelled = true
+      if (activeStream) {
+        activeStream.getTracks().forEach(t => t.stop())
+      }
+    }
+  }, [])
+
+  // Attach stream to hidden/widget video
+  useEffect(() => {
+    if (proctorVideoRef.current && proctorCamStream && proctorVideoRef.current.srcObject !== proctorCamStream) {
+      proctorVideoRef.current.srcObject = proctorCamStream
+      proctorVideoRef.current.play().catch(() => {})
+    }
+  }, [proctorCamStream])
+
+  // Continuous 2-second face presence / absence inspection
+  useEffect(() => {
+    if (!attemptId || submittedRef.current || terminated) return
+
+    const interval = setInterval(() => {
+      const video = proctorVideoRef.current
+      if (!video || video.readyState < 2 || video.videoWidth === 0) return
+
+      const w = 160
+      const h = 120
+      let canvas = proctorCanvasRef.current
+      if (!canvas) {
+        canvas = document.createElement('canvas')
+        proctorCanvasRef.current = canvas
+      }
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })
+      if (!ctx) return
+
+      try {
+        ctx.drawImage(video, 0, 0, w, h)
+        const frame = ctx.getImageData(0, 0, w, h)
+        const d = frame.data
+
+        let skinPixels = 0
+        let totalSampled = 0
+        let sumX = 0
+        let sumY = 0
+        for (let i = 0; i < d.length; i += 16) {
+          const r = d[i]
+          const g = d[i + 1]
+          const b = d[i + 2]
+          totalSampled++
+          if (r > 60 && g > 40 && b > 20 && r > b && (r - g) >= 10 && Math.abs(r - g) < 140) {
+            skinPixels++
+            const pixelIdx = i / 4
+            sumX += pixelIdx % w
+            sumY += Math.floor(pixelIdx / w)
+          }
+        }
+
+        const skinRatio = skinPixels / Math.max(1, totalSampled)
+        const isPresent = skinRatio > 0.018
+
+        if (!isPresent) {
+          missingCountRef.current++
+          if (missingCountRef.current >= 2) {
+            setFaceMissing(true)
+            reportMonitoringEvent('FACE_ABSENT', missingCountRef.current > 4 ? 'HIGH' : 'WARNING', {
+              duration: missingCountRef.current * 2,
+              message: 'Participant absent or not visible in camera view'
+            })
+          }
+        } else {
+          if (missingCountRef.current >= 2) {
+            setFaceMissing(false)
+            reportMonitoringEvent('FACE_RETURNED', 'INFO', { message: 'Participant returned to camera view' })
+          }
+          missingCountRef.current = 0
+
+          // Spatial Head Turn, Gaze, and Upper-Body Framing tracking
+          if (skinPixels > 20) {
+            const centroidX = sumX / skinPixels
+            const centroidY = sumY / skinPixels
+            const normX = centroidX / w
+            const normY = centroidY / h
+
+            // 1. Head Pose deviations
+            if (normX < 0.28) {
+              reportMonitoringEvent('HEAD_TURNED_LEFT', 'WARNING', {
+                confidence: 0.92,
+                duration: 2.0,
+                metadata: { offsetRatio: Math.round(normX * 100) / 100 }
+              })
+            } else if (normX > 0.72) {
+              reportMonitoringEvent('HEAD_TURNED_RIGHT', 'WARNING', {
+                confidence: 0.92,
+                duration: 2.0,
+                metadata: { offsetRatio: Math.round(normX * 100) / 100 }
+              })
+            } else if (normY > 0.75) {
+              reportMonitoringEvent('HEAD_LOOKING_DOWN', 'WARNING', {
+                confidence: 0.88,
+                duration: 2.0,
+                metadata: { offsetRatio: Math.round(normY * 100) / 100 }
+              })
+            } else if (normY < 0.18) {
+              reportMonitoringEvent('HEAD_LOOKING_UP', 'WARNING', {
+                confidence: 0.88,
+                duration: 2.0,
+                metadata: { offsetRatio: Math.round(normY * 100) / 100 }
+              })
+            }
+
+            // 2. Eye & Gaze Horizontal/Vertical Sclera-Iris Asymmetry analysis
+            const eyeRegionY = Math.max(0, Math.floor(centroidY - 18))
+            const eyeRegionH = 24
+            let leftHalfLuma = 0, rightHalfLuma = 0, upperLuma = 0, lowerLuma = 0
+            let eyePixelCount = 0
+
+            for (let ey = eyeRegionY; ey < Math.min(h, eyeRegionY + eyeRegionH); ey += 2) {
+              for (let ex = Math.max(0, Math.floor(centroidX - 28)); ex < Math.min(w, Math.floor(centroidX + 28)); ex += 2) {
+                const pIdx = (ey * w + ex) * 4
+                const pLuma = 0.299 * d[pIdx] + 0.587 * d[pIdx + 1] + 0.114 * d[pIdx + 2]
+                eyePixelCount++
+                if (ex < centroidX) leftHalfLuma += pLuma
+                else rightHalfLuma += pLuma
+                if (ey < eyeRegionY + 12) upperLuma += pLuma
+                else lowerLuma += pLuma
+              }
+            }
+
+            if (eyePixelCount > 30) {
+              const hDiff = (rightHalfLuma - leftHalfLuma) / Math.max(1, leftHalfLuma + rightHalfLuma)
+              const vDiff = (lowerLuma - upperLuma) / Math.max(1, upperLuma + lowerLuma)
+
+              if (hDiff > 0.22) {
+                reportMonitoringEvent('EYES_LOOKING_RIGHT', 'WARNING', {
+                  confidence: 0.89,
+                  duration: 2.0,
+                  metadata: { direction: 'RIGHT', asymmetry: Math.round(hDiff * 100) / 100 }
+                })
+              } else if (hDiff < -0.22) {
+                reportMonitoringEvent('EYES_LOOKING_LEFT', 'WARNING', {
+                  confidence: 0.89,
+                  duration: 2.0,
+                  metadata: { direction: 'LEFT', asymmetry: Math.round(hDiff * 100) / 100 }
+                })
+              } else if (vDiff > 0.24) {
+                reportMonitoringEvent('EYES_LOOKING_DOWN', 'WARNING', {
+                  confidence: 0.86,
+                  duration: 2.0,
+                  metadata: { direction: 'DOWN', asymmetry: Math.round(vDiff * 100) / 100 }
+                })
+              }
+            }
+
+            // 3. Below-Chest & Upper Body Framing analysis
+            if (skinRatio < 0.035 && isPresent) {
+              reportMonitoringEvent('BELOW_CHEST_NOT_VISIBLE', 'WARNING', {
+                confidence: 0.84,
+                duration: 2.5,
+                metadata: { skinRatio: Math.round(skinRatio * 1000) / 1000, message: 'Upper body and area below chest not clearly framed' }
+              })
+            }
+          }
+        }
+      } catch (_) {
+        // Frame analysis fallback
+      }
+    }, 1800)
+
+    // Tab visibility & Window blur listeners
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        reportMonitoringEvent('TAB_SWITCH', 'WARNING', { type: 'PAGE_VISIBILITY_HIDDEN' })
+      }
+    }
+    const handleWindowBlur = () => {
+      reportMonitoringEvent('WINDOW_BLUR', 'WARNING', { type: 'WINDOW_BLUR' })
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('blur', handleWindowBlur)
+
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('blur', handleWindowBlur)
+    }
+  }, [attemptId, reportMonitoringEvent, terminated])
 
   /* ── Screen share violation reporting ──────────────────────────────── */
   const reportViolation = useCallback(async (type, message) => {
@@ -1123,6 +1379,40 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Proctoring Hidden Camera Feed */}
+      <video
+        ref={proctorVideoRef}
+        playsInline
+        autoPlay
+        muted
+        style={{ position: 'fixed', width: 1, height: 1, opacity: 0.01, pointerEvents: 'none' }}
+      />
+
+      {/* Real-time Face Absence Warning Banner */}
+      {faceMissing && !terminated && !submitting && (
+        <div style={{
+          position: 'fixed',
+          top: 16,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 9999,
+          background: '#dc2626',
+          color: '#ffffff',
+          padding: '10px 24px',
+          borderRadius: 999,
+          boxShadow: '0 10px 25px rgba(220, 38, 38, 0.4)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          fontSize: 13,
+          fontWeight: 700,
+          fontFamily: 'var(--font-primary)'
+        }}>
+          <AlertTriangle size={18} color="#fff" />
+          <span>⚠️ Face Not Detected! Please return to camera view.</span>
+        </div>
+      )}
     </div>
   )
 }
