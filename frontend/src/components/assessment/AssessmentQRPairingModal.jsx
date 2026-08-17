@@ -70,6 +70,8 @@ export default function AssessmentQRPairingModal({
   // Media & Sockets
   const [remoteStream, setRemoteStream] = useState(null);
   const [hasReceivedFrames, setHasReceivedFrames] = useState(false);
+  const [lastFrame, setLastFrame] = useState(null);
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const videoRef = useRef(null);
   const previewContainerRef = useRef(null);
   const canvasRef = useRef(null);
@@ -274,21 +276,15 @@ export default function AssessmentQRPairingModal({
     });
 
     socket.on('assessment_verif:frame', ({ frame }) => {
-      if (frame && canvasRef.current) {
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext('2d');
-        const img = new Image();
-        img.onload = () => {
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          setHasReceivedFrames(true);
-          setQrScanned(true);
-          setParticipantValidated(true);
-          setMobileStreamConnected(true);
-          setMobileCameraReady(true);
-          setIsFullyVerified(true);
-          setIsDisconnected(false);
-        };
-        img.src = frame;
+      if (frame) {
+        setLastFrame(frame);
+        setHasReceivedFrames(true);
+        setQrScanned(true);
+        setParticipantValidated(true);
+        setMobileStreamConnected(true);
+        setMobileCameraReady(true);
+        setIsFullyVerified(true);
+        setIsDisconnected(false);
       }
     });
 
@@ -781,27 +777,26 @@ export default function AssessmentQRPairingModal({
                     autoPlay
                     playsInline
                     muted
+                    onPlaying={() => setIsVideoPlaying(true)}
+                    onLoadedData={() => setIsVideoPlaying(true)}
                     className={`w-full h-full object-cover transition-opacity duration-200 ${
-                      remoteStream && mobileCameraReady && !isDisconnected
+                      isVideoPlaying && remoteStream && mobileCameraReady && !isDisconnected
                         ? 'opacity-100 block z-10'
                         : 'opacity-0 absolute hidden'
                     }`}
                   />
 
-                  {/* Fallback Live Canvas Stream */}
-                  <canvas
-                    ref={canvasRef}
-                    width={480}
-                    height={360}
-                    className={`w-full h-full object-cover transition-opacity duration-200 ${
-                      !remoteStream && hasReceivedFrames && mobileCameraReady && !isDisconnected
-                        ? 'opacity-100 block z-10'
-                        : 'opacity-0 absolute hidden'
-                    }`}
-                  />
+                  {/* High-speed Direct Mobile Camera Frame Feed */}
+                  {(!isVideoPlaying || !remoteStream) && lastFrame && mobileCameraReady && !isDisconnected && (
+                    <img
+                      src={lastFrame}
+                      alt="Live Mobile Camera Feed"
+                      className="w-full h-full object-cover block z-10"
+                    />
+                  )}
 
                   {/* Connected Overlay Badges */}
-                  {(remoteStream || hasReceivedFrames || mobileCameraReady) && !isDisconnected ? (
+                  {(isVideoPlaying || lastFrame || mobileCameraReady) && !isDisconnected ? (
                     <>
                       <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-slate-950/80 backdrop-blur border border-slate-700 text-[9px] font-mono text-emerald-400 flex items-center gap-1 z-20 shadow-xs">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
