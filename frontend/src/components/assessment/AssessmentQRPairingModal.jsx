@@ -153,10 +153,12 @@ export default function AssessmentQRPairingModal({
   const getOrCreatePeerConnection = useCallback(() => {
     if (pcRef.current) return pcRef.current;
 
+    console.log('[WebRTC Laptop] Initializing RTCPeerConnection with STUN servers');
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     pcRef.current = pc;
 
     pc.ontrack = (event) => {
+      console.log('[WebRTC Laptop] ontrack event fired! Tracks:', event.tracks, 'Streams:', event.streams);
       let stream = event.streams && event.streams[0];
       if (!stream) {
         stream = new MediaStream([event.track]);
@@ -171,15 +173,20 @@ export default function AssessmentQRPairingModal({
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.muted = true;
+        videoRef.current.playsInline = true;
         const playPromise = videoRef.current.play();
         if (playPromise !== undefined) {
-          playPromise.catch((e) => console.warn('[AssessmentVerification] Play error:', e));
+          playPromise
+            .then(() => console.log('[WebRTC Laptop] Video playback started successfully'))
+            .catch((e) => console.warn('[WebRTC Laptop] Video play promise error:', e));
         }
       }
     };
 
     pc.onicecandidate = (event) => {
       if (event.candidate && socketRef.current?.connected) {
+        console.log('[WebRTC Laptop] Emitting ICE candidate:', event.candidate.candidate?.slice(0, 30));
         socketRef.current.emit('assessment_verif:ice-candidate', {
           sessionId: sessionData?.sessionId,
           candidate: event.candidate,
@@ -188,17 +195,23 @@ export default function AssessmentQRPairingModal({
     };
 
     pc.onconnectionstatechange = () => {
+      console.log('[WebRTC Laptop] Connection State changed:', pc.connectionState);
       const state = pc.connectionState;
       if (state === 'connected') {
         setIsDisconnected(false);
-        setQrScanned(true);
-        setParticipantValidated(true);
         setMobileStreamConnected(true);
         setMobileCameraReady(true);
-        setIsFullyVerified(true);
       } else if (state === 'disconnected' || state === 'failed') {
-        setIsDisconnected(true);
+        console.warn('[WebRTC Laptop] Connection disconnected or failed; fallback frame relay active');
       }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      console.log('[WebRTC Laptop] ICE Connection State:', pc.iceConnectionState);
+    };
+
+    pc.onsignalingstatechange = () => {
+      console.log('[WebRTC Laptop] Signaling State:', pc.signalingState);
     };
 
     return pc;
@@ -209,6 +222,7 @@ export default function AssessmentQRPairingModal({
     if (!sessionData?.sessionId) return;
 
     const wsUrl = BACKEND_ORIGIN || window.location.origin;
+    console.log('[AssessmentVerification] Connecting to socket:', wsUrl, 'session:', sessionData.sessionId);
     const socket = io(wsUrl, {
       auth: { token: activeToken },
       transports: ['websocket', 'polling'],
@@ -217,6 +231,7 @@ export default function AssessmentQRPairingModal({
     socketRef.current = socket;
 
     socket.on('connect', () => {
+      console.log('[AssessmentVerification] Laptop socket connected:', socket.id);
       socket.emit('assessment_verif:join', {
         sessionId: sessionData.sessionId,
         role: 'laptop',
@@ -224,6 +239,7 @@ export default function AssessmentQRPairingModal({
     });
 
     socket.on('assessment_verif:mobile_joined', () => {
+      console.log('[AssessmentVerification] Mobile device paired & joined room');
       setQrScanned(true);
       setParticipantValidated(true);
       setIsDisconnected(false);
@@ -232,13 +248,16 @@ export default function AssessmentQRPairingModal({
 
     socket.on('assessment_verif:offer', async ({ offer, fromSocketId }) => {
       try {
+        console.log('[WebRTC Laptop] Received offer from mobile socket:', fromSocketId);
         setQrScanned(true);
         setParticipantValidated(true);
         const pc = getOrCreatePeerConnection();
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        console.log('[WebRTC Laptop] Set remote description successfully');
 
         // Process any queued candidates
         if (candidateQueueRef.current.length > 0) {
+          console.log(`[WebRTC Laptop] Flushing ${candidateQueueRef.current.length} queued ICE candidates`);
           for (const cand of candidateQueueRef.current) {
             try {
               await pc.addIceCandidate(new RTCIceCandidate(cand));
@@ -249,6 +268,7 @@ export default function AssessmentQRPairingModal({
 
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
+        console.log('[WebRTC Laptop] Created answer, emitting to mobile');
 
         socket.emit('assessment_verif:answer', {
           sessionId: sessionData.sessionId,
@@ -256,7 +276,7 @@ export default function AssessmentQRPairingModal({
           answer: pc.localDescription,
         });
       } catch (err) {
-        console.warn('[AssessmentVerification] Offer handling error:', err);
+        console.error('[WebRTC Laptop] Offer handling error:', err);
       }
     });
 
@@ -267,11 +287,12 @@ export default function AssessmentQRPairingModal({
           if (pc.remoteDescription && pc.remoteDescription.type) {
             await pc.addIceCandidate(new RTCIceCandidate(candidate));
           } else {
+            console.log('[WebRTC Laptop] Queuing early ICE candidate');
             candidateQueueRef.current.push(candidate);
           }
         }
       } catch (err) {
-        console.warn('[AssessmentVerification] Candidate error:', err);
+        console.warn('[WebRTC Laptop] Candidate error:', err);
       }
     });
 
@@ -289,25 +310,19 @@ export default function AssessmentQRPairingModal({
     });
 
     socket.on('assessment_verif:mobile_status', (data) => {
+      console.log('[AssessmentVerification] Mobile status update:', data);
       if (data.connected || data.mobileVerified) {
         setQrScanned(true);
         setParticipantValidated(true);
-        setMobileStreamConnected(true);
-        setMobileCameraReady(true);
-        setIsFullyVerified(true);
-        setIsDisconnected(false);
       } else {
         setIsDisconnected(true);
       }
     });
 
     socket.on('assessment_verif:unlocked', () => {
+      console.log('[AssessmentVerification] Session unlocked event received');
       setQrScanned(true);
       setParticipantValidated(true);
-      setMobileStreamConnected(true);
-      setMobileCameraReady(true);
-      setIsFullyVerified(true);
-      setIsDisconnected(false);
     });
 
     return () => {
@@ -340,14 +355,6 @@ export default function AssessmentQRPairingModal({
             setQrScanned(true);
             setParticipantValidated(true);
           }
-          if (data.mobileVerified) {
-            setMobileStreamConnected(true);
-            setMobileCameraReady(true);
-          }
-          if (data.isFullyVerified || data.status === 'VERIFIED' || data.mobileVerified) {
-            setIsFullyVerified(true);
-            setIsDisconnected(false);
-          }
         }
       } catch (e) {}
     };
@@ -362,12 +369,14 @@ export default function AssessmentQRPairingModal({
       if (videoRef.current.srcObject !== remoteStream) {
         videoRef.current.srcObject = remoteStream;
       }
+      videoRef.current.muted = true;
+      videoRef.current.playsInline = true;
       const playPromise = videoRef.current.play();
       if (playPromise !== undefined) {
-        playPromise.catch((e) => console.warn('[AssessmentVerification] Play error:', e));
+        playPromise.catch((e) => console.warn('[WebRTC Laptop] Play error:', e));
       }
     }
-  }, [remoteStream, mobileCameraReady]);
+  }, [remoteStream]);
 
   // 6. Refresh QR Helper
   const handleRefreshQr = async () => {

@@ -48,25 +48,20 @@ export default function AssessmentMobileJoin() {
   const [peerConnected, setPeerConnected] = useState(false);
 
   const videoRef = useRef(null);
+  const captureVideoRef = useRef(null);
+  const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const socketRef = useRef(null);
   const pcRef = useRef(null);
   const frameIntervalRef = useRef(null);
-  const canvasRef = useRef(null);
 
-  // 1. Validate Pairing Token on Mount
+  // 1. Initial QR Token Validation
   useEffect(() => {
     let cancelled = false;
 
-    if (!token) {
-      setError('Invalid QR code — no verification token found in URL.');
-      setPhase(PHASE.ERROR);
-      return;
-    }
-
     const validateToken = async () => {
       try {
-        setPhase(PHASE.LOADING);
+        setPhase(PHASE.VALIDATING);
         const res = await fetch(`${API_BASE}/assessment-verification/mobile-validate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -103,15 +98,20 @@ export default function AssessmentMobileJoin() {
   const sendWebRtcOffer = useCallback(async (targetSocketId = null) => {
     if (!pcRef.current || !streamRef.current || !socketRef.current?.connected) return;
     try {
-      const offer = await pcRef.current.createOffer();
+      console.log('[WebRTC Mobile] Creating offer...');
+      const offer = await pcRef.current.createOffer({
+        offerToReceiveAudio: false,
+        offerToReceiveVideo: false,
+      });
       await pcRef.current.setLocalDescription(offer);
+      console.log('[WebRTC Mobile] Emitting offer to laptop:', targetSocketId || 'room');
       socketRef.current.emit('assessment_verif:offer', {
         sessionId: info?.sessionId,
         targetSocketId,
         offer: pcRef.current.localDescription,
       });
     } catch (err) {
-      console.warn('[AssessmentMobileJoin] createOffer error:', err);
+      console.warn('[WebRTC Mobile] createOffer error:', err);
     }
   }, [info?.sessionId]);
 
@@ -121,17 +121,20 @@ export default function AssessmentMobileJoin() {
       try { pcRef.current.close(); } catch (e) {}
     }
 
+    console.log('[WebRTC Mobile] Initializing RTCPeerConnection');
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     pcRef.current = pc;
 
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => {
+        console.log('[WebRTC Mobile] Adding track:', track.kind, track.label);
         pc.addTrack(track, streamRef.current);
       });
     }
 
     pc.onicecandidate = (event) => {
       if (event.candidate && socketRef.current?.connected) {
+        console.log('[WebRTC Mobile] Emitting ICE candidate:', event.candidate.candidate?.slice(0, 30));
         socketRef.current.emit('assessment_verif:ice-candidate', {
           sessionId: info?.sessionId,
           candidate: event.candidate,
@@ -140,6 +143,7 @@ export default function AssessmentMobileJoin() {
     };
 
     pc.onconnectionstatechange = () => {
+      console.log('[WebRTC Mobile] Connection state change:', pc.connectionState);
       const state = pc.connectionState;
       if (state === 'connected') {
         setPeerConnected(true);
@@ -148,7 +152,41 @@ export default function AssessmentMobileJoin() {
       }
     };
 
+    pc.oniceconnectionstatechange = () => {
+      console.log('[WebRTC Mobile] ICE connection state:', pc.iceConnectionState);
+    };
+
     return pc;
+  }, [info?.sessionId]);
+
+  // Frame Fallback Relay Stream (High-frequency lightweight canvas capture)
+  const startFrameCapture = useCallback(() => {
+    if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
+    if (!canvasRef.current) {
+      canvasRef.current = document.createElement('canvas');
+      canvasRef.current.width = 480;
+      canvasRef.current.height = 360;
+    }
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+
+    const captureAndEmit = () => {
+      const vid = videoRef.current || captureVideoRef.current;
+      const socket = socketRef.current;
+      if (vid && socket && socket.connected) {
+        try {
+          ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+          const frame = canvas.toDataURL('image/jpeg', 0.55);
+          socket.emit('assessment_verif:frame', {
+            sessionId: info?.sessionId,
+            frame,
+          });
+        } catch (e) {}
+      }
+    };
+
+    frameIntervalRef.current = setInterval(captureAndEmit, 80);
+    console.log('[AssessmentMobileJoin] Live frame capture relay started (12 fps)');
   }, [info?.sessionId]);
 
   // 2. Setup Socket Connection for real-time synchronization with Laptop
@@ -164,6 +202,7 @@ export default function AssessmentMobileJoin() {
     socketRef.current = socket;
 
     socket.on('connect', () => {
+      console.log('[AssessmentMobileJoin] Socket connected:', socket.id);
       setSocketConnected(true);
       socket.emit('assessment_verif:join', {
         sessionId: info.sessionId,
@@ -174,6 +213,7 @@ export default function AssessmentMobileJoin() {
       if (streamRef.current) {
         initPeerConnection();
         sendWebRtcOffer();
+        startFrameCapture();
         socket.emit('assessment_verif:mobile_ready', {
           sessionId: info.sessionId,
         });
@@ -181,23 +221,28 @@ export default function AssessmentMobileJoin() {
     });
 
     socket.on('disconnect', () => {
+      console.log('[AssessmentMobileJoin] Socket disconnected');
       setSocketConnected(false);
       setPeerConnected(false);
     });
 
-    // Laptop joined room → re-send WebRTC offer
+    // Laptop joined room → re-send WebRTC offer & ensure frame capture
     socket.on('assessment_verif:laptop_joined', ({ socketId }) => {
+      console.log('[AssessmentMobileJoin] Laptop joined event received:', socketId);
       if (streamRef.current) {
         initPeerConnection();
         sendWebRtcOffer(socketId);
+        startFrameCapture();
       }
     });
 
     // Laptop answered SDP offer
     socket.on('assessment_verif:answer', async ({ answer }) => {
+      console.log('[WebRTC Mobile] Received answer from laptop');
       if (pcRef.current && answer) {
         try {
           await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+          console.log('[WebRTC Mobile] Set remote description successfully');
         } catch (err) {
           console.warn('[AssessmentMobileJoin] setRemoteDescription answer error:', err);
         }
@@ -223,38 +268,7 @@ export default function AssessmentMobileJoin() {
         try { pcRef.current.close(); } catch (e) {}
       }
     };
-  }, [info, initPeerConnection, sendWebRtcOffer]);
-
-  // Frame Fallback Relay Stream (10 fps lightweight canvas capture)
-  const startFrameCapture = useCallback(() => {
-    if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
-    if (!canvasRef.current) {
-      canvasRef.current = document.createElement('canvas');
-      canvasRef.current.width = 480;
-      canvasRef.current.height = 360;
-    }
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-
-    const captureAndEmit = () => {
-      const vid = videoRef.current;
-      const socket = socketRef.current;
-      if (vid && socket && socket.connected) {
-        try {
-          if (vid.readyState >= 2 || vid.videoWidth > 0) {
-            ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
-            const frame = canvas.toDataURL('image/jpeg', 0.55);
-            socket.emit('assessment_verif:frame', {
-              sessionId: info?.sessionId,
-              frame,
-            });
-          }
-        } catch (e) {}
-      }
-    };
-
-    frameIntervalRef.current = setInterval(captureAndEmit, 100);
-  }, [info?.sessionId]);
+  }, [info, initPeerConnection, sendWebRtcOffer, startFrameCapture]);
 
   // 3. Request Mobile Camera Access
   const enableCamera = useCallback(async () => {
@@ -264,6 +278,7 @@ export default function AssessmentMobileJoin() {
         throw new Error('Camera access is not supported on this browser. Try Chrome or Safari.');
       }
 
+      console.log('[AssessmentMobileJoin] Requesting mobile camera...');
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: 'user',
@@ -276,6 +291,19 @@ export default function AssessmentMobileJoin() {
       streamRef.current = stream;
       setCameraActive(true);
       setPhase(PHASE.STREAMING);
+
+      // Create dedicated capture video element
+      if (!captureVideoRef.current) {
+        const vid = document.createElement('video');
+        vid.muted = true;
+        vid.playsInline = true;
+        vid.autoplay = true;
+        vid.width = 480;
+        vid.height = 360;
+        captureVideoRef.current = vid;
+      }
+      captureVideoRef.current.srcObject = stream;
+      captureVideoRef.current.play().catch(() => {});
 
       // Start WebRTC Peer Connection
       initPeerConnection();
@@ -321,8 +349,9 @@ export default function AssessmentMobileJoin() {
       if (playPromise !== undefined) {
         playPromise.catch((e) => console.warn('[AssessmentMobileJoin] Video play error:', e));
       }
+      startFrameCapture();
     }
-  }, [phase, cameraActive]);
+  }, [phase, cameraActive, startFrameCapture]);
 
   // Cleanup media tracks on unmount
   useEffect(() => {
@@ -330,6 +359,9 @@ export default function AssessmentMobileJoin() {
       if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+      if (captureVideoRef.current) {
+        captureVideoRef.current.srcObject = null;
       }
       if (pcRef.current) {
         try { pcRef.current.close(); } catch (e) {}
