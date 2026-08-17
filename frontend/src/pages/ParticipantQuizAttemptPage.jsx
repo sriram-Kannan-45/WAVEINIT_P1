@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import QuizTaking from '../components/QuizTaking'
 import AssessmentConsentGate from '../components/ai-quizzes/AssessmentConsentGate'
+import AssessmentQRPairingModal from '../components/assessment/AssessmentQRPairingModal'
 import { API_BASE } from '../api/api'
 import { useToast } from '../components/Toast'
 import { Loader2, AlertCircle } from 'lucide-react'
@@ -282,6 +283,49 @@ function ParticipantQuizAttemptPageInner({ user }) {
     )
   }
 
+
+  if (!qrVerified && quizData) {
+    return (
+      <div className="relative min-h-screen bg-[#f8fafc] flex">
+        <div className="flex-1 flex flex-col min-w-0">
+          <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200/60 bg-white">
+            <div className="flex items-center gap-2 text-sm text-slate-500 font-medium">
+              <span>My Courses</span>
+              <span>/</span>
+              <span className="text-emerald-700 font-semibold">{quizData.title ? quizData.title.toLowerCase() : 'python'}</span>
+            </div>
+            <button
+              onClick={() => navigate('/participant')}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <span>← Back</span>
+            </button>
+          </div>
+          <div className="p-8 space-y-4 max-w-5xl">
+            <div className="h-8 bg-slate-200/60 rounded-xl w-64" />
+            <div className="h-36 bg-white rounded-2xl border border-slate-200/60 p-6 space-y-3">
+              <div className="h-6 bg-slate-100 rounded-lg w-1/3" />
+              <div className="h-4 bg-slate-100 rounded-lg w-2/3" />
+            </div>
+          </div>
+        </div>
+
+        <AssessmentQRPairingModal
+          assessmentType="QUIZ"
+          assessmentId={parseInt(quizId, 10)}
+          attemptId={parseInt(attemptId, 10)}
+          assessmentTitle={quizData.title || 'Background Verification Declaration Quiz'}
+          participantName={user?.name || 'Sriram Titoo'}
+          userToken={user?.token}
+          onVerified={() => {
+            setQrVerified(true);
+            setConsented(true);
+          }}
+          onCancel={() => navigate('/participant')}
+        />
+      </div>
+    )
+  }
 
   if (!consented && quizData) {
     return (

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import AssessmentConsentGate from '../components/ai-quizzes/AssessmentConsentGate'
+import AssessmentQRPairingModal from '../components/assessment/AssessmentQRPairingModal'
 import { API_BASE, BACKEND_ORIGIN } from '../api/api'
 import { useToast } from '../components/Toast'
 import { ProctorProvider, useProctor } from '../proctoring/ProctorContext'
@@ -378,6 +379,49 @@ function ParticipantCodingAttemptInner({ user }) {
   if (loading || restoring) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: '#94a3b8' }}><Loader2 size={24} className="animate-spin" /></div>
   if (errorMsg) return <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', padding: 20, textAlign: 'center' }}><AlertCircle size={32} color="#dc2626" style={{ marginBottom: 12 }} /><div style={{ fontSize: 16, fontWeight: 600, color: '#dc2626', marginBottom: 8 }}>{errorMsg}</div><button onClick={() => navigate(`/trainings/${trainingId}`)} style={{ padding: '8px 20px', background: '#0D9488', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Go Back</button></div>
 
+
+  if (!qrVerified && assessment) {
+    return (
+      <div className="relative min-h-screen bg-[#f8fafc] flex">
+        <div className="flex-1 flex flex-col min-w-0">
+          <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200/60 bg-white">
+            <div className="flex items-center gap-2 text-sm text-slate-500 font-medium">
+              <span>My Courses</span>
+              <span>/</span>
+              <span className="text-emerald-700 font-semibold">{assessment.title ? assessment.title.toLowerCase() : 'coding'}</span>
+            </div>
+            <button
+              onClick={() => navigate(`/trainings/${trainingId}`)}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <span>← Back</span>
+            </button>
+          </div>
+          <div className="p-8 space-y-4 max-w-5xl">
+            <div className="h-8 bg-slate-200/60 rounded-xl w-64" />
+            <div className="h-36 bg-white rounded-2xl border border-slate-200/60 p-6 space-y-3">
+              <div className="h-6 bg-slate-100 rounded-lg w-1/3" />
+              <div className="h-4 bg-slate-100 rounded-lg w-2/3" />
+            </div>
+          </div>
+        </div>
+
+        <AssessmentQRPairingModal
+          assessmentType="CODING"
+          assessmentId={Number(assessmentId)}
+          attemptId={Number(attemptId)}
+          assessmentTitle={assessment.title || 'Coding Assessment'}
+          participantName={user?.name || 'Sriram Titoo'}
+          userToken={user?.token}
+          onVerified={() => {
+            setQrVerified(true);
+            setConsented(true);
+          }}
+          onCancel={() => navigate(`/trainings/${trainingId}`)}
+        />
+      </div>
+    )
+  }
 
   if (!consented) return (
     <AssessmentConsentGate quiz={assessment ? { id: assessment.id, title: assessment.title, description: assessment.description, timeLimit: assessment.timeLimit } : null} attemptId={Number(attemptId)} onConsented={handleConsented} onCancel={handleCancel} onScreenShareReady={handleScreenShareReady} />
