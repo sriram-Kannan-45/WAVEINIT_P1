@@ -7,29 +7,61 @@ const logger = require('../utils/logger');
 
 module.exports = (io, socket) => {
   // Join verification session room
-  socket.on('assessment_verif:join', (data) => {
+  socket.on('assessment_verif:join', async (data) => {
     const { sessionId, role } = data || {};
     if (!sessionId) return;
 
     socket.sessionId = sessionId;
     socket.verifRole = role || 'laptop';
 
-    socket.join(`assessment_verif_${sessionId}`);
-    logger.info(`Socket ${socket.id} (${socket.verifRole}) joined assessment_verif_${sessionId}`);
+    const roomName = `assessment_verif_${sessionId}`;
+    socket.join(roomName);
+    logger.info(`[SocketIO] Socket ${socket.id} (${socket.verifRole}) joined ${roomName}`);
 
-    // If mobile joined, notify laptop peer
-    if (socket.verifRole === 'mobile_camera') {
-      socket.to(`assessment_verif_${sessionId}`).emit('assessment_verif:mobile_joined', {
-        sessionId,
-        socketId: socket.id,
-        timestamp: Date.now(),
-      });
-    } else if (socket.verifRole === 'laptop') {
-      socket.to(`assessment_verif_${sessionId}`).emit('assessment_verif:laptop_joined', {
-        sessionId,
-        socketId: socket.id,
-        timestamp: Date.now(),
-      });
+    try {
+      if (socket.verifRole === 'mobile_camera') {
+        // 1. Notify laptop peer that mobile joined
+        socket.to(roomName).emit('assessment_verif:mobile_joined', {
+          sessionId,
+          socketId: socket.id,
+          timestamp: Date.now(),
+        });
+
+        // 2. Also notify the newly joined mobile about any existing laptop in the room
+        const socketsInRoom = await io.in(roomName).fetchSockets();
+        for (const s of socketsInRoom) {
+          if (s.id !== socket.id && s.verifRole === 'laptop') {
+            logger.info(`[SocketIO] Informing new mobile ${socket.id} of existing laptop ${s.id}`);
+            socket.emit('assessment_verif:laptop_joined', {
+              sessionId,
+              socketId: s.id,
+              timestamp: Date.now(),
+            });
+          }
+        }
+      } else if (socket.verifRole === 'laptop') {
+        // 1. Notify mobile if already in the room
+        socket.to(roomName).emit('assessment_verif:laptop_joined', {
+          sessionId,
+          socketId: socket.id,
+          timestamp: Date.now(),
+        });
+
+        // 2. Also notify the newly joined laptop about any existing mobile in the room
+        const socketsInRoom = await io.in(roomName).fetchSockets();
+        for (const s of socketsInRoom) {
+          if (s.id !== socket.id && s.verifRole === 'mobile_camera') {
+            logger.info(`[SocketIO] Informing new laptop ${socket.id} of existing mobile ${s.id}`);
+            socket.emit('assessment_verif:mobile_joined', {
+              sessionId,
+              socketId: s.id,
+              timestamp: Date.now(),
+            });
+          }
+        }
+      }
+    } catch (err) {
+      logger.error('[SocketIO] Error in assessment_verif:join peer discovery:', { error: err.message });
     }
   });
 
@@ -39,6 +71,7 @@ module.exports = (io, socket) => {
     const targetSessionId = sessionId || socket.sessionId;
     if (!targetSessionId || !offer) return;
 
+    logger.info(`[SocketIO WebRTC] Forwarding OFFER from ${socket.id} to ${targetSocketId || `assessment_verif_${targetSessionId}`}`);
     if (targetSocketId) {
       io.to(targetSocketId).emit('assessment_verif:offer', {
         sessionId: targetSessionId,
@@ -60,6 +93,7 @@ module.exports = (io, socket) => {
     const targetSessionId = sessionId || socket.sessionId;
     if (!targetSessionId || !answer) return;
 
+    logger.info(`[SocketIO WebRTC] Forwarding ANSWER from ${socket.id} to ${targetSocketId || `assessment_verif_${targetSessionId}`}`);
     if (targetSocketId) {
       io.to(targetSocketId).emit('assessment_verif:answer', {
         sessionId: targetSessionId,
