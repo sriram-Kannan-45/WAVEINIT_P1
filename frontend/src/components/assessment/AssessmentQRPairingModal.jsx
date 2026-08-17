@@ -88,7 +88,7 @@ export default function AssessmentQRPairingModal({
   const [remoteStream, setRemoteStream] = useState(null);
   const [hasReceivedFrames, setHasReceivedFrames] = useState(false);
   const [lastFrame, setLastFrame] = useState(null);
-  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const [isRealVideoFlowing, setIsRealVideoFlowing] = useState(false);
   const videoRef = useRef(null);
   const previewContainerRef = useRef(null);
   const canvasRef = useRef(null);
@@ -828,21 +828,43 @@ export default function AssessmentQRPairingModal({
                     ref={(el) => {
                       videoRef.current = el;
                       if (el && remoteStream && el.srcObject !== remoteStream) {
+                        console.log('[WebRTC Laptop] Setting videoElement.srcObject = remoteStream, tracks:', remoteStream.getTracks());
                         el.srcObject = remoteStream;
                         el.muted = true;
-                        el.play().catch(() => {});
+                        el.playsInline = true;
+                        const playPromise = el.play();
+                        if (playPromise !== undefined) {
+                          playPromise
+                            .then(() => console.log('[WebRTC Laptop] el.play() resolved successfully'))
+                            .catch((err) => console.warn('[WebRTC Laptop] el.play() error:', err));
+                        }
                       }
                     }}
                     autoPlay
                     playsInline
                     muted
+                    onLoadedMetadata={(e) => {
+                      console.log('[WebRTC Laptop] onLoadedMetadata -> videoWidth:', e.target.videoWidth, 'videoHeight:', e.target.videoHeight);
+                      if (e.target.videoWidth > 0) setIsRealVideoFlowing(true);
+                    }}
+                    onPlaying={(e) => {
+                      console.log('[WebRTC Laptop] onPlaying fired -> videoWidth:', e.target.videoWidth, 'videoHeight:', e.target.videoHeight);
+                      if (e.target.videoWidth > 0) setIsRealVideoFlowing(true);
+                    }}
+                    onTimeUpdate={(e) => {
+                      if (e.target.videoWidth > 0 && !isRealVideoFlowing) {
+                        setIsRealVideoFlowing(true);
+                      }
+                    }}
                     className={`w-full h-full object-cover z-10 transition-opacity duration-200 ${
-                      remoteStream && !isDisconnected ? 'opacity-100 block' : 'opacity-0 absolute'
+                      isRealVideoFlowing && remoteStream && !isDisconnected
+                        ? 'opacity-100 block'
+                        : 'opacity-0 absolute pointer-events-none'
                     }`}
                   />
 
                   {/* High-speed Direct Mobile Camera Frame Feed */}
-                  {lastFrame && !remoteStream && !isDisconnected && (
+                  {lastFrame && !isRealVideoFlowing && !isDisconnected && (
                     <img
                       src={lastFrame}
                       alt="Live Mobile Camera Feed"
@@ -851,7 +873,7 @@ export default function AssessmentQRPairingModal({
                   )}
 
                   {/* Connected Overlay Badges */}
-                  {(remoteStream || lastFrame || mobileCameraReady) && !isDisconnected ? (
+                  {(isRealVideoFlowing || lastFrame || (mobileStreamConnected && mobileCameraReady)) && !isDisconnected ? (
                     <>
                       <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-slate-950/80 backdrop-blur border border-slate-700 text-[9px] font-mono text-emerald-400 flex items-center gap-1 z-20 shadow-xs">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />

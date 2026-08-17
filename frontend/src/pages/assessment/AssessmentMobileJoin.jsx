@@ -70,6 +70,7 @@ export default function AssessmentMobileJoin() {
   const streamRef = useRef(null);
   const socketRef = useRef(null);
   const pcRef = useRef(null);
+  const mobileCandidateQueueRef = useRef([]);
   const frameIntervalRef = useRef(null);
 
   // 1. Initial QR Token Validation
@@ -144,9 +145,17 @@ export default function AssessmentMobileJoin() {
 
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => {
-        console.log('[WebRTC Mobile] Adding track to PeerConnection:', track.kind, track.label);
+        console.log('[WebRTC Mobile] Adding track to PeerConnection:', {
+          id: track.id,
+          kind: track.kind,
+          label: track.label,
+          enabled: track.enabled,
+          muted: track.muted,
+          readyState: track.readyState,
+        });
         pc.addTrack(track, streamRef.current);
       });
+      console.log('[WebRTC Mobile] Total active senders:', pc.getSenders().length);
     }
 
     pc.onnegotiationneeded = async () => {
@@ -269,6 +278,17 @@ export default function AssessmentMobileJoin() {
         try {
           await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
           console.log('[WebRTC Mobile] Set remote description successfully');
+
+          // Flush queued candidates
+          if (mobileCandidateQueueRef.current.length > 0) {
+            console.log(`[WebRTC Mobile] Flushing ${mobileCandidateQueueRef.current.length} queued ICE candidates from laptop`);
+            for (const cand of mobileCandidateQueueRef.current) {
+              try {
+                await pcRef.current.addIceCandidate(new RTCIceCandidate(cand));
+              } catch (e) {}
+            }
+            mobileCandidateQueueRef.current = [];
+          }
         } catch (err) {
           console.warn('[AssessmentMobileJoin] setRemoteDescription answer error:', err);
         }
@@ -277,13 +297,18 @@ export default function AssessmentMobileJoin() {
 
     // ICE candidates from laptop
     socket.on('assessment_verif:ice-candidate', async ({ candidate }) => {
-      if (pcRef.current && candidate) {
-        try {
-          if (pcRef.current.remoteDescription && pcRef.current.remoteDescription.type) {
-            await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+      if (candidate) {
+        const pc = pcRef.current;
+        if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            console.log('[WebRTC Mobile] Added ICE candidate from laptop');
+          } catch (err) {
+            console.warn('[AssessmentMobileJoin] addIceCandidate error:', err);
           }
-        } catch (err) {
-          console.warn('[AssessmentMobileJoin] addIceCandidate error:', err);
+        } else {
+          console.log('[WebRTC Mobile] Queuing candidate from laptop before answer SDP is set');
+          mobileCandidateQueueRef.current.push(candidate);
         }
       }
     });
