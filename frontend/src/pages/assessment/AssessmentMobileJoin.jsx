@@ -197,12 +197,12 @@ export default function AssessmentMobileJoin() {
     const ctx = canvas.getContext('2d');
 
     const captureAndEmit = () => {
-      const vid = videoRef.current || captureVideoRef.current;
+      const vid = videoRef.current;
       const socket = socketRef.current;
-      if (vid && socket && socket.connected) {
+      if (vid && vid.videoWidth > 0 && socket && socket.connected) {
         try {
           ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
-          const frame = canvas.toDataURL('image/jpeg', 0.55);
+          const frame = canvas.toDataURL('image/jpeg', 0.6);
           socket.emit('assessment_verif:frame', {
             sessionId: info?.sessionId,
             frame,
@@ -211,8 +211,8 @@ export default function AssessmentMobileJoin() {
       }
     };
 
-    frameIntervalRef.current = setInterval(captureAndEmit, 80);
-    console.log('[AssessmentMobileJoin] Live frame capture relay started (12 fps)');
+    frameIntervalRef.current = setInterval(captureAndEmit, 70);
+    console.log('[AssessmentMobileJoin] Live frame capture relay started (14 fps)');
   }, [info?.sessionId]);
 
   // 2. Setup Socket Connection for real-time synchronization with Laptop
@@ -550,7 +550,23 @@ export default function AssessmentMobileJoin() {
                   autoPlay
                   playsInline
                   muted
-                  onLoadedMetadata={(e) => e.target.play().catch(() => {})}
+                  onLoadedMetadata={(e) => {
+                    e.target.play().catch(() => {});
+                    startFrameCapture();
+                  }}
+                  onPlaying={() => {
+                    startFrameCapture();
+                    if (socketRef.current?.connected) {
+                      console.log('[AssessmentMobileJoin] onPlaying -> emitting mobile_ready and stream_status');
+                      socketRef.current.emit('assessment_verif:mobile_ready', {
+                        sessionId: info?.sessionId,
+                      });
+                      socketRef.current.emit('assessment_verif:stream_status', {
+                        sessionId: info?.sessionId,
+                        streaming: true,
+                      });
+                    }
+                  }}
                   className="w-full h-full object-cover"
                   style={{ transform: 'scaleX(-1)' }}
                 />
