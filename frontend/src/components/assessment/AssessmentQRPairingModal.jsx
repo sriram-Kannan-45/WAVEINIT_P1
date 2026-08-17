@@ -176,26 +176,24 @@ export default function AssessmentQRPairingModal({
     pcRef.current = pc;
 
     pc.ontrack = (event) => {
-      console.log('[LAPTOP] ===== REMOTE TRACK RECEIVED =====');
-      console.log('[LAPTOP] Track:', event.track);
-      console.log('[LAPTOP] Streams:', event.streams);
+      console.log('[LAPTOP-9] ===== ONTRACK FIRED =====');
+      console.log('[LAPTOP-10] REMOTE STREAM', event.streams);
       let stream = event.streams && event.streams[0];
       if (!stream) {
         stream = new MediaStream([event.track]);
       }
-      console.log('[LAPTOP] REMOTE STREAM:', stream);
-      console.log('[LAPTOP] REMOTE TRACKS:', stream.getTracks());
       setRemoteStream(stream);
     };
 
-    pc.onicecandidate = (event) => {
-      if (event.candidate && socketRef.current?.connected) {
-        console.log('[LAPTOP] ICE candidate emitted:', event.candidate.candidate?.slice(0, 35));
+    pc.onicecandidate = ({ candidate }) => {
+      if (!candidate) return;
+      console.log('[LAPTOP] ICE candidate emitted:', candidate.candidate?.slice(0, 35));
+      if (socketRef.current?.connected) {
         const targetSessionId = sessionIdRef.current || sessionData?.sessionId;
         socketRef.current.emit('assessment_verif:ice-candidate', {
           sessionId: targetSessionId,
           targetSocketId: mobileSocketIdRef.current,
-          candidate: event.candidate,
+          candidate,
         });
       }
     };
@@ -231,7 +229,6 @@ export default function AssessmentQRPairingModal({
     if (!currentSessionId) return;
 
     const wsUrl = BACKEND_ORIGIN || window.location.origin;
-    console.log('[LAPTOP] Connecting to socket:', wsUrl, 'sessionId:', currentSessionId);
     const socket = io(wsUrl, {
       auth: { token: activeToken },
       transports: ['websocket', 'polling'],
@@ -240,8 +237,9 @@ export default function AssessmentQRPairingModal({
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('[LAPTOP] sessionId:', currentSessionId);
-      console.log('[LAPTOP] socket.id:', socket.id);
+      console.log('[LAPTOP-1] socket connected', socket.connected);
+      console.log('[LAPTOP-2] socket id', socket.id);
+      console.log('[LAPTOP-3] session id', currentSessionId);
       socket.emit('assessment_verif:join', {
         sessionId: currentSessionId,
         role: 'laptop',
@@ -249,9 +247,8 @@ export default function AssessmentQRPairingModal({
     });
 
     socket.on('assessment_verif:mobile_joined', ({ socketId }) => {
-      console.log('[LAPTOP] mobile_joined received, socketId:', socketId);
+      console.log('[LAPTOP-4] MOBILE JOINED', socketId);
       mobileSocketIdRef.current = socketId;
-      console.log('[LAPTOP] Mobile Socket:', mobileSocketIdRef.current);
       setQrScanned(true);
       setParticipantValidated(true);
       setIsDisconnected(false);
@@ -267,22 +264,21 @@ export default function AssessmentQRPairingModal({
 
     socket.on('assessment_verif:offer', async ({ offer, fromSocketId, sessionId }) => {
       try {
-        console.log('[LAPTOP] RECEIVED OFFER', { sessionId, fromSocketId });
+        console.log('[LAPTOP-5] ===== OFFER RECEIVED =====', fromSocketId);
         mobileSocketIdRef.current = fromSocketId;
         setQrScanned(true);
         setParticipantValidated(true);
         const pc = getOrCreatePeerConnection();
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        console.log('[LAPTOP] Remote description set');
+        console.log('[LAPTOP] REMOTE DESCRIPTION SET');
 
         // Process any queued candidates
         if (candidateQueueRef.current.length > 0) {
-          console.log(`[LAPTOP] Flushing ${candidateQueueRef.current.length} queued ICE candidates`);
           for (const cand of candidateQueueRef.current) {
             try {
               await pc.addIceCandidate(new RTCIceCandidate(cand));
             } catch (e) {
-              console.error('[LAPTOP] addIceCandidate error:', e);
+              console.error('[WEBRTC ERROR]', e);
             }
           }
           candidateQueueRef.current = [];
@@ -290,33 +286,33 @@ export default function AssessmentQRPairingModal({
 
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        console.log('[LAPTOP] ANSWER SENT to socket:', fromSocketId);
+        console.log('[LAPTOP-6] ANSWER CREATED');
 
         const targetSessionId = sessionId || currentSessionId || sessionIdRef.current;
+        console.log('[LAPTOP-7] ANSWER SENT TO', fromSocketId);
         socket.emit('assessment_verif:answer', {
           sessionId: targetSessionId,
           targetSocketId: fromSocketId,
           answer: pc.localDescription,
         });
       } catch (err) {
-        console.error('[LAPTOP] Offer handling error:', err);
+        console.error('[WEBRTC ERROR]', err);
       }
     });
 
     socket.on('assessment_verif:ice-candidate', async ({ candidate }) => {
       try {
-        console.log('[LAPTOP] ICE candidate received');
+        console.log('[LAPTOP-8] ICE RECEIVED', candidate?.candidate?.slice(0, 30));
         const pc = getOrCreatePeerConnection();
         if (pc && candidate) {
           if (pc.remoteDescription && pc.remoteDescription.type) {
             await pc.addIceCandidate(new RTCIceCandidate(candidate));
           } else {
-            console.log('[LAPTOP] Queuing early ICE candidate');
             candidateQueueRef.current.push(candidate);
           }
         }
       } catch (err) {
-        console.error('[LAPTOP] ICE candidate error:', err);
+        console.error('[WEBRTC ERROR]', err);
       }
     });
 
@@ -362,7 +358,11 @@ export default function AssessmentQRPairingModal({
     return () => {
       socket.disconnect();
       if (pcRef.current) {
-        try { pcRef.current.close(); } catch (e) {}
+        try {
+          pcRef.current.close();
+        } catch (e) {
+          console.error('[WEBRTC ERROR]', e);
+        }
         pcRef.current = null;
       }
     };
@@ -375,7 +375,7 @@ export default function AssessmentQRPairingModal({
       return;
     }
 
-    console.log('[LAPTOP] ATTACHING REMOTE STREAM');
+    console.log('[LAPTOP-11] ATTACHING REMOTE STREAM');
     video.srcObject = remoteStream;
     video.muted = true;
     video.autoplay = true;
@@ -386,15 +386,14 @@ export default function AssessmentQRPairingModal({
     };
 
     video.onplaying = () => {
-      console.log('[LAPTOP] ===== REAL VIDEO PLAYING =====');
-      console.log('[LAPTOP] SIZE:', video.videoWidth, video.videoHeight);
+      console.log('[LAPTOP-12] ===== VIDEO PLAYING =====', video.videoWidth, video.videoHeight);
       if (video.videoWidth > 0 && video.videoHeight > 0) {
         setRemoteVideoReady(true);
       }
     };
 
     video.play().catch((error) => {
-      console.error('[LAPTOP] VIDEO PLAY ERROR', error);
+      console.error('[WEBRTC ERROR] VIDEO PLAY ERROR', error);
     });
   }, [remoteStream]);
 

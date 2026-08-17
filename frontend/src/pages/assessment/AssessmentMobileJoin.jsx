@@ -123,37 +123,48 @@ export default function AssessmentMobileJoin() {
       return;
     }
 
+    if (!target) {
+      console.log('[MOBILE] Laptop socket missing, waiting for laptop_joined');
+      return;
+    }
+
     try {
       if (pcRef.current) {
-        try { pcRef.current.close(); } catch (e) {}
+        try {
+          pcRef.current.close();
+        } catch (e) {
+          console.error('[WEBRTC ERROR]', e);
+        }
         pcRef.current = null;
       }
 
-      console.log('[MOBILE] Initializing RTCPeerConnection for target laptop socket:', target || 'room');
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      console.log('[MOBILE-7] PEER CREATED');
+      const pc = new RTCPeerConnection({
+        iceServers: ICE_SERVERS,
+      });
       pcRef.current = pc;
 
       // Add every live camera track
       streamRef.current.getVideoTracks().forEach((track) => {
-        console.log('[MOBILE] camera track readyState:', track.readyState, 'kind:', track.kind);
         pc.addTrack(track, streamRef.current);
       });
 
-      console.log('[MOBILE] SENDERS:', pc.getSenders());
+      console.log('[MOBILE-8] SENDERS', pc.getSenders());
 
-      pc.onicecandidate = (event) => {
-        if (event.candidate && socketRef.current?.connected) {
-          console.log('[MOBILE] ICE candidate emitted:', event.candidate.candidate?.slice(0, 35));
+      pc.onicecandidate = ({ candidate }) => {
+        if (!candidate) return;
+        console.log('[MOBILE] ICE SEND');
+        if (socketRef.current?.connected) {
           socketRef.current.emit('assessment_verif:ice-candidate', {
             sessionId: info.sessionId,
-            targetSocketId: target || laptopSocketIdRef.current,
-            candidate: event.candidate,
+            targetSocketId: laptopSocketIdRef.current || target,
+            candidate,
           });
         }
       };
 
       pc.onconnectionstatechange = () => {
-        console.log('[MOBILE] peer connection state:', pc.connectionState);
+        console.log('[MOBILE] CONNECTION STATE', pc.connectionState);
         if (pc.connectionState === 'connected') {
           setPeerConnected(true);
         } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
@@ -162,26 +173,27 @@ export default function AssessmentMobileJoin() {
       };
 
       pc.oniceconnectionstatechange = () => {
-        console.log('[MOBILE] ICE connection state:', pc.iceConnectionState);
+        console.log('[MOBILE] ICE STATE', pc.iceConnectionState);
       };
 
       pc.onsignalingstatechange = () => {
         console.log('[MOBILE] signalingState:', pc.signalingState);
       };
 
+      console.log('[MOBILE-9] CREATING OFFER');
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      console.log('[MOBILE] offer created');
+      console.log('[MOBILE-10] OFFER CREATED');
 
-      console.log('[MOBILE] Sending offer to:', target || laptopSocketIdRef.current || 'room');
+      console.log('[MOBILE-11] SENDING OFFER TO', laptopSocketIdRef.current || target);
+      console.log('[MOBILE] OFFER SEND');
       socketRef.current.emit('assessment_verif:offer', {
         sessionId: info.sessionId,
-        targetSocketId: target || laptopSocketIdRef.current,
+        targetSocketId: laptopSocketIdRef.current || target,
         offer: pc.localDescription,
       });
-      console.log('[MOBILE] offer emitted');
     } catch (err) {
-      console.error('[MOBILE] startWebRTCOffer error:', err);
+      console.error('[WEBRTC ERROR]', err);
     }
   }, [info?.sessionId]);
 
@@ -207,12 +219,13 @@ export default function AssessmentMobileJoin() {
             sessionId: info?.sessionId,
             frame,
           });
-        } catch (e) {}
+        } catch (e) {
+          console.error('[WEBRTC ERROR]', e);
+        }
       }
     };
 
     frameIntervalRef.current = setInterval(captureAndEmit, 100);
-    console.log(`[AssessmentMobileJoin] Frame capture relay active (10 fps)`);
   }, [info?.sessionId]);
 
   // 2. Setup Socket Connection for real-time synchronization with Laptop (Stable lifecycle)
@@ -223,7 +236,6 @@ export default function AssessmentMobileJoin() {
     if (!sessionId || !socketToken) return;
 
     const wsUrl = BACKEND_ORIGIN || window.location.origin;
-    console.log('[MOBILE] Connecting to socket:', wsUrl, 'sessionId:', sessionId);
     const socket = io(wsUrl, {
       auth: { token: socketToken },
       transports: ['websocket', 'polling'],
@@ -232,18 +244,21 @@ export default function AssessmentMobileJoin() {
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('[MOBILE] socket.id:', socket.id);
-      console.log('[MOBILE] socket.connected:', socket.connected);
-      console.log('[MOBILE] sessionId:', sessionId);
+      console.log('[MOBILE-1] socket connected', socket.connected);
+      console.log('[MOBILE-2] socket id', socket.id);
+      console.log('[MOBILE-3] session id', sessionId);
+      console.log('[MOBILE-4] laptop socket id', laptopSocketIdRef.current);
       setSocketConnected(true);
       socket.emit('assessment_verif:join', {
         sessionId,
         role: 'mobile_camera',
       });
 
-      // If camera stream is already live, immediately negotiate WebRTC and start frames
-      if (streamRef.current) {
+      // If camera stream is already live and laptop is known, start WebRTC
+      if (streamRef.current && laptopSocketIdRef.current) {
         startWebRTCOffer(laptopSocketIdRef.current);
+      }
+      if (streamRef.current) {
         startFrameCapture();
       }
     });
@@ -256,9 +271,9 @@ export default function AssessmentMobileJoin() {
 
     // Laptop joined room → store socket ID & start negotiation if camera is active
     socket.on('assessment_verif:laptop_joined', ({ socketId }) => {
-      console.log('[MOBILE] Laptop joined:', socketId);
+      console.log('[MOBILE] LAPTOP JOINED', socketId);
       laptopSocketIdRef.current = socketId;
-      console.log('[MOBILE] Laptop Socket:', laptopSocketIdRef.current);
+      console.log('[MOBILE-4] laptop socket id', laptopSocketIdRef.current);
       if (streamRef.current) {
         startWebRTCOffer(socketId);
         startFrameCapture();
@@ -275,18 +290,17 @@ export default function AssessmentMobileJoin() {
 
           // Flush queued candidates
           if (mobileCandidateQueueRef.current.length > 0) {
-            console.log(`[MOBILE] Flushing ${mobileCandidateQueueRef.current.length} queued ICE candidates from laptop`);
             for (const cand of mobileCandidateQueueRef.current) {
               try {
                 await pcRef.current.addIceCandidate(new RTCIceCandidate(cand));
               } catch (e) {
-                console.error('[MOBILE] addIceCandidate error:', e);
+                console.error('[WEBRTC ERROR]', e);
               }
             }
             mobileCandidateQueueRef.current = [];
           }
         } catch (err) {
-          console.error('[MOBILE] setRemoteDescription answer error:', err);
+          console.error('[WEBRTC ERROR]', err);
         }
       }
     });
@@ -301,10 +315,9 @@ export default function AssessmentMobileJoin() {
             await pc.addIceCandidate(new RTCIceCandidate(candidate));
             console.log('[MOBILE] Added ICE candidate from laptop');
           } catch (err) {
-            console.error('[MOBILE] addIceCandidate error:', err);
+            console.error('[WEBRTC ERROR]', err);
           }
         } else {
-          console.log('[MOBILE] Queuing candidate from laptop before answer SDP is set');
           mobileCandidateQueueRef.current.push(candidate);
         }
       }
@@ -313,7 +326,11 @@ export default function AssessmentMobileJoin() {
     return () => {
       socket.disconnect();
       if (pcRef.current) {
-        try { pcRef.current.close(); } catch (e) {}
+        try {
+          pcRef.current.close();
+        } catch (e) {
+          console.error('[WEBRTC ERROR]', e);
+        }
       }
     };
   }, [sessionId, socketToken, startWebRTCOffer, startFrameCapture]);
@@ -336,19 +353,15 @@ export default function AssessmentMobileJoin() {
         audio: false,
       });
 
-      const videoTracks = stream.getVideoTracks();
-      if (videoTracks.length === 0 || videoTracks[0].readyState !== 'live') {
-        throw new Error('No live video track available from mobile camera.');
-      }
-
-      console.log('[MOBILE] camera track readyState:', videoTracks[0].readyState, 'id:', videoTracks[0].id);
+      console.log('[MOBILE-5] CAMERA STREAM CREATED');
+      console.log('[MOBILE-6] VIDEO TRACK', stream.getVideoTracks()[0]);
 
       streamRef.current = stream;
       setCameraActive(true);
       setPhase(PHASE.STREAMING);
 
-      // Start WebRTC Peer Connection if socket is connected
-      if (socketRef.current?.connected) {
+      // Start WebRTC Peer Connection if laptop socket is already known
+      if (socketRef.current?.connected && laptopSocketIdRef.current) {
         startWebRTCOffer(laptopSocketIdRef.current);
       }
 
@@ -366,9 +379,9 @@ export default function AssessmentMobileJoin() {
             timestamp: new Date().toISOString(),
           },
         }),
-      }).catch((err) => console.warn('[AssessmentMobileJoin] HTTP notify error:', err));
+      }).catch((err) => console.error('[WEBRTC ERROR]', err));
     } catch (err) {
-      console.error('[AssessmentMobileJoin] Camera permission error:', err);
+      console.error('[WEBRTC ERROR]', err);
       setError(
         err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError'
           ? 'Camera permission was denied. Please allow camera access in your mobile browser settings.'
