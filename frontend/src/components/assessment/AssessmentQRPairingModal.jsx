@@ -357,7 +357,7 @@ export default function AssessmentQRPairingModal({
         pcRef.current = null;
       }
     };
-  }, [sessionData?.sessionId, activeToken, getOrCreatePeerConnection]);
+  }, [sessionData?.sessionId, activeToken]);
 
   // Video attachment & actual playback trigger
   useEffect(() => {
