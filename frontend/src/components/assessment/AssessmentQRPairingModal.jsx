@@ -2,17 +2,9 @@
  * AssessmentQRPairingModal.jsx
  * ─────────────────────────────────────────────────────────────────────────────
  * WAVE INIT LMS — AI Quiz / Coding Assessment Verification Modal
- * Exactly matches the target reference screenshot (Image 2):
- * - Max width: 780px (compact, balanced proportions)
- * - Header: Solid WAVE INIT green (#056d53)
- * - Token expired alert with Refresh QR action
- * - Left column: Mobile verification, 155px QR code, timer pill, Session ID
- * - Right column: Compact status checklist & dark navy camera preview
- * - Bottom: Locked banner, LOCKED badge, Start / Resume Quiz button, footer subtext
- * - Preserves all WebSocket, WebRTC, QR generation, polling, and attempt continuation.
+ * Pixel-perfect SaaS assessment verification matching the target reference UI.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { motion } from 'framer-motion';
 import { QRCodeSVG } from 'qrcode.react';
 import { io } from 'socket.io-client';
 import {
@@ -36,6 +28,7 @@ import {
 } from 'lucide-react';
 import { API_BASE, BACKEND_ORIGIN } from '../../api/api';
 import { buildAssessmentMobileUrl } from '../../utils/assessmentPairingUrl';
+import '../../styles/assessment-verification.css';
 
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -55,7 +48,6 @@ export default function AssessmentQRPairingModal({
   onVerified,
   onCancel,
 }) {
-  // ── Session & Verification State ──────────────────────────────────────────
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [sessionData, setSessionData] = useState(null);
@@ -90,7 +82,7 @@ export default function AssessmentQRPairingModal({
       ? localStorage.getItem('token') || sessionStorage.getItem('token')
       : null);
 
-  // ── 1. Initiate Verification Session ──────────────────────────────────────
+  // 1. Initiate Verification Session
   const initiateSession = useCallback(async () => {
     try {
       setLoading(true);
@@ -136,7 +128,7 @@ export default function AssessmentQRPairingModal({
     initiateSession();
   }, [initiateSession]);
 
-  // ── 2. Real-time Countdown Timer ──────────────────────────────────────────
+  // 2. Real-time Countdown Timer
   useEffect(() => {
     if (!sessionData?.expiresAt) return;
     const target = new Date(sessionData.expiresAt).getTime();
@@ -153,7 +145,7 @@ export default function AssessmentQRPairingModal({
 
   const isExpired = (timeLeft <= 0 && !loading && sessionData) || sessionData?.status === 'EXPIRED';
 
-  // ── 3. WebRTC Peer Connection (Receiver / Laptop) ─────────────────────────
+  // 3. WebRTC Peer Connection
   const getOrCreatePeerConnection = useCallback(() => {
     if (pcRef.current) return pcRef.current;
 
@@ -205,7 +197,7 @@ export default function AssessmentQRPairingModal({
     return pc;
   }, [sessionData?.sessionId]);
 
-  // ── 4. Socket.IO Synchronization ──────────────────────────────────────────
+  // 4. Socket.IO Synchronization
   useEffect(() => {
     if (!sessionData?.sessionId) return;
 
@@ -246,7 +238,7 @@ export default function AssessmentQRPairingModal({
           answer: pc.localDescription,
         });
       } catch (err) {
-        console.warn('[AssessmentVerification] Offer handling warn:', err);
+        console.warn('[AssessmentVerification] Offer handling error:', err);
       }
     });
 
@@ -261,7 +253,6 @@ export default function AssessmentQRPairingModal({
       }
     });
 
-    // Fallback frame receiver (canvas stream)
     socket.on('assessment_verif:frame', ({ frame }) => {
       if (frame && canvasRef.current) {
         const canvas = canvasRef.current;
@@ -311,7 +302,7 @@ export default function AssessmentQRPairingModal({
     };
   }, [sessionData?.sessionId, activeToken, getOrCreatePeerConnection]);
 
-  // ── 5. Polling Fallback ───────────────────────────────────────────────────
+  // 5. Polling Fallback
   useEffect(() => {
     if (!sessionData?.sessionId || isFullyVerified) return;
 
@@ -356,7 +347,7 @@ export default function AssessmentQRPairingModal({
     }
   }, [remoteStream, mobileCameraReady]);
 
-  // ── 6. Refresh QR Helper ──────────────────────────────────────────────────
+  // 6. Refresh QR Helper
   const handleRefreshQr = async () => {
     if (!sessionData?.sessionId || refreshing) return;
     try {
@@ -392,7 +383,7 @@ export default function AssessmentQRPairingModal({
     }
   };
 
-  // ── 7. Copy Helpers ───────────────────────────────────────────────────────
+  // 7. Copy Helpers
   const handleCopySessionId = () => {
     if (!sessionData?.sessionId) return;
     navigator.clipboard?.writeText(sessionData.sessionId);
@@ -400,7 +391,7 @@ export default function AssessmentQRPairingModal({
     setTimeout(() => setCopiedSessionId(false), 2000);
   };
 
-  // ── 8. Fullscreen Video Helper ────────────────────────────────────────────
+  // 8. Fullscreen Video Helper
   const toggleFullscreenVideo = () => {
     if (!previewContainerRef.current) return;
     if (!document.fullscreenElement) {
@@ -420,7 +411,7 @@ export default function AssessmentQRPairingModal({
     return () => document.removeEventListener('fullscreenchange', handleFsChange);
   }, []);
 
-  // ── 9. Start / Resume Quiz Action ─────────────────────────────────────────
+  // 9. Start / Resume Quiz Action
   const handleStartAssessment = async () => {
     try {
       setVerifyingStart(true);
@@ -464,16 +455,10 @@ export default function AssessmentQRPairingModal({
   const canStart = allChecksPassed && !isExpired;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/75 backdrop-blur-xs font-sans">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.98, y: 6 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.98 }}
-        transition={{ duration: 0.15 }}
-        className="w-full max-w-[780px] bg-white rounded-[18px] shadow-2xl border border-slate-200/90 overflow-hidden flex flex-col max-h-[calc(100vh-24px)]"
-      >
-        {/* ── 1. HEADER (WAVE INIT GREEN) ── */}
-        <div className="px-5 py-3 bg-[#056d53] text-white flex items-center justify-between shrink-0">
+    <div className="wi-verif-overlay">
+      <div className="wi-verif-card">
+        {/* ── 1. HEADER ── */}
+        <div className="wi-verif-header">
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-white/15 border border-white/20 flex items-center justify-center text-white shadow-xs">
               <Shield size={16} className="text-white" />
@@ -499,8 +484,8 @@ export default function AssessmentQRPairingModal({
           )}
         </div>
 
-        {/* ── 2. MODAL BODY (SCROLLABLE) ── */}
-        <div className="p-3.5 sm:p-4 overflow-y-auto space-y-2.5">
+        {/* ── 2. MODAL BODY ── */}
+        <div className="wi-verif-body">
           {/* Assessment Identity */}
           <div className="text-center pt-0 pb-0.5 space-y-0.5">
             <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none">
@@ -821,7 +806,7 @@ export default function AssessmentQRPairingModal({
                       <Loader2 size={13} className="animate-spin text-emerald-400 mt-0.5" />
                     </div>
                   ) : (
-                    /* Waiting Empty State matching reference (Image 2) */
+                    /* Waiting Empty State matching reference */
                     <div className="p-3 flex flex-col items-center justify-center text-center space-y-1">
                       <div className="w-9 h-9 rounded-full border border-dashed border-emerald-500/40 bg-emerald-500/10 flex items-center justify-center text-emerald-400 mx-auto mb-0.5">
                         <Smartphone size={16} />
@@ -854,7 +839,7 @@ export default function AssessmentQRPairingModal({
             </div>
           </div>
 
-          {/* ── 5. FOOTER ACTION BAR (LOCKED + START / RESUME) ── */}
+          {/* ── 5. FOOTER ACTION BAR ── */}
           <div className="flex items-center justify-between pt-0.5 gap-2">
             <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-slate-600 font-bold text-[10px]">
               <Lock size={11} className="text-slate-500" />
@@ -889,7 +874,7 @@ export default function AssessmentQRPairingModal({
             Complete all verification steps to unlock.
           </div>
         </div>
-      </motion.div>
+      </div>
     </div>
   );
 }
