@@ -391,7 +391,6 @@ function ParticipantCodingAttemptInner({ user }) {
         userToken={user?.token}
         onVerified={() => {
           setQrVerified(true);
-          setConsented(true);
         }}
         onCancel={() => navigate(`/trainings/${trainingId}`)}
       />

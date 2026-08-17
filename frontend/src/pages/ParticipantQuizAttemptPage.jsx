@@ -295,7 +295,6 @@ function ParticipantQuizAttemptPageInner({ user }) {
         userToken={user?.token}
         onVerified={() => {
           setQrVerified(true);
-          setConsented(true);
         }}
         onCancel={() => navigate('/participant')}
       />
