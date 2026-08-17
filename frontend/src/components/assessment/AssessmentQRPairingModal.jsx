@@ -780,23 +780,25 @@ export default function AssessmentQRPairingModal({
                     onPlaying={() => setIsVideoPlaying(true)}
                     onLoadedData={() => setIsVideoPlaying(true)}
                     className={`w-full h-full object-cover transition-opacity duration-200 ${
-                      isVideoPlaying && remoteStream && mobileCameraReady && !isDisconnected
+                      remoteStream && isVideoPlaying && !isDisconnected
                         ? 'opacity-100 block z-10'
                         : 'opacity-0 absolute hidden'
                     }`}
                   />
 
                   {/* High-speed Direct Mobile Camera Frame Feed */}
-                  {(!isVideoPlaying || !remoteStream) && lastFrame && mobileCameraReady && !isDisconnected && (
+                  {lastFrame && !isDisconnected && (
                     <img
                       src={lastFrame}
                       alt="Live Mobile Camera Feed"
-                      className="w-full h-full object-cover block z-10"
+                      className={`w-full h-full object-cover block ${
+                        remoteStream && isVideoPlaying ? 'opacity-0 absolute hidden' : 'opacity-100 z-10'
+                      }`}
                     />
                   )}
 
                   {/* Connected Overlay Badges */}
-                  {(isVideoPlaying || lastFrame || mobileCameraReady) && !isDisconnected ? (
+                  {(remoteStream || lastFrame || mobileCameraReady) && !isDisconnected ? (
                     <>
                       <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-slate-950/80 backdrop-blur border border-slate-700 text-[9px] font-mono text-emerald-400 flex items-center gap-1 z-20 shadow-xs">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />

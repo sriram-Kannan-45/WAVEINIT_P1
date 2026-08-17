@@ -238,14 +238,17 @@ export default function AssessmentMobileJoin() {
 
     const captureAndEmit = () => {
       const vid = videoRef.current;
-      if (vid && vid.videoWidth > 0 && socketRef.current?.connected) {
+      const socket = socketRef.current;
+      if (vid && socket && socket.connected) {
         try {
-          ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
-          const frame = canvas.toDataURL('image/jpeg', 0.6);
-          socketRef.current.emit('assessment_verif:frame', {
-            sessionId: info?.sessionId,
-            frame,
-          });
+          if (vid.readyState >= 2 || vid.videoWidth > 0) {
+            ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+            const frame = canvas.toDataURL('image/jpeg', 0.55);
+            socket.emit('assessment_verif:frame', {
+              sessionId: info?.sessionId,
+              frame,
+            });
+          }
         } catch (e) {}
       }
     };
