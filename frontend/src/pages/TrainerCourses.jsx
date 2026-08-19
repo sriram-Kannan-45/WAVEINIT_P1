@@ -798,7 +798,7 @@ function CourseDetail({ user, courseId, onBack }) {
           {tab === 'lessons' && <LessonsTab user={user} courseId={courseId} onCountChange={fetchCourse} setParentTab={setTab} />}
           {tab === 'quizzes' && <CourseQuizzesTab user={user} courseId={courseId} onCountChange={fetchCourse} />}
           {tab === 'coding' && <CourseCodingTab user={user} courseId={courseId} onCountChange={fetchCourse} />}
-          {tab === 'participants' && <CourseParticipantsTab user={user} courseId={courseId} />}
+          {tab === 'participants' && <CourseParticipantsTab user={user} courseId={courseId} course={course} />}
           {tab === 'analytics' && <CourseAnalyticsTab user={user} courseId={courseId} />}
           {tab === 'discussions' && <DiscussionBoard user={user} trainingId={course.trainingProgramId} />}
         </motion.div>

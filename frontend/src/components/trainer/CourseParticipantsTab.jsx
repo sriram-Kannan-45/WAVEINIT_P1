@@ -242,16 +242,17 @@ function sortParticipants(participants, sortConfig) {
   })
 }
 
-function ProgressBar({ value, color = '#0d9488' }) {
+function ProgressBar({ value, color = '#16A34A' }) {
+  const clamped = Math.min(Math.max(value || 0, 0), 100)
   return (
-    <div style={{
-      width: '100%', height: 6, background: '#f1f5f9',
-      borderRadius: 999, overflow: 'hidden', minWidth: 60,
-    }}>
-      <div style={{
-        width: `${Math.min(value, 100)}%`, height: '100%',
-        background: color, borderRadius: 999, transition: 'width 0.3s',
-      }} />
+    <div className="cpt-prog-track">
+      <div
+        className="cpt-prog-fill"
+        style={{
+          width: `${clamped}%`,
+          background: clamped >= 100 ? '#16A34A' : clamped > 0 ? color : 'transparent',
+        }}
+      />
     </div>
   )
 }
@@ -261,18 +262,26 @@ function initials(name = '') {
 }
 
 function StatusBadge({ status }) {
+  const norm = (status || 'ENROLLED').toUpperCase()
   const map = {
-    COMPLETED:    { bg: '#dcfce7', fg: '#15803d', label: 'Completed' },
-    IN_PROGRESS:  { bg: '#dbeafe', fg: '#1d4ed8', label: 'In Progress' },
-    NOT_STARTED:  { bg: '#f1f5f9', fg: '#475569', label: 'Not Started' },
-    DISQUALIFIED: { bg: '#fee2e2', fg: '#dc2626', label: 'Disqualified' },
-    RESULT_PUBLISHED: { bg: '#dbeafe', fg: '#1d4ed8', label: 'Result Published' },
+    ENROLLED:         { bg: '#EAF8F0', fg: '#16A34A', border: '#BBF7D0', label: 'Enrolled' },
+    COMPLETED:        { bg: '#DCFCE7', fg: '#15803D', border: '#86EFAC', label: 'Completed' },
+    IN_PROGRESS:      { bg: '#EFF6FF', fg: '#2563EB', border: '#BFDBFE', label: 'In Progress' },
+    NOT_STARTED:      { bg: '#F8FAFC', fg: '#64748B', border: '#E2E8F0', label: 'Not Started' },
+    DISQUALIFIED:     { bg: '#FEF2F2', fg: '#DC2626', border: '#FECACA', label: 'Disqualified' },
+    RESULT_PUBLISHED: { bg: '#F5F3FF', fg: '#7C3AED', border: '#DDD6FE', label: 'Result Published' },
   }
-  const s = map[status] || { bg: '#f1f5f9', fg: '#475569', label: status || '—' }
+  const s = map[norm] || { bg: '#EAF8F0', fg: '#16A34A', border: '#BBF7D0', label: status || 'Enrolled' }
   return (
-    <span className="reg-admin-status" style={{
-      background: s.bg, color: s.fg, padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600,
-    }}>
+    <span
+      className="cpt-badge"
+      style={{
+        backgroundColor: s.bg,
+        color: s.fg,
+        borderColor: s.border,
+      }}
+    >
+      <span className="cpt-badge-dot" style={{ backgroundColor: s.fg }} />
       {s.label}
     </span>
   )
@@ -729,7 +738,7 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
                         onClick={() => setDetail(p)}
                         title="View details"
                       >
-                        <Eye size={13} />
+                        <Eye size={15} />
                       </button>
                     </td>
                   </tr>
