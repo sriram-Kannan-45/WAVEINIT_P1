@@ -35,6 +35,7 @@ function statusColor(status) {
 
 export default function ParticipantMonitorCard({
   session,
+  yoloData,
   onTerminate,
   onObserve,
   onUnobserve,
@@ -49,6 +50,8 @@ export default function ParticipantMonitorCard({
   const liveDanger = session.warningsCount >= maxW - 1 || session.fullscreenExits >= maxFS - 1;
   const isDisconnected = !!session.disconnectedAt && !!session.gracePeriodEndsAt;
   const isGraceExpired = isDisconnected && new Date(session.gracePeriodEndsAt) < new Date();
+
+  const yolo = yoloData || session.yoloMonitoring;
 
   const videoRef = useRef(null);
 
@@ -111,6 +114,37 @@ export default function ParticipantMonitorCard({
         <StatusDot ok={session.isScreenSharing} label="Share" />
         {isObserved && <StatusDot ok label="Live" />}
       </div>
+
+      {/* Live YOLOv8 Proctoring Status Widget */}
+      {yolo && (
+        <div className="mt-3 rounded-lg border border-slate-200/80 bg-slate-50/80 p-2.5 text-[11px] space-y-1">
+          <div className="flex items-center justify-between text-slate-700 font-medium">
+            <span className="flex items-center gap-1 text-[10px] font-semibold text-blue-600 uppercase tracking-wider">
+              <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-ping" />
+              YOLOv8 {yolo.cameraSource === 'MOBILE_CAMERA' ? 'Mobile' : 'PC Cam'}
+            </span>
+            <span className="text-[10px] text-slate-400">
+              {yolo.timestamp ? new Date(yolo.timestamp).toLocaleTimeString() : 'Active'}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500">Detection:</span>
+            <span className={`font-semibold px-1.5 py-0.5 rounded text-[10px] ${
+              yolo.eventType === 'PHONE_DETECTED' || yolo.eventType === 'MULTIPLE_PERSONS_DETECTED'
+                ? 'bg-red-100 text-red-700'
+                : yolo.eventType === 'NO_PERSON_DETECTED'
+                ? 'bg-amber-100 text-amber-700'
+                : 'bg-emerald-100 text-emerald-700'
+            }`}>
+              {yolo.eventType.replace(/_/g, ' ')}
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-slate-500">
+            <span>Confidence:</span>
+            <span className="font-medium text-slate-700">{(yolo.confidence * 100).toFixed(0)}%</span>
+          </div>
+        </div>
+      )}
 
       {/* meters */}
       <div className="mt-3 space-y-2">

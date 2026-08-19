@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { AlertCircle, LogIn, Eye, EyeOff, Mail, Shield, BookOpen, GraduationCap, ArrowRight } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { Eye, EyeOff, Mail, Shield, BookOpen, GraduationCap, ArrowRight } from 'lucide-react';
 import { API } from '../api/api';
 import { useToast } from '../components/Toast';
 import AuthLayout from '../components/auth/AuthLayout';
@@ -10,28 +9,27 @@ import RoleSelector from '../components/auth/RoleSelector';
 import AuthButton from '../components/auth/AuthButton';
 
 const ROLES = [
-  { id: 'ADMIN', label: 'Admin', icon: Shield, placeholder: 'Enter admin email or username' },
-  { id: 'TRAINER', label: 'Trainer', icon: BookOpen, placeholder: 'Enter trainer email or username' },
-  { id: 'PARTICIPANT', label: 'Learner', icon: GraduationCap, placeholder: 'Enter learner email or username' },
+  { id: 'ADMIN', label: 'Admin', icon: Shield, placeholder: 'admin@test.com' },
+  { id: 'TRAINER', label: 'Trainer', icon: BookOpen, placeholder: 'trainer@test.com' },
+  { id: 'PARTICIPANT', label: 'Learner', icon: GraduationCap, placeholder: 'learner@test.com' },
 ];
 
 export default function Login({ onLogin, defaultRole }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { success: showSuccess, warning: showWarning } = useToast();
+  const { success: showSuccess, warning: showWarning, error: showError } = useToast();
 
   const [form, setForm] = useState(() => {
-    const lastRole = localStorage.getItem('lastRole') || 'PARTICIPANT';
+    const lastRole = localStorage.getItem('lastRole') || 'ADMIN';
     const stateRole = location.state?.fromRole;
     return { email: '', password: '', role: defaultRole || stateRole || lastRole };
   });
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
-  const [error, setError] = useState('');
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
-  const activeRole = ROLES.find(r => r.id === form.role) || ROLES[2];
+  const activeRole = ROLES.find(r => r.id === form.role) || ROLES[0];
 
   useEffect(() => {
     const prev = { html: document.documentElement.style.overflow, body: document.body.style.overflow };
@@ -42,7 +40,10 @@ export default function Login({ onLogin, defaultRole }) {
       setForm(p => ({ ...p, email }));
       setRememberMe(true);
     }
-    return () => { document.documentElement.style.overflow = prev.html; document.body.style.overflow = prev.body; };
+    return () => { 
+      document.documentElement.style.overflow = prev.html; 
+      document.body.style.overflow = prev.body; 
+    };
   }, []);
 
   useEffect(() => {
@@ -51,14 +52,21 @@ export default function Login({ onLogin, defaultRole }) {
   }, [defaultRole, location.state?.fromRole]);
 
   useEffect(() => {
-    if (location.state?.message) showSuccess(location.state.message);
+    if (location.state?.message) {
+      showSuccess(location.state.message);
+    }
   }, [location.state, showSuccess]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError('');
-    if (!form.email) return setError('Username or Email is required');
-    if (!form.password) return setError('Password is required');
+    if (!form.email) {
+      showError('Username or Email is required');
+      return;
+    }
+    if (!form.password) {
+      showError('Password is required');
+      return;
+    }
 
     setLoading(true);
     try {
@@ -68,8 +76,14 @@ export default function Login({ onLogin, defaultRole }) {
         body: JSON.stringify(form),
       });
       let data;
-      try { data = await res.json(); } catch { throw new Error('Server error or unavailable. Please try again.'); }
-      if (!res.ok) throw new Error(data.error || 'Login failed');
+      try { 
+        data = await res.json(); 
+      } catch { 
+        throw new Error('Server error or unavailable. Please try again.'); 
+      }
+      if (!res.ok) {
+        throw new Error(data.error || 'Invalid email or password');
+      }
 
       localStorage.setItem('user', JSON.stringify(data));
       localStorage.setItem('lastRole', form.role);
@@ -80,7 +94,9 @@ export default function Login({ onLogin, defaultRole }) {
         localStorage.removeItem('rememberMe');
         localStorage.removeItem('rememberedEmail');
       }
+      
       onLogin(data);
+      showSuccess('Welcome back!', 'You have signed in successfully.');
 
       if (data.forcePasswordChange) {
         navigate('/forgot-password', { replace: true });
@@ -97,7 +113,10 @@ export default function Login({ onLogin, defaultRole }) {
       else if (role === 'participant') navigate('/participant', { replace: true });
       else navigate('/', { replace: true });
     } catch (err) {
-      setError(err.message === 'Failed to fetch' ? 'Cannot connect to server.' : err.message);
+      const errorMsg = err.message === 'Failed to fetch' 
+        ? 'Cannot connect to server.' 
+        : (err.message || 'Invalid email or password');
+      showError(errorMsg);
     } finally {
       setLoading(false);
     }
@@ -120,18 +139,8 @@ export default function Login({ onLogin, defaultRole }) {
             onRoleChange={(id) => {
               setForm(p => ({ ...p, role: id }));
               localStorage.setItem('lastRole', id);
-              setError('');
             }}
           />
-
-          <div className="login-error-container">
-            {error ? (
-              <div className="auth-error" role="alert">
-                <AlertCircle className="auth-error-icon" size={16} />
-                <span className="auth-error-text">{error}</span>
-              </div>
-            ) : null}
-          </div>
 
           <form onSubmit={handleSubmit} autoComplete="on" className="auth-form-body">
             <div className="auth-form-group">
@@ -139,7 +148,7 @@ export default function Login({ onLogin, defaultRole }) {
               <div className="auth-input-wrapper">
                 <input
                   id="login-email"
-                  className="auth-form-input"
+                  className="auth-form-input auth-form-input--has-icon-right"
                   type="text"
                   value={form.email}
                   onChange={e => set('email', e.target.value)}
@@ -147,11 +156,9 @@ export default function Login({ onLogin, defaultRole }) {
                   autoComplete="username"
                   required
                 />
-                {form.email && (
-                  <span className="auth-input-icon" style={{ pointerEvents: 'none' }}>
-                    <Mail size={18} />
-                  </span>
-                )}
+                <span className="auth-input-icon" style={{ pointerEvents: 'none' }}>
+                  <Mail size={18} />
+                </span>
               </div>
             </div>
 
@@ -160,11 +167,11 @@ export default function Login({ onLogin, defaultRole }) {
               <div className="auth-input-wrapper">
                 <input
                   id="login-password"
-                  className="auth-form-input"
+                  className="auth-form-input auth-form-input--has-icon-right"
                   type={showPassword ? 'text' : 'password'}
                   value={form.password}
                   onChange={e => set('password', e.target.value)}
-                  placeholder="Enter your password"
+                  placeholder="••••••••"
                   autoComplete="current-password"
                   required
                 />
@@ -203,25 +210,24 @@ export default function Login({ onLogin, defaultRole }) {
               ) : (
                 <>
                   <span>Sign in as {activeRole.label}</span>
-                  <LogIn size={18} />
+                  <ArrowRight size={18} />
                 </>
               )}
             </AuthButton>
           </form>
 
-          <div
-            className="auth-card-footer"
-            style={{ visibility: form.role === 'PARTICIPANT' ? 'visible' : 'hidden' }}
-          >
-            Don&apos;t have an account?{' '}
-            <button
-              type="button"
-              style={{ background: 'none', border: 'none', color: '#16a34a', fontWeight: 600, cursor: 'pointer', padding: 0, fontSize: 13, fontFamily: 'inherit' }}
-              onClick={() => navigate('/register')}
-            >
-              Create one
-            </button>
-          </div>
+          {form.role === 'PARTICIPANT' && (
+            <div className="auth-card-footer">
+              <span>Don&apos;t have an account?</span>
+              <button
+                type="button"
+                className="auth-register-link"
+                onClick={() => navigate('/register')}
+              >
+                Create one
+              </button>
+            </div>
+          )}
         </div>
       </AuthCard>
     </div>

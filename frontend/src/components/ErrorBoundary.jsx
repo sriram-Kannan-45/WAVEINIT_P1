@@ -15,6 +15,23 @@ class ErrorBoundaryClass extends React.Component {
   componentDidCatch(error, errorInfo) {
     const errorId = this.state.errorId || `ERR-${Math.random().toString(36).substring(2, 9).toUpperCase()}`
     console.error(`[LMS Error ID: ${errorId}] caught an error:`, error, errorInfo)
+
+    // Auto-recover from dynamic import chunk load failures caused by Vite HMR or new build hashes
+    const isChunkError =
+      error?.message?.includes('Failed to fetch dynamically imported module') ||
+      error?.name === 'ChunkLoadError' ||
+      error?.toString()?.includes('dynamically imported module')
+
+    if (isChunkError) {
+      const reloaded = sessionStorage.getItem('vite_chunk_retry')
+      if (!reloaded) {
+        sessionStorage.setItem('vite_chunk_retry', 'true')
+        window.location.reload()
+        return
+      }
+    }
+    sessionStorage.removeItem('vite_chunk_retry')
+
     if (import.meta.env.DEV) {
       console.error("[ErrorBoundary DEV LOG] Full Error Details:", error)
       console.error("[ErrorBoundary DEV LOG] Component Stack:", errorInfo?.componentStack)

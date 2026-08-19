@@ -34,13 +34,7 @@ const initializeSocket = (server) => {
 
   const io = socketIO(server, {
     cors: {
-      origin: (origin, cb) => {
-        if (!origin) return cb(null, true);
-        // In development or on LAN allow any LAN origin (LAN access via QR / mobile / web).
-        if (isDev || isLanOrigin(origin)) return cb(null, true);
-        if (allowedSocketOrigins.has(origin)) return cb(null, true);
-        return cb(new Error(`Socket.IO CORS: origin ${origin} not allowed`));
-      },
+      origin: true,
       credentials: true,
       methods: ['GET', 'POST'],
     },
@@ -48,7 +42,7 @@ const initializeSocket = (server) => {
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
-    reconnectionAttempts: 5,
+    reconnectionAttempts: 15,
   });
 
   // Middleware: Authenticate connection

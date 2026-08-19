@@ -7,7 +7,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Navigate, Link, useNavigate, useParams } from 'react-router-dom';
-import { CheckCircle2, XCircle, ArrowRight, Award } from 'lucide-react';
+import { CheckCircle2, XCircle, ArrowRight, Award, Smartphone, Shield, AlertTriangle } from 'lucide-react';
 
 import '../proctoring/exam/exam.css';
 import { proctorApi } from '../proctoring/api';
@@ -74,6 +74,13 @@ function ResultBody({ data, onExit }) {
   const percentage = result?.percentage ?? 0;
   const passed = percentage >= 50;
 
+  const hasPhoneViolation =
+    data.session?.hasPhoneViolation ||
+    (data.session?.phoneViolations || 0) > 0 ||
+    (data.session?.violationCounts?.CELL_PHONE_DETECTED || 0) > 0 ||
+    data.proctorReport?.summary?.mobilePhoneViolation?.detected ||
+    (data.proctorReport?.summary?.objectMonitoring?.phoneEvents || 0) > 0;
+
   return (
     <>
       {/* Header card */}
@@ -113,6 +120,29 @@ function ResultBody({ data, onExit }) {
             value={`${correct}/${breakdown.length}`}
           />
         </div>
+
+        {hasPhoneViolation && (
+          <div
+            className="mt-6 border p-4 text-left"
+            style={{
+              borderColor: '#fca5a5',
+              background: '#fef2f2',
+              borderRadius: 8,
+            }}
+          >
+            <div className="flex items-start gap-3">
+              <Smartphone className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-rose-800">
+                  Proctoring Notice: Mobile Phone Detected
+                </p>
+                <p className="mt-0.5 text-xs text-rose-700 leading-relaxed">
+                  An unauthorized mobile phone was detected in camera view during your test. This violation has been updated and recorded in the official proctoring report for instructor review.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         <button
           onClick={onExit}

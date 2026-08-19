@@ -110,7 +110,7 @@ export default function TrainerQuizDetails({ user, onLogout }) {
         method: 'DELETE', headers: auth()
       })
       if (!r.ok) throw new Error('Delete failed')
-      toast.success('Quiz deleted')
+      toast.success('Quiz deleted successfully')
       navigate('/trainer')
     } catch (e) {
       toast.error(e.message)
@@ -341,7 +341,7 @@ function QuestionsTab({ quiz, onRefresh, auth, toast }) {
     try {
       const r = await fetch(API.TRAINER_COURSES.QUIZ_QUESTION(qId), { method: 'DELETE', headers: auth() })
       if (!r.ok) throw new Error('Delete failed')
-      toast.success('Question deleted')
+      toast.success('Question deleted successfully')
       loadQuestions()
     } catch (e) { toast.error(e.message) }
   }
@@ -359,7 +359,7 @@ function QuestionsTab({ quiz, onRefresh, auth, toast }) {
         body: JSON.stringify(data)
       })
       if (!r.ok) throw new Error('Save failed')
-      toast.success(isEdit ? 'Question updated' : 'Question added')
+      toast.success(isEdit ? 'Question updated successfully' : 'Question added successfully')
       setShowForm(false)
       setEditQ(null)
       loadQuestions()

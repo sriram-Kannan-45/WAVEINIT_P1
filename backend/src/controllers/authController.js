@@ -330,22 +330,35 @@ const register = async (req, res) => {
       return res.status(422).json({ error: 'Password must be at least 6 characters' });
     }
 
-    const existingUser = await User.findOne({ where: { email } });
+    const trimmedEmail = email.trim().toLowerCase();
+
+    const existingUser = await User.findOne({ where: { email: trimmedEmail, isDeleted: false } });
     if (existingUser) {
       // Don't reveal if email already exists
       return res.status(422).json({ error: 'Registration could not be completed' });
     }
 
+    const legacyDeleted = await User.findOne({ where: { email: trimmedEmail, isDeleted: true } });
+    if (legacyDeleted) {
+      const timestamp = Date.now();
+      await legacyDeleted.update({
+        email: `${trimmedEmail}__deleted_${timestamp}`,
+        username: legacyDeleted.username ? `${legacyDeleted.username}__deleted_${timestamp}` : null,
+      });
+    }
+
     const hashedPassword = await bcrypt.hash(password, BCRYPT_COST);
 
     const user = await User.create({
-      name,
-      email,
+      name: name.trim(),
+      email: trimmedEmail,
       password: hashedPassword,
-      phone,
+      phone: phone.trim(),
       role: 'PARTICIPANT',
       status: 'PENDING',
-      passwordVersion: 2
+      passwordVersion: 2,
+      isDeleted: false,
+      deletedAt: null
     });
 
     // Create a linked registration application so the admin
@@ -394,6 +407,14 @@ const register = async (req, res) => {
 
 // ── CREATE TRAINER ─────────────────────────────────────────────────────────
 const createTrainer = async (req, res) => {
+  const { sequelize } = require('../config/db');
+  let t;
+  try {
+    t = await sequelize.transaction();
+  } catch (err) {
+    return res.status(500).json({ error: 'Server error creating trainer' });
+  }
+
   try {
     const {
       name, email, password, phone, employeeId, department, designation,
@@ -401,16 +422,38 @@ const createTrainer = async (req, res) => {
     } = req.body;
 
     if (!name || !email || !password) {
+      await t.rollback();
       return res.status(422).json({ error: 'Name, email, and password are required' });
     }
 
     if (password.length < 8) {
+      await t.rollback();
       return res.status(422).json({ error: 'Password must be at least 8 characters' });
     }
 
-    const existingUser = await User.findOne({ where: { email } });
-    if (existingUser) {
+    const trimmedEmail = email.trim().toLowerCase();
+
+    // 1. Check if an active user exists with this email
+    const activeUser = await User.findOne({ 
+      where: { email: trimmedEmail, isDeleted: false },
+      transaction: t 
+    });
+    if (activeUser) {
+      await t.rollback();
       return res.status(400).json({ error: 'Email already exists' });
+    }
+
+    // 2. Clean up any legacy soft-deleted user occupying this email
+    const legacyDeleted = await User.findOne({ 
+      where: { email: trimmedEmail, isDeleted: true },
+      transaction: t 
+    });
+    if (legacyDeleted) {
+      const timestamp = Date.now();
+      await legacyDeleted.update({
+        email: `${trimmedEmail}__deleted_${timestamp}`,
+        username: legacyDeleted.username ? `${legacyDeleted.username}__deleted_${timestamp}` : null,
+      }, { transaction: t });
     }
 
     const username = await generateUsername(name);
@@ -419,26 +462,30 @@ const createTrainer = async (req, res) => {
     const validStatus = ['APPROVED', 'INACTIVE'].includes(status) ? status : 'APPROVED';
 
     const trainer = await User.create({
-      name,
-      email,
+      name: name.trim(),
+      email: trimmedEmail,
       username,
       password: hashedPassword,
-      phone: phone || null,
-      employeeId: employeeId || null,
-      department: department || null,
-      designation: designation || null,
+      phone: phone?.trim() || null,
+      employeeId: employeeId?.trim() || null,
+      department: department?.trim() || null,
+      designation: designation?.trim() || null,
       role: 'TRAINER',
       status: validStatus,
-      passwordVersion: 2
-    });
+      passwordVersion: 2,
+      isDeleted: false,
+      deletedAt: null,
+    }, { transaction: t });
 
     if (experience || profilePic) {
       await TrainerProfile.create({
         userId: trainer.id,
         experience: experience || null,
         imagePath: profilePic || null
-      });
+      }, { transaction: t });
     }
+
+    await t.commit();
 
     await logAudit({
       userId: req.user.id,
@@ -447,9 +494,9 @@ const createTrainer = async (req, res) => {
       severity: 'INFO',
       resourceId: trainer.id,
       resourceType: 'User',
-      details: { role: 'TRAINER', email, status: validStatus },
+      details: { role: 'TRAINER', email: trimmedEmail, status: validStatus },
       req,
-    });
+    }).catch(() => {});
 
     res.status(201).json({
       id: trainer.id,
@@ -460,8 +507,9 @@ const createTrainer = async (req, res) => {
       message: 'Trainer created successfully'
     });
   } catch (error) {
+    if (t) await t.rollback().catch(() => {});
     logger.error('createTrainer error:', { message: error.message, stack: error.stack });
-    res.status(500).json({ error: 'Server error creating trainer' });
+    res.status(500).json({ error: error.message || 'Server error creating trainer' });
   }
 };
 

@@ -24,8 +24,8 @@ const logger = require('../utils/logger');
 // ── Configuration ───────────────────────────────────────────────────────────
 const ACCESS_TOKEN_SECRET = process.env.JWT_SECRET;
 const REFRESH_TOKEN_SECRET = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET + '_refresh';
-const ACCESS_TOKEN_EXPIRY = '15m';
-const REFRESH_TOKEN_EXPIY_DAYS = 7;
+const ACCESS_TOKEN_EXPIRY = process.env.ACCESS_TOKEN_EXPIRY || '7d';
+const REFRESH_TOKEN_EXPIY_DAYS = 30;
 const REFRESH_TOKEN_EXPIRY = `${REFRESH_TOKEN_EXPIY_DAYS}d`;
 
 if (!ACCESS_TOKEN_SECRET) {

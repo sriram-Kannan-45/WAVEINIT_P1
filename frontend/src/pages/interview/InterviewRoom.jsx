@@ -22,6 +22,10 @@ import DeviceCheckScreen from '../../components/interview/room/DeviceCheckScreen
 import InterviewShell from '../../components/interview/room/InterviewShell'
 import InvitationScreen from '../../components/interview/room/InvitationScreen'
 import WaitingRoomScreen from '../../components/interview/room/WaitingRoomScreen'
+import ReadyCheckStep from '../../components/interview/room/ReadyCheckStep'
+import PairMobileStep from '../../components/interview/room/PairMobileStep'
+import ParticipantScreenShareStep from '../../components/interview/room/ParticipantScreenShareStep'
+import FullscreenPromptStep from '../../components/interview/room/FullscreenPromptStep'
 import { InterviewSessionProvider, useInterviewSession } from '../../contexts/InterviewSessionContext'
 import { useInterviewDetectors } from '../../hooks/useInterviewDetectors'
 import { useInterviewMedia } from '../../hooks/useInterviewMedia'
@@ -62,7 +66,7 @@ function InterviewRoomInner({ user }) {
   const isInterviewer = user?.role === 'TRAINER' || user?.role === 'ADMIN'
 
   const {
-    setInterview, setSession, setDevices, setPeers, setLocalStreams,
+    setInterview, setSession, setDevices, setPeers, localStreams, setLocalStreams,
     devices: sessionDevices, peers, alerts, chatMessages,
     addChatMessage, addAlert, updateDevice,
   } = useInterviewSession()
@@ -72,6 +76,13 @@ function InterviewRoomInner({ user }) {
   const [sessionId, setSessionId] = useState(null)
   const [qrPayload, setQrPayload] = useState(null)
   const [phase, setPhase] = useState(PHASE.LOADING)
+  const [flowStep, setFlowStep] = useState(() => {
+    try {
+      return sessionStorage.getItem(`iv_step_${interviewId}`) === 'room' ? 'room' : 'ready'
+    } catch {
+      return 'ready'
+    }
+  })
   const [joined, setJoined] = useState(false)
   const [consentGiven, setConsentGiven] = useState(false)
   const [started, setStarted] = useState(false)
@@ -119,6 +130,7 @@ function InterviewRoomInner({ user }) {
   const {
     remoteStreams, connectionStates, webrtcState, addLocalStream,
     createOffer, preparePeer, handleOffer, handleAnswer, handleIceCandidate,
+    retryPeerConnection,
     replaceTrackAll, addScreenStream, removeScreenStream,
     closePeer, closeAll: closeWebRTC, getRemoteDiagnostics,
   } = useWebRTC(socket, interviewId, localStreamRef)
@@ -155,11 +167,12 @@ function InterviewRoomInner({ user }) {
     }
   }, [isScreenSharing, socket, interviewId, addScreenStream, removeScreenStream])
   const { isRecording, toggleRecording } = useInterviewRecorder(sessionId)
-  const { monitorTrack } = useInterviewDetectors({
+  const { monitorTrack, aiStatus } = useInterviewDetectors({
     socket,
     sessionId,
     interviewId,
     enabled: !isInterviewer && consentGiven,
+    mediaStream: localStreams?.laptop || localStreamRef?.current,
   })
 
   // Register newly-acquired streams with the WebRTC layer + shared context.
@@ -360,16 +373,16 @@ function InterviewRoomInner({ user }) {
       })
     }
 
-    if (socket && isConnected) {
+    if (socket && socket.connected) {
       doJoin()
     } else if (socket) {
-      // Socket exists but is still connecting, wait for connect event
+      if (!socket.connected) socket.connect()
       const onConnect = () => {
         socket.off('connect', onConnect)
         doJoin()
       }
       socket.once('connect', onConnect)
-      // Safety timeout after 5s
+      // Safety timeout after 10s
       setTimeout(() => {
         socket.off('connect', onConnect)
         if (!socket.connected && !joined) {
@@ -377,7 +390,7 @@ function InterviewRoomInner({ user }) {
           setPhase(PHASE.ERROR)
           onJoined?.(false)
         }
-      }, 5000)
+      }, 10000)
     } else {
       setError('Interview server connection unavailable.')
       setPhase(PHASE.ERROR)
@@ -601,6 +614,52 @@ function InterviewRoomInner({ user }) {
     handleAnswer(data.fromSocketId, data.answer)
   }, [handleAnswer]))
 
+  // ── Step progress & tab switch tracking ──────────────────────────────────
+  const [participantSetupStatus, setParticipantSetupStatus] = useState({
+    step: 'ready',
+    completed: false,
+  })
+  const [tabSwitchCount, setTabSwitchCount] = useState(0)
+
+  // Participant reports setup step progression to the room
+  useEffect(() => {
+    if (!isInterviewer && socket && interviewId) {
+      socket.emit('participant-step-progress', {
+        interviewId,
+        step: flowStep,
+        completed: flowStep === 'room',
+      })
+    }
+  }, [flowStep, isInterviewer, socket, interviewId])
+
+  // Trainer listens for participant setup progression
+  useSocketEvent('participant-step-progress', useCallback((data) => {
+    if (data) {
+      setParticipantSetupStatus(data)
+    }
+  }, []))
+
+  // Participant reports tab switch / window blur to room
+  useEffect(() => {
+    if (isInterviewer) return
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        if (socket && interviewId) {
+          socket.emit('participant-tab-switch', { interviewId })
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [isInterviewer, socket, interviewId])
+
+  // Trainer tracks participant tab switches
+  useSocketEvent('participant-tab-switch', useCallback(() => {
+    if (isInterviewer) {
+      setTabSwitchCount((prev) => prev + 1)
+    }
+  }, [isInterviewer]))
+
   useSocketEvent('ice-candidate', useCallback((data) => {
     handleIceCandidate(data.fromSocketId, data.candidate)
   }, [handleIceCandidate]))
@@ -765,16 +824,11 @@ function InterviewRoomInner({ user }) {
   }
 
   const isTerminal = interviewData && ['COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(interviewData.status)
-  // Show live room as soon as joined — don't block on `started`.
-  // `started` only gates the interview timer and Trainer controls.
   const live = joined
 
   // ── Full-screen room mode ───────────────────────────────────────────────
-  // While the live room view is active (joined and not ended), hide the LMS
-  // sidebar/topbar chrome so the interview fills the viewport. Purely
-  // visual: toggled via a scoped body class and removed on end/unmount, so
-  // the sidebar returns once the room is no longer active.
-  const roomActive = live && !ended
+  // Only active when on Step 4 ('room') and live session is ongoing.
+  const roomActive = live && !ended && flowStep === 'room'
   useEffect(() => {
     document.body.classList.toggle('iv-room-fullscreen', roomActive)
     return () => document.body.classList.remove('iv-room-fullscreen')
@@ -811,7 +865,10 @@ function InterviewRoomInner({ user }) {
           <p style={{ fontSize: 13, color: '#64748b', margin: '0 0 24px' }}>{error}</p>
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
             <button
-              onClick={loadInterview}
+              onClick={() => {
+                if (socket && !socket.connected) socket.connect()
+                loadInterview()
+              }}
               className="reg-admin-btn reg-admin-btn--primary"
             >
               Try Again
@@ -846,55 +903,115 @@ function InterviewRoomInner({ user }) {
         isInterviewer={isInterviewer}
         isBusy={isBusy}
         isTerminal={isTerminal}
-        onContinue={() => setPhase(PHASE.DEVICE)}
+        onContinue={() => {
+          setPhase(PHASE.ACTIVE)
+          setFlowStep('ready')
+        }}
         onExit={() => navigate('/interviews')}
       />
     )
   }
 
-  if (phase === PHASE.DEVICE) {
+  // ── STEP 1: Ready Check (Pre-Join) ───────────────────────────────────────
+  if (flowStep === 'ready') {
     return (
-      <DeviceCheckScreen
+      <ReadyCheckStep
         interviewId={interviewId}
+        interviewData={interviewData}
+        isInterviewer={isInterviewer}
         mediaState={mediaState}
         mediaError={mediaError}
         localVideoRef={localVideoRef}
-        isSecure={isSecureContextForMedia()}
-        supportsMedia={!!navigator?.mediaDevices?.getUserMedia}
-        onRetry={handleRetryMedia}
-        onContinue={() => setPhase(PHASE.CONSENT)}
-        onBack={() => setPhase(PHASE.INVITE)}
-        isBusy={isBusy}
+        cameraPermission={cameraPermission}
+        micPermission={micPermission}
+        micLevel={micLevel}
+        isMicDetected={isMicDetected}
         devices={mediaDevices}
         selectedCamera={selectedCamera}
         selectedMicrophone={selectedMicrophone}
         onCameraChange={switchCamera}
         onMicrophoneChange={switchMicrophone}
         onEnumerateDevices={enumerateDevices}
-        micLevel={micLevel}
-        isMicDetected={isMicDetected}
-        cameraPermission={cameraPermission}
-        micPermission={micPermission}
-      />
-    )
-  }
-
-  if (phase === PHASE.CONSENT) {
-    return (
-      <ConsentScreen
-        interviewId={interviewId}
-        onConsent={handleAcceptConsent}
-        onDecline={() => {
-          stopLocalMedia()
-          navigate('/interviews')
-        }}
+        onRetry={handleRetryMedia}
         isBusy={isBusy}
-        error={error}
+        onBack={() => setPhase(PHASE.INVITE)}
+        onContinue={async () => {
+          if (!joined && !isBusy) {
+            await beginJoin()
+          }
+          if (isInterviewer) {
+            // Trainer role skips QR, Screen Share, and Fullscreen steps
+            try {
+              sessionStorage.setItem(`iv_step_${interviewId}`, 'room')
+            } catch {}
+            setFlowStep('room')
+          } else {
+            setFlowStep('pair')
+          }
+        }}
       />
     )
   }
 
-  if (live) {
+  // ── STEP 2: Pair Mobile Device (QR Step — Participant Only, Mandatory) ───
+  if (flowStep === 'pair') {
+    const isMobileConnected = sessionDevices?.mobile || peers.some(p => p.deviceType === 'MOBILE')
+    return (
+      <PairMobileStep
+        interviewId={interviewId}
+        interviewData={interviewData}
+        isInterviewer={isInterviewer}
+        qrPayload={qrPayload}
+        onRefreshQr={handleRefreshQr}
+        isMobileConnected={isMobileConnected}
+        isBusy={isBusy}
+        onBack={() => setFlowStep('ready')}
+        onContinue={() => setFlowStep('screenshare')}
+      />
+    )
+  }
+
+  // ── STEP 3: Screen Share Step (Participant Only) ─────────────────────────
+  if (flowStep === 'screenshare') {
+    return (
+      <ParticipantScreenShareStep
+        interviewId={interviewId}
+        interviewData={interviewData}
+        isScreenSharing={isScreenSharing}
+        onToggleScreenShare={handleToggleScreenShare}
+        onBack={() => setFlowStep('pair')}
+        onSkip={() => setFlowStep('fullscreen')}
+        onContinue={() => setFlowStep('fullscreen')}
+      />
+    )
+  }
+
+  // ── STEP 4: Fullscreen Prompt (Participant Only) ──────────────────────────
+  if (flowStep === 'fullscreen') {
+    return (
+      <FullscreenPromptStep
+        interviewId={interviewId}
+        interviewData={interviewData}
+        isInterviewer={isInterviewer}
+        onBack={() => setFlowStep('screenshare')}
+        onEnterFullscreen={() => {
+          try {
+            sessionStorage.setItem(`iv_step_${interviewId}`, 'room')
+          } catch {}
+          setFlowStep('room')
+        }}
+        onSkipFullscreen={() => {
+          try {
+            sessionStorage.setItem(`iv_step_${interviewId}`, 'room')
+          } catch {}
+          setFlowStep('room')
+        }}
+      />
+    )
+  }
+
+  // ── STEP 5: Final Interview Room Module ───────────────────────────────────
+  if (live && flowStep === 'room') {
     return (
       <ActiveRoom
         interviewData={interviewData}
@@ -921,6 +1038,8 @@ function InterviewRoomInner({ user }) {
         onToggleChat={setIsChatOpen}
         chatMessages={chatMessages}
         onSendMessage={handleSendMessage}
+        participantSetupStatus={participantSetupStatus}
+        tabSwitchCount={tabSwitchCount}
         alerts={alerts}
         elapsed={elapsed}
         formatTime={formatTime}
@@ -928,19 +1047,26 @@ function InterviewRoomInner({ user }) {
         peerConnected={peerConnected}
         connectionStatus={connectionStatus}
         notice={notice}
-        handleEndInterview={handleEndInterview}
-        handleLeaveInterview={handleLeaveInterview}
+        handleEndInterview={() => {
+          try { sessionStorage.removeItem(`iv_step_${interviewId}`) } catch {}
+          handleEndInterview()
+        }}
+        handleLeaveInterview={() => {
+          try { sessionStorage.removeItem(`iv_step_${interviewId}`) } catch {}
+          handleLeaveInterview()
+        }}
         socket={socket}
         interviewId={interviewId}
         sessionId={sessionId}
         getRemoteDiagnostics={getRemoteDiagnostics}
+        onRetryConnection={retryPeerConnection}
         expandedTile={expandedTile}
         onToggleTile={(key) => setExpandedTile((prev) => (prev === key ? null : key))}
       />
     )
   }
 
-  // Waiting room (joined socket, not yet started)
+  // Waiting room fallback
   return (
     <WaitingRoomScreen
       interviewData={interviewData}

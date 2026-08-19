@@ -41,7 +41,7 @@ export default function AuthLayout() {
         <motion.h1 className="auth-hero-title" {...fadeUp(0.1)}>
           Learn. Assess.<br />
           Grow with<br />
-          <span className="auth-hero-highlight">Wave Init</span> LMS
+          <span className="auth-hero-highlight">Wave Init LMS</span>
         </motion.h1>
 
         <motion.p className="auth-hero-subtitle" {...fadeUp(0.18)}>

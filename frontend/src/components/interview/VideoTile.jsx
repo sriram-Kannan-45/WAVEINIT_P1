@@ -34,7 +34,7 @@ export default function VideoTile({
 
   useEffect(() => {
     onVideoStateRef.current = onVideoState
-  })
+  }, [onVideoState])
 
   useEffect(() => {
     const video = videoRef.current
@@ -123,31 +123,83 @@ export default function VideoTile({
 
   return (
     <div
-      className={`relative rounded-xl overflow-hidden bg-slate-900 border border-slate-700/50 shadow-lg transition-all duration-300 aspect-video ${
+      className={`relative rounded-xl overflow-hidden bg-slate-900 border border-slate-700/50 shadow-lg transition-all duration-300 ${
         isExpanded ? 'col-span-2 row-span-2 z-10' : ''
       } ${className}`}
       onClick={onToggleExpand}
-      style={{ cursor: onToggleExpand ? 'pointer' : 'default', width: '100%', height: '100%', ...style }}
+      style={{
+        cursor: onToggleExpand ? 'pointer' : 'default',
+        width: '100%',
+        height: '100%',
+        position: 'relative',
+        overflow: 'hidden',
+        ...style,
+      }}
     >
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted={isLocal || isMuted}
-        className="absolute inset-0 w-full h-full object-cover"
-        style={{ transform: isLocal ? 'scaleX(-1)' : 'none' }}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          objectFit: isScreenShare ? 'contain' : 'cover',
+          transform: isLocal ? 'scaleX(-1)' : 'none',
+        }}
       />
 
       {/* Gradient overlay at bottom for label readability */}
-      <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-black/70 to-transparent pointer-events-none" />
+      <div style={{
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        height: 48,
+        background: 'linear-gradient(to top, rgba(0,0,0,0.7), transparent)',
+        pointerEvents: 'none',
+      }} />
 
       {/* Label overlay */}
-      <div className="absolute bottom-0 left-0 right-0 p-2 flex items-center justify-between z-10">
-        <span className="px-2 py-0.5 bg-white/10 backdrop-blur-sm rounded-md text-white text-xs font-medium truncate max-w-[70%]">
+      <div style={{
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        padding: '6px 10px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        zIndex: 10,
+      }}>
+        <span style={{
+          padding: '2px 8px',
+          background: 'rgba(0,0,0,0.6)',
+          backdropFilter: 'blur(4px)',
+          borderRadius: 6,
+          color: '#fff',
+          fontSize: 11,
+          fontWeight: 600,
+          maxWidth: '70%',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}>
           {label || 'Unknown'}
         </span>
         {isScreenShare && (
-          <span className="px-2 py-0.5 bg-primary-500/80 backdrop-blur-sm rounded-md text-white text-xs font-medium">
+          <span style={{
+            padding: '2px 8px',
+            background: 'rgba(37,99,235,0.85)',
+            backdropFilter: 'blur(4px)',
+            borderRadius: 6,
+            color: '#fff',
+            fontSize: 11,
+            fontWeight: 600,
+          }}>
             Screen
           </span>
         )}
@@ -155,12 +207,28 @@ export default function VideoTile({
 
       {/* No stream placeholder */}
       {!stream && (
-        <div className="absolute inset-0 flex items-center justify-center bg-slate-800">
-          <div className="text-center">
-            <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-slate-700 flex items-center justify-center">
-              <Video size={22} className="text-slate-500" />
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: '#1e293b',
+        }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{
+              width: 44,
+              height: 44,
+              margin: '0 auto 8px',
+              borderRadius: '50%',
+              background: '#334155',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+              <Video size={20} color="#94a3b8" />
             </div>
-            <span className="text-slate-400 text-xs">{label || 'No Feed'}</span>
+            <span style={{ color: '#94a3b8', fontSize: 11 }}>{label || 'No Feed'}</span>
           </div>
         </div>
       )}

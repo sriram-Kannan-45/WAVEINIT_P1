@@ -73,6 +73,37 @@ export default function ParticipantCard({ participant, latestScreenshot, onClick
         </p>
       </div>
 
+      {/* Live YOLOv8 Proctoring Status */}
+      {participant.yoloMonitoring && (
+        <div className="mb-3 rounded-lg border border-slate-200/80 bg-slate-50/80 p-2 text-[11px] space-y-1">
+          <div className="flex items-center justify-between text-slate-700">
+            <span className="flex items-center gap-1 text-[10px] font-semibold text-blue-600 uppercase tracking-wider">
+              <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-ping" />
+              YOLOv8 {participant.yoloMonitoring.cameraSource === 'MOBILE_CAMERA' ? 'Mobile' : 'PC'}
+            </span>
+            <span className="text-[10px] text-slate-400">
+              {participant.yoloMonitoring.timestamp ? new Date(participant.yoloMonitoring.timestamp).toLocaleTimeString() : 'Active'}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500">Detection:</span>
+            <span className={`font-semibold px-1.5 py-0.5 rounded text-[10px] ${
+              participant.yoloMonitoring.eventType === 'PHONE_DETECTED' || participant.yoloMonitoring.eventType === 'MULTIPLE_PERSONS_DETECTED'
+                ? 'bg-red-100 text-red-700'
+                : participant.yoloMonitoring.eventType === 'NO_PERSON_DETECTED'
+                ? 'bg-amber-100 text-amber-700'
+                : 'bg-emerald-100 text-emerald-700'
+            }`}>
+              {participant.yoloMonitoring.eventType.replace(/_/g, ' ')}
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-slate-500">
+            <span>Confidence:</span>
+            <span className="font-medium text-slate-700">{(participant.yoloMonitoring.confidence * 100).toFixed(0)}%</span>
+          </div>
+        </div>
+      )}
+
       <div className="aspect-video overflow-hidden rounded-lg bg-slate-100">
         {imageSrc ? (
           <img

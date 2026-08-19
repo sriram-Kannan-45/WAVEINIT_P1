@@ -13,7 +13,7 @@ async function tick() {
   const now = new Date();
   let io = null;
   try {
-    io = require('../../app')?.get('io');
+    io = require('../app')?.get('io');
   } catch (_) {}
 
   try {

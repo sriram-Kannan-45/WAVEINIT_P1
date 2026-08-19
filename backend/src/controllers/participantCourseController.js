@@ -874,8 +874,8 @@ async function loadAccessibleQuiz(req, res, quizId) {
       include: [{ model: Training, as: 'program' }]
     }]
   });
-  if (!quiz) { res.status(404).json({ error: 'Quiz not found' }); return null; }
-  if (!quiz.isPublished) { res.status(403).json({ error: 'Quiz not published' }); return null; }
+  const isQuizPublished = quiz.status === 'PUBLISHED' || quiz.isPublished || quiz.published;
+  if (!isQuizPublished) { res.status(403).json({ error: 'Quiz not published' }); return null; }
   if (!quiz.courseId) { res.status(403).json({ error: 'Quiz not associated with a course' }); return null; }
   
   // Must be enrolled in the quiz's course.
@@ -915,7 +915,7 @@ async function startQuiz(req, res) {
     if (!ctx) return;
     const { quiz } = ctx;
 
-    if (quiz.status !== 'PUBLISHED') {
+    if (quiz.status !== 'PUBLISHED' && !quiz.isPublished && !quiz.published) {
       return res.status(403).json({ error: 'Quiz not published' });
     }
 

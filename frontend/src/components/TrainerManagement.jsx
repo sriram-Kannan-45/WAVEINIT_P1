@@ -5,6 +5,7 @@ import {
   UserPlus, Mail, Lock, CheckCircle, Trash2, Edit2, 
   Shield, Eye, EyeOff, Loader2, Phone, Calendar, AlertCircle, User, Search
 } from 'lucide-react';
+import { useToast } from './Toast';
 
 // Generates initials from name
 const getInitials = (name) => {
@@ -31,38 +32,33 @@ export default function TrainerManagement({
   loading = false 
 }) {
   const navigate = useNavigate();
+  const { success, error: showError } = useToast();
   const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [showPassword, setShowPassword] = useState(false);
   const [focused, setFocused] = useState('');
-  const [toast, setToast] = useState({ show: false, message: '', type: '' });
   const [searchTerm, setSearchTerm] = useState('');
 
   const passStrength = checkStrength(form.password);
   const strengthColors = ['bg-gray-200', 'bg-red-500', 'bg-yellow-500', 'bg-blue-500', 'bg-green-500'];
   const strengthLabels = ['Too Weak', 'Weak', 'Fair', 'Good', 'Strong'];
 
-  const showToast = (message, type = 'success') => {
-    setToast({ show: true, message, type });
-    setTimeout(() => setToast({ show: false, message: '', type: '' }), 3000);
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.name || !form.email || !form.password) {
-      showToast('Please fill all fields', 'error');
+      showError('Please fill in all required fields');
       return;
     }
     if (form.password.length < 6) {
-      showToast('Password must be at least 6 characters', 'error');
+      showError('Password must be at least 6 characters');
       return;
     }
 
     try {
       await onCreateTrainer(form);
       setForm({ name: '', email: '', password: '' });
-      showToast('Trainer created successfully');
-    } catch (error) {
-      showToast(error.message || 'Failed to create trainer', 'error');
+      success('Trainer created successfully');
+    } catch (err) {
+      showError(err.message || 'Failed to create trainer');
     }
   };
 
@@ -76,25 +72,6 @@ export default function TrainerManagement({
       {/* Decorative Blobs */}
       <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-primary-500/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-primary-500/10 rounded-full blur-3xl pointer-events-none" />
-
-      {/* Toast Notification */}
-      <AnimatePresence>
-        {toast.show && (
-          <motion.div
-            initial={{ opacity: 0, y: -20, x: '-50%' }}
-            animate={{ opacity: 1, y: 0, x: '-50%' }}
-            exit={{ opacity: 0, y: -20, x: '-50%' }}
-            className={`fixed top-6 left-1/2 z-50 flex items-center gap-3 px-6 py-3 rounded-full shadow-lg border backdrop-blur-md text-sm font-medium
-              ${toast.type === 'error' 
-                ? 'bg-red-50/90 border-red-200 text-red-700' 
-                : 'bg-green-50/90 border-green-200 text-green-700'
-              }`}
-          >
-            {toast.type === 'error' ? <AlertCircle size={18} /> : <CheckCircle size={18} />}
-            {toast.message}
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       <div className="max-w-7xl mx-auto relative z-10">
         <div className="mb-10 text-center md:text-left">

@@ -1,8 +1,9 @@
 /**
  * ActiveRoom Component (Stage 5: Main Interview Room)
- * Redesigned to match the reference SaaS structure using LMS design system components.
+ * SaaS layout with multi-stream support, mandatory setup gating, in-call chat,
+ * tab-switch detection, HR scorecard, and timer countdown.
  */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import InterviewShell from './InterviewShell'
 import VideoTile from '../VideoTile'
 import QRPairing from '../QRPairing'
@@ -22,6 +23,11 @@ import {
   Send,
   AlertCircle,
   QrCode,
+  MessageSquare,
+  Star,
+  X,
+  AlertTriangle,
+  Disc,
 } from 'lucide-react'
 
 const defaultFormatTime = (seconds = 0) => {
@@ -30,71 +36,7 @@ const defaultFormatTime = (seconds = 0) => {
   const s = seconds % 60
   return h > 0
     ? `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
-    : `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '00')}`
-}
-
-/** Development-only real-time connection diagnostics panel */
-function WebRTCDebugPanel({ isInterviewer, peers, connectionStates, remoteStreams, mediaState, socket, interviewId, getRemoteDiagnostics }) {
-  return null
-  const remotePeer = isInterviewer
-    ? peers.find(p => (p.role === 'PARTICIPANT' || p.role === 'CANDIDATE') && p.deviceType !== 'MOBILE')
-    : peers.find(p => (p.role === 'TRAINER' || p.role === 'ADMIN') && p.deviceType !== 'MOBILE')
-  const remoteState = remotePeer ? (connectionStates[remotePeer.socketId] || (Object.keys(connectionStates).length > 0 ? 'connecting' : 'connecting')) : undefined
-  const remoteStream = remotePeer ? remoteStreams[remotePeer.socketId] : undefined
-  const remoteVideoTracks = remoteStream?.getVideoTracks() || []
-  const remoteAudioTracks = remoteStream?.getAudioTracks() || []
-
-  const row = (label, value, ok) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, padding: '2px 0', borderBottom: '1px solid #333' }}>
-      <span style={{ color: '#94a3b8' }}>{label}</span>
-      <span style={{ color: ok === true ? '#4ade80' : ok === false ? '#f87171' : '#fbbf24', fontFamily: 'monospace' }}>{value ?? '—'}</span>
-    </div>
-  )
-
-  const activeConnSummary = Object.entries(connectionStates)
-    .map(([id, s]) => `${id.substr(0, 6)}:${s}`)
-    .join(' ') || (peers.length > 0 ? 'connecting' : 'none')
-
-  return (
-    <div style={{
-      position: 'fixed', bottom: 12, left: 12, zIndex: 9999,
-      background: 'rgba(15,23,42,0.95)', border: '1px solid #334155',
-      borderRadius: 8, padding: '8px 12px', minWidth: 240,
-      boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
-    }}>
-      <div style={{ fontSize: 10, fontWeight: 700, color: '#60a5fa', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
-        WebRTC Debug [{isInterviewer ? 'TRAINER' : 'PARTICIPANT'}]
-      </div>
-      {row('Socket ID', socket?.id?.substr(0, 12), !!socket?.connected)}
-      {row('Socket', socket?.connected ? 'connected' : 'disconnected', socket?.connected)}
-      {row('Interview ID', interviewId, true)}
-      {row('Media State', mediaState, mediaState === 'ready')}
-      {row('Remote Peer', remotePeer?.socketId?.substr(0, 12) || 'none', !!remotePeer)}
-      {row('Remote Role', remotePeer?.role, !!remotePeer)}
-      {row('WebRTC State', remoteState, remoteState === 'connected' || remoteState === 'completed')}
-      {row('Remote Video Tracks', remoteVideoTracks.length, remoteVideoTracks.length > 0)}
-      {row('Remote Audio Tracks', remoteAudioTracks.length, remoteAudioTracks.length > 0)}
-      {row('Remote Stream ID', remoteStream?.id?.substr(0, 12), !!remoteStream)}
-      {row('All Peers', peers.map(p => `${p.role}/${p.deviceType}`).join(', ') || 'none', peers.length > 0)}
-      {row('Conn States', activeConnSummary, Object.values(connectionStates).some(s => s === 'connected' || s === 'completed'))}
-      <div style={{ marginTop: 6, display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-        <button
-          onClick={() => {
-            peers.filter(p => p.socketId).forEach(p => {
-              console.log(`[WEBRTC SIGNALING] debug: getRemoteDiagnostics for ${p.role}/${p.deviceType} ${p.socketId}`)
-              getRemoteDiagnostics?.(p.socketId)
-            })
-          }}
-          style={{
-            background: '#1e293b', color: '#94a3b8', border: '1px solid #334155',
-            borderRadius: 4, padding: '3px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'monospace',
-          }}
-        >
-          Dump getStats
-        </button>
-      </div>
-    </div>
-  )
+    : `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
 }
 
 export default function ActiveRoom({
@@ -116,13 +58,18 @@ export default function ActiveRoom({
   onToggleCamera,
   isScreenSharing,
   onToggleScreenShare,
-  isRecording,
+  isRecording = false,
   onToggleRecording,
   handleEndInterview,
   handleLeaveInterview,
   socket,
   interviewId,
   getRemoteDiagnostics,
+  onRetryConnection,
+  participantSetupStatus,
+  tabSwitchCount = 0,
+  chatMessages = [],
+  onSendMessage,
   elapsed = 0,
   formatTime = defaultFormatTime,
   started = false,
@@ -135,9 +82,41 @@ export default function ActiveRoom({
   const [screenShareLive, setScreenShareLive] = useState(false)
   const [screenShareStatus, setScreenShareStatus] = useState('none') // 'none' | 'connecting' | 'live' | 'failed'
 
+  // In-call Chat state
+  const [showChat, setShowChat] = useState(false)
+  const [chatText, setChatText] = useState('')
+  const [unreadChatCount, setUnreadChatCount] = useState(0)
+  const lastSeenMsgCountRef = useRef(0)
+  const chatBottomRef = useRef(null)
+
+  // HR Scorecard state (Trainer view)
+  const [techRating, setTechRating] = useState(0)
+  const [commRating, setCommRating] = useState(0)
+  const [problemRating, setProblemRating] = useState(0)
+  const [recommendation, setRecommendation] = useState('')
+  const [showEndModal, setShowEndModal] = useState(false)
+
   const handleScreenShareVideoState = useCallback((state) => {
     setScreenShareLive(state.ready)
   }, [])
+
+  // Unread chat tracking
+  useEffect(() => {
+    if (chatMessages.length > lastSeenMsgCountRef.current) {
+      if (!showChat) {
+        setUnreadChatCount(prev => prev + (chatMessages.length - lastSeenMsgCountRef.current))
+      }
+      lastSeenMsgCountRef.current = chatMessages.length
+    }
+  }, [chatMessages.length, showChat])
+
+  // Auto-scroll chat to bottom
+  useEffect(() => {
+    if (showChat) {
+      setUnreadChatCount(0)
+      chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [showChat, chatMessages.length])
 
   // Fetch initial notes
   useEffect(() => {
@@ -155,15 +134,30 @@ export default function ActiveRoom({
   }, [interviewId])
 
   const handleSaveNotes = async () => {
-    if (!interviewId || !notes.trim()) return
+    if (!interviewId) return
     try {
       setSavingNotes(true)
-      await interviewService.createNote(interviewId, { note_text: notes })
+      let fullNotes = notes
+      if (isInterviewer && (techRating > 0 || commRating > 0 || problemRating > 0 || recommendation)) {
+        const ratingSummary = `\n\n[HR Scorecard]\n- Technical Skills: ${techRating}/5\n- Communication: ${commRating}/5\n- Problem Solving: ${problemRating}/5\n- Recommendation: ${recommendation || 'Pending'}`
+        if (!notes.includes('[HR Scorecard]')) {
+          fullNotes = `${notes.trim()}${ratingSummary}`
+          setNotes(fullNotes)
+        }
+      }
+      await interviewService.createNote(interviewId, { note_text: fullNotes })
     } catch (e) {
       console.error('Failed to save notes:', e)
     } finally {
       setSavingNotes(false)
     }
+  }
+
+  const handleSendChatMessage = (e) => {
+    e?.preventDefault()
+    if (!chatText.trim()) return
+    onSendMessage?.(chatText.trim())
+    setChatText('')
   }
 
   const candidateName = interviewData?.candidate?.name || 'Candidate'
@@ -172,13 +166,15 @@ export default function ActiveRoom({
   const interviewerEmail = interviewData?.interviewer?.email || ''
   const scheduledDate = interviewData?.scheduledAt || interviewData?.scheduled_at
     ? new Date(interviewData.scheduledAt || interviewData.scheduled_at).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
-    : '—'
+    : 'Today'
   const scheduledTime = interviewData?.scheduledAt || interviewData?.scheduled_at
     ? new Date(interviewData.scheduledAt || interviewData.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : '—'
-  const durationMinutes = interviewData?.durationMinutes || interviewData?.duration_minutes || 60
+    : 'Scheduled'
+  const durationMinutes = interviewData?.duration || 60
+  const durationSeconds = durationMinutes * 60
+  const remainingSeconds = Math.max(0, durationSeconds - elapsed)
 
-  // Pinned stream selection state (Option B)
+  // Pinned stream selection state
   const [pinnedStreamKey, setPinnedStreamKey] = useState(null)
 
   // Differentiate streams by role and deviceType
@@ -190,26 +186,34 @@ export default function ActiveRoom({
     ? remoteStreams[mobilePeer.socketId]
     : (remoteEntries.find(([id]) => peers.find(p => p.socketId === id)?.deviceType === 'MOBILE')?.[1] || null)
 
+  // Find counterpart laptop peer
+  const remoteLaptopPeer = peers.find(p => p.socketId !== socket?.id && p.deviceType !== 'MOBILE')
+  const remoteLaptopStream = remoteLaptopPeer
+    ? (remoteStreams[remoteLaptopPeer.socketId] || remoteEntries.find(([id]) => id !== mobilePeer?.socketId && !id.endsWith('_screen'))?.[1] || null)
+    : (remoteEntries.find(([id]) => id !== mobilePeer?.socketId && !id.endsWith('_screen'))?.[1] || null)
+
   // Participant laptop peer & stream (for Trainer view)
-  const participantLaptopPeer = peers.find(p => (p.role === 'PARTICIPANT' || p.role === 'CANDIDATE') && p.deviceType !== 'MOBILE')
-  const participantLaptopStream = participantLaptopPeer
-    ? (remoteStreams[participantLaptopPeer.socketId] || remoteEntries.find(([id]) => id !== mobilePeer?.socketId && !id.endsWith('_screen'))?.[1] || null)
-    : (isInterviewer ? (remoteEntries.find(([id]) => id !== mobilePeer?.socketId && !id.endsWith('_screen'))?.[1] || null) : null)
+  const participantLaptopPeer = peers.find(p => (p.role?.toUpperCase() === 'PARTICIPANT' || p.role?.toUpperCase() === 'CANDIDATE') && p.deviceType !== 'MOBILE') || (isInterviewer ? remoteLaptopPeer : null)
+  const participantLaptopStream = isInterviewer ? remoteLaptopStream : (participantLaptopPeer ? remoteStreams[participantLaptopPeer.socketId] : null)
 
   // Trainer laptop peer & stream (for Participant view)
-  const trainerLaptopPeer = peers.find(p => (p.role === 'TRAINER' || p.role === 'ADMIN') && p.deviceType !== 'MOBILE')
-  const trainerLaptopStream = trainerLaptopPeer
-    ? (remoteStreams[trainerLaptopPeer.socketId] || remoteEntries.find(([id]) => id !== mobilePeer?.socketId && !id.endsWith('_screen'))?.[1] || null)
-    : (!isInterviewer ? (remoteEntries.find(([id]) => id !== mobilePeer?.socketId && !id.endsWith('_screen'))?.[1] || null) : null)
+  const trainerLaptopPeer = peers.find(p => (p.role?.toUpperCase() === 'TRAINER' || p.role?.toUpperCase() === 'ADMIN') && p.deviceType !== 'MOBILE') || (!isInterviewer ? remoteLaptopPeer : null)
+  const trainerLaptopStream = !isInterviewer ? remoteLaptopStream : (trainerLaptopPeer ? remoteStreams[trainerLaptopPeer.socketId] : null)
 
-  // Screen share detection: resolve explicitly tagged _screen stream or any secondary video stream
+  // Screen share detection
   const participantScreenStream = (remoteStreams[`${participantLaptopPeer?.socketId}_screen`]
     || remoteEntries.find(([id]) => id.endsWith('_screen'))?.[1]
     || (participantLaptopPeer && remoteStreams[participantLaptopPeer.socketId]?.getVideoTracks().length > 1
         ? remoteStreams[participantLaptopPeer.socketId] : null)
     || null)
 
-  // Screen share status lifecycle with 8s timeout to prevent hanging on "Starting..."
+  // Tier 4: Remote Media Status
+  const hasTrainerVideo      = !!trainerLaptopStream      && trainerLaptopStream.getVideoTracks().some(t => t.readyState === 'live')
+  const hasParticipantVideo  = !!participantLaptopStream  && participantLaptopStream.getVideoTracks().some(t => t.readyState === 'live')
+  const hasMobileVideo       = !!mobileStream             && mobileStream.getVideoTracks().some(t => t.readyState === 'live')
+  const hasScreenVideo       = !!participantScreenStream && participantScreenStream.getVideoTracks().some(t => t.readyState === 'live')
+
+  // Screen share status lifecycle
   useEffect(() => {
     if (!participantScreenStream) {
       setScreenShareStatus('none')
@@ -228,28 +232,47 @@ export default function ActiveRoom({
     return () => clearTimeout(timer)
   }, [participantScreenStream, screenShareLive])
 
-  // Tier 4: Remote Media Status — stream exists with live video tracks
-  const hasTrainerVideo      = !!trainerLaptopStream      && trainerLaptopStream.getVideoTracks().some(t => t.readyState === 'live')
-  const hasParticipantVideo  = !!participantLaptopStream  && participantLaptopStream.getVideoTracks().some(t => t.readyState === 'live')
-  const hasMobileVideo       = !!mobileStream             && mobileStream.getVideoTracks().some(t => t.readyState === 'live')
-  const hasScreenVideo       = !!participantScreenStream && participantScreenStream.getVideoTracks().some(t => t.readyState === 'live')
+  // Track connection duration to show retry if negotiation takes too long
+  const [connectingElapsed, setConnectingElapsed] = useState(0)
+  useEffect(() => {
+    if (!remoteLaptopPeer || hasTrainerVideo || hasParticipantVideo) {
+      setConnectingElapsed(0)
+      return
+    }
+    const timer = setInterval(() => {
+      setConnectingElapsed(prev => prev + 1)
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [remoteLaptopPeer, hasTrainerVideo, hasParticipantVideo])
 
-  // Primary video stage stream resolution:
-  // Main Stage ALWAYS shows the candidate's laptop camera feed (or pinned stream if user explicitly pins)
+  // Auto-retry connection once if stuck for > 8s
+  const retryAttemptedRef = useRef(false)
+  useEffect(() => {
+    if (connectingElapsed >= 8 && !retryAttemptedRef.current && remoteLaptopPeer) {
+      retryAttemptedRef.current = true
+      console.log('[ActiveRoom] Connection taking longer than 8s — triggering automatic ICE retry...')
+      onRetryConnection?.(remoteLaptopPeer.socketId)
+    }
+  }, [connectingElapsed, remoteLaptopPeer, onRetryConnection])
+
+  // Participant setup completion flag
+  const isParticipantSetupDone = !isInterviewer || participantSetupStatus?.completed || participantSetupStatus?.step === 'room' || hasParticipantVideo
+
+  // Primary video stage stream resolution
   const mainStageStream = (() => {
     if (pinnedStreamKey) {
       if (pinnedStreamKey === 'screen' && participantScreenStream) return participantScreenStream
       if (pinnedStreamKey === 'mobile' && mobileStream) return mobileStream
-      if (pinnedStreamKey === 'laptop' && participantLaptopStream) return participantLaptopStream
+      if (pinnedStreamKey === 'laptop' && (participantLaptopStream || remoteLaptopStream)) return participantLaptopStream || remoteLaptopStream
       if (remoteStreams[pinnedStreamKey]) return remoteStreams[pinnedStreamKey]
     }
 
     if (isInterviewer) {
-      // Main Stage ALWAYS defaults to the candidate's laptop camera feed
-      return participantLaptopStream || (remoteEntries.find(([id]) => id !== mobilePeer?.socketId && !id.endsWith('_screen'))?.[1]) || null
+      // Only show participant video if participant setup is complete
+      if (!isParticipantSetupDone) return null
+      return participantLaptopStream || remoteLaptopStream || null
     } else {
-      // Participant view: Main Stage shows the Trainer's camera feed
-      return trainerLaptopStream || (remoteEntries.find(([id]) => id !== mobilePeer?.socketId && !id.endsWith('_screen'))?.[1]) || null
+      return trainerLaptopStream || remoteLaptopStream || null
     }
   })()
 
@@ -261,37 +284,31 @@ export default function ActiveRoom({
 
   const isMainStageLive = !!mainStageStream && mainStageStream.getVideoTracks().some(t => t.readyState === 'live')
 
-  // Tier 1: Room Presence — peer is in the signaling room
-  const trainerInRoom   = !!trainerLaptopPeer
-  const participantInRoom = !!participantLaptopPeer
+  // Tier 1: Room Presence
+  const trainerInRoom   = !!trainerLaptopPeer || (!isInterviewer && !!remoteLaptopPeer)
+  const participantInRoom = !!participantLaptopPeer || (isInterviewer && !!remoteLaptopPeer)
   const mobileInRoom    = !!mobilePeer
 
-  // Tier 2 / 3: WebRTC Connection State (real RTCPeerConnection.connectionState)
+  // Tier 2 / 3: WebRTC Connection State
   const mobileWebRTCState            = mobilePeer            ? connectionStates[mobilePeer.socketId]            : null
-  const participantLaptopWebRTCState  = participantLaptopPeer ? connectionStates[participantLaptopPeer.socketId]  : null
-  const trainerLaptopWebRTCState      = trainerLaptopPeer    ? connectionStates[trainerLaptopPeer.socketId]      : null
+  const participantLaptopWebRTCState  = participantLaptopPeer ? connectionStates[participantLaptopPeer.socketId]  : (remoteLaptopPeer ? connectionStates[remoteLaptopPeer.socketId] : null)
+  const trainerLaptopWebRTCState      = trainerLaptopPeer    ? connectionStates[trainerLaptopPeer.socketId]      : (remoteLaptopPeer ? connectionStates[remoteLaptopPeer.socketId] : null)
 
-  // Derived boolean helpers for badges and main stage display
+  // Derived helpers
   const isMobileConnected            = hasMobileVideo || mobileWebRTCState === 'connected' || !!devices?.mobile || mobileInRoom
   const isParticipantLaptopConnected = hasParticipantVideo || participantLaptopWebRTCState === 'connected'
   const isTrainerConnected           = hasTrainerVideo || trainerLaptopWebRTCState === 'connected'
 
-  // For the center stage, the remote peer (the one you're watching) depends on role
   const remotePeerInRoom     = isInterviewer ? (participantInRoom || mobileInRoom) : trainerInRoom
   const remoteWebRTCState    = isInterviewer ? (participantLaptopWebRTCState || mobileWebRTCState) : trainerLaptopWebRTCState
-  const remoteHasVideo       = isMainStageLive
   const remoteName           = isInterviewer ? candidateName : interviewerName
 
   /**
-   * Derive center-stage status from the 4 tiers:
-   * 'waiting'      — remote peer not yet in signaling room
-   * 'connecting'   — in room, WebRTC negotiating
-   * 'connected'    — WebRTC connected, waiting for first video frame
-   * 'live'         — video tracks flowing
-   * 'failed'       — connection failed
+   * Derive center-stage status
    */
   const centerStageStatus = (() => {
     if (isMainStageLive) return 'live'
+    if (isInterviewer && !isParticipantSetupDone) return 'waiting_setup'
     if (!remotePeerInRoom) return 'waiting'
     if (remoteWebRTCState === 'connected') return 'connected'
     if (remoteWebRTCState === 'failed') return 'failed'
@@ -306,7 +323,7 @@ export default function ActiveRoom({
     if (peerHasVideo || peerWebRTCState === 'connected') {
       return { text: '● Connected', bg: '#dcfce7', color: '#15803D', border: '#bbf7d0' }
     }
-    if (peerWebRTCState === 'connecting' || peerWebRTCState === 'checking' || peerWebRTCState === 'new') {
+    if (peerWebRTCState === 'connecting' || peerWebRTCState === 'checking' || peerWebRTCState === 'new' || peerWebRTCState === null) {
       return { text: '◐ Connecting...', bg: '#fef3c7', color: '#d97706', border: '#fcd34d' }
     }
     if (peerWebRTCState === 'failed') {
@@ -315,36 +332,15 @@ export default function ActiveRoom({
     if (peerWebRTCState === 'disconnected') {
       return { text: '↻ Reconnecting', bg: '#fef3c7', color: '#d97706', border: '#fcd34d' }
     }
-    // Peer in room but WebRTC not yet started
     return { text: '◐ Connecting...', bg: '#fef3c7', color: '#d97706', border: '#fcd34d' }
   }
 
-  // Center-stage placeholder message
-  const centerStageContent = (() => {
-    if (centerStageStatus === 'live') return null // render VideoTile
-    const icon = <VideoIcon size={32} color="#CBD5E1" />
-    let heading = ''
-    let sub = ''
-    if (centerStageStatus === 'waiting') {
-      heading = isInterviewer ? 'Waiting for participant to join...' : 'Waiting for interviewer...'
-      sub = isInterviewer
-        ? 'The participant video feed will appear automatically once they join.'
-        : 'The interviewer video feed will appear automatically once they join.'
-    } else if (centerStageStatus === 'connecting') {
-      heading = `Connecting to ${remoteName}...`
-      sub = 'Establishing secure WebRTC connection. This takes a few seconds.'
-    } else if (centerStageStatus === 'connected') {
-      heading = `Connected to ${remoteName}`
-      sub = 'Waiting for video stream to start...'
-    } else if (centerStageStatus === 'failed') {
-      heading = 'Connection failed'
-      sub = 'Could not establish a video connection. Please refresh the page.'
-    } else if (centerStageStatus === 'disconnected') {
-      heading = `${remoteName} disconnected`
-      sub = 'Trying to reconnect...'
-    }
-    return { icon, heading, sub }
-  })()
+  // Setup step status helpers
+  const setupStep = participantSetupStatus?.step || 'ready'
+  const isReadyDone = setupStep !== 'ready'
+  const isPairDone = ['screenshare', 'fullscreen', 'room'].includes(setupStep) || isMobileConnected
+  const isScreenDone = ['fullscreen', 'room'].includes(setupStep)
+  const isFullscreenDone = setupStep === 'room'
 
   return (
     <InterviewShell
@@ -355,7 +351,7 @@ export default function ActiveRoom({
       status={isTrainerConnected || isParticipantLaptopConnected ? 'Live' : 'Waiting status'}
       headerRight={
         <button
-          onClick={isInterviewer ? handleEndInterview : handleLeaveInterview}
+          onClick={isInterviewer ? () => setShowEndModal(true) : handleLeaveInterview}
           className="reg-admin-btn reg-admin-btn--danger"
         >
           <LogOut size={14} />
@@ -367,50 +363,50 @@ export default function ActiveRoom({
       <div className="interview-room-grid">
 
         {/* LEFT COLUMN: Interview Details & Connection Status */}
-        <div className="interview-col-details" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div className="interview-col-details" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {/* Interview Details Card */}
-          <div className="reg-admin-table-wrap" style={{ background: '#fff', padding: 18 }}>
-            <h4 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 14px', color: '#0f172a', borderBottom: '1px solid #f1f5f9', pb: 8 }}>
+          <div className="reg-admin-table-wrap" style={{ background: '#fff', padding: 12 }}>
+            <h4 style={{ fontSize: 13, fontWeight: 700, margin: '0 0 10px', color: '#0f172a', borderBottom: '1px solid #f1f5f9', paddingBottom: 6 }}>
               Interview Details
             </h4>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div>
-                <span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600, display: 'block' }}>Candidate</span>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{candidateName}</div>
+                <span style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', fontWeight: 600, display: 'block' }}>Candidate</span>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>{candidateName}</div>
                 {candidateEmail && <div style={{ fontSize: 11, color: '#64748b' }}>{candidateEmail}</div>}
               </div>
 
               <div>
-                <span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600, display: 'block' }}>Interviewer</span>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{interviewerName}</div>
+                <span style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', fontWeight: 600, display: 'block' }}>Interviewer</span>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>{interviewerName}</div>
                 {interviewerEmail && <div style={{ fontSize: 11, color: '#64748b' }}>{interviewerEmail}</div>}
               </div>
 
               <div>
-                <span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600, display: 'block' }}>Type</span>
+                <span style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', fontWeight: 600, display: 'block' }}>Type</span>
                 <span className="reg-admin-type" style={{ fontSize: 11, fontWeight: 600, display: 'inline-block', marginTop: 2 }}>
                   {interviewData?.type || 'HR'} Interview
                 </span>
               </div>
 
               <div>
-                <span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600, display: 'block' }}>Date & Time</span>
-                <div style={{ fontSize: 12, color: '#334155', fontWeight: 500 }}>{scheduledDate} at {scheduledTime}</div>
+                <span style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', fontWeight: 600, display: 'block' }}>Date & Time</span>
+                <div style={{ fontSize: 11, color: '#334155', fontWeight: 500 }}>{scheduledDate} at {scheduledTime}</div>
               </div>
 
               <div>
-                <span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 600, display: 'block' }}>Duration</span>
-                <div style={{ fontSize: 12, color: '#334155', fontWeight: 500 }}>{durationMinutes} minutes</div>
+                <span style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', fontWeight: 600, display: 'block' }}>Duration</span>
+                <div style={{ fontSize: 11, color: '#334155', fontWeight: 500 }}>{durationMinutes} minutes</div>
               </div>
             </div>
           </div>
 
           {/* Connection Status Card */}
-          <div className="reg-admin-table-wrap" style={{ background: '#fff', padding: 18 }}>
-            <h4 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 12px', color: '#0f172a', borderBottom: '1px solid #f1f5f9', pb: 8 }}>
+          <div className="reg-admin-table-wrap" style={{ background: '#fff', padding: 12 }}>
+            <h4 style={{ fontSize: 13, fontWeight: 700, margin: '0 0 10px', color: '#0f172a', borderBottom: '1px solid #f1f5f9', paddingBottom: 6 }}>
               Connection Status
             </h4>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {(() => {
                 const targetPeer      = isInterviewer ? participantLaptopPeer : trainerLaptopPeer
                 const targetHasVideo  = isInterviewer ? hasParticipantVideo   : hasTrainerVideo
@@ -420,28 +416,18 @@ export default function ActiveRoom({
 
                 return (
                   <>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
                       <span style={{ color: '#475569', fontWeight: 500 }}>
                         {isInterviewer ? 'Participant Laptop' : 'Interviewer Laptop'}
                       </span>
-                      <span className="reg-admin-status" style={{
-                        background: laptopBadge.bg,
-                        color: laptopBadge.color,
-                        borderColor: laptopBadge.border,
-                        fontSize: 10, padding: '2px 8px'
-                      }}>
+                      <span className="reg-admin-status" style={{ background: laptopBadge.bg, color: laptopBadge.color, borderColor: laptopBadge.border, fontSize: 10, padding: '1px 6px' }}>
                         {laptopBadge.text}
                       </span>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
                       <span style={{ color: '#475569', fontWeight: 500 }}>Mobile Camera</span>
-                      <span className="reg-admin-status" style={{
-                        background: mobileBadge.bg,
-                        color: mobileBadge.color,
-                        borderColor: mobileBadge.border,
-                        fontSize: 10, padding: '2px 8px'
-                      }}>
+                      <span className="reg-admin-status" style={{ background: mobileBadge.bg, color: mobileBadge.color, borderColor: mobileBadge.border, fontSize: 10, padding: '1px 6px' }}>
                         {mobileBadge.text}
                       </span>
                     </div>
@@ -449,86 +435,176 @@ export default function ActiveRoom({
                 )
               })()}
 
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
                 <span style={{ color: '#475569', fontWeight: 500 }}>Microphone</span>
                 <span className="reg-admin-status" style={{
-                  background: !isMuted ? '#dcfce7' : '#fee2e2',
-                  color: !isMuted ? '#15803D' : '#dc2626',
-                  borderColor: !isMuted ? '#bbf7d0' : '#fca5a5',
-                  fontSize: 10, padding: '2px 8px'
+                  background: isMuted ? '#fee2e2' : '#dcfce7',
+                  color: isMuted ? '#dc2626' : '#15803D',
+                  borderColor: isMuted ? '#fca5a5' : '#bbf7d0',
+                  fontSize: 10, padding: '1px 6px',
                 }}>
-                  {!isMuted ? '● Active' : '○ Muted'}
+                  {isMuted ? '✕ Muted' : '● Active'}
                 </span>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
-                <span style={{ color: '#475569', fontWeight: 500 }}>Network</span>
-                <span className="reg-admin-status" style={{ background: '#dcfce7', color: '#15803D', borderColor: '#bbf7d0', fontSize: 10, padding: '2px 8px' }}>
-                  ● Good
-                </span>
-              </div>
+              {/* Tab Switch Integrity Badge */}
+              {isInterviewer && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
+                  <span style={{ color: '#475569', fontWeight: 500 }}>Tab Focus</span>
+                  <span className="reg-admin-status" style={{
+                    background: tabSwitchCount === 0 ? '#dcfce7' : tabSwitchCount < 3 ? '#fef3c7' : '#fee2e2',
+                    color: tabSwitchCount === 0 ? '#15803D' : tabSwitchCount < 3 ? '#d97706' : '#dc2626',
+                    borderColor: tabSwitchCount === 0 ? '#bbf7d0' : tabSwitchCount < 3 ? '#fcd34d' : '#fca5a5',
+                    fontSize: 10, padding: '1px 6px',
+                  }}>
+                    {tabSwitchCount === 0 ? '● Active' : `⚠️ ${tabSwitchCount} switch${tabSwitchCount > 1 ? 'es' : ''}`}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </div>
 
         {/* CENTER COLUMN: Large Video Container & Video Controls */}
-        <div className="interview-col-video" style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
+        <div className="interview-col-video" style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0, height: '100%' }}>
           {/* Main Video Viewport */}
-          <div style={{
+          <div className="interview-video-stage" style={{
             background: '#0F172A',
-            borderRadius: 14,
+            borderRadius: 12,
             border: '1px solid #1E293B',
-            aspectRatio: '16/10',
             position: 'relative',
             overflow: 'hidden',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            flex: '1 1 0%',
+            minHeight: 0,
+            width: '100%',
           }}>
-            {/* Remote video stream (live) */}
+            {/* Live Video Feed */}
             {centerStageStatus === 'live' && mainStageStream ? (
               <VideoTile
                 stream={mainStageStream}
                 label={mainStageLabel}
                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
               />
+            ) : centerStageStatus === 'waiting_setup' ? (
+              /* Trainer View: Participant Setup Progress Checklist */
+              <div style={{ textAlign: 'center', color: '#94A3B8', padding: 20, maxWidth: 440 }}>
+                <div style={{
+                  width: 48, height: 48, borderRadius: '50%',
+                  background: 'rgba(37,99,235,0.15)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  margin: '0 auto 12px',
+                }}>
+                  <Clock size={24} color="#60a5fa" />
+                </div>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: '#F8FAFC', margin: '0 0 6px' }}>
+                  Waiting for Candidate Setup...
+                </h3>
+                <p style={{ fontSize: 11, color: '#94A3B8', margin: '0 0 16px', lineHeight: 1.4 }}>
+                  {candidateName} is completing the required pre-join preparation steps.
+                </p>
+
+                {/* 4 Step Progress Checklist */}
+                <div style={{
+                  background: 'rgba(30,41,59,0.7)',
+                  borderRadius: 10,
+                  padding: '12px 14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  textAlign: 'left',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
+                    <span style={{ color: isReadyDone ? '#4ade80' : '#cbd5e1' }}>1. Hardware & Media Check</span>
+                    <span style={{ color: isReadyDone ? '#4ade80' : '#fbbf24', fontWeight: 600 }}>{isReadyDone ? '✓ Ready' : '◐ In Progress'}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
+                    <span style={{ color: isPairDone ? '#4ade80' : '#cbd5e1' }}>2. Mobile QR Pairing</span>
+                    <span style={{ color: isPairDone ? '#4ade80' : setupStep === 'pair' ? '#fbbf24' : '#64748b', fontWeight: 600 }}>
+                      {isPairDone ? '✓ Paired' : setupStep === 'pair' ? '◐ Pairing...' : '○ Pending'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
+                    <span style={{ color: isScreenDone ? '#4ade80' : '#cbd5e1' }}>3. Screen Sharing</span>
+                    <span style={{ color: isScreenDone ? '#4ade80' : setupStep === 'screenshare' ? '#fbbf24' : '#64748b', fontWeight: 600 }}>
+                      {isScreenDone ? '✓ Configured' : setupStep === 'screenshare' ? '◐ Setting up...' : '○ Pending'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
+                    <span style={{ color: isFullscreenDone ? '#4ade80' : '#cbd5e1' }}>4. Fullscreen Room Entry</span>
+                    <span style={{ color: isFullscreenDone ? '#4ade80' : setupStep === 'fullscreen' ? '#fbbf24' : '#64748b', fontWeight: 600 }}>
+                      {isFullscreenDone ? '✓ Ready' : setupStep === 'fullscreen' ? '◐ Entering...' : '○ Pending'}
+                    </span>
+                  </div>
+                </div>
+                <p style={{ fontSize: 10, color: '#64748b', margin: '12px 0 0' }}>
+                  Live video feed will appear automatically once candidate enters the room.
+                </p>
+              </div>
             ) : (
               /* Status placeholder */
-              <div style={{ textAlign: 'center', color: '#94A3B8', padding: 24 }}>
+              <div style={{ textAlign: 'center', color: '#94A3B8', padding: 20 }}>
                 <div style={{
-                  width: 64, height: 64, borderRadius: '50%',
+                  width: 50, height: 50, borderRadius: '50%',
                   background: centerStageStatus === 'failed' ? 'rgba(220,38,38,0.15)' : 'rgba(255,255,255,0.08)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  margin: '0 auto 14px',
+                  margin: '0 auto 10px',
                 }}>
                   {centerStageStatus === 'failed'
-                    ? <AlertCircle size={32} color="#dc2626" />
+                    ? <AlertCircle size={26} color="#dc2626" />
                     : centerStageStatus === 'connecting' || centerStageStatus === 'connected'
-                      ? <div style={{ width: 32, height: 32, border: '3px solid #475569', borderTopColor: '#60a5fa', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
-                      : <VideoIcon size={32} color="#CBD5E1" />}
+                      ? <div style={{ width: 26, height: 26, border: '3px solid #475569', borderTopColor: '#60a5fa', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                      : <VideoIcon size={26} color="#CBD5E1" />}
                 </div>
-                <h3 style={{ fontSize: 16, fontWeight: 600, color: '#F8FAFC', margin: '0 0 6px' }}>
-                  {centerStageContent?.heading}
+                <h3 style={{ fontSize: 14, fontWeight: 600, color: '#F8FAFC', margin: '0 0 4px' }}>
+                  {centerStageStatus === 'waiting'
+                    ? (isInterviewer ? 'Waiting for participant to join...' : 'Waiting for interviewer...')
+                    : centerStageStatus === 'connecting'
+                      ? `Connecting to ${remoteName}...`
+                      : centerStageStatus === 'connected'
+                        ? `Connected to ${remoteName}`
+                        : centerStageStatus === 'failed'
+                          ? 'Connection failed'
+                          : `${remoteName} disconnected`}
                 </h3>
-                <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>
-                  {centerStageContent?.sub}
+                <p style={{ fontSize: 11, color: '#94A3B8', margin: '0 auto 10px', maxWidth: 340, lineHeight: 1.4 }}>
+                  {centerStageStatus === 'connecting' && connectingElapsed > 5
+                    ? 'Negotiating media connection. Click Retry below if it takes longer than expected.'
+                    : centerStageStatus === 'connecting'
+                      ? 'Establishing secure WebRTC connection. This takes a few seconds.'
+                      : centerStageStatus === 'failed'
+                        ? 'Could not establish video connection. Please click Retry below.'
+                        : 'Waiting for stream frames...'}
                 </p>
+                {(centerStageStatus === 'failed' || (centerStageStatus === 'connecting' && connectingElapsed > 5)) && (
+                  <button
+                    onClick={() => onRetryConnection?.(remoteLaptopPeer?.socketId)}
+                    className="reg-admin-btn reg-admin-btn--secondary"
+                    style={{ fontSize: 11, padding: '4px 12px', margin: '4px auto 0' }}
+                  >
+                    Retry Video Connection
+                  </button>
+                )}
               </div>
             )}
 
-            {/* Local Video Picture-in-Picture Badge */}
+            {/* Local Video Picture-in-Picture */}
             <div style={{
               position: 'absolute',
-              bottom: 12,
-              right: 12,
-              width: 140,
-              height: 90,
+              bottom: 8,
+              right: 8,
+              width: 110,
+              height: 70,
               borderRadius: 8,
               overflow: 'hidden',
               border: '2px solid rgba(255,255,255,0.2)',
               background: '#000',
               boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+              zIndex: 20,
             }}>
               <video
                 ref={localVideoRef}
@@ -539,49 +615,162 @@ export default function ActiveRoom({
               />
               <span style={{
                 position: 'absolute',
-                bottom: 4,
-                left: 4,
-                background: 'rgba(0,0,0,0.6)',
+                bottom: 2,
+                left: 2,
+                background: 'rgba(0,0,0,0.7)',
                 color: '#fff',
                 fontSize: 9,
                 fontWeight: 600,
-                padding: '1px 5px',
-                borderRadius: 4,
+                padding: '1px 4px',
+                borderRadius: 3,
               }}>
-                You ({isInterviewer ? 'Trainer' : 'Participant'})
+                You ({isInterviewer ? 'Trainer' : 'Candidate'})
               </span>
             </div>
 
-            {/* Elapsed Timer Overlay */}
+            {/* Elapsed Timer & Time Remaining Overlay */}
             <div style={{
               position: 'absolute',
-              top: 12,
-              left: 12,
-              background: 'rgba(15, 23, 42, 0.75)',
+              top: 8,
+              left: 8,
+              background: 'rgba(15, 23, 42, 0.85)',
               backdropFilter: 'blur(4px)',
-              padding: '6px 12px',
-              borderRadius: 20,
+              padding: '4px 10px',
+              borderRadius: 14,
               display: 'flex',
               alignItems: 'center',
               gap: 6,
               color: '#fff',
-              fontSize: 12,
+              fontSize: 11,
               fontWeight: 600,
               border: '1px solid rgba(255,255,255,0.1)',
+              zIndex: 20,
             }}>
-              <Clock size={14} color="#16A34A" />
-              <span>{formatTime(elapsed || 0)}</span>
+              <Clock size={12} color="#16A34A" />
+              <span>{formatTime(elapsed || 0)} / {durationMinutes}m</span>
+              <span style={{ color: remainingSeconds < 300 ? '#f87171' : '#94a3b8', fontSize: 10, fontWeight: 500 }}>
+                ({Math.ceil(remainingSeconds / 60)}m left)
+              </span>
             </div>
+
+            {/* In-Call Chat Overlay Popover */}
+            {showChat && (
+              <div style={{
+                position: 'absolute',
+                bottom: 8,
+                left: 8,
+                width: 320,
+                height: 280,
+                background: '#ffffff',
+                borderRadius: 10,
+                boxShadow: '0 10px 25px rgba(0,0,0,0.3)',
+                display: 'flex',
+                flexDirection: 'column',
+                zIndex: 30,
+                border: '1px solid #e2e8f0',
+                overflow: 'hidden',
+              }}>
+                {/* Chat Header */}
+                <div style={{
+                  padding: '8px 12px',
+                  background: '#f8fafc',
+                  borderBottom: '1px solid #e2e8f0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <MessageSquare size={14} color="#2563eb" />
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#0f172a' }}>In-Call Chat</span>
+                  </div>
+                  <button
+                    onClick={() => setShowChat(false)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#64748b' }}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+
+                {/* Chat Messages */}
+                <div style={{
+                  flex: 1,
+                  padding: 10,
+                  overflowY: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  background: '#fafafa',
+                }}>
+                  {chatMessages.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 11, margin: 'auto' }}>
+                      No messages yet. Send a note if you experience audio/video issues.
+                    </div>
+                  ) : (
+                    chatMessages.map((msg, i) => {
+                      const isMe = msg.fromUserId === user?.id || msg.fromSocketId === socket?.id
+                      return (
+                        <div key={i} style={{ alignSelf: isMe ? 'flex-end' : 'flex-start', maxWidth: '80%' }}>
+                          <div style={{
+                            fontSize: 9,
+                            color: '#64748b',
+                            marginBottom: 2,
+                            textAlign: isMe ? 'right' : 'left',
+                          }}>
+                            {isMe ? 'You' : (msg.fromUserName || remoteName)} · {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                          </div>
+                          <div style={{
+                            padding: '6px 10px',
+                            borderRadius: 8,
+                            fontSize: 11,
+                            lineHeight: 1.4,
+                            background: isMe ? '#2563eb' : '#e2e8f0',
+                            color: isMe ? '#ffffff' : '#0f172a',
+                          }}>
+                            {msg.message}
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                  <div ref={chatBottomRef} />
+                </div>
+
+                {/* Chat Input */}
+                <form onSubmit={handleSendChatMessage} style={{ padding: '6px 8px', borderTop: '1px solid #e2e8f0', display: 'flex', gap: 6, background: '#fff' }}>
+                  <input
+                    type="text"
+                    value={chatText}
+                    onChange={(e) => setChatText(e.target.value)}
+                    placeholder="Type message to room..."
+                    style={{
+                      flex: 1,
+                      padding: '5px 8px',
+                      fontSize: 11,
+                      border: '1px solid #cbd5e1',
+                      borderRadius: 6,
+                      outline: 'none',
+                    }}
+                  />
+                  <button
+                    type="submit"
+                    className="reg-admin-btn reg-admin-btn--primary"
+                    style={{ padding: '5px 10px', fontSize: 11 }}
+                  >
+                    <Send size={12} />
+                  </button>
+                </form>
+              </div>
+            )}
           </div>
 
           {/* Video Controls Bar */}
-          <div className="reg-admin-table-wrap interview-video-controls">
+          <div className="reg-admin-table-wrap interview-video-controls" style={{ padding: '4px 10px', gap: 6 }}>
             <button
               onClick={onToggleMute}
               className={`reg-admin-btn ${isMuted ? 'reg-admin-btn--danger' : 'reg-admin-btn--secondary'}`}
               title={isMuted ? 'Unmute Microphone' : 'Mute Microphone'}
             >
-              {isMuted ? <MicOff size={16} /> : <Mic size={16} />}
+              {isMuted ? <MicOff size={14} /> : <Mic size={14} />}
               <span>{isMuted ? 'Unmute' : 'Mute'}</span>
             </button>
 
@@ -590,20 +779,32 @@ export default function ActiveRoom({
               className={`reg-admin-btn ${isCameraOff ? 'reg-admin-btn--danger' : 'reg-admin-btn--secondary'}`}
               title={isCameraOff ? 'Turn Camera On' : 'Turn Camera Off'}
             >
-              {isCameraOff ? <VideoOff size={16} /> : <VideoIcon size={16} />}
+              {isCameraOff ? <VideoOff size={14} /> : <VideoIcon size={14} />}
               <span>{isCameraOff ? 'Camera On' : 'Camera Off'}</span>
             </button>
 
-            {!isInterviewer && qrPayload && (
-              <button
-                onClick={() => setShowQrModal(!showQrModal)}
-                className="reg-admin-btn reg-admin-btn--secondary"
-                title="Pair Mobile Camera"
-              >
-                <QrCode size={16} />
-                <span>Pair Mobile</span>
-              </button>
-            )}
+            {/* In-Call Chat Toggle Button */}
+            <button
+              onClick={() => setShowChat(prev => !prev)}
+              className={`reg-admin-btn ${showChat ? 'reg-admin-btn--primary' : 'reg-admin-btn--secondary'}`}
+              title="Toggle In-Call Chat"
+            >
+              <MessageSquare size={14} />
+              <span>Chat</span>
+              {unreadChatCount > 0 && !showChat && (
+                <span style={{
+                  background: '#ef4444',
+                  color: '#fff',
+                  borderRadius: '50%',
+                  padding: '1px 5px',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  marginLeft: 3,
+                }}>
+                  {unreadChatCount}
+                </span>
+              )}
+            </button>
 
             {/* Screen Share: Participant only */}
             {!isInterviewer && (
@@ -612,70 +813,71 @@ export default function ActiveRoom({
                 className={`reg-admin-btn ${isScreenSharing ? 'reg-admin-btn--primary' : 'reg-admin-btn--secondary'}`}
                 title="Share Screen"
               >
-                <Monitor size={16} />
-                <span>{isScreenSharing ? 'Sharing Screen' : 'Share Screen'}</span>
+                <Monitor size={14} />
+                <span>{isScreenSharing ? 'Sharing' : 'Share Screen'}</span>
+              </button>
+            )}
+
+            {/* Recording Control (if available) */}
+            {onToggleRecording && (
+              <button
+                onClick={onToggleRecording}
+                className={`reg-admin-btn ${isRecording ? 'reg-admin-btn--danger' : 'reg-admin-btn--secondary'}`}
+                title={isRecording ? 'Stop Recording' : 'Start Recording'}
+              >
+                <Disc size={14} className={isRecording ? 'spin' : ''} />
+                <span>{isRecording ? 'Recording' : 'Record'}</span>
               </button>
             )}
 
             <button
-              onClick={isInterviewer ? handleEndInterview : handleLeaveInterview}
+              onClick={isInterviewer ? () => setShowEndModal(true) : handleLeaveInterview}
               className="reg-admin-btn reg-admin-btn--danger"
             >
-              <LogOut size={16} />
+              <LogOut size={14} />
               <span>{isInterviewer ? 'End Interview' : 'Leave Room'}</span>
             </button>
           </div>
-
-          {/* QR Modal if toggled */}
-          {showQrModal && qrPayload && (
-            <div style={{
-              background: '#fff',
-              border: '1px solid #e2e8f0',
-              borderRadius: 12,
-              padding: 16,
-            }}>
-              <QRPairing qrPayload={qrPayload} onRefresh={onRefreshQr} expiresAt={qrPayload?.expiresAt} />
-            </div>
-          )}
         </div>
 
-        {/* RIGHT COLUMN: Participant Mobile Feed (Trainer View) OR Connect Mobile Camera QR Card (Participant View) & Notes */}
-        <div className="interview-col-notes" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* RIGHT COLUMN: Participant Mobile Feed (Trainer View) OR Connected Status (Participant View) & Notes */}
+        <div className="interview-col-notes" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {isInterviewer ? (
             /* Trainer View: Participant Screen Share & Mobile Camera Feed Tiles */
             <>
-              {/* Participant Screen Share Feed Tile (ALWAYS MOUNTED) */}
+              {/* Participant Screen Share Feed Tile */}
               <div
                 className="reg-admin-table-wrap"
                 style={{
                   background: '#fff',
-                  padding: 18,
+                  padding: 10,
                   cursor: participantScreenStream ? 'pointer' : 'default',
                   outline: pinnedStreamKey === 'screen' ? '2px solid #2563eb' : 'none',
+                  flex: '0 0 auto',
                 }}
                 onClick={() => participantScreenStream && setPinnedStreamKey(pinnedStreamKey === 'screen' ? null : 'screen')}
                 title={participantScreenStream ? 'Click to pin/unpin to main stage' : undefined}
               >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, borderBottom: '1px solid #f1f5f9', paddingBottom: 8 }}>
-                  <h4 style={{ fontSize: 14, fontWeight: 700, margin: 0, color: '#0f172a' }}>
-                    Participant Screen Share {pinnedStreamKey === 'screen' ? '📌' : ''}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, borderBottom: '1px solid #f1f5f9', paddingBottom: 4 }}>
+                  <h4 style={{ fontSize: 12, fontWeight: 700, margin: 0, color: '#0f172a' }}>
+                    Screen Share {pinnedStreamKey === 'screen' ? '📌' : ''}
                   </h4>
                   <span className="reg-admin-status" style={{
                     background: screenShareStatus === 'live' ? '#dcfce7' : screenShareStatus === 'failed' ? '#fee2e2' : screenShareStatus === 'connecting' ? '#fef3c7' : '#f1f5f9',
                     color: screenShareStatus === 'live' ? '#15803D' : screenShareStatus === 'failed' ? '#dc2626' : screenShareStatus === 'connecting' ? '#d97706' : '#64748b',
                     borderColor: screenShareStatus === 'live' ? '#bbf7d0' : screenShareStatus === 'failed' ? '#fca5a5' : screenShareStatus === 'connecting' ? '#fcd34d' : '#e2e8f0',
-                    fontSize: 10, padding: '2px 8px',
+                    fontSize: 10, padding: '1px 6px',
                   }}>
                     {screenShareStatus === 'live'
-                      ? '● Live Sharing'
+                      ? '● Live'
                       : screenShareStatus === 'failed'
-                        ? '✕ Screen share failed — Retry'
+                        ? '✕ Failed'
                         : screenShareStatus === 'connecting'
-                          ? '◐ Starting screen share...'
-                          : '○ Not Sharing'}
+                          ? '◐ Starting...'
+                          : '○ Off'}
                   </span>
                 </div>
-                <div style={{ width: '100%', aspectRatio: '16/10', background: '#0f172a', borderRadius: 8, overflow: 'hidden', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ width: '100%', height: 100, background: '#0f172a', borderRadius: 8, overflow: 'hidden', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   {participantScreenStream ? (
                     <VideoTile
                       stream={participantScreenStream}
@@ -685,9 +887,9 @@ export default function ActiveRoom({
                       onVideoState={handleScreenShareVideoState}
                     />
                   ) : (
-                    <div style={{ textAlign: 'center', padding: 12 }}>
+                    <div style={{ textAlign: 'center', padding: 6 }}>
                       <p style={{ color: '#94a3b8', fontSize: 11, margin: 0 }}>
-                        Waiting for participant to share their screen...
+                        Waiting for screen share...
                       </p>
                     </div>
                   )}
@@ -698,8 +900,9 @@ export default function ActiveRoom({
               <div
                 style={{
                   cursor: 'pointer',
-                  borderRadius: 12,
+                  borderRadius: 10,
                   outline: pinnedStreamKey === 'mobile' ? '2px solid #2563eb' : 'none',
+                  flex: '0 0 auto',
                 }}
                 onClick={() => setPinnedStreamKey(pinnedStreamKey === 'mobile' ? null : 'mobile')}
                 title="Click to pin/unpin to main stage"
@@ -708,135 +911,195 @@ export default function ActiveRoom({
               </div>
             </>
           ) : (
-            /* Participant View: Connect Mobile Camera QR Code Card */
-            <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: 16 }}>
-              <QRPairing
-                qrPayload={qrPayload}
-                onRefresh={onRefreshQr}
-                expiresAt={qrPayload?.expiresAt}
-                tokenStatus={isMobileConnected ? '● Mobile camera connected' : '○ Waiting for mobile scan'}
-              />
+            /* Participant View: Connect Mobile Camera Status or QR Code Card */
+            <div style={{ flex: '0 0 auto' }}>
+              {isMobileConnected ? (
+                <div className="reg-admin-table-wrap" style={{ background: '#fff', padding: 10, border: '1px solid #bbf7d0' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <h4 style={{ fontSize: 12, fontWeight: 700, margin: 0, color: '#0f172a' }}>
+                      Mobile Companion Camera
+                    </h4>
+                    <span className="reg-admin-status" style={{
+                      background: '#dcfce7',
+                      color: '#15803D',
+                      borderColor: '#bbf7d0',
+                      fontSize: 10,
+                      padding: '1px 6px',
+                    }}>
+                      ● Connected
+                    </span>
+                  </div>
+                  <p style={{ fontSize: 11, color: '#166534', margin: 0 }}>
+                    Secondary proctoring camera is connected & streaming.
+                  </p>
+                </div>
+              ) : (
+                <QRPairing
+                  qrPayload={qrPayload}
+                  onRefresh={onRefreshQr}
+                  expiresAt={qrPayload?.expiresAt}
+                  tokenStatus="○ Waiting for scan"
+                />
+              )}
+            </div>
+          )}
+
+          {/* Trainer HR Scorecard (Trainer View Only) */}
+          {isInterviewer && (
+            <div className="reg-admin-table-wrap" style={{ background: '#fff', padding: 10, flex: '0 0 auto' }}>
+              <h4 style={{ fontSize: 12, fontWeight: 700, margin: '0 0 8px', color: '#0f172a', borderBottom: '1px solid #f1f5f9', paddingBottom: 4 }}>
+                HR Quick Scorecard
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
+                  <span style={{ color: '#475569' }}>Technical</span>
+                  <div style={{ display: 'flex', gap: 2 }}>
+                    {[1, 2, 3, 4, 5].map(star => (
+                      <Star
+                        key={star}
+                        size={14}
+                        onClick={() => setTechRating(star)}
+                        style={{ cursor: 'pointer', fill: star <= techRating ? '#f59e0b' : 'none', color: star <= techRating ? '#f59e0b' : '#cbd5e1' }}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
+                  <span style={{ color: '#475569' }}>Communication</span>
+                  <div style={{ display: 'flex', gap: 2 }}>
+                    {[1, 2, 3, 4, 5].map(star => (
+                      <Star
+                        key={star}
+                        size={14}
+                        onClick={() => setCommRating(star)}
+                        style={{ cursor: 'pointer', fill: star <= commRating ? '#f59e0b' : 'none', color: star <= commRating ? '#f59e0b' : '#cbd5e1' }}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
+                  <span style={{ color: '#475569' }}>Problem Solving</span>
+                  <div style={{ display: 'flex', gap: 2 }}>
+                    {[1, 2, 3, 4, 5].map(star => (
+                      <Star
+                        key={star}
+                        size={14}
+                        onClick={() => setProblemRating(star)}
+                        style={{ cursor: 'pointer', fill: star <= problemRating ? '#f59e0b' : 'none', color: star <= problemRating ? '#f59e0b' : '#cbd5e1' }}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div style={{ marginTop: 4 }}>
+                  <select
+                    value={recommendation}
+                    onChange={(e) => setRecommendation(e.target.value)}
+                    style={{ width: '100%', fontSize: 11, padding: '4px 6px', borderRadius: 6, border: '1px solid #cbd5e1' }}
+                  >
+                    <option value="">-- Recommendation --</option>
+                    <option value="Strong Hire">Strong Hire</option>
+                    <option value="Hire">Hire</option>
+                    <option value="Hold / Under Review">Hold / Under Review</option>
+                    <option value="Reject">Reject</option>
+                  </select>
+                </div>
+              </div>
             </div>
           )}
 
           {/* Interview Notes Card */}
-          <div className="reg-admin-table-wrap" style={{ background: '#fff', padding: 18, flex: 1, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyBetween: 'space-between', marginBottom: 10 }}>
-              <h4 style={{ fontSize: 14, fontWeight: 700, margin: 0, color: '#0f172a' }}>
+          <div className="reg-admin-table-wrap interview-notes-card" style={{ background: '#fff', padding: 10, flex: '1 1 0%', display: 'flex', flexDirection: 'column', minHeight: 120 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, flexShrink: 0 }}>
+              <h4 style={{ fontSize: 12, fontWeight: 700, margin: 0, color: '#0f172a' }}>
                 Interview Notes
               </h4>
               <button
                 onClick={handleSaveNotes}
                 disabled={savingNotes}
                 className="reg-admin-btn reg-admin-btn--secondary"
-                style={{ padding: '4px 10px', fontSize: 11, marginLeft: 'auto' }}
+                style={{ padding: '2px 8px', fontSize: 11, marginLeft: 'auto' }}
               >
                 {savingNotes ? 'Saving...' : 'Save Notes'}
               </button>
             </div>
             <textarea
-              rows={6}
-              placeholder="Add notes during the interview..."
               value={notes}
-              onChange={e => setNotes(e.target.value)}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Record assessment notes, evaluation feedback, and candidate answers here..."
               style={{
+                flex: '1 1 0%',
                 width: '100%',
-                flex: 1,
-                padding: '10px 12px',
                 border: '1px solid #e2e8f0',
                 borderRadius: 8,
-                fontSize: 13,
-                fontFamily: 'Inter, system-ui, sans-serif',
+                padding: 8,
+                fontSize: 12,
+                resize: 'none',
+                fontFamily: 'inherit',
                 outline: 'none',
-                resize: 'vertical',
-                minHeight: 120,
                 boxSizing: 'border-box',
               }}
             />
           </div>
         </div>
-
       </div>
 
-      {/* BOTTOM SECTION: Interview Timeline Card */}
-      <div className="reg-admin-table-wrap" style={{ background: '#fff', padding: 20 }}>
-        <h4 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 16px', color: '#0f172a' }}>
-          Interview Timeline
-        </h4>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
-          {/* Stage 1 */}
-          <div style={{
-            padding: 14,
-            background: '#f8fafc',
-            border: '1px solid #e2e8f0',
-            borderRadius: 10,
-          }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#16A34A', textTransform: 'uppercase', marginBottom: 4 }}>
-              Stage 1
+      {/* Quick End Interview Outcome Modal (Trainer View) */}
+      {showEndModal && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.6)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          padding: 16,
+        }}>
+          <div className="reg-admin-table-wrap" style={{ background: '#fff', maxWidth: 420, width: '100%', padding: 20 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 8px', color: '#0f172a' }}>
+              End Interview
+            </h3>
+            <p style={{ fontSize: 12, color: '#64748b', margin: '0 0 16px' }}>
+              Select a final outcome recommendation before completing this session.
+            </p>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: '#334155', display: 'block', marginBottom: 6 }}>
+                Outcome Recommendation
+              </label>
+              <select
+                value={recommendation}
+                onChange={(e) => setRecommendation(e.target.value)}
+                style={{ width: '100%', fontSize: 12, padding: '8px 10px', borderRadius: 8, border: '1px solid #cbd5e1' }}
+              >
+                <option value="Advance to Next Round">Advance to Next Round</option>
+                <option value="Strong Hire">Strong Hire</option>
+                <option value="Hire">Hire</option>
+                <option value="Hold / Under Review">Hold / Under Review</option>
+                <option value="Reject">Reject</option>
+              </select>
             </div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>Interview Scheduled</div>
-            <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{scheduledDate}</div>
-          </div>
-
-          {/* Stage 2 */}
-          <div style={{
-            padding: 14,
-            background: peerConnected ? '#f0fdf4' : '#f8fafc',
-            border: `1px solid ${peerConnected ? '#bbf7d0' : '#e2e8f0'}`,
-            borderRadius: 10,
-          }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: peerConnected ? '#16A34A' : '#64748b', textTransform: 'uppercase', marginBottom: 4 }}>
-              Stage 2
-            </div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>Participant Joining</div>
-            <div style={{ fontSize: 12, color: peerConnected ? '#15803D' : '#64748b', marginTop: 2 }}>
-              {peerConnected ? 'Joined' : 'Waiting...'}
-            </div>
-          </div>
-
-          {/* Stage 3 */}
-          <div style={{
-            padding: 14,
-            background: interviewData?.status === 'IN_PROGRESS' || peerConnected ? '#fef3c7' : '#f8fafc',
-            border: `1px solid ${interviewData?.status === 'IN_PROGRESS' || peerConnected ? '#fcd34d' : '#e2e8f0'}`,
-            borderRadius: 10,
-          }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#d97706', textTransform: 'uppercase', marginBottom: 4 }}>
-              Stage 3
-            </div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>Interview In Progress</div>
-            <div style={{ fontSize: 12, color: '#92400e', marginTop: 2 }}>
-              {interviewData?.status === 'IN_PROGRESS' || peerConnected ? `Active (${formatTime(elapsed || 0)})` : 'Not started'}
-            </div>
-          </div>
-
-          {/* Stage 4 */}
-          <div style={{
-            padding: 14,
-            background: interviewData?.status === 'COMPLETED' ? '#f0fdf4' : '#f8fafc',
-            border: `1px solid ${interviewData?.status === 'COMPLETED' ? '#bbf7d0' : '#e2e8f0'}`,
-            borderRadius: 10,
-          }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: interviewData?.status === 'COMPLETED' ? '#16A34A' : '#64748b', textTransform: 'uppercase', marginBottom: 4 }}>
-              Stage 4
-            </div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>Interview Completed</div>
-            <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
-              {interviewData?.status === 'COMPLETED' ? 'Completed' : 'Not started'}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button
+                onClick={() => setShowEndModal(false)}
+                className="reg-admin-btn reg-admin-btn--secondary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  await handleSaveNotes()
+                  setShowEndModal(false)
+                  handleEndInterview?.()
+                }}
+                className="reg-admin-btn reg-admin-btn--danger"
+              >
+                Confirm & End Interview
+              </button>
             </div>
           </div>
         </div>
-      </div>
-      <WebRTCDebugPanel
-        isInterviewer={isInterviewer}
-        peers={peers}
-        connectionStates={connectionStates}
-        remoteStreams={remoteStreams}
-        mediaState={mediaState}
-        socket={socket}
-        interviewId={interviewId}
-        getRemoteDiagnostics={getRemoteDiagnostics}
-      />
+      )}
     </InterviewShell>
   )
 }

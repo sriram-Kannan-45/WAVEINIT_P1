@@ -324,7 +324,7 @@ const aiService = {
 
     // 2. Direct Gemini API call fallback (if microservice unreachable)
     const apiKey = process.env.GEMINI_API_KEY;
-    if (apiKey && apiKey !== 'your-gemini-api-key-here' && !apiKey.startsWith('AQ.')) {
+    if (apiKey && apiKey !== 'your-gemini-api-key-here') {
       try {
         console.log('[aiService] Attempting direct Google Gemini API call...');
         const systemPrompt = `You are an enterprise LMS curriculum architect and master instructional designer.
@@ -366,7 +366,7 @@ Return ONLY valid JSON matching this exact schema:
 }`;
 
         const geminiRes = await axios.post(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
           {
             contents: [{ parts: [{ text: systemPrompt }] }],
             generationConfig: { temperature: 0.3, responseMimeType: 'application/json' }

@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react'
-import { Camera, Users, UserPlus, ShieldCheck, Loader2 } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
+import { Camera, Users, UserPlus, ShieldCheck, Loader2, RefreshCw, Sparkles } from 'lucide-react'
 import { useToast } from '../Toast'
 import { API_BASE } from '../../api/api'
 
@@ -18,6 +18,30 @@ const DESIGNATIONS = [
 const EXPERIENCE_LEVELS = [
   'Fresher', '1-3 years', '3-5 years', '5-10 years', '10+ years',
 ]
+
+function generateNextEmployeeId(trainersList = []) {
+  const list = Array.isArray(trainersList) ? trainersList : []
+  let maxNumber = 1000
+
+  list.forEach(t => {
+    const raw = t.employeeId || t.employee_id || t.profile?.employeeId || t.profile?.employee_id
+    if (raw) {
+      const match = String(raw).match(/\d+/)
+      if (match) {
+        const num = parseInt(match[0], 10)
+        if (!isNaN(num) && num > maxNumber && num < 99999) {
+          maxNumber = num
+        }
+      }
+    }
+  })
+
+  // If no numbers above 1000 exist, compute sequentially based on current trainer count
+  if (maxNumber === 1000) {
+    maxNumber = 1000 + list.length
+  }
+  return `EMP-${maxNumber + 1}`
+}
 
 const EMPTY_FORM = {
   name: '',
@@ -43,13 +67,17 @@ function StatusBadge({ status }) {
 }
 
 export default function CreateTrainerModule({
+  trainers = [],
   token,
   onCreated,
   onBack,
 }) {
   const { success, error: showError } = useToast()
 
-  const [form, setForm] = useState(EMPTY_FORM)
+  const [form, setForm] = useState(() => ({
+    ...EMPTY_FORM,
+    employeeId: generateNextEmployeeId(trainers),
+  }))
   const [errors, setErrors] = useState({})
   const [submitting, setSubmitting] = useState(false)
   const [imagePreview, setImagePreview] = useState(null)
@@ -59,6 +87,21 @@ export default function CreateTrainerModule({
   const fileInputRef = useRef(null)
 
   const isActive = form.status === 'APPROVED'
+
+  useEffect(() => {
+    if (!form.employeeId || form.employeeId.startsWith('EMP-')) {
+      const nextId = generateNextEmployeeId(trainers)
+      setForm(prev => ({
+        ...prev,
+        employeeId: prev.employeeId && !prev.employeeId.startsWith('EMP-') ? prev.employeeId : nextId,
+      }))
+    }
+  }, [trainers])
+
+  const handleRegenerateEmpId = () => {
+    const nextId = generateNextEmployeeId(trainers)
+    setField('employeeId', nextId)
+  }
 
   const setField = (key, value) => {
     setForm(prev => ({ ...prev, [key]: value }))
@@ -125,8 +168,11 @@ export default function CreateTrainerModule({
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || 'Failed to create trainer')
 
-      success('Trainer account created successfully.')
-      setForm(EMPTY_FORM)
+      success('Trainer created successfully')
+      setForm({
+        ...EMPTY_FORM,
+        employeeId: generateNextEmployeeId([...trainers, { employeeId: form.employeeId }]),
+      })
       setImagePreview(null)
       setErrors({})
       onCreated?.()
@@ -138,7 +184,10 @@ export default function CreateTrainerModule({
   }
 
   const resetForm = () => {
-    setForm(EMPTY_FORM)
+    setForm({
+      ...EMPTY_FORM,
+      employeeId: generateNextEmployeeId(trainers),
+    })
     setImagePreview(null)
     setErrors({})
   }
@@ -252,8 +301,46 @@ export default function CreateTrainerModule({
                     {errors.phone && <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 2 }}>{errors.phone}</div>}
                   </div>
                   <div>
-                    <label className="reg-field-label" style={labelStyle}>Employee ID</label>
-                    <input className="reg-input" type="text" placeholder="e.g. EMP-1024" value={form.employeeId} onChange={(e) => setField('employeeId', e.target.value)} />
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <label className="reg-field-label" style={{ ...labelStyle, marginBottom: 0 }}>Employee ID</label>
+                      <button
+                        type="button"
+                        onClick={handleRegenerateEmpId}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
+                          background: 'none', border: 'none', color: '#16A34A',
+                          fontSize: 11, fontWeight: 600, cursor: 'pointer', padding: 0,
+                        }}
+                        title="Auto-generate next ID based on trainer count"
+                      >
+                        <RefreshCw size={11} /> Auto-Generate
+                      </button>
+                    </div>
+                    <div style={{ position: 'relative' }}>
+                      <input
+                        className="reg-input"
+                        type="text"
+                        placeholder="e.g. EMP-1006"
+                        value={form.employeeId}
+                        onChange={(e) => setField('employeeId', e.target.value)}
+                        style={{ paddingRight: 32 }}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleRegenerateEmpId}
+                        style={{
+                          position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                          background: 'none', border: 'none', color: '#16A34A', cursor: 'pointer',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 4,
+                        }}
+                        title="Refresh Employee ID"
+                      >
+                        <Sparkles size={14} />
+                      </button>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                      Auto-assigned based on current trainer count ({trainers?.length || 0})
+                    </div>
                   </div>
                 </div>
 

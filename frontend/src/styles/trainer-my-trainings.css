@@ -35,17 +35,17 @@
   max-width: 100% !important;
 }
 
-/* ── Container (Single Desktop Screen Viewport Layout) ── */
+/* ── Container (Responsive Scrollable Viewport Layout) ── */
 .tmt-container {
-  height: 100vh;
-  max-height: 100vh;
-  overflow: hidden;
-  padding: 16px 24px 20px;
+  min-height: 100vh;
+  height: auto;
+  overflow-y: auto;
+  padding: 16px 24px 24px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
-  gap: 12px;
+  gap: 14px;
   font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--tmt-text-primary);
   background: #F8FAFC;
@@ -316,6 +316,172 @@
 .tmt-table-wrapper {
   width: 100%;
   overflow-x: auto;
+  overflow-y: auto;
+  max-height: calc(100vh - 280px);
+  min-height: 220px;
+  border-radius: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: #CBD5E1 #F8FAFC;
+}
+
+.tmt-table-wrapper::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.tmt-table-wrapper::-webkit-scrollbar-track {
+  background: #F8FAFC;
+  border-radius: 6px;
+}
+
+.tmt-table-wrapper::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 6px;
+}
+
+.tmt-table-wrapper::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+.tmt-table thead th {
+  position: sticky;
+  top: 0;
+  background: #FFFFFF;
+  z-index: 5;
+  box-shadow: 0 1px 0 #F1F5F9;
+}
+
+/* ── Quick Course Jump Scroll Menu ── */
+.tmt-quick-jump {
+  position: relative;
+  display: inline-block;
+}
+
+.tmt-quick-jump-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.tmt-quick-jump-btn:hover {
+  background: #F8FAFC;
+  border-color: #CBD5E1;
+  color: #0F172A;
+}
+
+.tmt-quick-jump-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 340px;
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+  z-index: 100;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tmt-quick-jump-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.tmt-quick-jump-search input {
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 12px;
+  width: 100%;
+  color: #0F172A;
+}
+
+.tmt-quick-jump-list {
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: #CBD5E1 transparent;
+}
+
+.tmt-quick-jump-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.tmt-quick-jump-list::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 4px;
+}
+
+.tmt-quick-jump-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.tmt-quick-jump-item:hover {
+  background: #F1F5F9;
+}
+
+.tmt-quick-jump-thumb {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: #0F172A;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.tmt-quick-jump-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.tmt-quick-jump-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #0F172A;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tmt-quick-jump-meta {
+  font-size: 11px;
+  color: #64748B;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .tmt-table {
@@ -554,16 +720,19 @@
   margin-top: 6px;
 }
 
-.tmt-showing-text {
+.tmt-showing-text,
+.tmt-pagination-info {
   font-size: 11px;
   color: #64748B;
   font-weight: 500;
 }
 
-.tmt-page-controls {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.tmt-page-controls,
+.tmt-pagination-controls {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 4px !important;
 }
 
 .tmt-page-btn {

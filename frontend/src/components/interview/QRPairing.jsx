@@ -76,28 +76,28 @@ export default function QRPairing({ qrPayload, onRefresh, expiresAt, tokenStatus
   }
 
   return (
-    <div className="bg-white rounded-2xl border border-surface-200 shadow-card p-5 flex flex-col items-center">
-      <h3 className="text-surface-900 font-semibold text-sm mb-1">Pair Mobile Device</h3>
-      <p className="text-surface-500 text-xs mb-4 text-center">
+    <div className="bg-white rounded-xl border border-surface-200 shadow-card p-3 flex flex-col items-center">
+      <h3 className="text-surface-900 font-semibold text-xs mb-1">Pair Mobile Device</h3>
+      <p className="text-surface-500 text-[11px] mb-2 text-center leading-tight">
         Scan with your phone camera to pair it as a second camera.
       </p>
 
-      <div className={`bg-white p-3 rounded-xl border border-surface-200 transition-opacity ${isExpired ? 'opacity-40' : ''}`}>
+      <div className={`bg-white p-2 rounded-lg border border-surface-200 transition-opacity ${isExpired ? 'opacity-40' : ''}`}>
         {pairUrl ? (
-          <QRCodeSVG value={pairUrl} size={168} level="M" />
+          <QRCodeSVG value={pairUrl} size={120} level="M" />
         ) : (
-          <div className="w-[168px] h-[168px] bg-surface-100 rounded-lg flex items-center justify-center text-xs text-surface-400">
+          <div className="w-[120px] h-[120px] bg-surface-100 rounded-lg flex items-center justify-center text-xs text-surface-400">
             Generating...
           </div>
         )}
       </div>
 
       {isExpired ? (
-        <div className="text-rose-600 text-xs mt-3 font-medium flex items-center gap-1.5">
-          <AlertTriangle size={13} /> QR code expired
+        <div className="text-rose-600 text-[11px] mt-2 font-medium flex items-center gap-1">
+          <AlertTriangle size={12} /> QR code expired
         </div>
       ) : (
-        <div className="text-surface-600 text-xs mt-3 font-mono bg-surface-50 px-2.5 py-1 rounded-md border border-surface-200">
+        <div className="text-surface-600 text-[10px] mt-2 font-mono bg-surface-50 px-2 py-0.5 rounded border border-surface-200">
           Expires in {String(Math.floor(timeLeft / 60)).padStart(2, '0')}:
           {String(timeLeft % 60).padStart(2, '0')}
         </div>
@@ -106,21 +106,21 @@ export default function QRPairing({ qrPayload, onRefresh, expiresAt, tokenStatus
       <button
         onClick={handleRefresh}
         disabled={refreshing}
-        className="mt-3 px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded-lg transition-colors shadow-xs"
+        className="mt-2 px-3 py-1 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-[11px] font-medium rounded-md transition-colors shadow-xs"
       >
         {refreshing ? 'Refreshing...' : 'Refresh QR Code'}
       </button>
 
       {refreshError && (
-        <div className="mt-2 text-rose-600 text-xs text-center max-w-[220px]">{refreshError}</div>
+        <div className="mt-1 text-rose-600 text-[10px] text-center max-w-[200px]">{refreshError}</div>
       )}
 
       {tokenStatus && (
-        <p className="text-surface-400 text-[10px] mt-2">{tokenStatus}</p>
+        <p className="text-surface-400 text-[10px] mt-1.5">{tokenStatus}</p>
       )}
 
       {pairUrl && (
-        <p className="text-surface-400 text-[10px] mt-3 text-center max-w-[220px] font-mono break-all bg-surface-50 p-1.5 rounded border border-surface-100">
+        <p className="text-surface-400 text-[9px] mt-2 text-center max-w-[200px] font-mono break-all bg-surface-50 p-1 rounded border border-surface-100">
           {pairUrl}
         </p>
       )}

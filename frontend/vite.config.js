@@ -45,23 +45,27 @@ export default defineConfig({
     port: 5174,
     https: customHttps || true,
     proxy: {
-      // All /api/* calls → Node backend on port 3001
+      // All /api/* calls → Node backend on port 3001 (127.0.0.1 prevents IPv6 DNS lookup delays)
       '/api': {
-        target: 'http://localhost:3001',
+        target: 'http://127.0.0.1:3001',
         changeOrigin: true,
         secure: false,
+        timeout: 300000,
+        proxyTimeout: 300000,
       },
       // Static uploads (profile images, docs) served by backend
       '/uploads': {
-        target: 'http://localhost:3001',
+        target: 'http://127.0.0.1:3001',
         changeOrigin: true,
         secure: false,
       },
       // WebSocket (Socket.IO) → backend
       '/socket.io': {
-        target: 'http://localhost:3001',
+        target: 'http://127.0.0.1:3001',
         changeOrigin: true,
         ws: true,
+        timeout: 300000,
+        proxyTimeout: 300000,
       }
     }
   }

@@ -19,26 +19,22 @@ const ICE_SERVERS = [
   { urls: 'stun:stun2.l.google.com:19302' },
   { urls: 'stun:stun3.l.google.com:19302' },
   { urls: 'stun:stun4.l.google.com:19302' },
+  { urls: 'stun:global.stun.twilio.com:3478' },
+  { urls: 'stun:stun.relay.metered.ca:80' },
   // OpenRelay by Metered (free public TURN service for NAT traversal fallback)
   {
-    urls: 'turn:openrelay.metered.ca:80',
-    username: 'openrelay',
-    credential: 'openrelay',
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443',
-    username: 'openrelay',
-    credential: 'openrelay',
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+    urls: [
+      'turn:openrelay.metered.ca:80',
+      'turn:openrelay.metered.ca:443',
+      'turn:openrelay.metered.ca:443?transport=tcp',
+    ],
     username: 'openrelay',
     credential: 'openrelay',
   },
 ]
 
 const ICE_RECONNECT_DELAY = 2000
-const CONNECTION_TIMEOUT_MS = 20000
+const CONNECTION_TIMEOUT_MS = 15000
 
 export function useWebRTC(socket, interviewId, localStreamRef) {
   const peerConnections = useRef(new Map())   // socketId → RTCPeerConnection
@@ -762,6 +758,37 @@ export function useWebRTC(socket, interviewId, localStreamRef) {
     return () => closeAll()
   }, [closeAll])
 
+  const retryPeerConnection = useCallback((peerSocketId) => {
+    if (!peerSocketId) {
+      for (const [id, pc] of peerConnections.current.entries()) {
+        console.log(`[WebRTC] Retrying peer connection for ${id}...`)
+        try {
+          pc.restartIce()
+          if (socketRef.current) {
+            socketRef.current.emit('ice-restart', { targetSocketId: id })
+          }
+        } catch (e) {
+          console.warn('[WebRTC] restartIce error:', e)
+        }
+        createOffer(id)
+      }
+      return
+    }
+
+    const pc = peerConnections.current.get(peerSocketId)
+    if (pc) {
+      try {
+        pc.restartIce()
+        if (socketRef.current) {
+          socketRef.current.emit('ice-restart', { targetSocketId: peerSocketId })
+        }
+      } catch (e) {
+        console.warn('[WebRTC] restartIce error:', e)
+      }
+    }
+    createOffer(peerSocketId)
+  }, [createOffer])
+
   return {
     remoteStreams,
     connectionStates,
@@ -771,6 +798,7 @@ export function useWebRTC(socket, interviewId, localStreamRef) {
     handleOffer,
     handleAnswer,
     handleIceCandidate,
+    retryPeerConnection,
     replaceTrack,
     replaceTrackAll,
     addScreenStream,

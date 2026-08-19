@@ -243,17 +243,19 @@ async function deleteProgram(req, res) {
         if (lessonQuizIds.length > 0) {
           await QuizProgress.destroy({ where: { lessonQuizId: { [Op.in]: lessonQuizIds } } });
         }
-        await Promise.all([
-          LessonMaterial.destroy({   where: { lessonId: { [Op.in]: lessonIds } } }),
-          LessonAssessment.destroy({ where: { lessonId: { [Op.in]: lessonIds } } }),
-          LessonProgress.destroy({   where: { lessonId: { [Op.in]: lessonIds } } }),
-          LessonQuiz.destroy({       where: { lessonId: { [Op.in]: lessonIds } } }),
-        ]);
+        await LessonMaterial.destroy({   where: { lessonId: { [Op.in]: lessonIds } } });
+        await LessonAssessment.destroy({ where: { lessonId: { [Op.in]: lessonIds } } });
+        await LessonProgress.destroy({   where: { lessonId: { [Op.in]: lessonIds } } });
+        await LessonQuiz.destroy({       where: { lessonId: { [Op.in]: lessonIds } } });
       }
       if (quizIds.length > 0) {
         const attempts = await QuizAttempt.findAll({ where: { quizId: { [Op.in]: quizIds } }, attributes: ['id'] });
         const attemptIds = attempts.map(a => a.id);
-        const { QuizAnswer, AssessmentSession, ExamSession, Violation, ProctorActivity, Screenshot } = require('../models');
+        const { QuizAnswer, QuizResultsAudit, AssessmentSession, ExamSession, Violation, ProctorActivity, Screenshot } = require('../models');
+
+        if (QuizResultsAudit) {
+          await QuizResultsAudit.destroy({ where: { quizId: { [Op.in]: quizIds } } });
+        }
 
         await AssessmentSession.destroy({
           where: {
@@ -275,11 +277,9 @@ async function deleteProgram(req, res) {
         });
         const sessionIds = examSessions.map(s => s.id);
         if (sessionIds.length > 0) {
-          await Promise.all([
-            Violation.destroy({ where: { sessionId: { [Op.in]: sessionIds } } }),
-            ProctorActivity.destroy({ where: { sessionId: { [Op.in]: sessionIds } } }),
-            Screenshot.destroy({ where: { sessionId: { [Op.in]: sessionIds } } })
-          ]);
+          await Violation.destroy({ where: { sessionId: { [Op.in]: sessionIds } } });
+          await ProctorActivity.destroy({ where: { sessionId: { [Op.in]: sessionIds } } });
+          await Screenshot.destroy({ where: { sessionId: { [Op.in]: sessionIds } } });
 
           const fs = require('fs');
           const path = require('path');
@@ -301,19 +301,15 @@ async function deleteProgram(req, res) {
           await QuizAnswer.destroy({ where: { attemptId: { [Op.in]: attemptIds } } });
           await QuizResult.destroy({ where: { attemptId: { [Op.in]: attemptIds } } });
         }
-        await Promise.all([
-          QuizAttempt.destroy({ where: { quizId: { [Op.in]: quizIds } } }),
-          AIQuestion.destroy({  where: { quizId: { [Op.in]: quizIds } } }),
-          LessonQuiz.destroy({  where: { quizId: { [Op.in]: quizIds } } }),
-        ]);
+        await QuizAttempt.destroy({ where: { quizId: { [Op.in]: quizIds } } });
+        await AIQuestion.destroy({  where: { quizId: { [Op.in]: quizIds } } });
+        await LessonQuiz.destroy({  where: { quizId: { [Op.in]: quizIds } } });
       }
 
-      await Promise.all([
-        Lesson.destroy({       where: { courseId: { [Op.in]: courseIds } } }),
-        AIQuiz.destroy({       where: { courseId: { [Op.in]: courseIds } } }),
-        Enrollment.destroy({   where: { courseId: { [Op.in]: courseIds } } }),
-        CourseTrainerAssignment.destroy({ where: { courseId: { [Op.in]: courseIds } } }),
-      ]);
+      await Lesson.destroy({       where: { courseId: { [Op.in]: courseIds } } });
+      await AIQuiz.destroy({       where: { courseId: { [Op.in]: courseIds } } });
+      await Enrollment.destroy({   where: { courseId: { [Op.in]: courseIds } } });
+      await CourseTrainerAssignment.destroy({ where: { courseId: { [Op.in]: courseIds } } });
       await Course.destroy({ where: { id: { [Op.in]: courseIds } } });
     }
 
@@ -597,19 +593,15 @@ async function deleteCourse(req, res) {
         await QuizAnswer.destroy({ where: { attemptId: { [Op.in]: attemptIds } } });
         await QuizResult.destroy({ where: { attemptId: { [Op.in]: attemptIds } } });
       }
-      await Promise.all([
-        QuizAttempt.destroy({ where: { quizId: { [Op.in]: quizIds } } }),
-        AIQuestion.destroy({  where: { quizId: { [Op.in]: quizIds } } }),
-        LessonQuiz.destroy({  where: { quizId: { [Op.in]: quizIds } } }),
-      ]);
+      await QuizAttempt.destroy({ where: { quizId: { [Op.in]: quizIds } } });
+      await AIQuestion.destroy({  where: { quizId: { [Op.in]: quizIds } } });
+      await LessonQuiz.destroy({  where: { quizId: { [Op.in]: quizIds } } });
     }
 
-    await Promise.all([
-      Lesson.destroy({       where: { courseId: course.id } }),
-      AIQuiz.destroy({       where: { courseId: course.id } }),
-      Enrollment.destroy({   where: { courseId: course.id } }),
-      CourseTrainerAssignment.destroy({ where: { courseId: course.id } }),
-    ]);
+    await Lesson.destroy({       where: { courseId: course.id } });
+    await AIQuiz.destroy({       where: { courseId: course.id } });
+    await Enrollment.destroy({   where: { courseId: course.id } });
+    await CourseTrainerAssignment.destroy({ where: { courseId: course.id } });
     await course.destroy();
 
     return res.json({ success: true, message: 'Course deleted' });

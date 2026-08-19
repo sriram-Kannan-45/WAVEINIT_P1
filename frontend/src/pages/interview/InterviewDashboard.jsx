@@ -149,6 +149,10 @@ export default function InterviewDashboard({ user }) {
   // behind the sidebar/header, and flips upward when near the viewport bottom.
   const openMenu = (e, id) => {
     e.stopPropagation()
+    if (menuOpen === id) {
+      setMenuOpen(null)
+      return
+    }
     const rect = e.currentTarget.getBoundingClientRect()
     const menuWidth = 180
     let right = window.innerWidth - rect.right
@@ -156,13 +160,29 @@ export default function InterviewDashboard({ user }) {
     if (window.innerWidth - right - menuWidth < 8) {
       right = Math.max(8, window.innerWidth - rect.left - menuWidth)
     }
-    const estHeight = menuRef.current?.offsetHeight || 260
-    let top = rect.bottom + 6
-    if (top + estHeight > window.innerHeight - 8) {
-      top = Math.max(8, rect.top - estHeight - 6)
+
+    const spaceBelow = window.innerHeight - rect.bottom
+    const spaceAbove = rect.top
+    const estHeight = manage ? 190 : 56
+
+    const shouldFlip = spaceBelow < estHeight && spaceAbove > spaceBelow
+
+    if (shouldFlip) {
+      setMenuPos({
+        bottom: window.innerHeight - rect.top + 6,
+        top: 'auto',
+        right,
+        isFlipped: true,
+      })
+    } else {
+      setMenuPos({
+        top: rect.bottom + 6,
+        bottom: 'auto',
+        right,
+        isFlipped: false,
+      })
     }
-    setMenuPos({ top, right })
-    setMenuOpen(prev => (prev === id ? null : id))
+    setMenuOpen(id)
   }
 
   const openEdit = async (interview) => {
@@ -241,7 +261,6 @@ export default function InterviewDashboard({ user }) {
   }
 
   const handleStart = (interview) => {
-    if (user?.role === 'ADMIN') return
     setMenuOpen(null)
     navigate(`/interview/${interview.id}/room`)
   }
@@ -542,10 +561,14 @@ export default function InterviewDashboard({ user }) {
                               <motion.div
                                 ref={menuRef}
                                 className="reg-admin-action-menu"
-                                style={{ top: menuPos?.top, right: menuPos?.right }}
-                                initial={{ opacity: 0, y: -4 }}
+                                style={{
+                                  top: menuPos?.top ?? 'auto',
+                                  bottom: menuPos?.bottom ?? 'auto',
+                                  right: menuPos?.right ?? 'auto',
+                                }}
+                                initial={{ opacity: 0, y: menuPos?.isFlipped ? 4 : -4 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -4 }}
+                                exit={{ opacity: 0, y: menuPos?.isFlipped ? 4 : -4 }}
                                 transition={{ duration: 0.15 }}
                               >
                                 <button className="reg-admin-action-menu-item" onClick={() => handleView(iv)}>

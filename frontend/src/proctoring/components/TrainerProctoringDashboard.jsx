@@ -74,6 +74,7 @@ export default function TrainerProctoringDashboard({ quizId, quizTitle }) {
   const [liveStreamObj, setLiveStreamObj] = useState({ screen: null, webcam: null });
   const { socket } = useSocket();
   const { warning, info } = useToast();
+  const [yoloMonitoringMap, setYoloMonitoringMap] = useState({});
 
   // Map sessionId -> participant name for toast alerts
   const participantNameMap = useMemo(() => {
@@ -88,6 +89,18 @@ export default function TrainerProctoringDashboard({ quizId, quizTitle }) {
 
   // Incoming violation updates via proctor:update
   useSocketEvent('proctor:update', (msg) => {
+    if (msg?.type === 'yolo_monitoring' && msg?.monitoring) {
+      const m = msg.monitoring;
+      setYoloMonitoringMap(prev => ({
+        ...prev,
+        [m.sessionId]: m,
+      }));
+
+      if (m.eventType === 'PHONE_DETECTED' || m.eventType === 'MULTIPLE_PERSONS_DETECTED') {
+        const pName = participantNameMap.get(m.sessionId) || 'Participant';
+        warning(`🚨 ${pName} (${m.cameraSource === 'MOBILE_CAMERA' ? 'Mobile' : 'PC Cam'}): ${m.eventType.replace(/_/g, ' ')} (${(m.confidence * 100).toFixed(0)}%)`, { duration: 6000 });
+      }
+    }
     if (msg?.type === 'violation' && msg?.violation) {
       setViolations(prev => [msg.violation, ...prev].slice(0, 200));
 
@@ -322,6 +335,7 @@ export default function TrainerProctoringDashboard({ quizId, quizTitle }) {
             >
               <ParticipantMonitorCard
                 session={s}
+                yoloData={yoloMonitoringMap[s.sessionId]}
                 onTerminate={handleTerminate}
                 onObserve={handleObserveToggle}
                 onUnobserve={unobserve}

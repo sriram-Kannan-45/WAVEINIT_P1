@@ -2748,6 +2748,142 @@ def validate_startup_config():
         
     log.info("✅ Configuration and environment are valid.")
 
+# ── YOLOv8 Proctoring Engine & MediaPipe Endpoints ────
+try:
+    from inference.yolo_detector import yolo_engine
+    YOLO_ENGINE_AVAILABLE = True
+except Exception as e:
+    log.warning(f"YOLO Proctoring engine init warning: {e}")
+    YOLO_ENGINE_AVAILABLE = False
+
+try:
+    from inference.proctoring_detector import proctor_engine, FACE_MODEL_PATH, POSE_MODEL_PATH
+    PROCTORING_ENGINE_AVAILABLE = True
+except Exception as e:
+    log.warning(f"MediaPipe Proctoring engine init warning: {e}")
+    PROCTORING_ENGINE_AVAILABLE = False
+
+
+class AnalyzeFrameRequest(BaseModel):
+    frame: str  # Base64 data URL or raw base64 JPEG/PNG
+    sessionId: Optional[str] = "default"
+    timestampMs: Optional[int] = None
+
+
+class YOLOAnalyzeFrameRequest(BaseModel):
+    frame: str  # Base64 image
+    sessionId: str = "default"
+    participantId: Optional[Any] = None
+    moduleType: Optional[str] = "QUIZ"       # QUIZ | CODING | INTERVIEW
+    cameraSource: Optional[str] = "PC_CAMERA" # PC_CAMERA | MOBILE_CAMERA
+    confidenceThreshold: Optional[float] = 0.35
+    timestampMs: Optional[int] = None
+
+
+class CalibrateRequest(BaseModel):
+    sessionId: str
+    baselineEar: float = 0.28
+    baselineFaceWidth: float = 120.0
+
+
+@app.post("/api/proctoring/yolo/analyze-frame")
+async def analyze_yolo_frame(req: YOLOAnalyzeFrameRequest):
+    """
+    Analyze a live camera frame using the shared singleton YOLOv8 model.
+    Reusable across Quiz, Coding, and Interview modules for PC and Mobile feeds.
+    """
+    if not YOLO_ENGINE_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="YOLO proctoring engine is initializing or unavailable"
+        )
+
+    result = yolo_engine.analyze_frame(
+        frame_data=req.frame,
+        session_id=req.sessionId or "default",
+        participant_id=req.participantId,
+        module_type=req.moduleType or "QUIZ",
+        camera_source=req.cameraSource or "PC_CAMERA",
+        confidence_threshold=req.confidenceThreshold or 0.35,
+        timestamp_ms=req.timestampMs
+    )
+
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "YOLO frame analysis failed"))
+    return result
+
+
+@app.get("/api/proctoring/yolo/status")
+async def get_yolo_proctoring_status():
+    """Health check and model class introspection for the YOLO proctoring engine."""
+    if not YOLO_ENGINE_AVAILABLE:
+        return {
+            "status": "DOWN",
+            "error": "YOLO engine module not loaded"
+        }
+    return yolo_engine.get_status()
+
+
+@app.post("/api/proctoring/analyze-frame")
+async def analyze_proctoring_frame(req: AnalyzeFrameRequest):
+    """Analyze a single video frame with MediaPipe Face & Pose detectors."""
+    if not PROCTORING_ENGINE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="MediaPipe proctoring engine is initializing or unavailable")
+
+    result = proctor_engine.process_b64_frame(
+        b64_data=req.frame,
+        session_id=req.sessionId or "default",
+        timestamp_ms=req.timestampMs
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Frame analysis failed"))
+    return result
+
+
+@app.post("/api/proctoring/calibrate")
+async def calibrate_proctoring_session(req: CalibrateRequest):
+    """Calibrate user baseline metrics for a session."""
+    if not PROCTORING_ENGINE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="MediaPipe proctoring engine is unavailable")
+
+    proctor_engine.calibrate_session(
+        session_id=req.sessionId,
+        baseline_ear=req.baselineEar,
+        baseline_face_width=req.baselineFaceWidth
+    )
+    return {"success": True, "message": f"Session {req.sessionId} calibrated successfully"}
+
+
+@app.post("/api/proctoring/inspect-gemini")
+async def inspect_proctoring_with_gemini(req: AnalyzeFrameRequest):
+    """Run Gemini Multimodal Vision detection for mobile phones, earbuds, and secondary devices."""
+    try:
+        from services.proctoring_detector import inspect_b64_with_gemini
+        res = inspect_b64_with_gemini(req.frame)
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error", "Vision inspection failed"))
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/proctoring/status")
+async def get_proctoring_status():
+    """Health check for MediaPipe, Gemini & YOLO proctoring engines."""
+    yolo_status = yolo_engine.get_status() if YOLO_ENGINE_AVAILABLE else {"status": "DOWN"}
+    return {
+        "status": "UP" if (PROCTORING_ENGINE_AVAILABLE or YOLO_ENGINE_AVAILABLE) else "DOWN",
+        "engines": {
+            "yolo": yolo_status,
+            "mediapipe": {
+                "status": "UP" if PROCTORING_ENGINE_AVAILABLE else "DOWN",
+                "face_landmarker": os.path.exists(FACE_MODEL_PATH) if PROCTORING_ENGINE_AVAILABLE else False,
+                "pose_landmarker": os.path.exists(POSE_MODEL_PATH) if PROCTORING_ENGINE_AVAILABLE else False,
+            }
+        }
+    }
+
+
 def log_startup_banner(provider: str, model: str, port: int, health_status: str):
     """Log a colored startup banner with AI service status details."""
     startup_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

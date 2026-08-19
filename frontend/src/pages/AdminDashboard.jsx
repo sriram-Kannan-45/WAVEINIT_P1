@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { AlertCircle, BookOpen, CheckCircle2, ClipboardList, Clock, Eye, Layers, Loader2, MessageSquare, Plus, RefreshCw, Search, Star, Trash2, TrendingUp, User, UserCheck, UserPlus, Users, X, XCircle } from 'lucide-react'
+import { AlertCircle, BookOpen, Check, CheckCircle2, ClipboardList, Clock, Eye, FileText, Layers, Loader2, MessageSquare, Plus, RefreshCw, Search, Star, Trash2, TrendingUp, User, UserCheck, UserPlus, Users, X, XCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { API, API_BASE } from '../api/api'
 import AssessmentSessionsPanel from '../components/admin/AssessmentSessionsPanel'
@@ -154,13 +154,13 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       if (confirmModal.action === 'delete-question') {
         const r = await fetch(`${API_BASE}/survey/${confirmModal.id}`, { method: 'DELETE', headers: auth() })
         if (!r.ok) throw new Error('Failed to delete question')
-        success('Question deleted')
+        success('Survey question deleted successfully')
         fetchQuestions()
       } else if (confirmModal.action === 'delete-training') {
         const r = await fetch(`${API_BASE}/admin/trainings/${confirmModal.id}`, { method: 'DELETE', headers: auth() })
         const d = await r.json()
         if (!r.ok) throw new Error(d.error)
-        success('Training deleted successfully')
+        success('Training deleted successfully', 'The training session has been removed.')
         fetchTrainings(); fetchStats()
       } else if (confirmModal.action === 'delete-participant') {
         const r = await fetch(`${API_BASE}/admin/participants/${confirmModal.id}`, { method: 'DELETE', headers: auth() })
@@ -178,13 +178,13 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
           }
           throw new Error(d.message || d.error || 'Server error deleting trainer')
         }
-        success(d.message || 'Trainer removed successfully')
+        success('Trainer deleted successfully')
         fetchTrainers(); fetchStats()
       } else if (confirmModal.action === 'delete-program') {
         const r = await fetch(`${API_BASE}/admin/training-programs/${confirmModal.id}`, { method: 'DELETE', headers: auth() })
         const d = await r.json()
         if (!r.ok) throw new Error(d.error)
-        success('Program deleted successfully')
+        success('Training program deleted successfully')
         fetchPrograms()
       } else if (confirmModal.action === 'delete-course') {
         const r = await fetch(`${API_BASE}/admin/courses/${confirmModal.id}`, { method: 'DELETE', headers: auth() })
@@ -331,7 +331,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       if (!r.ok) throw new Error(d.error)
       setTrainingForm({ title: '', description: '', trainerId: '', trainerIds: [], startDate: '', endDate: '', capacity: '', sequentialLearning: false })
       fetchTrainings(); fetchStats()
-      success('Training session created successfully.')
+      success('Training created successfully')
     } catch (e) { showError(e.message) }
     finally { setLoading(false) }
   }
@@ -346,7 +346,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       if (!r.ok) throw new Error(d.error)
       setQuestionForm({ trainingId: '', questionText: '', questionType: 'TEXT', options: '' })
       fetchQuestions()
-      success('Survey question created.')
+      success('Survey question created successfully')
     } catch (e) { showError(e.message) }
     finally { setLoading(false) }
   }
@@ -363,7 +363,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       if (!r.ok) throw new Error(d.error)
       setProgramForm({ title: '', description: '' })
       fetchPrograms()
-      success('Program created successfully.')
+      success('Training program created successfully')
     } catch (e) { showError(e.message) }
     finally { setLoading(false) }
   }
@@ -395,7 +395,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       if (!r.ok) throw new Error(d.error)
       setCourseForm({ title: '', description: '', trainerId: '', programId: '', status: 'ACTIVE' })
       fetchCourses(); fetchPrograms()
-      success('Course created successfully.')
+      success('Course created successfully')
     } catch (e) { showError(e.message) }
     finally { setLoading(false) }
   }
@@ -422,7 +422,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || d.message || 'Failed to approve participant')
-      success('Participant approved successfully')
+      success('Participant approved successfully', 'The participant application has been approved.')
       fetchParticipants(); fetchPendingParticipants(); fetchStats()
     } catch (e) {
       showError(e.message)
@@ -979,7 +979,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                     <th>Enrolled</th>
                     <th>Progress</th>
                     <th>Quiz</th>
-                    <th>Actions</th>
+                    <th style={{ minWidth: 190, textAlign: 'left' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1020,15 +1020,53 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                           </div>
                         </td>
                         <td style={{ fontSize: 12, fontWeight: 600, color: '#334155' }}>{p.quizScore || p.quiz_score || 0}%</td>
-                        <td>
-                          <div className="reg-admin-actions">
-                            <button className="reg-admin-action" title="View Details" onClick={() => setViewingParticipant(p)}><Eye size={14} /></button>
+                        <td style={{ minWidth: 190 }}>
+                          <div className="reg-admin-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap' }}>
+                            {/* 1. View Participant */}
+                            <button
+                              type="button"
+                              className="reg-admin-action reg-admin-action--view"
+                              title="View participant"
+                              aria-label="View participant"
+                              onClick={() => setViewingParticipant(p)}
+                            >
+                              <Eye size={16} />
+                            </button>
+
+                            {/* 2. Review Application */}
+                            <button
+                              type="button"
+                              className="reg-admin-action reg-admin-action--review"
+                              title="Review application"
+                              aria-label="Review application"
+                              onClick={() => handleTabChange('pending')}
+                            >
+                              <FileText size={16} />
+                            </button>
+
+                            {/* 3. Direct Approve Action (Only for PENDING status) */}
                             {String(p.status || 'PENDING').toUpperCase() === 'PENDING' && (
-                              <button className="reg-admin-action reg-admin-action--secondary" title="Go to Pending Approval" onClick={() => handleTabChange('pending')}>
-                                Review<br />Application
+                              <button
+                                type="button"
+                                className="reg-admin-action reg-admin-action--approve-direct"
+                                title="Approve participant"
+                                aria-label="Approve participant"
+                                onClick={() => handleApproveParticipant(p.id)}
+                              >
+                                <Check size={18} strokeWidth={2.6} />
                               </button>
                             )}
-                            <button className="reg-admin-action reg-admin-action--reject" title="Remove Participant" onClick={() => handleDeleteParticipant(p.id, p.name)}><Trash2 size={14} /></button>
+
+                            {/* 4. Delete Participant */}
+                            <button
+                              type="button"
+                              className="reg-admin-action reg-admin-action--reject"
+                              title="Delete participant"
+                              aria-label="Delete participant"
+                              onClick={() => handleDeleteParticipant(p.id, p.name)}
+                            >
+                              <Trash2 size={16} />
+                            </button>
                           </div>
                         </td>
                       </tr>

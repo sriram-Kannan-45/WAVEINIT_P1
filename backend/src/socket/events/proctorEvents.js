@@ -462,6 +462,54 @@ module.exports = function registerProctorEvents(io, socket) {
     }
   });
 
+  // ── Real-Time YOLO Proctoring Frame Handler (PC & Mobile) ───────────
+  socket.on('proctor:yolo_frame', async (payload, ack) => {
+    try {
+      const {
+        frame,
+        sessionId,
+        participantId = socket.userId,
+        moduleType = 'QUIZ',
+        cameraSource = 'PC_CAMERA',
+        confidenceThreshold = 0.35,
+        quizId,
+        assessmentId,
+      } = payload || {};
+
+      if (!frame || !sessionId) {
+        return ack?.({ ok: false, error: 'frame and sessionId required' });
+      }
+
+      const yoloService = require('../../services/yoloProctoringService');
+      const result = await yoloService.analyzeFrame({
+        frame,
+        sessionId,
+        participantId,
+        moduleType,
+        cameraSource,
+        confidenceThreshold,
+      });
+
+      if (result.success && result.proctoring_event) {
+        const event = result.proctoring_event;
+        event.quizId = quizId;
+        event.assessmentId = assessmentId;
+
+        // Broadcast to trainers if event state changed or important detection found
+        if (event.shouldBroadcast) {
+          yoloService.broadcastEvent(io, event);
+        }
+
+        ack?.({ ok: true, event, detections: result.detections });
+      } else {
+        ack?.({ ok: false, error: result.error });
+      }
+    } catch (err) {
+      logger.warn('[SocketIO] proctor:yolo_frame error:', err.message);
+      ack?.({ ok: false, error: err.message });
+    }
+  });
+
   // ── Disconnect: enter grace period instead of immediate offline ─────────
   socket.on('disconnect', async () => {
     const sid = socket.data?.activeSessionId;
@@ -503,3 +551,4 @@ module.exports = function registerProctorEvents(io, socket) {
     }
   });
 };
+

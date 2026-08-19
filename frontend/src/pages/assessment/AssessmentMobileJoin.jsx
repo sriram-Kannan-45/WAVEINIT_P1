@@ -19,6 +19,7 @@ import {
   Info,
   Maximize,
   Wifi,
+  SwitchCamera,
 } from 'lucide-react';
 import { API_BASE, BACKEND_ORIGIN } from '../../api/api';
 
@@ -63,6 +64,8 @@ export default function AssessmentMobileJoin() {
   const [cameraActive, setCameraActive] = useState(false);
   const [socketConnected, setSocketConnected] = useState(false);
   const [peerConnected, setPeerConnected] = useState(false);
+  const [facingMode, setFacingMode] = useState('environment'); // 'environment' (back) | 'user' (front)
+  const [isSwitchingCamera, setIsSwitchingCamera] = useState(false);
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -217,6 +220,9 @@ export default function AssessmentMobileJoin() {
           const frame = canvas.toDataURL('image/jpeg', 0.45);
           socket.emit('assessment_verif:frame', {
             sessionId: info?.sessionId,
+            participantId: info?.participantId || 1,
+            moduleType: info?.assessmentType || 'QUIZ',
+            cameraSource: 'MOBILE_CAMERA',
             frame,
           });
         } catch (e) {
@@ -225,8 +231,8 @@ export default function AssessmentMobileJoin() {
       }
     };
 
-    frameIntervalRef.current = setInterval(captureAndEmit, 100);
-  }, [info?.sessionId]);
+    frameIntervalRef.current = setInterval(captureAndEmit, 150);
+  }, [info?.sessionId, info?.participantId, info?.assessmentType]);
 
   // 2. Setup Socket Connection for real-time synchronization with Laptop (Stable lifecycle)
   const sessionId = info?.sessionId;
@@ -335,26 +341,56 @@ export default function AssessmentMobileJoin() {
     };
   }, [sessionId, socketToken, startWebRTCOffer, startFrameCapture]);
 
-  // 3. Request Mobile Camera Access
-  const enableCamera = useCallback(async () => {
+  // 3. Request Mobile Camera Access (Defaults to Back Camera / Environment)
+  const enableCamera = useCallback(async (requestedFacingMode = 'environment') => {
     setError(null);
     try {
       if (!navigator?.mediaDevices?.getUserMedia) {
         throw new Error('Camera access is not supported on this browser. Try Chrome or Safari.');
       }
 
-      console.log('[MOBILE] Requesting mobile camera...');
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'user',
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-        },
-        audio: false,
-      });
+      console.log(`[MOBILE] Requesting mobile camera with facingMode: ${requestedFacingMode}...`);
+      let stream = null;
+      let usedFacingMode = requestedFacingMode;
 
-      console.log('[MOBILE-5] CAMERA STREAM CREATED');
-      console.log('[MOBILE-6] VIDEO TRACK', stream.getVideoTracks()[0]);
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: requestedFacingMode },
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+          },
+          audio: false,
+        });
+      } catch (prefErr) {
+        console.warn(`[MOBILE] Preferred facingMode ${requestedFacingMode} failed, trying fallback:`, prefErr);
+        const fallbackMode = requestedFacingMode === 'environment' ? 'user' : 'environment';
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: fallbackMode,
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+            },
+            audio: false,
+          });
+          usedFacingMode = fallbackMode;
+        } catch (fallErr) {
+          console.warn('[MOBILE] Fallback facingMode failed, trying generic video constraints:', fallErr);
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
+        }
+      }
+
+      const videoTrack = stream.getVideoTracks()[0];
+      const actualSettings = videoTrack?.getSettings?.() || {};
+      const finalFacingMode = actualSettings.facingMode || usedFacingMode;
+      setFacingMode(finalFacingMode);
+
+      console.log('[MOBILE-5] CAMERA STREAM CREATED', finalFacingMode);
+      console.log('[MOBILE-6] VIDEO TRACK', videoTrack);
 
       streamRef.current = stream;
       setCameraActive(true);
@@ -389,6 +425,66 @@ export default function AssessmentMobileJoin() {
       );
     }
   }, [token, startWebRTCOffer, startFrameCapture]);
+
+  // 4. Switch / Toggle Camera between Back and Front
+  const toggleCamera = useCallback(async () => {
+    if (isSwitchingCamera) return;
+    setIsSwitchingCamera(true);
+    const targetMode = facingMode === 'environment' ? 'user' : 'environment';
+
+    try {
+      // 1. Stop current tracks
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+
+      // 2. Request new stream with alternate facing mode
+      let newStream = null;
+      try {
+        newStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: targetMode },
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+          },
+          audio: false,
+        });
+      } catch (err) {
+        console.warn(`[MOBILE] Could not switch to ${targetMode}:`, err);
+        newStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
+      }
+
+      const newTrack = newStream.getVideoTracks()[0];
+      const actualSettings = newTrack?.getSettings?.() || {};
+      const effectiveMode = actualSettings.facingMode || targetMode;
+      setFacingMode(effectiveMode);
+
+      streamRef.current = newStream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = newStream;
+        videoRef.current.play().catch(() => {});
+      }
+
+      // 3. Update WebRTC sender track seamlessly
+      if (pcRef.current) {
+        const senders = pcRef.current.getSenders();
+        const videoSender = senders.find((s) => s.track && s.track.kind === 'video');
+        if (videoSender && newTrack) {
+          await videoSender.replaceTrack(newTrack);
+        } else if (socketRef.current?.connected && laptopSocketIdRef.current) {
+          startWebRTCOffer(laptopSocketIdRef.current);
+        }
+      }
+    } catch (err) {
+      console.error('[MOBILE] Switch camera error:', err);
+      setError('Unable to switch camera. Please try again.');
+    } finally {
+      setIsSwitchingCamera(false);
+    }
+  }, [facingMode, isSwitchingCamera, startWebRTCOffer]);
 
   // Bind and play stream when video element renders
   useEffect(() => {
@@ -486,7 +582,7 @@ export default function AssessmentMobileJoin() {
                     {info?.assessmentType === 'CODING' ? 'Coding Assessment' : 'AI Quiz'} Verification
                   </span>
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                    <Smartphone size={10} /> Mobile Camera
+                    <Smartphone size={10} /> Back Camera
                   </span>
                 </div>
                 <div className="text-sm font-bold text-white truncate">{info?.assessmentTitle}</div>
@@ -503,7 +599,7 @@ export default function AssessmentMobileJoin() {
                 <div className="space-y-1 text-xs">
                   <span className="font-bold text-emerald-300">Camera Framing Requirement</span>
                   <p className="text-slate-300 leading-relaxed font-medium">
-                    Position your phone so your <span className="text-emerald-400 font-bold">face</span>, <span className="text-emerald-400 font-bold">upper body</span>, and <span className="text-emerald-400 font-bold">laptop screen</span> are visible.
+                    Position your phone using the <span className="text-emerald-400 font-bold">Back Camera</span> so your <span className="text-emerald-400 font-bold">face</span>, <span className="text-emerald-400 font-bold">upper body</span>, and <span className="text-emerald-400 font-bold">laptop screen</span> are clearly visible.
                   </p>
                 </div>
               </div>
@@ -513,9 +609,9 @@ export default function AssessmentMobileJoin() {
                   <Camera size={32} />
                 </div>
                 <div className="space-y-1">
-                  <h3 className="text-base font-semibold text-white">Camera Access Required</h3>
+                  <h3 className="text-base font-semibold text-white">Back Camera Access Required</h3>
                   <p className="text-xs text-slate-400 leading-relaxed px-2">
-                    Enable camera permission to stream this phone as your live secondary proctoring view.
+                    Enable camera permission to stream your back camera as the live secondary proctoring view.
                   </p>
                 </div>
               </div>
@@ -528,11 +624,11 @@ export default function AssessmentMobileJoin() {
               )}
 
               <button
-                onClick={enableCamera}
+                onClick={() => enableCamera('environment')}
                 className="w-full py-3.5 px-4 bg-emerald-500 hover:bg-emerald-600 active:scale-[0.98] text-slate-950 font-bold text-sm rounded-2xl transition duration-150 shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Camera size={18} />
-                <span>Enable Mobile Camera</span>
+                <span>Enable Back Camera</span>
               </button>
             </motion.div>
           )}
@@ -557,7 +653,7 @@ export default function AssessmentMobileJoin() {
                 </span>
               </div>
 
-              {/* Video Preview with Live Badges */}
+              {/* Video Preview with Live Badges and Switch Camera Button */}
               <div className="relative rounded-2xl overflow-hidden bg-slate-950 border border-emerald-500/40 aspect-[4/3] flex items-center justify-center shadow-inner min-h-[220px]">
                 <video
                   ref={(el) => {
@@ -588,7 +684,7 @@ export default function AssessmentMobileJoin() {
                     }
                   }}
                   className="w-full h-full object-cover"
-                  style={{ transform: 'scaleX(-1)' }}
+                  style={{ transform: facingMode === 'user' ? 'scaleX(-1)' : 'none' }}
                 />
 
                 {/* Top-Left Live Indicator */}
@@ -596,6 +692,18 @@ export default function AssessmentMobileJoin() {
                   <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                   <span className="font-bold">LIVE PROCTORING</span>
                 </div>
+
+                {/* Top-Right Flip/Switch Camera Button */}
+                <button
+                  type="button"
+                  onClick={toggleCamera}
+                  disabled={isSwitchingCamera}
+                  className="absolute top-3 right-3 px-2.5 py-1.5 rounded-lg bg-slate-900/85 hover:bg-slate-800 backdrop-blur border border-slate-700/70 text-slate-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 z-10 transition active:scale-95 shadow-sm cursor-pointer disabled:opacity-50"
+                  title="Switch between Back and Front Camera"
+                >
+                  <SwitchCamera size={13} className={isSwitchingCamera ? 'animate-spin text-emerald-400' : 'text-emerald-400'} />
+                  <span>{facingMode === 'environment' ? 'Back Cam' : 'Front Cam'}</span>
+                </button>
 
                 {/* Bottom-Left Live Connection Status */}
                 <div className="absolute bottom-3 left-3 px-2.5 py-1 rounded-md bg-slate-900/85 backdrop-blur border border-slate-700/60 text-[10px] text-slate-200 flex items-center gap-1.5 z-10 shadow-sm">
@@ -610,7 +718,7 @@ export default function AssessmentMobileJoin() {
                   <CheckCircle2 size={14} /> Verification Ready
                 </div>
                 <p className="text-[11.5px] text-slate-300 leading-relaxed font-medium">
-                  <strong>Position your phone so your face, upper body, and laptop screen are visible.</strong> Keep this screen active and do not close this browser tab during your assessment.
+                  <strong>Position your phone so your face, upper body, and laptop screen are visible.</strong> Keep this screen active and do not close this browser tab during your assessment. You can tap <strong>Back Cam / Front Cam</strong> above to switch cameras anytime.
                 </p>
               </div>
             </motion.div>

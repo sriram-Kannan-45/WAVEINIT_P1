@@ -1,8 +1,10 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { User, LogOut, ChevronDown } from 'lucide-react'
 
 export default function ProfileDropdown({ user, onProfile, onLogout }) {
+  const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const initials = user?.name
     ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
@@ -100,7 +102,11 @@ export default function ProfileDropdown({ user, onProfile, onLogout }) {
                 <User size={15} /> My Profile
               </button>
               <button
-                onClick={() => { setOpen(false); onLogout && onLogout() }}
+                onClick={() => {
+                  setOpen(false)
+                  if (onLogout) onLogout()
+                  navigate('/login', { state: { message: 'Logged out successfully' }, replace: true })
+                }}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10, width: '100%',
                   padding: '10px 14px', border: 'none', borderTop: '1px solid #F3F4F6',

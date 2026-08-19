@@ -108,7 +108,7 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
       const r = await fetch(API.CODING.PUBLISH(assessmentId), { method: 'POST', headers: auth() })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || 'Publish failed')
-      toast.success('Assessment published')
+      toast.success('Coding assessment published successfully')
       fetchAssessment()
       onRefresh?.()
     } catch (e) { toast.error(e.message) }
@@ -120,7 +120,7 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
     try {
       const r = await fetch(API.CODING.CLOSE(assessmentId), { method: 'POST', headers: auth() })
       if (!r.ok) throw new Error('Close failed')
-      toast.success('Assessment closed')
+      toast.success('Coding assessment closed')
       fetchAssessment()
       onRefresh?.()
     } catch (e) { toast.error(e.message) }
@@ -131,7 +131,7 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
     try {
       const r = await fetch(API.CODING.DELETE(assessmentId), { method: 'DELETE', headers: auth() })
       if (!r.ok) throw new Error('Delete failed')
-      toast.success('Assessment deleted')
+      toast.success('Coding assessment deleted successfully')
       onRefresh?.()
       onClose?.()
     } catch (e) { toast.error(e.message) }
@@ -144,7 +144,7 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
         body: JSON.stringify(editForm)
       })
       if (!r.ok) throw new Error('Save failed')
-      toast.success('Assessment updated successfully')
+      toast.success('Coding assessment updated successfully')
       setEditingAssessment(false)
       fetchAssessment()
       onRefresh?.()

@@ -30,5 +30,7 @@ export { default as useNetworkStatus } from './hooks/useNetworkStatus';
 export { default as useExamTimer, formatRemaining } from './hooks/useExamTimer';
 export { default as useProctorMonitor } from './hooks/useProctorMonitor';
 export { default as useProctoringMedia } from './hooks/useProctoringMedia';
+export { default as useYOLOProctoring } from './hooks/useYOLOProctoring';
+export { default as yoloProctoringService } from '../services/yoloProctoringService';
 
 export * from './constants';

@@ -1,11 +1,14 @@
+import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
     Award,
     BookOpen,
+    ChevronDown,
     FileText,
     GraduationCap,
     LayoutDashboard,
     Menu,
+    Search,
     Trophy,
     User,
     UserCheck,
@@ -14,6 +17,7 @@ import {
     X
 } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { API } from '../../api/api'
 import ProfileDropdown from './ProfileDropdown'
 
 const ROLE_HOME = {
@@ -133,12 +137,43 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
   const isAdmin = user.role === 'ADMIN'
   const isTrainer = user.role === 'TRAINER'
 
+  const [courses, setCourses] = useState([])
+  const [coursesOpen, setCoursesOpen] = useState(true)
+  const [courseFilter, setCourseFilter] = useState('')
+
+  // Fetch assigned courses dynamically for Trainer and Participant
+  useEffect(() => {
+    let aborted = false
+    const fetchAssignedCourses = async () => {
+      if (!user?.token) return
+      try {
+        let endpoint = ''
+        if (user.role === 'TRAINER') endpoint = API.TRAINER_COURSES.LIST
+        else if (user.role === 'PARTICIPANT') endpoint = API.PARTICIPANT_COURSES.LIST
+        if (!endpoint) return
+
+        const res = await fetch(endpoint, {
+          headers: { Authorization: `Bearer ${user.token}` }
+        })
+        const data = await res.json()
+        if (!aborted && data.success && Array.isArray(data.courses)) {
+          setCourses(data.courses)
+        }
+      } catch (err) {
+        console.error('Sidebar failed to fetch assigned courses:', err.message)
+      }
+    }
+    fetchAssignedCourses()
+    return () => { aborted = true }
+  }, [user?.token, user?.role, location.key])
+
+  const filteredCourses = useMemo(() => {
+    if (!courseFilter) return courses
+    const q = courseFilter.toLowerCase()
+    return courses.filter(c => (c.title || '').toLowerCase().includes(q))
+  }, [courses, courseFilter])
+
   const roleLabel = user.role === 'ADMIN' ? 'Admin' : user.role === 'TRAINER' ? 'Trainer' : 'Learner'
-  const avatarGradient = isAdmin
-    ? 'linear-gradient(135deg, #16A34A, #22C55E)'
-    : isTrainer
-    ? 'linear-gradient(135deg, #16A34A, #22C55E)'
-    : 'linear-gradient(135deg, #22C55E, #4ADE80)'
 
   return (
     <>
@@ -193,34 +228,120 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
                   const currentActive = isProfileRoute ? 'profile' : (isInterviewRoute ? 'interviews' : activeTab)
                   const isActive = currentActive === item.key
                   const Icon = item.icon
+                  const isCourseItem = item.key === 'courses' || item.key === 'myEnrollments'
+
                   return (
-                    <motion.button
-                      key={item.key}
-                      className={`wl-sidebar-item ${isActive ? 'wl-sidebar-item--active' : ''}`}
-                      onClick={() => {
-                        if (item.key === 'profile') {
-                          navigate('/my-profile')
-                        } else if (item.key === 'interviews') {
-                          navigate('/interviews')
-                        } else {
-                          const home = ROLE_HOME[user?.role] || '/admin'
-                          if (location.pathname !== home) {
-                            navigate(home, { state: { tab: item.key } })
-                          } else {
-                            onTabChange(item.key)
+                    <div key={item.key} style={{ display: 'flex', flexDirection: 'column' }}>
+                      <motion.button
+                        className={`wl-sidebar-item ${isActive ? 'wl-sidebar-item--active' : ''}`}
+                        onClick={() => {
+                          if (isCourseItem && courses.length > 0) {
+                            setCoursesOpen(prev => !prev)
                           }
-                        }
-                        onCloseSidebar && onCloseSidebar()
-                      }}
-                      whileHover={{ x: 2 }}
-                      whileTap={{ scale: 0.98 }}
-                      transition={{ duration: 0.15 }}
-                    >
-                      <span className="wl-sidebar-item-icon">
-                        <Icon size={18} strokeWidth={isActive ? 2 : 1.8} />
-                      </span>
-                      <span>{item.label}</span>
-                    </motion.button>
+                          if (item.key === 'profile') {
+                            navigate('/my-profile')
+                          } else if (item.key === 'interviews') {
+                            navigate('/interviews')
+                          } else {
+                            const home = ROLE_HOME[user?.role] || '/admin'
+                            if (location.pathname !== home) {
+                              navigate(home, { state: { tab: item.key, courseId: null } })
+                            } else {
+                              onTabChange(item.key)
+                            }
+                          }
+                          onCloseSidebar && onCloseSidebar()
+                        }}
+                        whileHover={{ x: 2 }}
+                        whileTap={{ scale: 0.98 }}
+                        transition={{ duration: 0.15 }}
+                      >
+                        <span className="wl-sidebar-item-icon">
+                          <Icon size={18} strokeWidth={isActive ? 2 : 1.8} />
+                        </span>
+                        <span style={{ flex: 1, textAlign: 'left' }}>{item.label}</span>
+
+                        {isCourseItem && courses.length > 0 && (
+                          <>
+                            <span className="wl-sidebar-count-badge">
+                              {courses.length}
+                            </span>
+                            <span
+                              className={`wl-sidebar-chevron ${coursesOpen ? 'wl-sidebar-chevron--open' : ''}`}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setCoursesOpen(prev => !prev)
+                              }}
+                            >
+                              <ChevronDown size={14} />
+                            </span>
+                          </>
+                        )}
+                      </motion.button>
+
+                      {/* Expandable Scrollable Course Menu */}
+                      <AnimatePresence>
+                        {isCourseItem && coursesOpen && courses.length > 0 && (
+                          <motion.div
+                            className="wl-sidebar-submenu-box"
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            transition={{ duration: 0.18 }}
+                          >
+                            {courses.length >= 4 && (
+                              <div className="wl-sidebar-submenu-search">
+                                <Search size={11} color="#94A3B8" />
+                                <input
+                                  type="text"
+                                  placeholder="Filter courses..."
+                                  value={courseFilter}
+                                  onChange={(e) => setCourseFilter(e.target.value)}
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              </div>
+                            )}
+                            <div className="wl-sidebar-submenu-scroll">
+                              {filteredCourses.map((c) => {
+                                const isSelected = location.state?.courseId === c.id
+                                return (
+                                  <button
+                                    key={c.id}
+                                    type="button"
+                                    className={`wl-sidebar-course-item ${isSelected ? 'wl-sidebar-course-item--active' : ''}`}
+                                    title={c.title}
+                                    onClick={() => {
+                                      const home = ROLE_HOME[user?.role] || '/admin'
+                                      navigate(home, { state: { tab: item.key, courseId: c.id } })
+                                      onTabChange && onTabChange(item.key, c.id)
+                                      onCloseSidebar && onCloseSidebar()
+                                    }}
+                                  >
+                                    <span className="wl-sidebar-course-dot" />
+                                    <span className="wl-sidebar-course-name">{c.title}</span>
+                                    {c.lessonCount != null && (
+                                      <span className="wl-sidebar-course-badge">{c.lessonCount}L</span>
+                                    )}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                            <button
+                              type="button"
+                              className="wl-sidebar-view-all"
+                              onClick={() => {
+                                const home = ROLE_HOME[user?.role] || '/admin'
+                                navigate(home, { state: { tab: item.key, courseId: null } })
+                                onTabChange && onTabChange(item.key, null)
+                                onCloseSidebar && onCloseSidebar()
+                              }}
+                            >
+                              View all ({courses.length}) courses &rarr;
+                            </button>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
                   )
                 })}
               </div>

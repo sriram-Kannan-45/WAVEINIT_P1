@@ -880,6 +880,9 @@ async function getQuizReport(assessmentId) {
     const webcamViolations = violations.filter(v =>
       v.type === 'FACE_ABSENT' || v.type === 'FACE_MULTIPLE' || v.type === 'LOOKING_AWAY' || v.type === 'FACE_NOT_VISIBLE' || v.type === 'CAMERA_OFF' || v.type === 'MIC_MUTED'
     ).length;
+    const phoneViolations = violations.filter(v =>
+      v.type === 'CELL_PHONE_DETECTED' || v.type === 'PHONE_DETECTED' || v.type === 'MOBILE_DETECTED'
+    ).length;
     const devtoolsCount = violations.filter(v => v.type === 'DEVTOOLS_OPENED').length;
     const copyPasteCount = violations.filter(v =>
       v.type === 'COPY_ATTEMPT' || v.type === 'PASTE_ATTEMPT'
@@ -912,6 +915,8 @@ async function getQuizReport(assessmentId) {
       fullscreenExitCount,
       screenShareInterruptions,
       webcamViolations,
+      phoneViolations,
+      hasPhoneViolation: phoneViolations > 0,
       devtoolsCount,
       copyPasteCount,
       violationCounts,

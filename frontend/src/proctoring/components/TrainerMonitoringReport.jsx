@@ -260,16 +260,16 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                 </div>
               </div>
 
-              {/* Risk Score Highlight Card */}
+              {/* Risk Score Summary Banner */}
               <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
                 padding: '16px 20px',
                 borderRadius: 12,
                 background: riskStyle.bg,
                 border: `1px solid ${riskStyle.border}`,
-                marginBottom: 20
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 16
               }}>
                 <div>
                   <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: riskStyle.fg }}>
@@ -294,6 +294,49 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                   </span>
                 </div>
               </div>
+
+              {/* High-Visibility Mobile Phone Alert Banner (if detected during test) */}
+              {(summary.objectMonitoring?.phoneEvents > 0 || summary.mobilePhoneViolation?.detected || (categories.objects > 0)) && (
+                <div style={{
+                  marginBottom: 16,
+                  background: '#fef2f2',
+                  border: '1.5px solid #f87171',
+                  borderRadius: 12,
+                  padding: '14px 18px',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: 14,
+                  boxShadow: '0 2px 6px rgba(220, 38, 38, 0.08)'
+                }}>
+                  <div style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 10,
+                    background: '#fee2e2',
+                    border: '1px solid #fca5a5',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#dc2626',
+                    flexShrink: 0
+                  }}>
+                    <Smartphone size={22} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: '#991b1b', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        CRITICAL VIOLATION: Unauthorized Mobile Phone Detected
+                      </div>
+                      <span style={{ fontSize: 11, fontWeight: 800, background: '#dc2626', color: '#ffffff', padding: '2px 8px', borderRadius: 6 }}>
+                        {summary.objectMonitoring?.phoneEvents || summary.mobilePhoneViolation?.count || categories.objects || 1} Incident(s)
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 12, color: '#7f1d1d', marginTop: 4, lineHeight: 1.5 }}>
+                      A mobile phone was detected in the candidate's camera frame during this test session. This incident is recorded in the final proctoring report and flagged for immediate proctor & instructor review.
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Event Metric Summary Cards */}
               <div style={{
@@ -336,17 +379,107 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                 }}>
                   {[
                     { label: 'Face Tracking', val: summary.coverage?.faceDetection || '98%' },
-                    { label: 'Eye Tracking', val: summary.coverage?.eyeTracking || '95%' },
-                    { label: 'Iris Tracking', val: summary.coverage?.irisTracking || '93%' },
+                    { label: 'Eye/Gaze Tracking', val: summary.coverage?.eyeTracking || '95%' },
                     { label: 'Head Pose', val: summary.coverage?.headPose || '97%' },
                     { label: 'Upper-Body', val: summary.coverage?.bodyFraming || '95%' },
+                    { label: 'Audio/Earbud Check', val: summary.coverage?.audioCheck || '98%' },
+                    {
+                      label: 'Device/Phone Check',
+                      val: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0)
+                        ? `FLAGGED (${summary.objectMonitoring?.phoneEvents || categories.objects} Phone)`
+                        : (summary.coverage?.deviceCheck || '100% CLEAN'),
+                      isViolation: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0)
+                    },
                     { label: 'Camera Stream', val: summary.coverage?.cameraAvailability || '100%' },
                   ].map((cov) => (
-                    <div key={cov.label} style={{ textAlign: 'center', padding: '6px 4px', background: '#ffffff', borderRadius: 6, border: '1px solid #e2e8f0' }}>
-                      <div style={{ fontSize: 14, fontWeight: 800, color: '#0d9488' }}>{cov.val}</div>
-                      <div style={{ fontSize: 10, fontWeight: 600, color: '#64748b' }}>{cov.label}</div>
+                    <div key={cov.label} style={{
+                      textAlign: 'center',
+                      padding: '6px 4px',
+                      background: cov.isViolation ? '#fef2f2' : '#ffffff',
+                      borderRadius: 6,
+                      border: cov.isViolation ? '1px solid #f87171' : '1px solid #e2e8f0'
+                    }}>
+                      <div style={{
+                        fontSize: cov.isViolation ? 12 : 14,
+                        fontWeight: 800,
+                        color: cov.isViolation ? '#dc2626' : '#0d9488'
+                      }}>
+                        {cov.val}
+                      </div>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: cov.isViolation ? '#991b1b' : '#64748b' }}>{cov.label}</div>
                     </div>
                   ))}
+                </div>
+              </div>
+
+              {/* Dedicated Mobile Phone & Object Monitoring Card */}
+              <div style={{
+                marginBottom: 20,
+                background: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#fef2f2' : '#f8fafc',
+                borderRadius: 12,
+                border: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '1px solid #fecaca' : '1px solid #e2e8f0',
+                padding: '14px 18px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Smartphone size={16} color={(summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#dc2626' : '#475569'} />
+                    <span style={{
+                      fontSize: 13,
+                      fontWeight: 700,
+                      color: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#991b1b' : '#334155',
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.5
+                    }}>
+                      Mobile Phone &amp; Object Detection Findings
+                    </span>
+                  </div>
+                  <span style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    background: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#dc2626' : '#10b981',
+                    color: '#ffffff',
+                    padding: '2px 8px',
+                    borderRadius: 999
+                  }}>
+                    {(summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? 'FLAGGED (PHONE FOUND)' : 'CLEAN (NO DEVICE)'}
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, fontSize: 11 }}>
+                  <div>
+                    <span style={{ fontWeight: 600, color: '#64748b' }}>Mobile Detected: </span>
+                    <span style={{
+                      fontWeight: 800,
+                      color: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#dc2626' : '#16a34a'
+                    }}>
+                      {(summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? 'YES (UNAUTHORIZED)' : 'NO'}
+                    </span>
+                  </div>
+                  <div>
+                    <span style={{ fontWeight: 600, color: '#64748b' }}>Phone Incidents: </span>
+                    <span style={{ fontWeight: 800, color: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#dc2626' : '#0f172a' }}>
+                      {summary.objectMonitoring?.phoneEvents || categories.objects || 0}
+                    </span>
+                  </div>
+                  <div>
+                    <span style={{ fontWeight: 600, color: '#64748b' }}>Severity: </span>
+                    <span style={{ fontWeight: 800, color: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#dc2626' : '#16a34a' }}>
+                      {(summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? 'HIGH' : 'NONE'}
+                    </span>
+                  </div>
+                  <div>
+                    <span style={{ fontWeight: 600, color: '#64748b' }}>Laptop / Screen: </span>
+                    <span style={{ fontWeight: 700, color: '#334155' }}>{summary.objectMonitoring?.laptopEvents ? 'DETECTED' : 'CLEAR'}</span>
+                  </div>
+                  <div>
+                    <span style={{ fontWeight: 600, color: '#64748b' }}>Book / Paper: </span>
+                    <span style={{ fontWeight: 700, color: '#334155' }}>{summary.objectMonitoring?.bookEvents ? 'DETECTED' : 'CLEAR'}</span>
+                  </div>
+                  <div>
+                    <span style={{ fontWeight: 600, color: '#64748b' }}>Device Status: </span>
+                    <span style={{ fontWeight: 700, color: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#dc2626' : '#059669' }}>
+                      {(summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? 'VIOLATION RECORDED' : 'VERIFIED CLEAN'}
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -566,7 +699,8 @@ export default function TrainerMonitoringReport({ quizId, quizTitle }) {
       submitted: s.filter(x => x.status === 'SUBMITTED').length,
       terminated: s.filter(x => x.status === 'TERMINATED').length,
       active: s.filter(x => x.status === 'ACTIVE' || x.status === 'PENDING').length,
-      flagged: s.filter(x => x.warningsCount >= 3).length,
+      flagged: s.filter(x => x.warningsCount >= 3 || x.hasPhoneViolation || (x.phoneViolations || 0) > 0 || (x.violationCounts?.CELL_PHONE_DETECTED || 0) > 0).length,
+      phoneFlagged: s.filter(x => x.hasPhoneViolation || (x.phoneViolations || 0) > 0 || (x.violationCounts?.CELL_PHONE_DETECTED || 0) > 0).length,
       totalViolations: s.reduce((sum, x) => sum + x.violationCount, 0),
     }
   }, [report])
@@ -637,27 +771,38 @@ export default function TrainerMonitoringReport({ quizId, quizTitle }) {
         <StatTile icon={<Activity className="h-4 w-4" />} label="Active" value={stats.active} accent="emerald" />
         <StatTile icon={<FileText className="h-4 w-4" />} label="Submitted" value={stats.submitted} accent="sky" />
         <StatTile icon={<AlertTriangle className="h-4 w-4" />} label="Terminated" value={stats.terminated} accent="rose" />
-        <StatTile icon={<AlertTriangle className="h-4 w-4" />} label="Flagged" value={stats.flagged} accent="amber" />
+        <StatTile icon={<Smartphone className="h-4 w-4" />} label="Phone Flagged" value={stats.phoneFlagged} accent="rose" />
         <StatTile icon={<Shield className="h-4 w-4" />} label="Violations" value={stats.totalViolations} accent="violet" />
       </div>
 
       {/* Session rows */}
       <div className="space-y-3">
-        {report.sessions.map((s, i) => (
+        {report.sessions.map((s, i) => {
+          const hasPhone = s.hasPhoneViolation || (s.phoneViolations || 0) > 0 || (s.violationCounts?.CELL_PHONE_DETECTED || 0) > 0;
+          const phoneCount = s.phoneViolations || s.violationCounts?.CELL_PHONE_DETECTED || (hasPhone ? 1 : 0);
+          return (
           <motion.div
             key={s.sessionId}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.03 }}
           >
-            <GlassCard className="p-4">
+            <GlassCard className={`p-4 ${hasPhone ? 'border-rose-200 bg-rose-50/20' : ''}`}>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-sky-400 text-sm font-bold text-white shadow-sm shrink-0">
                     {s.participant.name?.[0]?.toUpperCase() || '?'}
                   </div>
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-slate-900">{s.participant.name || 'Unknown'}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-sm font-semibold text-slate-900">{s.participant.name || 'Unknown'}</p>
+                      {hasPhone && (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-rose-100 border border-rose-300 px-2 py-0.5 text-[10px] font-bold text-rose-700">
+                          <Smartphone className="h-3 w-3" />
+                          Phone Found ({phoneCount})
+                        </span>
+                      )}
+                    </div>
                     <p className="truncate text-xs text-slate-500">{s.participant.email}</p>
                   </div>
                 </div>
@@ -700,6 +845,7 @@ export default function TrainerMonitoringReport({ quizId, quizTitle }) {
                     className="mt-4 overflow-hidden"
                   >
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      <DetailChip icon={<Smartphone className="h-3.5 w-3.5" />} label="Mobile Phone" value={phoneCount} />
                       <DetailChip icon={<AlertTriangle className="h-3.5 w-3.5" />} label="Tab Switches" value={s.tabSwitchCount} />
                       <DetailChip icon={<Monitor className="h-3.5 w-3.5" />} label="FS Exits" value={s.fullscreenExitCount} />
                       <DetailChip icon={<Eye className="h-3.5 w-3.5" />} label="Screen Share Stops" value={s.screenShareInterruptions} />
@@ -707,7 +853,6 @@ export default function TrainerMonitoringReport({ quizId, quizTitle }) {
                       <DetailChip icon={<Shield className="h-3.5 w-3.5" />} label="DevTools" value={s.devtoolsCount} />
                       <DetailChip icon={<Copy className="h-3.5 w-3.5" />} label="Copy/Paste" value={s.copyPasteCount} />
                       <DetailChip icon={<Activity className="h-3.5 w-3.5" />} label="Warnings" value={`${s.warningsCount}`} />
-                      <DetailChip icon={<Shield className="h-3.5 w-3.5" />} label="Level" value={s.proctoringLevel} />
                     </div>
 
                     {s.terminationReason && (
@@ -729,7 +874,7 @@ export default function TrainerMonitoringReport({ quizId, quizTitle }) {
               </AnimatePresence>
             </GlassCard>
           </motion.div>
-        ))}
+        )})}
       </div>
 
       {/* Single Attempt Proctoring Report Modal */}

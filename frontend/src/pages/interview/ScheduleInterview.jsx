@@ -8,6 +8,7 @@ import { motion } from 'framer-motion'
 import { Calendar, ArrowLeft, Loader2 } from 'lucide-react'
 import interviewService from '../../services/interviewService'
 import { useToast } from '../../components/Toast'
+import SearchableSelect from '../../components/common/SearchableSelect'
 
 const itemVariants = {
   hidden: { opacity: 0, y: 12 },
@@ -127,7 +128,7 @@ export default function ScheduleInterview({ user }) {
   }
 
   const handleSaveDraft = () => {
-    alert('Draft saved locally. You can continue editing later.')
+    success('Interview draft saved locally')
   }
 
   const selectedCandidate = candidates.find(c => c.id === parseInt(form.candidateId))
@@ -183,22 +184,24 @@ export default function ScheduleInterview({ user }) {
                   </div>
 
                   <div>
-                    <label style={labelStyle}>Candidate *</label>
-                    <select
+                    <SearchableSelect
+                      label="Candidate *"
+                      placeholder="Select candidate"
+                      searchPlaceholder="Search candidate..."
+                      emptyMessage={candidates.length === 0 ? "No approved participants found" : "No candidates found"}
                       value={form.candidateId}
-                      onChange={e => handleChange('candidateId', e.target.value)}
-                      style={selectStyle}
+                      onChange={val => handleChange('candidateId', val)}
+                      options={candidates.map(c => ({
+                        id: String(c.id),
+                        name: c.name,
+                        email: c.email,
+                        training: c.training,
+                        phone: c.phone,
+                        disabled: !!c.alreadyScheduled,
+                        badge: c.alreadyScheduled ? 'Already Scheduled' : null
+                      }))}
                       required
-                    >
-                      <option value="">Select candidate</option>
-                      {candidates.length === 0 ? (
-                        <option value="" disabled>No approved participants found</option>
-                      ) : candidates.map(c => (
-                        <option key={c.id} value={c.id} disabled={c.alreadyScheduled}>
-                          {c.name} ({c.email}) {c.training?.title ? `- ${c.training.title}` : ''} {c.alreadyScheduled ? ' [Already Scheduled]' : ''}
-                        </option>
-                      ))}
-                    </select>
+                    />
                     {selectedCandidate && (
                       <div style={{ marginTop: 6, fontSize: 12, color: '#64748b' }}>
                         {selectedCandidate.phone && <span>Phone: {selectedCandidate.phone} · </span>}
@@ -208,22 +211,21 @@ export default function ScheduleInterview({ user }) {
                   </div>
 
                   <div>
-                    <label style={labelStyle}>HR / Interviewer *</label>
-                    <select
+                    <SearchableSelect
+                      label="HR / Interviewer *"
+                      placeholder="Select interviewer"
+                      searchPlaceholder="Search interviewer..."
+                      emptyMessage={interviewers.length === 0 ? "No trainers found" : "No interviewers found"}
                       value={form.interviewerId}
-                      onChange={e => handleChange('interviewerId', e.target.value)}
-                      style={selectStyle}
+                      onChange={val => handleChange('interviewerId', val)}
+                      options={interviewers.map(i => ({
+                        id: String(i.id),
+                        name: i.name,
+                        email: i.email,
+                        activeInterviews: i.activeInterviews
+                      }))}
                       required
-                    >
-                      <option value="">Select interviewer</option>
-                      {interviewers.length === 0 ? (
-                        <option value="" disabled>No trainers found</option>
-                      ) : interviewers.map(i => (
-                        <option key={i.id} value={i.id}>
-                          {i.name} ({i.email}) {i.activeInterviews > 0 ? ` [${i.activeInterviews} active]` : ''}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   </div>
 
                   <div>

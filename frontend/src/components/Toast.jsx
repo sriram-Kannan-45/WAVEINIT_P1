@@ -18,16 +18,35 @@ export const ToastProvider = ({ children }) => {
     }
   }, [location.pathname])
 
-  const addToast = useCallback((message, options = {}) => {
-    const id = Date.now()
+  const removeToast = useCallback((id) => {
+    setToasts(prev => prev.filter(t => t.id !== id))
+  }, [])
+
+  const addToast = useCallback((message, optionsOrDesc = {}) => {
+    const id = `${Date.now()}_${Math.random().toString(36).substring(2, 6)}`
+    let options = {}
+    if (typeof optionsOrDesc === 'string') {
+      options = { description: optionsOrDesc }
+    } else if (typeof optionsOrDesc === 'object' && optionsOrDesc !== null) {
+      options = optionsOrDesc
+    }
+
     const {
       type = 'info',
-      duration = 4000,
+      duration = type === 'error' ? 5000 : type === 'warning' ? 4500 : 3500,
+      description = '',
       action = null
     } = options
 
-    const toast = { id, message, type, action }
-    setToasts(prev => [...prev, toast])
+    const toast = { id, message, description, type, action, duration }
+    setToasts(prev => {
+      const updated = [...prev, toast]
+      // Maximum 3 visible toasts
+      if (updated.length > 3) {
+        return updated.slice(updated.length - 3)
+      }
+      return updated
+    })
 
     if (duration > 0) {
       setTimeout(() => {
@@ -36,30 +55,39 @@ export const ToastProvider = ({ children }) => {
     }
 
     return id
-  }, [])
+  }, [removeToast])
 
-  const removeToast = useCallback((id) => {
-    setToasts(prev => prev.filter(t => t.id !== id))
-  }, [])
-
-  const success = useCallback((message, options = {}) => {
-    addToast(message, { ...options, type: 'success' })
+  const success = useCallback((message, optionsOrDesc) => {
+    const opts = typeof optionsOrDesc === 'string' ? { description: optionsOrDesc } : optionsOrDesc
+    return addToast(message, { ...opts, type: 'success' })
   }, [addToast])
 
-  const error = useCallback((message, options = {}) => {
-    addToast(message, { ...options, type: 'error', duration: options.duration ?? 5000 })
+  const error = useCallback((message, optionsOrDesc) => {
+    const opts = typeof optionsOrDesc === 'string' ? { description: optionsOrDesc } : optionsOrDesc
+    return addToast(message, { ...opts, type: 'error' })
   }, [addToast])
 
-  const info = useCallback((message, options = {}) => {
-    addToast(message, { ...options, type: 'info' })
+  const info = useCallback((message, optionsOrDesc) => {
+    const opts = typeof optionsOrDesc === 'string' ? { description: optionsOrDesc } : optionsOrDesc
+    return addToast(message, { ...opts, type: 'info' })
   }, [addToast])
 
-  const warning = useCallback((message, options = {}) => {
-    addToast(message, { ...options, type: 'warning', duration: options.duration ?? 5000 })
+  const warning = useCallback((message, optionsOrDesc) => {
+    const opts = typeof optionsOrDesc === 'string' ? { description: optionsOrDesc } : optionsOrDesc
+    return addToast(message, { ...opts, type: 'warning' })
   }, [addToast])
+
+  const toastFn = useCallback((message, optionsOrDesc) => {
+    return addToast(message, optionsOrDesc)
+  }, [addToast])
+
+  toastFn.success = success
+  toastFn.error = error
+  toastFn.info = info
+  toastFn.warning = warning
 
   return (
-    <ToastContext.Provider value={{ addToast, removeToast, success, error, info, warning }}>
+    <ToastContext.Provider value={{ addToast, removeToast, success, error, info, warning, toast: toastFn }}>
       {children}
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </ToastContext.Provider>
@@ -71,37 +99,54 @@ export const useToast = () => {
   if (!context) {
     throw new Error('useToast must be used within ToastProvider')
   }
-  return context
+  // Return context directly, but also allow calling as toast.success() or { success, error }
+  const result = {
+    ...context,
+    toast: context.toast || context,
+  }
+  return result
 }
 
 const toastStyles = {
   success: {
-    bg: 'rgba(16, 185, 129, 0.12)',
-    border: 'rgba(16, 185, 129, 0.25)',
-    text: '#059669',
-    iconBg: 'rgba(16, 185, 129, 0.15)',
-    progressBar: '#10b981',
+    bg: '#F0FDF4',
+    border: '#BBF7D0',
+    iconCircleBg: '#16A34A',
+    iconColor: '#FFFFFF',
+    titleColor: '#14532D',
+    descColor: '#15803D',
+    closeColor: '#16A34A',
+    progressBar: '#16A34A',
   },
   error: {
-    bg: 'rgba(239, 68, 68, 0.12)',
-    border: 'rgba(239, 68, 68, 0.25)',
-    text: '#dc2626',
-    iconBg: 'rgba(239, 68, 68, 0.15)',
-    progressBar: '#ef4444',
+    bg: '#FEF2F2',
+    border: '#FECACA',
+    iconCircleBg: '#DC2626',
+    iconColor: '#FFFFFF',
+    titleColor: '#7F1D1D',
+    descColor: '#991B1B',
+    closeColor: '#DC2626',
+    progressBar: '#DC2626',
   },
   warning: {
-    bg: 'rgba(245, 158, 11, 0.12)',
-    border: 'rgba(245, 158, 11, 0.25)',
-    text: '#d97706',
-    iconBg: 'rgba(245, 158, 11, 0.15)',
-    progressBar: '#f59e0b',
+    bg: '#FFFBEB',
+    border: '#FDE68A',
+    iconCircleBg: '#D97706',
+    iconColor: '#FFFFFF',
+    titleColor: '#78350F',
+    descColor: '#92400E',
+    closeColor: '#D97706',
+    progressBar: '#D97706',
   },
   info: {
-    bg: 'rgba(59, 130, 246, 0.12)',
-    border: 'rgba(59, 130, 246, 0.25)',
-    text: '#2563eb',
-    iconBg: 'rgba(59, 130, 246, 0.15)',
-    progressBar: '#3b82f6',
+    bg: '#EFF6FF',
+    border: '#BFDBFE',
+    iconCircleBg: '#2563EB',
+    iconColor: '#FFFFFF',
+    titleColor: '#1E3A8A',
+    descColor: '#1D4ED8',
+    closeColor: '#2563EB',
+    progressBar: '#2563EB',
   },
 }
 
@@ -109,69 +154,141 @@ const ToastContainer = ({ toasts, onRemove }) => {
   const getIcon = (type) => {
     switch (type) {
       case 'success':
-        return <Check size={16} />
+        return <Check size={14} strokeWidth={3} />
       case 'error':
-        return <AlertCircle size={16} />
+        return <AlertCircle size={15} strokeWidth={2.5} />
       case 'warning':
-        return <AlertTriangle size={16} />
+        return <AlertTriangle size={14} strokeWidth={2.5} />
       case 'info':
       default:
-        return <Info size={16} />
+        return <Info size={15} strokeWidth={2.5} />
     }
   }
 
   return (
     <div 
-      className="fixed top-4 right-4 z-[9999] flex flex-col gap-3 pointer-events-none"
-      style={{ maxWidth: '420px', width: '100%' }}
+      className="fixed bottom-6 right-6 z-[999999] flex flex-col-reverse gap-2.5 pointer-events-none"
+      style={{
+        maxWidth: '380px',
+        width: 'calc(100vw - 32px)',
+        fontFamily: "'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+      }}
     >
       <AnimatePresence mode="popLayout">
         {toasts.map(toast => {
           const style = toastStyles[toast.type] || toastStyles.info
+          const durationSeconds = (toast.duration || 3500) / 1000
+
           return (
             <motion.div
               key={toast.id}
-              initial={{ opacity: 0, x: 50, scale: 0.9 }}
-              animate={{ opacity: 1, x: 0, scale: 1 }}
-              exit={{ opacity: 0, x: 50, scale: 0.9 }}
-              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+              initial={{ opacity: 0, y: 25, scale: 0.94 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 15, scale: 0.94 }}
+              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
               className="pointer-events-auto"
             >
               <div 
-                className="flex items-start gap-3 px-4 py-3.5 rounded-xl font-medium text-sm shadow-lg"
                 style={{
+                  position: 'relative',
+                  overflow: 'hidden',
                   background: style.bg,
                   border: `1px solid ${style.border}`,
-                  backdropFilter: 'blur(12px)',
-                  WebkitBackdropFilter: 'blur(12px)',
-                  boxShadow: '0 8px 32px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04)',
+                  borderRadius: '14px',
+                  boxShadow: '0 10px 25px -4px rgba(0, 0, 0, 0.12), 0 4px 10px -2px rgba(0, 0, 0, 0.06)',
+                  padding: '12px 14px 14px',
                 }}
               >
-                <div 
-                  className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center mt-0.5"
-                  style={{ background: style.iconBg, color: style.text }}
-                >
-                  {getIcon(toast.type)}
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                  {/* Circular icon */}
+                  <div 
+                    style={{
+                      width: '26px',
+                      height: '26px',
+                      borderRadius: '50%',
+                      background: style.iconCircleBg,
+                      color: style.iconColor,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                      marginTop: '1px',
+                      boxShadow: '0 2px 5px rgba(0,0,0,0.1)'
+                    }}
+                  >
+                    {getIcon(toast.type)}
+                  </div>
+
+                  {/* Text area */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div 
+                      style={{
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        color: style.titleColor,
+                        lineHeight: 1.35,
+                        wordBreak: 'break-word'
+                      }}
+                    >
+                      {toast.message}
+                    </div>
+
+                    {toast.description && (
+                      <div 
+                        style={{
+                          fontSize: '11.5px',
+                          color: style.descColor,
+                          marginTop: '2px',
+                          lineHeight: 1.35,
+                          opacity: 0.9,
+                          wordBreak: 'break-word'
+                        }}
+                      >
+                        {toast.description}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Close button */}
+                  <button
+                    onClick={() => onRemove(toast.id)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: style.closeColor,
+                      opacity: 0.65,
+                      cursor: 'pointer',
+                      padding: '2px',
+                      borderRadius: '6px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                      transition: 'opacity 150ms ease, background 150ms ease'
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.background = 'rgba(0,0,0,0.06)' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.65'; e.currentTarget.style.background = 'none' }}
+                    aria-label="Close notification"
+                  >
+                    <X size={14} />
+                  </button>
                 </div>
-                <div className="flex-1 pt-0.5" style={{ color: style.text }}>
-                  {toast.message}
-                </div>
-                <button
-                  onClick={() => onRemove(toast.id)}
-                  className="flex-shrink-0 ml-1 p-1 rounded-md hover:bg-black/5 transition-all duration-150"
-                  style={{ color: style.text, opacity: 0.6 }}
-                >
-                  <X size={14} />
-                </button>
+
+                {/* Progress bar line */}
+                <motion.div
+                  style={{
+                    position: 'absolute',
+                    bottom: 0,
+                    left: 0,
+                    height: '3px',
+                    background: style.progressBar,
+                    opacity: 0.85
+                  }}
+                  initial={{ width: '100%' }}
+                  animate={{ width: '0%' }}
+                  transition={{ duration: durationSeconds, ease: 'linear' }}
+                />
               </div>
-              {/* Progress bar */}
-              <motion.div
-                className="h-[2px] rounded-b-xl mx-1 -mt-[1px]"
-                style={{ background: style.progressBar, opacity: 0.4 }}
-                initial={{ width: '100%' }}
-                animate={{ width: '0%' }}
-                transition={{ duration: toast.type === 'error' || toast.type === 'warning' ? 5 : 4, ease: 'linear' }}
-              />
             </motion.div>
           )
         })}

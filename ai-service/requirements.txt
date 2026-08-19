@@ -25,4 +25,7 @@ SQLAlchemy>=2.0.32
 PyMySQL>=1.1.1
 orjson>=3.10.7
 numpy>=1.26.4
+ultralytics>=8.0.0
+opencv-python-headless>=4.8.0
+mediapipe>=0.10.0
 

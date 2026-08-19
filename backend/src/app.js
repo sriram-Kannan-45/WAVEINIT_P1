@@ -67,13 +67,7 @@ const allowedOrigins = new Set([
 ]);
 
 app.use(cors({
-  origin: (origin, cb) => {
-    // Allow same-origin / curl / server-to-server (no Origin header)
-    if (!origin) return cb(null, true);
-    if (isDev || isLanOrigin(origin)) return cb(null, true);
-    if (allowedOrigins.has(origin)) return cb(null, true);
-    return cb(new Error(`CORS: origin ${origin} not allowed`));
-  },
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],

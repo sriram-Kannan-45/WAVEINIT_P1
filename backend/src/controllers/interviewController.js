@@ -260,9 +260,6 @@ class InterviewController {
       if (role === 'PARTICIPANT' && interview.candidate_id !== userId) {
         return res.status(403).json({ error: 'Access denied' });
       }
-      if (role === 'TRAINER' && interview.interviewer_id !== userId && interview.candidate_id !== userId) {
-        return res.status(403).json({ error: 'Access denied' });
-      }
 
       const interviewData = interview.toJSON();
       if (role === 'PARTICIPANT') {
@@ -295,9 +292,6 @@ class InterviewController {
 
       // Access check
       if (role === 'PARTICIPANT' && interview.candidate_id !== userId) {
-        return res.status(403).json({ error: 'Access denied' });
-      }
-      if (role === 'TRAINER' && interview.interviewer_id !== userId) {
         return res.status(403).json({ error: 'Access denied' });
       }
 
@@ -410,9 +404,6 @@ class InterviewController {
       const role = req.user.role;
 
       if (role === 'PARTICIPANT' && interview.candidate_id !== userId) {
-        return res.status(403).json({ error: 'Access denied' });
-      }
-      if (role === 'TRAINER' && interview.interviewer_id !== userId && interview.candidate_id !== userId) {
         return res.status(403).json({ error: 'Access denied' });
       }
 
@@ -938,7 +929,7 @@ class InterviewController {
       const interview = await Interview.findByPk(req.params.id);
       if (!interview) return res.status(404).json({ error: 'Interview not found' });
 
-      if (interview.interviewer_id !== req.user.id && req.user.role !== 'ADMIN') {
+      if (interview.interviewer_id !== req.user.id && req.user.role !== 'ADMIN' && req.user.role !== 'TRAINER') {
         return res.status(403).json({ error: 'Not authorized to submit result' });
       }
 
@@ -991,7 +982,7 @@ class InterviewController {
       const interview = await Interview.findByPk(req.params.id);
       if (!interview) return res.status(404).json({ error: 'Interview not found' });
 
-      if (interview.interviewer_id !== req.user.id && req.user.role !== 'ADMIN') {
+      if (interview.interviewer_id !== req.user.id && req.user.role !== 'ADMIN' && req.user.role !== 'TRAINER') {
         return res.status(403).json({ error: 'Not authorized to publish result' });
       }
 
@@ -1022,8 +1013,8 @@ class InterviewController {
 
       const isCandidate = req.user.id === interview.candidate_id;
       const isInterviewer = req.user.id === interview.interviewer_id;
-      const isAdmin = req.user.role === 'ADMIN';
-      if (!isCandidate && !isInterviewer && !isAdmin) {
+      const isStaff = req.user.role === 'ADMIN' || req.user.role === 'TRAINER';
+      if (!isCandidate && !isInterviewer && !isStaff) {
         return res.status(403).json({ error: 'Not authorized to refresh QR' });
       }
 

@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import QuizTaking from '../components/QuizTaking'
 import AssessmentConsentGate from '../components/ai-quizzes/AssessmentConsentGate'
 import AssessmentQRPairingModal from '../components/assessment/AssessmentQRPairingModal'
+import DualCameraProctorWidget from '../components/assessment/DualCameraProctorWidget'
 import { API_BASE } from '../api/api'
 import { useToast } from '../components/Toast'
 import { Loader2, AlertCircle } from 'lucide-react'
@@ -69,6 +70,7 @@ function ParticipantQuizAttemptPageInner({ user }) {
   const [errorMsg, setErrorMsg] = useState(null)
   const [quizData, setQuizData] = useState(null)
   const [qrVerified, setQrVerified] = useState(false)
+  const [verifSessionInfo, setVerifSessionInfo] = useState(null)
   const [consented, setConsented] = useState(false)
   const [screenStream, setScreenStream] = useState(null)
   const [sessionError, setSessionError] = useState(null)
@@ -293,7 +295,8 @@ function ParticipantQuizAttemptPageInner({ user }) {
         assessmentTitle={quizData.title || 'Background Verification Declaration Quiz'}
         participantName={user?.name || 'Sriram Titoo'}
         userToken={user?.token}
-        onVerified={() => {
+        onVerified={(data) => {
+          setVerifSessionInfo(data);
           setQrVerified(true);
         }}
         onCancel={() => navigate('/participant')}
@@ -370,6 +373,15 @@ function ParticipantQuizAttemptPageInner({ user }) {
         onScreenShareResumed={handleScreenShareResumed}
         onSubmit={handleSubmit}
         onRecordingStop={handleRecordingStop}
+      />
+
+      {/* Real-time Dual Camera View (Laptop Webcam + Mobile Back Cam) */}
+      <DualCameraProctorWidget
+        assessmentType="QUIZ"
+        assessmentId={parseInt(quizId, 10)}
+        attemptId={parseInt(attemptId, 10)}
+        sessionId={verifSessionInfo?.sessionId}
+        userToken={user?.token}
       />
     </>
   )

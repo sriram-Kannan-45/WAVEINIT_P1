@@ -8,6 +8,7 @@ import { useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { io } from 'socket.io-client'
 import { useWebRTC } from '../../hooks/useWebRTC'
+import yoloProctoringService from '../../services/yoloProctoringService'
 
 const PHASE = {
   LOADING: 'loading',
@@ -444,13 +445,33 @@ export default function MobileJoin() {
     }
   }, [phase, requestCamera, addLog])
 
-  // Attach local stream to WebRTC peer connections once connected
+  // Attach local stream to WebRTC peer connections once connected + start YOLO proctoring
   useEffect(() => {
-    if (phase === PHASE.CONNECTED && socket && localStreamRef.current) {
-      addLog('Socket connected & phase CONNECTED — triggering addLocalStream')
+    if (phase === PHASE.CONNECTED && socket && localStreamRef.current && info?.interviewId) {
+      addLog('Socket connected & phase CONNECTED — triggering addLocalStream & YOLO proctoring')
       addLocalStream(localStreamRef.current)
+
+      const monitorId = yoloProctoringService.startMonitoring({
+        source: localStreamRef.current,
+        socket,
+        sessionId: String(info.sessionId || info.interviewId),
+        participantId: info.candidateId || 1,
+        moduleType: 'INTERVIEW',
+        cameraSource: 'MOBILE_CAMERA',
+        interviewId: String(info.interviewId),
+        fps: 5,
+        onDetection: ({ event }) => {
+          if (event) {
+            addLog(`YOLO Event: ${event.eventType} (${(event.confidence * 100).toFixed(0)}%)`)
+          }
+        },
+      })
+
+      return () => {
+        yoloProctoringService.stopMonitoring(monitorId)
+      }
     }
-  }, [phase, socket, addLocalStream, addLog])
+  }, [phase, socket, addLocalStream, addLog, info])
 
   // Single guarded video ref attachment effect (fixes Issue 1 play abort loop)
   useEffect(() => {
@@ -568,11 +589,11 @@ export default function MobileJoin() {
   // ── Error state ─────────────────────────────────────────────────────────
   if (phase === PHASE.ERROR) {
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-6 pb-16">
-        <div className="bg-gray-800 rounded-2xl border border-red-500/30 p-8 max-w-sm w-full text-center">
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4 sm:p-6 pb-16">
+        <div className="bg-gray-800 rounded-2xl border border-red-500/30 p-6 sm:p-8 max-w-sm w-full text-center">
           <div className="text-4xl mb-3">⚠️</div>
           <h2 className="text-lg font-bold text-white mb-2">Camera Permission Error</h2>
-          <p className="text-gray-400 text-sm mb-6">{error}</p>
+          <p className="text-gray-400 text-sm mb-6 leading-relaxed">{error}</p>
           <button
             onClick={() => {
               setError(null)
@@ -582,7 +603,7 @@ export default function MobileJoin() {
                 window.location.reload()
               }
             }}
-            className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-xl transition-colors shadow-md"
+            className="w-full px-6 py-3.5 min-h-[48px] bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-sm font-semibold rounded-xl transition-colors shadow-md touch-manipulation"
           >
             Allow Camera / Try Again
           </button>
@@ -595,11 +616,11 @@ export default function MobileJoin() {
   // ── Ended state ─────────────────────────────────────────────────────────
   if (phase === PHASE.ENDED) {
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-6 pb-16">
-        <div className="bg-gray-800 rounded-2xl border border-green-500/30 p-8 max-w-sm w-full text-center">
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4 sm:p-6 pb-16">
+        <div className="bg-gray-800 rounded-2xl border border-green-500/30 p-6 sm:p-8 max-w-sm w-full text-center">
           <div className="text-4xl mb-3">🏁</div>
           <h2 className="text-lg font-bold text-white mb-2">Interview Ended</h2>
-          <p className="text-gray-400 text-sm">
+          <p className="text-gray-400 text-sm leading-relaxed">
             The camera has been turned off. You can close this page now.
           </p>
         </div>
@@ -612,11 +633,11 @@ export default function MobileJoin() {
   const interviewLabel = info?.interviewTitle || info?.interviewType || 'Interview'
 
   return (
-    <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-6 pb-16">
+    <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-4 sm:p-6 pb-16">
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-gray-800 rounded-2xl border border-gray-700/50 p-8 max-w-sm w-full text-center"
+        className="bg-gray-800 rounded-2xl border border-gray-700/50 p-6 sm:p-8 max-w-sm w-full text-center"
       >
         <div className="text-4xl mb-3">📱</div>
         <h2 className="text-lg font-bold text-white mb-2" style={{ fontFamily: 'Poppins, sans-serif' }}>
@@ -626,19 +647,19 @@ export default function MobileJoin() {
         {phase === PHASE.LOADING && (
           <div className="flex flex-col items-center gap-3 py-4">
             <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-            <span className="text-gray-400 text-sm">Validating QR code…</span>
+            <span className="text-gray-400 text-sm font-medium">Validating QR code…</span>
           </div>
         )}
 
         {phase === PHASE.READY && (
           <>
-            <p className="text-gray-400 text-sm mb-5">
+            <p className="text-gray-400 text-sm mb-5 leading-relaxed">
               Your phone will be used as a secondary monitoring camera during the{' '}
-              <span className="text-white font-medium">{interviewLabel}</span>.
+              <span className="text-white font-semibold">{interviewLabel}</span>.
               Position it to show your desk and workspace.
             </p>
 
-            <div className="mb-5 bg-gray-700/50 rounded-xl p-3 text-left text-xs text-gray-300 space-y-2">
+            <div className="mb-5 bg-gray-700/50 rounded-xl p-3.5 text-left text-xs text-gray-300 space-y-2.5">
               <div className="flex items-center justify-between">
                 <span>Interviewer laptop</span>
                 <span className={laptopConnected ? 'text-green-400 font-medium' : 'text-amber-400 font-medium'}>
@@ -653,7 +674,7 @@ export default function MobileJoin() {
 
             <button
               onClick={requestCamera}
-              className="w-full px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-xl transition-colors shadow-md"
+              className="w-full px-6 py-3.5 min-h-[48px] bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-sm font-semibold rounded-xl transition-colors shadow-md touch-manipulation"
             >
               Allow Camera & Connect
             </button>
@@ -662,14 +683,14 @@ export default function MobileJoin() {
 
         {(phase === PHASE.CAMERA || phase === PHASE.CONNECTING || phase === PHASE.CONNECTED) && (
           <div className="flex flex-col items-center gap-3 py-2">
-            <div className="flex items-center justify-center gap-2 text-xs mb-2">
+            <div className="flex items-center justify-center gap-2 text-xs mb-2 flex-wrap">
               <span className={`inline-block w-2.5 h-2.5 rounded-full ${videoActive ? 'bg-green-400 animate-pulse' : 'bg-amber-400'}`} />
               <span className={videoActive ? 'text-green-400 font-medium' : 'text-amber-400 font-medium'}>
                 {getStatusText()}
               </span>
             </div>
 
-            {/* SINGLE PERISTENT VIDEO ELEMENT — never unmounts across phase changes */}
+            {/* SINGLE PERSISTENT VIDEO ELEMENT — never unmounts across phase changes */}
             <div className="w-full">
               <video
                 ref={videoRef}
@@ -693,7 +714,7 @@ export default function MobileJoin() {
                   endedRef.current = true
                   setPhase(PHASE.ENDED)
                 }}
-                className="mt-4 px-6 py-2 bg-red-600/80 hover:bg-red-600 text-white text-xs font-medium rounded-xl transition-colors"
+                className="w-full mt-4 px-6 py-3 min-h-[44px] bg-red-600/80 hover:bg-red-600 active:bg-red-700 text-white text-xs font-semibold rounded-xl transition-colors touch-manipulation"
               >
                 Disconnect Camera
               </button>

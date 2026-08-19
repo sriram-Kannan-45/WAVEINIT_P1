@@ -392,35 +392,49 @@ const deleteTrainer = async (req, res) => {
 
     if (!trainer) {
       await t.rollback();
-      console.log('[deleteTrainer] Trainer not found:', id);
+      console.log('[deleteTrainer] Trainer not found or already deleted:', id);
       return res.status(404).json({ error: 'Trainer not found' });
     }
 
     const {
-      TrainerProfile, TrainingTrainerAssignment, CourseTrainerAssignment,
+      TrainerProfile, TrainerEducation, TrainerExperience, UserProfile,
+      TrainingTrainerAssignment, CourseTrainerAssignment,
       Course, Lesson, Note, AIDocument, AIQuiz, LiveSession,
       DiscussionPost, Notification, Training, DeviceFingerprint, ChatMessage,
-      Attendance, ActivityLog
+      Attendance, ActivityLog, UserSession, RefreshToken, Interview, CodingAssessment
     } = require('../models');
     const { Op } = require('sequelize');
 
-    // 1. Check if trainer is assigned to trainings, courses, sessions, or referenced by child records (lessons, quizzes, materials)
+    // 1. Cleanup assignments and transient user records
+    await Promise.all([
+      CourseTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t }).catch(() => {}),
+      TrainingTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t }).catch(() => {}),
+      Training.update({ trainerId: null }, { where: { trainerId: id }, transaction: t }).catch(() => {}),
+      Course.update({ trainerId: null }, { where: { trainerId: id }, transaction: t }).catch(() => {}),
+      DeviceFingerprint.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
+      UserSession.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
+      RefreshToken.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
+      Notification.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
+      DiscussionPost.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
+      ChatMessage.destroy({ where: { senderId: id }, transaction: t }).catch(() => {}),
+      Attendance.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
+      ActivityLog.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
+      TrainerProfile.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
+      TrainerEducation.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
+      TrainerExperience.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
+      UserProfile.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
+      Interview.destroy({ where: { interviewer_id: id }, transaction: t }).catch(() => {}),
+      CodingAssessment.destroy({ where: { trainerId: id }, transaction: t }).catch(() => {}),
+    ]);
+
+    // 2. Check if trainer is referenced by permanent educational content (lessons, quizzes, notes, documents, live sessions)
     const [
-      assignedTrainings,
-      assignedCourses,
-      assignedTrainingAssignments,
-      assignedCourseAssignments,
-      assignedLiveSessions,
       referencedLessons,
       referencedQuizzes,
       referencedNotes,
-      referencedAIDocuments
+      referencedAIDocuments,
+      referencedLiveSessions
     ] = await Promise.all([
-      Training.findOne({ where: { trainerId: id }, transaction: t }),
-      Course.findOne({ where: { trainerId: id }, transaction: t }),
-      TrainingTrainerAssignment.findOne({ where: { trainerId: id }, transaction: t }),
-      CourseTrainerAssignment.findOne({ where: { trainerId: id }, transaction: t }),
-      LiveSession.findOne({ where: { trainerId: id }, transaction: t }),
       Lesson.findOne({ where: { trainerId: id }, transaction: t }),
       AIQuiz.findOne({
         where: {
@@ -432,97 +446,56 @@ const deleteTrainer = async (req, res) => {
         transaction: t
       }),
       Note.findOne({ where: { trainerId: id }, transaction: t }),
-      AIDocument.findOne({ where: { trainerId: id }, transaction: t })
+      AIDocument.findOne({ where: { trainerId: id }, transaction: t }),
+      LiveSession.findOne({ where: { trainerId: id }, transaction: t })
     ]);
 
-    const hasReferences =
-      assignedTrainings ||
-      assignedCourses ||
-      assignedTrainingAssignments ||
-      assignedCourseAssignments ||
-      assignedLiveSessions ||
+    const hasPermanentReferences =
       referencedLessons ||
       referencedQuizzes ||
       referencedNotes ||
-      referencedAIDocuments;
+      referencedAIDocuments ||
+      referencedLiveSessions;
 
-    if (hasReferences) {
-      console.log('[deleteTrainer] Trainer is referenced by existing courses, lessons, quizzes, or materials. Soft-deleting trainer id:', id);
+    if (hasPermanentReferences) {
+      console.log('[deleteTrainer] Trainer is referenced by existing content (lessons/quizzes/notes/materials). Soft-deleting and anonymizing trainer id:', id);
       
-      // Cleanup active assignment links so trainer is unassigned from active course management
-      await Promise.all([
-        CourseTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t }).catch(() => {}),
-        TrainingTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t }).catch(() => {}),
-      ]);
+      const timestamp = Date.now();
+      const anonymizedEmail = `${trainer.email}__deleted_${timestamp}`;
+      const anonymizedUsername = trainer.username ? `${trainer.username}__deleted_${timestamp}` : null;
 
       const [affectedRows] = await User.update(
-        { isDeleted: true, status: 'INACTIVE', deletedAt: new Date() },
+        { 
+          isDeleted: true, 
+          status: 'INACTIVE', 
+          deletedAt: new Date(),
+          email: anonymizedEmail,
+          username: anonymizedUsername
+        },
         { where: { id }, transaction: t }
       );
       console.log('[deleteTrainer] Soft delete completed. Affected rows:', affectedRows);
       
       await t.commit();
-      logger.info(`[deleteTrainer] Trainer #${id} soft-deleted successfully.`);
+      logger.info(`[deleteTrainer] Trainer #${id} soft-deleted and email freed successfully.`);
       return res.json({
         success: true,
         message: 'Trainer deleted successfully.'
       });
     }
 
-    // 3. No dependencies or active assignments: perform hard delete
-    console.log('Deleting trainer...');
-    console.log('Trainer ID:', id);
-    console.log('User ID:', id);
-
-    // A. Deleting device fingerprints
-    console.log('Deleting device fingerprints...');
-    const dfRows = await DeviceFingerprint.destroy({ where: { userId: id }, transaction: t });
-    console.log('Rows deleted:', dfRows);
-
-    // B. Deleting other child tables
-    console.log('Deleting other child tables...');
-    await Promise.all([
-      Notification.destroy({ where: { userId: id }, transaction: t }),
-      DiscussionPost.destroy({ where: { userId: id }, transaction: t }),
-      ChatMessage.destroy({ where: { senderId: id }, transaction: t }),
-      Attendance.destroy({ where: { userId: id }, transaction: t }),
-      ActivityLog.destroy({ where: { userId: id }, transaction: t }),
-      Note.destroy({ where: { trainerId: id }, transaction: t }),
-      AIDocument.destroy({ where: { trainerId: id }, transaction: t }),
-      AIQuiz.destroy({ where: { trainerId: id }, transaction: t }),
-    ]);
-
-    // B2. Cleanup interview-related references
-    const { Interview, CodingAssessment } = require('../models');
-    await Promise.all([
-      Interview.destroy({ where: { interviewer_id: id }, transaction: t }).catch(() => {}),
-      CodingAssessment.destroy({ where: { trainerId: id }, transaction: t }).catch(() => {}),
-    ]);
-
-    // B3. Cleanup assignment references
-    await Promise.all([
-      require('../models').CourseTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t }).catch(() => {}),
-      require('../models').TrainingTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t }).catch(() => {}),
-    ]);
-
-    // C. Deleting trainer profile
-    console.log('Deleting trainer profile...');
-    await TrainerProfile.destroy({ where: { userId: id }, transaction: t });
-
-    // D. Deleting trainer / user (disable FK checks for comprehensive cleanup)
-    console.log('Deleting trainer...');
-    console.log('Deleting user...');
+    // 3. No permanent content references: perform complete hard delete
+    console.log('[deleteTrainer] No permanent references. Hard-deleting trainer id:', id);
     try {
       await sequelize.query('SET FOREIGN_KEY_CHECKS = 0', { transaction: t });
       const affectedRows = await User.destroy({ where: { id }, transaction: t });
-      console.log('Rows deleted:', affectedRows);
+      console.log('[deleteTrainer] Hard delete completed. Rows deleted:', affectedRows);
     } finally {
       await sequelize.query('SET FOREIGN_KEY_CHECKS = 1', { transaction: t }).catch(() => {});
     }
     
     await t.commit();
-    console.log('Transaction committed.');
-    logger.info(`[deleteTrainer] Trainer #${id} deleted successfully.`);
+    logger.info(`[deleteTrainer] Trainer #${id} hard-deleted successfully.`);
     res.json({
       success: true,
       message: 'Trainer deleted successfully.'

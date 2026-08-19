@@ -20,11 +20,11 @@ export default function InterviewShell({
   const navigate = useNavigate()
 
   return (
-    <div className="reg-admin" style={{ width: '100%', maxWidth: '1400px', margin: '0 auto' }}>
+    <div className="reg-admin interview-shell-root">
       {/* LMS Breadcrumb & Page Header */}
-      <div style={{ marginBottom: 20 }}>
+      <div className="interview-shell-header">
         {/* Breadcrumbs */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#64748b', marginBottom: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#64748b', marginBottom: 6 }}>
           <button
             onClick={() => navigate('/interviews')}
             style={{ background: 'none', border: 'none', padding: 0, color: '#16A34A', fontWeight: 600, cursor: 'pointer', fontSize: 13 }}
@@ -41,7 +41,7 @@ export default function InterviewShell({
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <h1 className="reg-admin-title" style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#0f172a' }}>
+              <h1 className="reg-admin-title" style={{ fontSize: 20, fontWeight: 700, margin: 0, color: '#0f172a' }}>
                 {title}
               </h1>
               {statusBadge && (
@@ -51,7 +51,7 @@ export default function InterviewShell({
                   borderColor: statusBadge === 'IN_PROGRESS' || statusBadge === 'In Progress' ? '#fcd34d' : '#bbf7d0',
                   fontWeight: 600,
                   fontSize: 11,
-                  padding: '3px 10px',
+                  padding: '2px 8px',
                   borderRadius: 6,
                 }}>
                   {statusBadge?.replace('_', ' ')}
@@ -59,7 +59,7 @@ export default function InterviewShell({
               )}
             </div>
             {subtitle && (
-              <p className="reg-admin-subtitle" style={{ fontSize: 13, color: '#64748b', margin: '4px 0 0' }}>
+              <p className="reg-admin-subtitle" style={{ fontSize: 12, color: '#64748b', margin: '2px 0 0' }}>
                 {subtitle}
               </p>
             )}
@@ -72,7 +72,7 @@ export default function InterviewShell({
                 fontWeight: 600,
                 color: '#475569',
                 background: '#f1f5f9',
-                padding: '4px 10px',
+                padding: '3px 8px',
                 borderRadius: 20,
                 border: '1px solid #e2e8f0'
               }}>
@@ -85,7 +85,7 @@ export default function InterviewShell({
                 fontWeight: 600,
                 color: '#15803D',
                 background: '#f0fdf4',
-                padding: '4px 10px',
+                padding: '3px 8px',
                 borderRadius: 20,
                 border: '1px solid #bbf7d0',
                 display: 'inline-flex',
@@ -103,6 +103,7 @@ export default function InterviewShell({
 
       {/* Main Page Area */}
       <motion.div
+        className="interview-shell-body"
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25 }}

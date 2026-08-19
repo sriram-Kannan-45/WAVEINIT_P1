@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import AssessmentConsentGate from '../components/ai-quizzes/AssessmentConsentGate'
 import AssessmentQRPairingModal from '../components/assessment/AssessmentQRPairingModal'
+import DualCameraProctorWidget from '../components/assessment/DualCameraProctorWidget'
 import { API_BASE, BACKEND_ORIGIN } from '../api/api'
 import { useToast } from '../components/Toast'
 import { ProctorProvider, useProctor } from '../proctoring/ProctorContext'
@@ -76,6 +77,7 @@ function ParticipantCodingAttemptInner({ user }) {
   const [assessment, setAssessment] = useState(null)
   const [problems, setProblems] = useState([])
   const [qrVerified, setQrVerified] = useState(false)
+  const [verifSessionInfo, setVerifSessionInfo] = useState(null)
   const [consented, setConsented] = useState(false)
   const [screenStream, setScreenStream] = useState(null)
   const [sessionError, setSessionError] = useState(null)
@@ -350,7 +352,7 @@ function ParticipantCodingAttemptInner({ user }) {
           throw new Error(data.error || 'Submit failed')
         }
       } else {
-        showSuccess?.('Submitted successfully!')
+        showSuccess?.('Coding assessment submitted successfully')
       }
       setSubmitted(true); clearInterval(timerRef.current)
 
@@ -365,20 +367,14 @@ function ParticipantCodingAttemptInner({ user }) {
 
   const currentLanguage = languageByProblem[currentProblem?.id] || currentProblem?.programmingLanguage || 'javascript'
 
-  // beforeunload — stop screen share when tab is closed
   useEffect(() => {
-    const onBeforeUnload = () => {
-      if (screenRecording) {
-        stopRecording()
-      }
-    }
+    const onBeforeUnload = () => { if (screenRecording) stopRecording() }
     window.addEventListener('beforeunload', onBeforeUnload)
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [screenRecording, stopRecording])
 
   if (loading || restoring) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: '#94a3b8' }}><Loader2 size={24} className="animate-spin" /></div>
   if (errorMsg) return <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', padding: 20, textAlign: 'center' }}><AlertCircle size={32} color="#dc2626" style={{ marginBottom: 12 }} /><div style={{ fontSize: 16, fontWeight: 600, color: '#dc2626', marginBottom: 8 }}>{errorMsg}</div><button onClick={() => navigate(`/trainings/${trainingId}`)} style={{ padding: '8px 20px', background: '#0D9488', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Go Back</button></div>
-
 
   if (!qrVerified && assessment) {
     return (
@@ -387,9 +383,10 @@ function ParticipantCodingAttemptInner({ user }) {
         assessmentId={Number(assessmentId)}
         attemptId={Number(attemptId)}
         assessmentTitle={assessment.title || 'Coding Assessment'}
-        participantName={user?.name || 'Sriram Titoo'}
+        participantName={user?.name || 'Participant'}
         userToken={user?.token}
-        onVerified={() => {
+        onVerified={(data) => {
+          setVerifSessionInfo(data);
           setQrVerified(true);
         }}
         onCancel={() => navigate(`/trainings/${trainingId}`)}
@@ -598,6 +595,14 @@ function ParticipantCodingAttemptInner({ user }) {
             </div>
           </div>
         </div>
+        {/* Real-time Dual Camera View (Laptop Webcam + Mobile Back Cam) */}
+        <DualCameraProctorWidget
+          assessmentType="CODING"
+          assessmentId={Number(assessmentId)}
+          attemptId={Number(attemptId)}
+          sessionId={verifSessionInfo?.sessionId}
+          userToken={user?.token}
+        />
       </div>
     </ExamProctorShell>
   )

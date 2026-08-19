@@ -8,6 +8,7 @@ import {
   ChevronRight, ChevronLeft, Upload, X, HelpCircle, Save, Inbox
 } from 'lucide-react'
 import { API, API_BASE } from '../api/api'
+import { useToast } from '../components/Toast'
 
 const ease = [0.22, 1, 0.36, 1]
 
@@ -79,6 +80,7 @@ function Select({ children, ...props }) {
 
 function RegistrationPage() {
   const navigate = useNavigate()
+  const { success: toastSuccess } = useToast()
   const [step, setStep] = useState(0)
   const [loading, setLoading] = useState(false)
   const [submitStep, setSubmitStep] = useState(0)
@@ -152,7 +154,7 @@ function RegistrationPage() {
 
   const handleSaveDraft = () => {
     localStorage.setItem('reg_draft', JSON.stringify(form))
-    alert('Draft saved!')
+    toastSuccess('Registration draft saved successfully')
   }
 
   const handleSubmit = async () => {

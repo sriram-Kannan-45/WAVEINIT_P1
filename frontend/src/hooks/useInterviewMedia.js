@@ -82,6 +82,41 @@ export function useInterviewMedia({ onLocalStream } = {}) {
     onLocalStreamRef.current = onLocalStream
   }, [onLocalStream])
 
+  // Explicitly check browser permissions on hook initialization for current real state
+  useEffect(() => {
+    let active = true
+    const checkPermissions = async () => {
+      try {
+        if (navigator?.permissions?.query) {
+          try {
+            const camStatus = await navigator.permissions.query({ name: 'camera' })
+            if (active && camStatus) {
+              setCameraPermission(camStatus.state)
+              camStatus.onchange = () => {
+                if (active) setCameraPermission(camStatus.state)
+              }
+            }
+          } catch {}
+          try {
+            const micStatus = await navigator.permissions.query({ name: 'microphone' })
+            if (active && micStatus) {
+              setMicPermission(micStatus.state)
+              micStatus.onchange = () => {
+                if (active) setMicPermission(micStatus.state)
+              }
+            }
+          } catch {}
+        }
+      } catch (err) {
+        console.warn('Permission query not supported in this environment:', err)
+      }
+    }
+    checkPermissions()
+    return () => {
+      active = false
+    }
+  }, [])
+
   // Stop Web Audio API microphone analyzer
   const stopAudioAnalyzer = useCallback(() => {
     if (animFrameRef.current) {

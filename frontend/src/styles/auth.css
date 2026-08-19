@@ -327,13 +327,13 @@ body:has(.auth-page) {
    LOGIN / REGISTER CARD
    ═══════════════════════════════════════════════════════════════════ */
 .auth-card {
-  width: min(480px, calc(100vw - 40px));
+  width: min(460px, calc(100vw - 40px));
   min-height: auto;
   background: var(--color-white);
-  border-radius: 20px;
+  border-radius: 24px;
   border: 1px solid #e2e8f0;
-  padding: 32px 36px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.04);
+  padding: 38px 40px;
+  box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.02);
   position: relative;
   box-sizing: border-box;
   display: flex;
@@ -344,7 +344,7 @@ body:has(.auth-page) {
   display: flex;
   flex-direction: column;
   height: 100%;
-  gap: 4px;
+  gap: 0;
 }
 
 /* ── Card Header Avatar ────────────────────────────────────────── */
@@ -364,15 +364,15 @@ body:has(.auth-page) {
 /* ── Card Header ───────────────────────────────────────────────── */
 .auth-card-header {
   text-align: center;
-  margin-bottom: 20px;
+  margin-bottom: 22px;
 }
 
 .auth-card-title {
   font-size: 26px;
   font-weight: 700;
   color: #0F172A;
-  margin: 0 0 4px 0;
-  letter-spacing: -0.4px;
+  margin: 0 0 6px 0;
+  letter-spacing: -0.5px;
   line-height: 1.2;
   font-family: 'Poppins', sans-serif;
 }
@@ -393,7 +393,7 @@ body:has(.auth-page) {
   border-radius: 12px;
   padding: 4px;
   gap: 4px;
-  margin-bottom: 20px;
+  margin-bottom: 22px;
 }
 
 .auth-role-btn {
@@ -403,11 +403,11 @@ body:has(.auth-page) {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  padding: 9px 10px;
+  padding: 9px 12px;
   border: none;
   border-radius: 9px;
   font-family: 'Poppins', sans-serif;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 500;
   color: #64748B;
   background: transparent;
@@ -429,8 +429,8 @@ body:has(.auth-page) {
 }
 
 .auth-role-btn svg {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
 }
 
@@ -440,25 +440,25 @@ body:has(.auth-page) {
 
 /* ── Form Group ────────────────────────────────────────────────── */
 .auth-form-group {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .auth-form-label {
   display: block;
   font-size: 13.5px;
   font-weight: 500;
-  color: #334155;
-  margin-bottom: 4px;
+  color: #0F172A;
+  margin-bottom: 6px;
 }
 
 .auth-form-input {
   width: 100%;
-  height: 44px;
-  padding: 0 14px;
+  height: 48px;
+  padding: 0 16px;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   font-family: 'Poppins', sans-serif;
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--color-dark);
   background: #fff;
   transition: all 0.2s ease;
@@ -472,7 +472,7 @@ body:has(.auth-page) {
 
 .auth-form-input:focus {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.1);
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.12);
 }
 
 .auth-input-wrapper {
@@ -652,60 +652,40 @@ body:has(.auth-page) {
 
 /* ── Card Footer ───────────────────────────────────────────────── */
 .auth-card-footer {
-  margin-top: 14px;
+  margin-top: 16px;
   text-align: center;
-  font-size: 13px;
-  color: var(--color-secondary);
+  font-size: 13.5px;
+  color: #64748B;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
 }
 
-.auth-card-footer a {
+.auth-register-link {
   color: var(--color-primary);
-  text-decoration: none;
+  background: none;
+  border: none;
   font-weight: 600;
+  font-size: 13.5px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
   transition: color 0.2s;
 }
 
-.auth-card-footer a:hover {
+.auth-register-link:hover {
   color: var(--color-primary-hover);
   text-decoration: underline;
 }
 
-/* ── Reserved Error Container (Prevents Layout Shift) ────────── */
+/* ── Inline Error Container (Removed for Clean Card UI) ────────── */
 .login-error-container {
-  height: 42px;
-  margin-bottom: 8px;
-  display: flex;
-  align-items: center;
-  box-sizing: border-box;
+  display: none !important;
 }
 
 .auth-error {
-  width: 100%;
-  height: 100%;
-  background: #FEF2F2;
-  border: 1px solid #FECACA;
-  border-radius: 10px;
-  padding: 0 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  box-sizing: border-box;
-}
-
-.auth-error-icon {
-  width: 16px;
-  height: 16px;
-  color: #EF4444;
-  flex-shrink: 0;
-}
-
-.auth-error-text {
-  font-size: 12.5px;
-  color: #B91C1C;
-  line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: none !important;
 }
 
 /* ── Success Message ───────────────────────────────────────────── */

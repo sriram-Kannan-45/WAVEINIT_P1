@@ -526,7 +526,20 @@ export default function AssessmentQRPairingModal({
         throw new Error(data.error || 'Verification check failed on server');
       }
 
-      onVerified?.(data.data);
+      const verifData = {
+        ...(data.data || {}),
+        sessionId: sessionData?.sessionId,
+        token: sessionData?.token,
+      };
+
+      try {
+        sessionStorage.setItem(
+          `assessment_verif_${assessmentType}_${assessmentId}_${attemptId}`,
+          JSON.stringify({ sessionId: sessionData?.sessionId, token: sessionData?.token })
+        );
+      } catch (e) {}
+
+      onVerified?.(verifData);
     } catch (err) {
       setError(err.message || 'Verification could not be confirmed');
       setVerifyingStart(false);

@@ -109,16 +109,35 @@ export default function TrainerMonitoringDashboard({ user }) {
       );
     };
 
+    const onProctorUpdate = (msg) => {
+      if (msg?.type === 'yolo_monitoring' && msg?.monitoring) {
+        const m = msg.monitoring;
+        setParticipants((prev) =>
+          prev.map((p) =>
+            p.id === m.participantId || p.sessionId === m.sessionId
+              ? {
+                  ...p,
+                  yoloMonitoring: m,
+                  lastSeen: m.timestamp,
+                }
+              : p
+          )
+        );
+      }
+    };
+
     socket.on('new-frame', onNewFrame);
     socket.on('violation', onViolation);
     socket.on('test-submitted', onTestSubmitted);
     socket.on('participant-flagged', onParticipantFlagged);
+    socket.on('proctor:update', onProctorUpdate);
 
     return () => {
       socket.off('new-frame', onNewFrame);
       socket.off('violation', onViolation);
       socket.off('test-submitted', onTestSubmitted);
       socket.off('participant-flagged', onParticipantFlagged);
+      socket.off('proctor:update', onProctorUpdate);
     };
   }, [socket, selectedSessionId]);
 

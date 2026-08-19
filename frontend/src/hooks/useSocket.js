@@ -36,24 +36,46 @@ function getStoredToken() {
 }
 
 function ensureSocket() {
-  if (socketRef && socketRef.connected) return socketRef
-  if (socketRef) return socketRef // connecting / reconnecting
-
   const token = getStoredToken()
-  if (!token) return null
+  if (!token) {
+    if (socketRef) {
+      socketRef.disconnect()
+      socketRef = null
+      notifyState('disconnected')
+    }
+    return null
+  }
+
+  // If socket already exists with the current token
+  if (socketRef && socketRef.auth?.token === token) {
+    if (socketRef.connected) return socketRef
+    if (!socketRef.disconnected) return socketRef
+    socketRef.connect()
+    return socketRef
+  }
+
+  // If token changed or previous socket needs replacement
+  if (socketRef) {
+    socketRef.disconnect()
+    socketRef = null
+  }
 
   socketRef = io(BACKEND_ORIGIN, {
     auth: { token },
     transports: ['websocket', 'polling'],
     reconnection: true,
-    reconnectionAttempts: 8,
+    reconnectionAttempts: 20,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
+    timeout: 10000,
   })
 
   socketRef.on('connect', () => notifyState('connected'))
   socketRef.on('disconnect', () => notifyState('disconnected'))
-  socketRef.on('connect_error', () => notifyState('disconnected'))
+  socketRef.on('connect_error', (err) => {
+    console.warn('[Socket.IO] connect_error:', err?.message)
+    notifyState('disconnected')
+  })
   notifyState('connecting')
 
   return socketRef

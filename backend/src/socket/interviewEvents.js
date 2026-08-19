@@ -108,9 +108,10 @@ async function validateRoomAccess(socket, interviewId) {
   const interview = await Interview.findByPk(interviewId);
   if (!interview) return { allowed: false, error: 'Interview not found' };
 
-  if (role === 'ADMIN' || socket.deviceType === 'MOBILE') return { allowed: true, interview };
+  if (role === 'ADMIN' || role === 'TRAINER' || socket.deviceType === 'MOBILE') return { allowed: true, interview };
   if (String(interview.candidate_id) === String(userId)) return { allowed: true, interview };
   if (String(interview.interviewer_id) === String(userId)) return { allowed: true, interview };
+  if (String(interview.created_by) === String(userId)) return { allowed: true, interview };
 
   return { allowed: false, error: 'Not authorized for this interview' };
 }
@@ -433,6 +434,38 @@ function registerInterviewEvents(io, socket) {
   });
 
   /**
+   * participant-step-progress: Reports candidate setup step progression.
+   */
+  socket.on('participant-step-progress', (data) => {
+    const { step, progress, completed } = data || {};
+    const interviewId = data?.interviewId != null ? String(data.interviewId) : String(socket.currentInterviewId || '');
+    if (!interviewId) return;
+
+    io.to(`interview_${interviewId}`).emit('participant-step-progress', {
+      fromSocketId: socket.id,
+      fromUserId: socket.userId,
+      step,
+      progress,
+      completed: completed || step === 'room',
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  /**
+   * participant-tab-switch: Reports candidate tab switch / focus loss.
+   */
+  socket.on('participant-tab-switch', (data) => {
+    const interviewId = data?.interviewId != null ? String(data.interviewId) : String(socket.currentInterviewId || '');
+    if (!interviewId) return;
+
+    io.to(`interview_${interviewId}`).emit('participant-tab-switch', {
+      fromSocketId: socket.id,
+      fromUserId: socket.userId,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  /**
    * device-status: Client reports device connection status change.
    */
   socket.on('device-status', async (data) => {
@@ -488,6 +521,62 @@ function registerInterviewEvents(io, socket) {
           }
         }
       }
+    }
+  });
+
+  /**
+   * interview:yolo_frame: Real-time YOLO frame processing for candidate camera / mobile stream
+   */
+  socket.on('interview:yolo_frame', async (data, ack) => {
+    try {
+      const {
+        frame,
+        sessionId,
+        participantId = socket.userId,
+        cameraSource = 'PC_CAMERA',
+        confidenceThreshold = 0.35,
+        interviewId = socket.currentInterviewId,
+      } = data || {};
+
+      if (!frame || !sessionId) {
+        return ack?.({ ok: false, error: 'frame and sessionId required' });
+      }
+
+      const yoloService = require('../services/yoloProctoringService');
+      const res = await yoloService.analyzeFrame({
+        frame,
+        sessionId,
+        participantId,
+        moduleType: 'INTERVIEW',
+        cameraSource,
+        confidenceThreshold,
+      });
+
+      if (res?.success && res.proctoring_event) {
+        const ev = res.proctoring_event;
+        // Broadcast alert if suspicious event or state change
+        if (ev.shouldBroadcast) {
+          const alertRoomId = String(interviewId || sessionId);
+          io.to(`interview_${alertRoomId}`).emit('interview-alert', {
+            alertType: ev.eventType,
+            severity: ev.severity,
+            sourceDevice: cameraSource === 'MOBILE_CAMERA' ? 'MOBILE' : 'LAPTOP',
+            message: `YOLO Monitor: ${ev.eventType} (${(ev.confidence * 100).toFixed(0)}%)`,
+            metadata: {
+              detectedClasses: ev.detectedClasses,
+              confidence: ev.confidence,
+              cameraSource,
+            },
+            ts: new Date(),
+          });
+        }
+        ack?.({ ok: true, event: ev, detections: res.detections });
+      } else {
+        ack?.({ ok: false, error: res?.error });
+      }
+    } catch (err) {
+      logger.warn('[SocketIO] interview:yolo_frame error:', err.message);
+      ack?.({ ok: false, error: err.message });
     }
   });
 

@@ -50,6 +50,10 @@ ai-service/vector_store/
 
 # Uploaded documents
 backend/uploads/ai-docs/
+backend/uploads/materials/
+
+# Model weights
+*.pt
 
 # Recordings & screenshots (binary, generated at runtime)
 backend/storage/recordings/
@@ -58,4 +62,7 @@ _pdf_build/
 shots.js
 backend/findpass.js
 backend/resetpass.js
+
+
+
 

@@ -149,8 +149,19 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
     }
   }, [step, camStream]);
 
+  const detectorRef = useRef(null);
+  const lastApiDetectionRef = useRef({ timestamp: 0, faces: [] });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'FaceDetector' in window && !detectorRef.current) {
+      try {
+        detectorRef.current = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 3 });
+      } catch (_) {}
+    }
+  }, []);
+
   /**
-   * Validate Upper-Body Framing using real-time video frame analysis
+   * Validate Upper-Body Framing using real-time biometric & computer vision analysis
    */
   const validateCalibrationFrame = useCallback((video) => {
     if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
@@ -183,7 +194,20 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
 
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) {
-      return { valid: true, message: 'Calibrating...' };
+      return {
+        valid: false,
+        faceDetected: false,
+        faceCentered: false,
+        eyesVisible: false,
+        leftShoulderVisible: false,
+        rightShoulderVisible: false,
+        chestVisible: false,
+        belowChestVisible: false,
+        bodyCentered: false,
+        lightingGood: false,
+        bodyCoverage: 0,
+        message: 'Calibrating camera…',
+      };
     }
 
     ctx.drawImage(video, 0, 0, w, h);
@@ -191,20 +215,49 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
     try {
       frameData = ctx.getImageData(0, 0, w, h);
     } catch (_) {
-      return { valid: true, message: 'Calibrating...' };
+      return {
+        valid: false,
+        faceDetected: false,
+        faceCentered: false,
+        eyesVisible: false,
+        leftShoulderVisible: false,
+        rightShoulderVisible: false,
+        chestVisible: false,
+        belowChestVisible: false,
+        bodyCentered: false,
+        lightingGood: false,
+        bodyCoverage: 0,
+        message: 'Calibrating camera…',
+      };
     }
 
     const data = frameData.data;
 
+    // Asynchronously trigger hardware FaceDetector API if available
+    if (detectorRef.current && Date.now() - lastApiDetectionRef.current.timestamp > 140) {
+      lastApiDetectionRef.current.timestamp = Date.now();
+      detectorRef.current.detect(video).then((faces) => {
+        if (isComponentMounted.current) {
+          lastApiDetectionRef.current.faces = faces || [];
+        }
+      }).catch(() => {});
+    }
+
+    const apiFaces = lastApiDetectionRef.current.faces;
+    const hasApiDetector = detectorRef.current !== null;
+
     // 1. Lighting / Average Luma & Regional Analysis
     let totalLuma = 0;
     let sampleCount = 0;
+    let headLumaSum = 0;
+    let headLumaSqSum = 0;
     let headSkinCount = 0;
     let headSampleCount = 0;
     let leftEyeSkin = 0, rightEyeSkin = 0;
-    let leftShoulderCount = 0, rightShoulderCount = 0;
-    let chestCount = 0;
-    let belowChestCount = 0;
+    let leftEyeDark = 0, rightEyeDark = 0;
+    let leftShoulderBody = 0, rightShoulderBody = 0;
+    let chestBody = 0;
+    let belowChestBody = 0;
     let leftSideTotal = 0, rightSideTotal = 0;
 
     for (let y = 0; y < h; y += 4) {
@@ -218,67 +271,114 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
         totalLuma += luma;
         sampleCount++;
 
-        // Skin & upper torso chroma classification
-        const isSkinOrTorso = (r > 55 && g > 35 && b > 20 && r > b && (r - g) >= 8 && Math.abs(r - g) < 145) ||
-                              (luma > 40 && luma < 225 && Math.abs(r - g) < 30 && Math.abs(g - b) < 30); // Clothing/body pixels
+        // Strict YCbCr human skin chrominance space (rejects walls, ceilings, tiles, and ambient lighting)
+        const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+        const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+        const isStrictSkin = (luma >= 42 && luma <= 235) &&
+                             (cb >= 77 && cb <= 127) &&
+                             (cr >= 133 && cr <= 173) &&
+                             (r > g && g > b && (r - g) >= 10);
 
-        if (isSkinOrTorso) {
-          if (x < w * 0.5) leftSideTotal++;
-          else rightSideTotal++;
+        // Body / Clothing mass (contrast from neutral background)
+        const isBodyChroma = isStrictSkin || (luma > 25 && luma < 210 && (Math.abs(r - g) > 8 || Math.abs(g - b) > 8 || Math.abs(r - b) > 10));
 
-          // Head & Face Zone (x: 105..215, y: 15..100)
-          if (x >= 105 && x <= 215 && y >= 15 && y <= 100) {
+        if (x >= 105 && x <= 215 && y >= 15 && y <= 105) {
+          headSampleCount++;
+          headLumaSum += luma;
+          headLumaSqSum += luma * luma;
+
+          if (isStrictSkin) {
             headSkinCount++;
           }
-          // Left Eye / Right Eye sub-zones (y: 40..70)
-          if (y >= 40 && y <= 70) {
-            if (x >= 120 && x <= 155) leftEyeSkin++;
-            if (x >= 165 && x <= 200) rightEyeSkin++;
-          }
-          // Left Shoulder Zone (x: 45..135, y: 95..155)
-          if (x >= 45 && x <= 135 && y >= 95 && y <= 155) {
-            leftShoulderCount++;
-          }
-          // Right Shoulder Zone (x: 185..275, y: 95..155)
-          if (x >= 185 && x <= 275 && y >= 95 && y <= 155) {
-            rightShoulderCount++;
-          }
-          // Chest Zone (x: 90..230, y: 115..180)
-          if (x >= 90 && x <= 230 && y >= 115 && y <= 180) {
-            chestCount++;
-          }
-          // Below-Chest Zone (x: 75..245, y: 180..235)
-          if (x >= 75 && x <= 245 && y >= 180 && y <= 235) {
-            belowChestCount++;
+
+          // Eye sub-zones (y: 42..74)
+          if (y >= 42 && y <= 74) {
+            if (x >= 120 && x <= 155) {
+              if (isStrictSkin) leftEyeSkin++;
+              if (luma < 85) leftEyeDark++;
+            }
+            if (x >= 165 && x <= 200) {
+              if (isStrictSkin) rightEyeSkin++;
+              if (luma < 85) rightEyeDark++;
+            }
           }
         }
 
-        if (x >= 105 && x <= 215 && y >= 15 && y <= 100) {
-          headSampleCount++;
+        if (isBodyChroma) {
+          if (x < w * 0.5) leftSideTotal++;
+          else rightSideTotal++;
+
+          // Left Shoulder Zone (x: 35..135, y: 95..160)
+          if (x >= 35 && x <= 135 && y >= 95 && y <= 160) {
+            leftShoulderBody++;
+          }
+          // Right Shoulder Zone (x: 185..285, y: 95..160)
+          if (x >= 185 && x <= 285 && y >= 95 && y <= 160) {
+            rightShoulderBody++;
+          }
+          // Chest Zone (x: 80..240, y: 115..185)
+          if (x >= 80 && x <= 240 && y >= 115 && y <= 185) {
+            chestBody++;
+          }
+          // Below-Chest Zone (x: 65..255, y: 185..235)
+          if (x >= 65 && x <= 255 && y >= 185 && y <= 235) {
+            belowChestBody++;
+          }
         }
       }
     }
 
     const avgLuma = totalLuma / Math.max(1, sampleCount);
-    const lightingGood = avgLuma >= 28 && avgLuma <= 240;
+    const lightingGood = avgLuma >= 35 && avgLuma <= 230;
 
-    // 2. Real-time Anatomical Presence Verification
-    const faceDetected = headSkinCount >= 35 && (headSkinCount / Math.max(1, headSampleCount)) >= 0.08;
-    const eyesVisible = faceDetected && (leftEyeSkin >= 6 && rightEyeSkin >= 6);
-    const leftShoulderVisible = faceDetected && leftShoulderCount >= 18;
-    const rightShoulderVisible = faceDetected && rightShoulderCount >= 18;
-    const chestVisible = faceDetected && chestCount >= 28;
-    const belowChestVisible = faceDetected && belowChestCount >= 20;
+    // Head Texture Variance Check (real human face has eyes, eyebrows, nose, mouth; plain walls have variance < 12)
+    const headMean = headLumaSum / Math.max(1, headSampleCount);
+    const headVariance = Math.max(0, (headLumaSqSum / Math.max(1, headSampleCount)) - (headMean * headMean));
+    const headStdDev = Math.sqrt(headVariance);
+    const hasFacialTexture = headStdDev >= 16.0;
 
-    const sideBalanceDiff = Math.abs(leftSideTotal - rightSideTotal) / Math.max(1, leftSideTotal + rightSideTotal);
-    const bodyCentered = faceDetected && sideBalanceDiff < 0.55;
-    const bodyCoverage = Math.min(98, Math.max(0, Math.round(((headSkinCount + chestCount + belowChestCount) / (sampleCount * 0.4)) * 100)));
+    // 2. Multi-Stage Biometric Face Detection
+    let faceDetected = false;
+    let faceCentered = false;
+
+    if (hasApiDetector && apiFaces.length > 0) {
+      // Hardware/Browser FaceDetector validated presence
+      const primaryFace = apiFaces[0];
+      const box = primaryFace.boundingBox;
+      const faceMidX = box ? (box.x + box.width / 2) / (video.videoWidth || w) : 0.5;
+      const faceMidY = box ? (box.y + box.height / 2) / (video.videoHeight || h) : 0.35;
+      const faceWidthRatio = box ? box.width / (video.videoWidth || w) : 0.3;
+
+      faceDetected = true;
+      faceCentered = faceMidX >= 0.30 && faceMidX <= 0.70 && faceMidY >= 0.12 && faceMidY <= 0.60 && faceWidthRatio >= 0.12 && faceWidthRatio <= 0.70;
+    } else if (!hasApiDetector) {
+      // Strict Computer Vision Skin & Texture Ellipse
+      const skinRatioInHead = headSkinCount / Math.max(1, headSampleCount);
+      faceDetected = headSkinCount >= 75 && skinRatioInHead >= 0.16 && hasFacialTexture;
+      faceCentered = faceDetected && (headSkinCount >= 90);
+    } else {
+      // Hardware FaceDetector is available and explicitly reports 0 faces!
+      faceDetected = false;
+      faceCentered = false;
+    }
+
+    // 3. Anatomical Sub-Feature Checks
+    const eyesVisible = faceDetected && ((leftEyeSkin >= 10 && rightEyeSkin >= 10) || (hasApiDetector && apiFaces.length > 0));
+    const leftShoulderVisible = faceDetected && leftShoulderBody >= 35;
+    const rightShoulderVisible = faceDetected && rightShoulderBody >= 35;
+    const chestVisible = faceDetected && chestBody >= 55;
+    const belowChestVisible = faceDetected && belowChestBody >= 40;
+
+    const totalTorsoMass = leftSideTotal + rightSideTotal;
+    const sideBalanceDiff = Math.abs(leftSideTotal - rightSideTotal) / Math.max(1, totalTorsoMass);
+    const bodyCentered = faceDetected && (faceCentered || sideBalanceDiff < 0.45) && totalTorsoMass >= 180;
+    const bodyCoverage = Math.min(98, Math.max(0, Math.round(((headSkinCount + chestBody + belowChestBody) / (sampleCount * 0.45)) * 100)));
 
     const valid = lightingGood && faceDetected && eyesVisible && leftShoulderVisible && rightShoulderVisible && chestVisible && belowChestVisible && bodyCentered;
 
     let message = 'Position yourself so your head, eyes, shoulders, chest, and area below chest are visible.';
     if (!faceDetected) {
-      message = '✗ Face Not Detected. Position yourself directly in front of the camera.';
+      message = '✗ No Face Detected. Position yourself directly in front of the camera.';
     } else if (!eyesVisible) {
       message = '✗ Both Eyes Not Reliably Visible. Look directly at the camera.';
     } else if (!leftShoulderVisible || !rightShoulderVisible) {
@@ -290,7 +390,7 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
     } else if (!bodyCentered) {
       message = '✗ Center yourself horizontally in the camera frame.';
     } else if (!lightingGood) {
-      message = avgLuma < 28 ? '✗ Lighting too dark. Increase room lighting.' : '✗ Lighting too bright. Reduce direct glare.';
+      message = avgLuma < 35 ? '✗ Lighting too dark. Increase room lighting.' : '✗ Lighting too bright. Reduce direct glare.';
     } else if (valid) {
       message = '✓ Good framing. Hold position to complete calibration.';
     }

@@ -1,4 +1,4 @@
-import { colors, typography, radius, shadows, gradients } from '../theme/tokens'
+import { colors, typography, radius, shadows } from '../theme/tokens'
 
 export default function AuthLayout({ children, variant = 'login' }) {
   const bgGradients = {

@@ -82,11 +82,11 @@ async function call(method, path, { token, body, query } = {}) {
   // ── 2. Create / reuse a trainer ──────────────────────────────────────
   step('Use an existing trainer (or create one if missing)');
   const trList = await call('GET', '/api/admin/trainers', { token: adminToken });
-  let trainerId = trList.trainers?.[0]?.id;
+  let trainerId = trList.trainers?.find(t => t.status === 'APPROVED')?.id;
   if (!trainerId) {
     const tr = await call('POST', '/api/admin/create-trainer', {
       token: adminToken,
-      body: { name: 'E2E Trainer', email: `e2e-trainer-${Date.now()}@test.com`, phone: '0000000000' },
+      body: { name: 'E2E Trainer', email: `e2e-trainer-${Date.now()}@test.com`, password: 'Password123!', phone: '0000000000' },
     });
     trainerId = tr.user?.id || tr.id;
   }

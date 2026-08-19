@@ -574,11 +574,12 @@ exports.getResult = async (req, res, next) => {
     if (!isOwner && !isTrainer) return fail(res, 403, 'Forbidden');
 
     if (session.assessmentType === 'coding') {
-      const { CodingResult, CodingAssessment } = require('../models');
+      const { CodingResult, CodingAssessment, ProctoringReport } = require('../models');
       const attemptId = session.codingAttemptId;
-      const [result, assessment] = await Promise.all([
+      const [result, assessment, proctorReport] = await Promise.all([
         attemptId ? CodingResult.findOne({ where: { attemptId } }) : Promise.resolve(null),
         CodingAssessment.findByPk(session.assessmentId),
+        attemptId ? ProctoringReport.findOne({ where: { attemptId } }) : Promise.resolve(null),
       ]);
       return ok(res, {
         session: proctoring.buildClientView(session),
@@ -594,15 +595,22 @@ exports.getResult = async (req, res, next) => {
           percentage: Number(result.percentage),
           evaluatedAt: result.evaluatedAt,
         } : null,
+        proctorReport: proctorReport ? {
+          riskScore: proctorReport.riskScore,
+          riskLevel: proctorReport.riskLevel,
+          summary: proctorReport.summary,
+        } : null,
       });
     }
 
-    const [result, quiz, savedAnswers] = await Promise.all([
+    const { ProctoringReport } = require('../models');
+    const [result, quiz, savedAnswers, proctorReport] = await Promise.all([
       QuizResult.findOne({ where: { attemptId: session.attemptId } }),
       AIQuiz.findByPk(session.quizId, {
         include: [{ model: AIQuestion, as: 'questions' }],
       }),
       QuizAnswer.findAll({ where: { attemptId: session.attemptId } }),
+      session.attemptId ? ProctoringReport.findOne({ where: { attemptId: session.attemptId } }) : Promise.resolve(null),
     ]);
 
     const breakdown = (quiz?.questions || []).map(q => {
@@ -635,6 +643,11 @@ exports.getResult = async (req, res, next) => {
         maxScore: Number(result.maxScore),
         percentage: Number(result.percentage),
         evaluatedAt: result.evaluatedAt,
+      } : null,
+      proctorReport: proctorReport ? {
+        riskScore: proctorReport.riskScore,
+        riskLevel: proctorReport.riskLevel,
+        summary: proctorReport.summary,
       } : null,
       breakdown,
     });

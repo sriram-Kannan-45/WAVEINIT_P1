@@ -130,9 +130,9 @@ module.exports = (io, socket) => {
     }
   });
 
-  // Fallback real-time video frame relay
-  socket.on('assessment_verif:frame', (data) => {
-    const { sessionId, frame } = data || {};
+  // Fallback real-time video frame relay + YOLO Mobile Monitoring
+  socket.on('assessment_verif:frame', async (data) => {
+    const { sessionId, frame, participantId, moduleType = 'QUIZ' } = data || {};
     const targetSessionId = sessionId || socket.sessionId;
     if (!targetSessionId || !frame) return;
 
@@ -141,6 +141,29 @@ module.exports = (io, socket) => {
       frame,
       timestamp: Date.now(),
     });
+
+    // Run YOLO inference asynchronously on mobile camera frame
+    try {
+      const yoloService = require('../services/yoloProctoringService');
+      const resolvedParticipantId = participantId || socket.userId || 1;
+      const res = await yoloService.analyzeFrame({
+        frame,
+        sessionId: targetSessionId,
+        participantId: resolvedParticipantId,
+        moduleType,
+        cameraSource: 'MOBILE_CAMERA',
+      });
+
+      if (res?.success && res.proctoring_event?.shouldBroadcast) {
+        yoloService.broadcastEvent(io, res.proctoring_event);
+        io.to(`assessment_verif_${targetSessionId}`).emit('assessment_verif:yolo_detection', {
+          event: res.proctoring_event,
+          detections: res.detections,
+        });
+      }
+    } catch (e) {
+      logger.debug('[assessment_verif:frame] YOLO error:', e.message);
+    }
   });
 
   // Mobile camera stream status update

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ArrowLeft, BookOpen, FileText, Sparkles, ClipboardList, Folder,
@@ -7,6 +7,7 @@ import {
   Image as ImageIcon, Video, Link as LinkIcon, FilePenLine, Presentation,
   Trophy, AlertCircle, User, Lock, MessageSquare, Code,
   BarChart3, Award, Star, ChevronRight, GraduationCap, Plus, Search, MoreHorizontal, MoreVertical, Layers, Users,
+  ChevronDown
 } from 'lucide-react'
 import { API, assetUrl, API_BASE } from '../api/api'
 import { useToast } from '../components/Toast'
@@ -65,6 +66,10 @@ function MyCoursesList({ user, onOpen }) {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [sortBy, setSortBy] = useState('newest')
+  const [quickJumpOpen, setQuickJumpOpen] = useState(false)
+  const [quickJumpSearch, setQuickJumpSearch] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const PAGE_SIZE = 4
 
   useEffect(() => {
     let aborted = false
@@ -113,6 +118,17 @@ function MyCoursesList({ user, onOpen }) {
 
     return list
   }, [activeCourses, search, statusFilter, sortBy])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [search, statusFilter, sortBy])
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const safeCurrentPage = Math.min(currentPage, totalPages)
+  const paginatedCourses = useMemo(() => {
+    const start = (safeCurrentPage - 1) * PAGE_SIZE
+    return filtered.slice(start, start + PAGE_SIZE)
+  }, [filtered, safeCurrentPage, PAGE_SIZE])
 
   return (
     <div className="tmt-container" style={{ padding: 0, height: 'auto', background: 'transparent' }}>
@@ -231,7 +247,76 @@ function MyCoursesList({ user, onOpen }) {
       {/* ── 4. Main Course Management Table Card ── */}
       <div className="tmt-courses-card">
         <div className="tmt-card-header">
-          <h2 className="tmt-card-title">My Courses</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <h2 className="tmt-card-title">My Courses</h2>
+            {activeCourses.length > 0 && (
+              <div className="tmt-quick-jump">
+                <button
+                  type="button"
+                  className="tmt-quick-jump-btn"
+                  onClick={() => setQuickJumpOpen(prev => !prev)}
+                >
+                  <BookOpen size={14} color="#16A34A" />
+                  <span>Select Course ({activeCourses.length})</span>
+                  <ChevronDown size={14} style={{ transform: quickJumpOpen ? 'rotate(180deg)' : undefined, transition: 'transform 150ms ease' }} />
+                </button>
+
+                <AnimatePresence>
+                  {quickJumpOpen && (
+                    <>
+                      <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setQuickJumpOpen(false)} />
+                      <motion.div
+                        className="tmt-quick-jump-dropdown"
+                        initial={{ opacity: 0, y: -4, scale: 0.98 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: -4, scale: 0.98 }}
+                        transition={{ duration: 0.12 }}
+                      >
+                        <div className="tmt-quick-jump-search">
+                          <Search size={13} color="#94A3B8" />
+                          <input
+                            type="text"
+                            placeholder="Search all enrolled courses..."
+                            value={quickJumpSearch}
+                            onChange={(e) => setQuickJumpSearch(e.target.value)}
+                            autoFocus
+                          />
+                        </div>
+                        <div className="tmt-quick-jump-list">
+                          {activeCourses
+                            .filter(c => !quickJumpSearch || (c.title || '').toLowerCase().includes(quickJumpSearch.toLowerCase()))
+                            .map(c => (
+                              <button
+                                key={c.id}
+                                type="button"
+                                className="tmt-quick-jump-item"
+                                onClick={() => {
+                                  setQuickJumpOpen(false)
+                                  onOpen(c.id)
+                                }}
+                              >
+                                <div className="tmt-quick-jump-thumb">
+                                  <CourseArtwork title={c.title} category={c.category} />
+                                </div>
+                                <div className="tmt-quick-jump-info">
+                                  <div className="tmt-quick-jump-title">{c.title}</div>
+                                  <div className="tmt-quick-jump-meta">
+                                    <span>{c.lessonCount || 0} Lessons</span>
+                                    <span>·</span>
+                                    <span style={{ color: '#16A34A' }}>Enrolled</span>
+                                  </div>
+                                </div>
+                                <ChevronRight size={14} color="#94A3B8" />
+                              </button>
+                            ))}
+                        </div>
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
+          </div>
           <div className="tmt-sort-dropdown">
             <select
               value={sortBy}
@@ -282,7 +367,7 @@ function MyCoursesList({ user, onOpen }) {
                   </td>
                 </tr>
               ) : (
-                filtered.map((course) => {
+                paginatedCourses.map((course) => {
                   return (
                     <tr
                       key={course.courseId || course.id}
@@ -322,7 +407,7 @@ function MyCoursesList({ user, onOpen }) {
                       {/* LESSONS COLUMN */}
                       <td className="tmt-td">
                         <div className="tmt-metric-cell">
-                          <span className="tmt-metric-val">{course.totalLessons || course.lessonCount || 103}</span>
+                          <span className="tmt-metric-val">{course.totalLessons || course.lessonCount || 0}</span>
                           <span className="tmt-metric-sub">Lessons</span>
                         </div>
                       </td>
@@ -339,7 +424,7 @@ function MyCoursesList({ user, onOpen }) {
                       <td className="tmt-td">
                         <div className="tmt-metric-cell">
                           <span className="tmt-updated-val">{timeAgo(course.updatedAt || course.createdAt)}</span>
-                          <span className="tmt-metric-sub">{course.title?.toLowerCase() || 'python'}</span>
+                          <span className="tmt-metric-sub">{course.programTitle || 'by Admin'}</span>
                         </div>
                       </td>
 
@@ -365,19 +450,37 @@ function MyCoursesList({ user, onOpen }) {
 
         {/* ── Table Footer / Pagination ── */}
         <div className="tmt-pagination-bar">
-          <span className="tmt-pagination-info">
-            Showing 1 to {filtered.length} of {filtered.length} courses
+          <span className="tmt-showing-text">
+            {filtered.length === 0
+              ? 'Showing 0 courses'
+              : `Showing ${(safeCurrentPage - 1) * PAGE_SIZE + 1} to ${Math.min(filtered.length, safeCurrentPage * PAGE_SIZE)} of ${filtered.length} courses`}
           </span>
 
-          <div className="tmt-pagination-controls">
-            <button className="tmt-page-btn" disabled>
-              ‹
+          <div className="tmt-page-controls">
+            <button
+              className="tmt-page-btn"
+              disabled={safeCurrentPage <= 1}
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              aria-label="Previous page"
+            >
+              &lt;
             </button>
-            <button className="tmt-page-btn tmt-page-btn--active">
-              1
-            </button>
-            <button className="tmt-page-btn" disabled>
-              ›
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map(pageNum => (
+              <button
+                key={pageNum}
+                className={`tmt-page-btn ${pageNum === safeCurrentPage ? 'tmt-page-btn--active' : ''}`}
+                onClick={() => setCurrentPage(pageNum)}
+              >
+                {pageNum}
+              </button>
+            ))}
+            <button
+              className="tmt-page-btn"
+              disabled={safeCurrentPage >= totalPages}
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              aria-label="Next page"
+            >
+              &gt;
             </button>
           </div>
         </div>
@@ -1983,8 +2086,22 @@ function ExploreCatalog({ user, onEnrollSuccess }) {
 // ════════════════════════════════════════════════════════════════════════════
 // PUBLIC ENTRY — switches between list / course / lesson
 // ════════════════════════════════════════════════════════════════════════════
-export default function ParticipantCourses({ user }) {
-  const [view, setView] = useState({ mode: 'list', courseId: null, lessonId: null })
+export default function ParticipantCourses({ user, initialCourseId }) {
+  const location = useLocation()
+  const activeCourseId = initialCourseId || location.state?.courseId || null
+  const [view, setView] = useState({
+    mode: activeCourseId ? 'course' : 'list',
+    courseId: activeCourseId,
+    lessonId: null
+  })
+
+  useEffect(() => {
+    if (location.state?.courseId) {
+      setView({ mode: 'course', courseId: location.state.courseId, lessonId: null })
+    } else if (location.state?.courseId === null) {
+      setView({ mode: 'list', courseId: null, lessonId: null })
+    }
+  }, [location.state?.courseId])
 
   if (view.mode === 'lesson') {
     return (
@@ -2000,13 +2117,13 @@ export default function ParticipantCourses({ user }) {
       <CourseView
         user={user}
         courseId={view.courseId}
-        onBack={() => setView({ mode: 'list' })}
+        onBack={() => setView({ mode: 'list', courseId: null, lessonId: null })}
         onOpenLesson={(lessonId) => setView({ mode: 'lesson', courseId: view.courseId, lessonId })}
       />
     )
   }
   return (
-    <MyCoursesList user={user} onOpen={(courseId) => setView({ mode: 'course', courseId })} />
+    <MyCoursesList user={user} onOpen={(courseId) => setView({ mode: 'course', courseId, lessonId: null })} />
   )
 }
 

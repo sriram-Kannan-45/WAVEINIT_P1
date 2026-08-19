@@ -131,11 +131,11 @@ function waitForEvent(socket, eventName, timeoutMs = 4000) {
   const programId = program.program.id;
 
   const trainersList = await call('GET', '/api/admin/trainers', { token: adminToken });
-  let trainerId = trainersList.trainers?.[0]?.id;
+  let trainerId = trainersList.trainers?.find(t => t.status === 'APPROVED')?.id;
   if (!trainerId) {
     const tr = await call('POST', '/api/admin/create-trainer', {
       token: adminToken,
-      body: { name: 'Proctor Trainer', email: `proctor-trainer-${Date.now()}@test.com`, phone: '1111111111' },
+      body: { name: 'Proctor Trainer', email: `proctor-trainer-${Date.now()}@test.com`, password: 'Password123!', phone: '1111111111' },
     });
     trainerId = tr.user?.id || tr.id;
   }
@@ -208,19 +208,14 @@ function waitForEvent(socket, eventName, timeoutMs = 4000) {
     body: { email: pEmail, password: pPassword }
   }).catch(e => fail('Participant login failed', e));
   const studentToken = studentLogin.token;
+  const studentId = studentLogin.user?.id || studentLogin.id;
 
   // Enroll student
   await call('POST', '/api/participant/enroll', {
     token: studentToken,
     body: { courseId }
   }).catch(e => fail('Enrollment failed', e));
-
-  // Approve enrollment
-  await call('PUT', `/api/trainer/courses/${courseId}/participants/${freshStudent.id}/approve`, {
-    token: adminToken,
-    body: {}
-  }).catch(e => fail('Enrollment approval failed', e));
-  ok(`Participant logged in, enrolled in course, and enrollment approved`);
+  ok(`Participant logged in and enrolled in course`);
 
   // ── 5. Participant starts quiz (REST) ─────────────────────────────────
   step('Participant starts quiz via REST API');

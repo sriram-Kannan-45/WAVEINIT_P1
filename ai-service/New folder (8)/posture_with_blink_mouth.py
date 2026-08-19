@@ -2417,9 +2417,16 @@ def main():
                     odur = T["object_visible"].update(True, now)
                     if T["object_visible"].crossed(cfg["object_detection"]["persistence_seconds"]):
                         names = sorted({n for (_, _, _, _, n, _) in dets})
-                        engine.emit(f"Possible {names[0].title()} Detected", "WARNING",
-                                    confidence=max(c for (_, _, _, _, _, c) in dets),
-                                    duration=odur, metadata={"objects": names})
+                        has_phone = any("phone" in n.lower() for n in names)
+                        if has_phone:
+                            phone_conf = max(c for (_, _, _, _, n, c) in dets if "phone" in n.lower())
+                            engine.emit("Cell Phone Detected", "HIGH",
+                                        confidence=phone_conf,
+                                        duration=odur, metadata={"objects": names, "violation": "UNAUTHORIZED_MOBILE_PHONE"})
+                        else:
+                            engine.emit(f"Possible {names[0].title()} Detected", "WARNING",
+                                        confidence=max(c for (_, _, _, _, _, c) in dets),
+                                        duration=odur, metadata={"objects": names})
                 else:
                     T["object_visible"].update(False, now)
 
@@ -2678,6 +2685,30 @@ def main():
     if not cfg.get("headless", False):
         cv2.destroyAllWindows()
     engine.stop()
+
+    phone_events = [e for e in engine.timeline if e.get("eventType") == "CELL_PHONE_DETECTED"]
+    session_report = {
+        "sessionId": cfg.get("session_id", "LMS-SESSION"),
+        "attemptId": cfg.get("attempt_id") or 0,
+        "participant": cfg.get("participant_name", "Participant"),
+        "totalEvents": len(engine.timeline),
+        "finalRiskScore": round(engine.risk, 1),
+        "finalRiskLevel": engine.risk_level(),
+        "mobilePhoneDetected": len(phone_events) > 0,
+        "phoneEventsCount": len(phone_events),
+        "phoneEventDetails": phone_events,
+        "generatedAt": datetime.datetime.now().isoformat()
+    }
+    report_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session_proctoring_report.json")
+    try:
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(session_report, f, indent=2)
+        print(f"[REPORT] Final Proctoring Summary Report saved to {report_path}")
+        if session_report["mobilePhoneDetected"]:
+            print(f"[ALERT] *** UNAUTHORIZED MOBILE PHONE WAS DETECTED ({len(phone_events)} times) AND RECORDED IN RESULT REPORT ***")
+    except Exception as e:
+        print(f"[WARN] Could not save summary report: {e}")
+
     print("[INFO] Session ended. Events logged to",
           cfg["event_log_path"] if cfg["log_events_to_file"] else "(disabled)")
 

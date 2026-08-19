@@ -6,7 +6,7 @@ import {
   ChevronDown, Plus, BookOpen, Clock, FileUp, CheckCircle,
   HelpCircle, Layers, Folder, RefreshCw
 } from 'lucide-react'
-import { API } from '../../api/api'
+import { API, getAuthHeaders } from '../../api/api'
 import { useToast } from '../Toast'
 import './AIStructureGenerator.css'
 
@@ -59,7 +59,7 @@ export default function AIStructureGenerator({ user, courseId, onStructureSaved 
   const fileRef = useRef(null)
   const dropRef = useRef(null)
 
-  const auth = () => ({ Authorization: `Bearer ${user.token}` })
+  const auth = () => getAuthHeaders(user)
 
   // Fetch initial structure on mount
   const fetchStructure = useCallback(async () => {
@@ -123,15 +123,22 @@ export default function AIStructureGenerator({ user, courseId, onStructureSaved 
       formData.append('replaceExisting', 'true')
       if (file) formData.append('file', file)
 
+      const authHeaders = getAuthHeaders(user)
       const r = await fetch(API.TRAINER_COURSES.GENERATE_STRUCTURE(courseId), {
         method: 'POST',
-        headers: auth(),
+        headers: {
+          ...authHeaders,
+        },
         body: formData,
       })
-      const d = await r.json()
+
+      let d = {}
+      try {
+        d = await r.json()
+      } catch (_) {}
 
       if (!r.ok || !d.success) {
-        throw new Error(d.error || 'Failed to generate course structure.')
+        throw new Error(d.error || d.message || `Request failed with status ${r.status}`)
       }
 
       const normalized = normalizeStructure(d.structure)
@@ -420,11 +427,10 @@ export default function AIStructureGenerator({ user, courseId, onStructureSaved 
                 className="wls-prompt-textarea"
                 value={prompt}
                 onChange={(e) => {
-                  if (e.target.value.length <= 2000) {
-                    setPrompt(e.target.value)
-                  }
+                  setPrompt(e.target.value.slice(0, 2000))
                   if (error) setError('')
                 }}
+                maxLength={2000}
                 placeholder="e.g., Create a complete Python course for beginners, from basics to advanced, for 1 month with 7 hours of learning every day."
                 rows={4}
                 disabled={generating}

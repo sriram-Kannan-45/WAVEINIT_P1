@@ -8,44 +8,67 @@ import { ToastProvider } from './components/Toast'
 import { AppThemeProvider } from './contexts/AppThemeContext'
 import { API_BASE } from './api/api'
 
-// Lazy-loaded pages — each chunk is separate
-const AdminDashboard = lazy(() => import('./pages/AdminDashboard'))
-const ExamPage = lazy(() => import('./pages/ExamPage'))
-const ExamResultPage = lazy(() => import('./pages/ExamResultPage'))
-const ForgotPassword = lazy(() => import('./pages/ForgotPassword'))
-const Login = lazy(() => import('./pages/Login'))
-const ParticipantDashboard = lazy(() => import('./pages/ParticipantDashboard'))
-const ParticipantQuizAttemptPage = lazy(() => import('./pages/ParticipantQuizAttemptPage'))
-const ParticipantQuizResultPage = lazy(() => import('./pages/ParticipantQuizResultPage'))
-const PreExamReadiness = lazy(() => import('./pages/PreExamReadiness'))
-const Register = lazy(() => import('./pages/Register'))
-const RegistrationPage = lazy(() => import('./pages/RegistrationPage'))
-const TrainerDashboard = lazy(() => import('./pages/TrainerDashboard'))
-const TrainerProfile = lazy(() => import('./pages/TrainerProfile'))
-const AdminTrainerProfile = lazy(() => import('./pages/AdminTrainerProfile'))
-const TrainerRecordings = lazy(() => import('./pages/TrainerRecordings'))
-const TrainerRecordingDetail = lazy(() => import('./pages/TrainerRecordingDetail'))
-const TrainerProctoringPage = lazy(() => import('./pages/TrainerProctoringPage'))
-const TrainerMonitoringReportPage = lazy(() => import('./pages/TrainerMonitoringReportPage'))
-const TrainerQuizDetails = lazy(() => import('./pages/TrainerQuizDetails'))
-const TestPage = lazy(() => import('./pages/TestPage'))
-const TestResultPage = lazy(() => import('./pages/TestResultPage'))
-const TrainerMonitoringDashboard = lazy(() => import('./pages/TrainerMonitoringDashboard'))
-const TrainerCodingAssessmentDetails = lazy(() => import('./pages/TrainerCodingAssessmentDetails'))
-const ParticipantCodingAttemptPage = lazy(() => import('./pages/ParticipantCodingAttemptPage'))
-const CodingAssessmentResultPage = lazy(() => import('./pages/CodingAssessmentResultPage'))
-const TrainerCourses = lazy(() => import('./pages/TrainerCourses'))
-const ProfilePage = lazy(() => import('./pages/Profile/ProfilePage'))
+// Resilient lazy loader with auto-retry and auto-reload on stale Vite chunks / HMR
+function lazyRetry(componentImport) {
+  return lazy(async () => {
+    try {
+      return await componentImport()
+    } catch (error) {
+      const isDynamicImportError =
+        error?.message?.includes('Failed to fetch dynamically imported module') ||
+        error?.name === 'ChunkLoadError' ||
+        error?.toString()?.includes('dynamically imported module')
+
+      const refreshed = sessionStorage.getItem('page_auto_refreshed')
+      if (isDynamicImportError && !refreshed) {
+        sessionStorage.setItem('page_auto_refreshed', 'true')
+        window.location.reload()
+        return { default: () => null }
+      }
+      sessionStorage.removeItem('page_auto_refreshed')
+      throw error
+    }
+  })
+}
+
+// Lazy-loaded pages — each chunk is separate with auto-retry
+const AdminDashboard = lazyRetry(() => import('./pages/AdminDashboard'))
+const ExamPage = lazyRetry(() => import('./pages/ExamPage'))
+const ExamResultPage = lazyRetry(() => import('./pages/ExamResultPage'))
+const ForgotPassword = lazyRetry(() => import('./pages/ForgotPassword'))
+const Login = lazyRetry(() => import('./pages/Login'))
+const ParticipantDashboard = lazyRetry(() => import('./pages/ParticipantDashboard'))
+const ParticipantQuizAttemptPage = lazyRetry(() => import('./pages/ParticipantQuizAttemptPage'))
+const ParticipantQuizResultPage = lazyRetry(() => import('./pages/ParticipantQuizResultPage'))
+const PreExamReadiness = lazyRetry(() => import('./pages/PreExamReadiness'))
+const Register = lazyRetry(() => import('./pages/Register'))
+const RegistrationPage = lazyRetry(() => import('./pages/RegistrationPage'))
+const TrainerDashboard = lazyRetry(() => import('./pages/TrainerDashboard'))
+const TrainerProfile = lazyRetry(() => import('./pages/TrainerProfile'))
+const AdminTrainerProfile = lazyRetry(() => import('./pages/AdminTrainerProfile'))
+const TrainerRecordings = lazyRetry(() => import('./pages/TrainerRecordings'))
+const TrainerRecordingDetail = lazyRetry(() => import('./pages/TrainerRecordingDetail'))
+const TrainerProctoringPage = lazyRetry(() => import('./pages/TrainerProctoringPage'))
+const TrainerMonitoringReportPage = lazyRetry(() => import('./pages/TrainerMonitoringReportPage'))
+const TrainerQuizDetails = lazyRetry(() => import('./pages/TrainerQuizDetails'))
+const TestPage = lazyRetry(() => import('./pages/TestPage'))
+const TestResultPage = lazyRetry(() => import('./pages/TestResultPage'))
+const TrainerMonitoringDashboard = lazyRetry(() => import('./pages/TrainerMonitoringDashboard'))
+const TrainerCodingAssessmentDetails = lazyRetry(() => import('./pages/TrainerCodingAssessmentDetails'))
+const ParticipantCodingAttemptPage = lazyRetry(() => import('./pages/ParticipantCodingAttemptPage'))
+const CodingAssessmentResultPage = lazyRetry(() => import('./pages/CodingAssessmentResultPage'))
+const TrainerCourses = lazyRetry(() => import('./pages/TrainerCourses'))
+const ProfilePage = lazyRetry(() => import('./pages/Profile/ProfilePage'))
 
 // Interview Module (Read-only reference)
-const InterviewDashboard = lazy(() => import('./pages/interview/InterviewDashboard'))
-const ScheduleInterview = lazy(() => import('./pages/interview/ScheduleInterview'))
-const InterviewRoom = lazy(() => import('./pages/interview/InterviewRoom'))
-const MobileJoin = lazy(() => import('./pages/interview/MobileJoin'))
-const InterviewEvaluation = lazy(() => import('./pages/interview/InterviewEvaluation'))
+const InterviewDashboard = lazyRetry(() => import('./pages/interview/InterviewDashboard'))
+const ScheduleInterview = lazyRetry(() => import('./pages/interview/ScheduleInterview'))
+const InterviewRoom = lazyRetry(() => import('./pages/interview/InterviewRoom'))
+const MobileJoin = lazyRetry(() => import('./pages/interview/MobileJoin'))
+const InterviewEvaluation = lazyRetry(() => import('./pages/interview/InterviewEvaluation'))
 
 // Assessment Verification (Quiz & Coding)
-const AssessmentMobileJoin = lazy(() => import('./pages/assessment/AssessmentMobileJoin'))
+const AssessmentMobileJoin = lazyRetry(() => import('./pages/assessment/AssessmentMobileJoin'))
 
 function PageLoader() {
   return (
@@ -285,9 +308,6 @@ function DashboardWrapper({ component: Component, user, onLogout }) {
   useEffect(() => {
     const nextTab = resolveTab()
     setActiveTab(nextTab)
-    if (location.state?.tab) {
-      window.history.replaceState({}, document.title)
-    }
   }, [location.pathname, location.state?.tab])
 
   return (
