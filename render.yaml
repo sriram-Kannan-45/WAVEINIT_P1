@@ -1,0 +1,57 @@
+services:
+  # ── 1. Backend Web Service (Node.js + Express + Socket.IO) ──
+  - type: web
+    name: waveinit-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node src/app.js
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: DB_NAME
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: 3306
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FRONTEND_URL
+        fromService:
+          type: web
+          name: waveinit-frontend
+          property: host
+
+  # ── 2. Frontend Static Site (React + Vite SPA) ──
+  - type: web
+    name: waveinit-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: waveinit-backend
+          property: host
+      - key: VITE_PUBLIC_URL
+        fromService:
+          type: web
+          name: waveinit-frontend
+          property: host
