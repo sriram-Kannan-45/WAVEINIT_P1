@@ -2922,7 +2922,7 @@ if __name__ == "__main__":
     
     validate_startup_config()
     
-    configured_port = int(os.getenv("AI_SERVICE_PORT", 8000))
+    configured_port = int(os.getenv("PORT", os.getenv("AI_SERVICE_PORT", 8000)))
     resolved_port = check_and_resolve_port(configured_port)
     
     current_port = resolved_port
