@@ -106,9 +106,8 @@ class YOLOProctorEngine:
 
         model_file = self._find_model_file()
         if not model_file:
-            self.init_error = "YOLO model initialization failed: yolo11s.pt not found in candidate paths"
-            logger.error(self.init_error)
-            return
+            logger.info("Local model file not found in candidates, defaulting to 'yolo11s.pt' for automatic download")
+            model_file = "yolo11s.pt"
 
         self.model_path = model_file
         try:
