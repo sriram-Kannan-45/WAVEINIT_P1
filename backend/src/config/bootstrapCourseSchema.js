@@ -42,6 +42,9 @@ async function rowCount(name) {
 }
 
 async function bootstrapCourseSchema(logger = console) {
+  if (sequelize.getDialect() !== 'mysql') {
+    return { skipped: true };
+  }
   const hasOld = await tableExists('trainings');
   const hasNew = await tableExists('training_programs');
 
@@ -206,6 +209,7 @@ async function columnIsNullable(table, column) {
  * Idempotent and safe to run on every boot.
  */
 async function relaxLegacyTrainingIdColumns(logger = console) {
+  if (sequelize.getDialect() !== 'mysql') return;
   // (1) Explicit pre-relax targets — see column nullability changes in
   //     models/lesson.js, aiQuiz.js, enrollment.js, training.js.
   const explicitTargets = [
@@ -307,6 +311,7 @@ async function addIndexIfMissing(table, indexName, columns, { unique = false } =
  * to avoid the global-sync race.
  */
 async function bootstrapCourseIndexes(logger = console) {
+  if (sequelize.getDialect() !== 'mysql') return;
   try {
     await addIndexIfMissing('lessons', 'idx_lessons_course_order',
       ['course_id', 'order_index'], {}, logger);

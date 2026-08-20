@@ -413,13 +413,20 @@ const startServer = async () => {
       }
     }
 
+    // Helper to safely toggle FK checks only on MySQL
+    const setFkChecks = async (enable) => {
+      if (sequelize.getDialect() === 'mysql') {
+        await sequelize.query(`SET FOREIGN_KEY_CHECKS = ${enable ? 1 : 0}`);
+      }
+    };
+
     // Sync UserProfile tables — additive, scoped to profile module
     try {
       const {
         UserProfile, ProfileSkill, ProfileExperience, ProfileEducation,
         ProfileCertificate, ProfileProject, ProfileContactLink, ProfileActivityLog,
       } = require('./models');
-      await sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
+      await setFkChecks(false);
       try {
         await UserProfile.sync({ alter: true });
         await ProfileSkill.sync({ alter: true });
@@ -430,7 +437,7 @@ const startServer = async () => {
         await ProfileContactLink.sync({ alter: true });
         await ProfileActivityLog.sync({ alter: true });
       } finally {
-        await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
+        await setFkChecks(true);
       }
       logger.info('user profile tables ready');
     } catch (e) {
@@ -479,7 +486,7 @@ const startServer = async () => {
       // training_programs was just created empty by the global sync and
       // then dropped during bootstrap) any FK from courses to it should
       // not block the alters.
-      await sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
+      await setFkChecks(false);
       try {
         // Re-sync Training so the new thumbnail_url column is added on
         // existing rows. Legacy columns remain (kept nullable in the model).
@@ -488,7 +495,7 @@ const startServer = async () => {
         await LessonMaterial.sync({ alter: true });
         await CourseTrainerAssignment.sync({ alter: true });
       } finally {
-        await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
+        await setFkChecks(true);
       }
       logger.info('course-centric tables ready');
     } catch (e) {
@@ -506,7 +513,7 @@ const startServer = async () => {
       // and enrollments.training_id similarly conflicts with existing
       // SET NULL FK actions (column must be nullable for SET NULL — older
       // table state is inconsistent).
-      await sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
+      await setFkChecks(false);
       try {
         // Lesson, AIQuiz, Enrollment now carry the new course_id columns.
         await Lesson.sync({ alter: true });
@@ -518,7 +525,7 @@ const startServer = async () => {
         await Enrollment.sync({ alter: true });
         await AIQuiz.sync({ alter: true });
       } finally {
-        await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
+        await setFkChecks(true);
       }
       logger.info('lesson workflow tables ready');
     } catch (e) {
