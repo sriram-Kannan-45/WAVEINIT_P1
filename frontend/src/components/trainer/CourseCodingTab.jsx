@@ -8,6 +8,7 @@ import {
 import { CodingAssessmentDetailModal } from '../../pages/TrainerCodingAssessmentDetails'
 import { API } from '../../api/api'
 import { useToast } from '../Toast'
+import { useConfirm } from '../ui/AlertModal'
 import {
   colors, btnPrimary, btnSecondary, iconBtn, STATUS_BADGE, RESULT_BADGE,
   lblStyle, lblTiny, inputStyle, th, td, skeletonStyle, typography, DIFF_BADGE,
@@ -554,6 +555,7 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
 export default function CourseCodingTab({ user, courseId, onCountChange }) {
   const navigate = useNavigate()
   const { success, error: showError } = useToast()
+  const confirm = useConfirm()
   const [assessments, setAssessments] = useState([])
   const [loading, setLoading] = useState(true)
   const [showWizard, setShowWizard] = useState(false)
@@ -602,7 +604,13 @@ export default function CourseCodingTab({ user, courseId, onCountChange }) {
   }
 
   const handleDelete = async (a) => {
-    if (!window.confirm(`Delete assessment "${a.title}"? This cannot be undone.`)) return
+    const ok = await confirm({
+      title: 'Delete Assessment',
+      message: `Are you sure you want to delete "${a.title}"? This cannot be undone.`,
+      type: 'danger',
+      confirmText: 'Delete Permanently',
+    })
+    if (!ok) return
     try {
       const r = await fetch(API.CODING.DELETE(a.id), { method: 'DELETE', headers: auth() })
       const d = await r.json()
@@ -619,7 +627,13 @@ export default function CourseCodingTab({ user, courseId, onCountChange }) {
   }
 
   const publishToParticipants = async (a) => {
-    if (!window.confirm(`Publish "${a.title}" to enrolled participants?`)) return
+    const ok = await confirm({
+      title: 'Publish Assessment',
+      message: `Are you sure you want to publish "${a.title}" to enrolled participants?`,
+      type: 'publish',
+      confirmText: 'Yes, Publish',
+    })
+    if (!ok) return
     setSendingAssessmentId(a.id)
     try {
       const r = await fetch(API.CODING.PUBLISH(a.id), { method: 'POST', headers: auth() })

@@ -195,6 +195,7 @@ app.use('/api/profile', profileRoutes);
 const userProfileRoutes = require('./routes/userProfileRoutes');
 app.use('/api/user-profile', userProfileRoutes);
 app.use('/api/participant-profile', participantProfileRoutes);
+app.use('/api/monitoring', require('./routes/monitoringRoutes'));
 app.use('/api/proctor', proctoringRoutes);
 app.use('/api/proctoring', proctoringRoutes);
 app.use('/api', monitorRoutes);

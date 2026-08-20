@@ -26,6 +26,7 @@ import './exam.css';
 import { proctorApi } from '../api';
 import { useProctor } from '../ProctorContext';
 import { useToast } from '../../components/Toast';
+import { useConfirm } from '../../components/ui/AlertModal';
 import useExamTimer from '../hooks/useExamTimer';
 import useAntiCheat from '../hooks/useAntiCheat';
 import useTabVisibility from '../hooks/useTabVisibility';
@@ -49,6 +50,7 @@ export default function ExamShell({ sessionId, onSubmitted }) {
   const navigate = useNavigate();
   const proctor = useProctor();
   const fp = useDeviceFingerprint();
+  const confirm = useConfirm();
   const { success: toastSuccess, error: toastError, warning: toastWarning, info: toastInfo } = useToast();
 
   // ── Hydration state ────────────────────────────────────────────────────
@@ -466,8 +468,14 @@ export default function ExamShell({ sessionId, onSubmitted }) {
       <SecurityBanner />
       <TopBar
         title={data.quiz?.title}
-        onSubmit={() => {
-          if (!window.confirm('Submit your exam? You cannot change answers after this.')) return;
+        onSubmit={async () => {
+          const ok = await confirm({
+            title: 'Submit Exam',
+            message: 'Submit your exam? You cannot change answers after this.',
+            type: 'submit',
+            confirmText: 'Yes, Submit',
+          });
+          if (!ok) return;
           void submitExam();
         }}
         submitting={submitting}

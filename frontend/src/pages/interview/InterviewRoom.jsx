@@ -34,6 +34,7 @@ import { useSocket, useSocketEvent } from '../../hooks/useSocket'
 import { useWebRTC } from '../../hooks/useWebRTC'
 import { normalizeInterview } from '../../utils/interviewPresentation'
 import { isSecureContextForMedia } from '../../utils/mobilePairingUrl'
+import { useConfirm } from '../../components/ui/AlertModal'
 import interviewService from '../../services/interviewService'
 
 const PHASE = {
@@ -95,6 +96,7 @@ function InterviewRoomInner({ user }) {
   const [isScreenSharing, setIsScreenSharing] = useState(false)
   const [expandedTile, setExpandedTile] = useState(null)
   const [ended, setEnded] = useState(null)
+  const confirm = useConfirm()
 
   // Refs
   const localVideoRef = useRef(null)
@@ -171,6 +173,7 @@ function InterviewRoomInner({ user }) {
     socket,
     sessionId,
     interviewId,
+    participantId: user?.id,
     enabled: !isInterviewer && consentGiven,
     mediaStream: localStreams?.laptop || localStreamRef?.current,
   })
@@ -726,7 +729,13 @@ function InterviewRoomInner({ user }) {
 
   const handleEndInterview = useCallback(async () => {
     if (leavingRef.current) return
-    if (!window.confirm('Are you sure you want to end this interview?')) return
+    const ok = await confirm({
+      title: 'End Interview',
+      message: 'Are you sure you want to end this interview session for all participants?',
+      type: 'danger',
+      confirmText: 'End Interview',
+    })
+    if (!ok) return
     try {
       await interviewService.end(interviewId)
     } catch (err) {
@@ -735,14 +744,20 @@ function InterviewRoomInner({ user }) {
     socket?.emit('end-interview', { interviewId })
     cleanupResources()
     navigate('/interviews')
-  }, [interviewId, cleanupResources, navigate, socket])
+  }, [interviewId, cleanupResources, navigate, socket, confirm])
 
-  const handleLeaveInterview = useCallback(() => {
+  const handleLeaveInterview = useCallback(async () => {
     if (leavingRef.current) return
-    if (!window.confirm('Are you sure you want to leave this interview?')) return
+    const ok = await confirm({
+      title: 'Leave Interview',
+      message: 'Are you sure you want to leave this interview room?',
+      type: 'warning',
+      confirmText: 'Leave Room',
+    })
+    if (!ok) return
     cleanupResources()
     navigate('/interviews')
-  }, [cleanupResources, navigate])
+  }, [cleanupResources, navigate, confirm])
 
   // When the interviewer ends the interview, clean up and leave after a beat.
   useEffect(() => {

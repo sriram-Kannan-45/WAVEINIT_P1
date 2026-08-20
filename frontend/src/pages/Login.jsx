@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, Mail, Shield, BookOpen, GraduationCap, ArrowRight } from 'lucide-react';
 import { API } from '../api/api';
@@ -18,6 +18,7 @@ export default function Login({ onLogin, defaultRole }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { success: showSuccess, warning: showWarning, error: showError } = useToast();
+  const displayedMessageRef = useRef(null);
 
   const [form, setForm] = useState(() => {
     const lastRole = localStorage.getItem('lastRole') || 'ADMIN';
@@ -52,10 +53,13 @@ export default function Login({ onLogin, defaultRole }) {
   }, [defaultRole, location.state?.fromRole]);
 
   useEffect(() => {
-    if (location.state?.message) {
+    if (location.state?.message && displayedMessageRef.current !== location.state.message) {
+      displayedMessageRef.current = location.state.message;
       showSuccess(location.state.message);
+      // Clean up history state so re-renders/hot-reloads don't re-toast
+      navigate(location.pathname, { replace: true, state: { ...location.state, message: undefined } });
     }
-  }, [location.state, showSuccess]);
+  }, [location.state, showSuccess, navigate, location.pathname]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();

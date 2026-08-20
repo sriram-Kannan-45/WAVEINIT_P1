@@ -119,6 +119,10 @@ exports.submit = async (req, res, next) => {
   try {
     const session = req.examSession;
     await proctoring.submitSession(session);
+    try {
+      const verificationService = require('../services/assessmentVerificationService');
+      await verificationService.endSession({ attemptId: session.attemptId, participantId: session.participantId, sessionId: session.id }).catch(() => {});
+    } catch (_) {}
     emitTrainerUpdate(req, session.quizId, {
       type: 'submitted',
       session: proctoring.buildClientView(session),
@@ -135,6 +139,10 @@ exports.terminate = async (req, res, next) => {
       session,
       reason: req.body?.reason || 'Terminated by participant',
     });
+    try {
+      const verificationService = require('../services/assessmentVerificationService');
+      await verificationService.endSession({ attemptId: session.attemptId, participantId: session.participantId, sessionId: session.id }).catch(() => {});
+    } catch (_) {}
     emitTrainerUpdate(req, session.quizId, {
       type: 'terminated',
       session: proctoring.buildClientView(session),
@@ -764,14 +772,15 @@ exports.recordMonitoringEvent = async (req, res, next) => {
       }
     }
 
-    if (!resolvedSessionId) {
-      resolvedSessionId = `session_${attemptId}`;
+    let finalParticipantId = Number(resolvedParticipantId);
+    if (!Number.isInteger(finalParticipantId) || finalParticipantId <= 0) {
+      finalParticipantId = attempt?.participantId || codingAttempt?.participantId || (user?.id ? Number(user.id) : 1);
     }
 
     const event = await proctoringReportService.recordMonitoringEvent({
       monitoringSessionId: resolvedSessionId,
       attemptId,
-      participantId: resolvedParticipantId || 1,
+      participantId: finalParticipantId,
       quizId: resolvedQuizId,
       eventType,
       severity,

@@ -1090,6 +1090,12 @@ async function submitQuiz(req, res) {
     // Recompute course progress (mandatory quiz might have flipped completion).
     await recomputeCourseProgress(quiz.courseId, req.user.id);
 
+    // Automatically conclude verification and monitoring session and close mobile camera
+    try {
+      const verificationService = require('../services/assessmentVerificationService');
+      await verificationService.endSession({ attemptId: attempt.id, participantId: req.user.id }).catch(() => {});
+    } catch (_) {}
+
     // Note: never return the score here. Score is only revealed via /result
     // after the trainer flips result_status.
     res.json({

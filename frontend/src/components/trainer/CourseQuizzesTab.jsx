@@ -12,6 +12,7 @@ import {
 import { SingleAttemptProctoringModal } from '../../proctoring/components/TrainerMonitoringReport'
 import { API } from '../../api/api'
 import { useToast } from '../Toast'
+import { useConfirm } from '../ui/AlertModal'
 import {
   colors, btnPrimary, btnSecondary, iconBtn, STATUS_BADGE, RESULT_BADGE,
   lblStyle, lblTiny, inputStyle, th, td, skeletonStyle, typography, DIFF_BADGE,
@@ -27,6 +28,7 @@ const blankQuestion = () => ({
 
 export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
   const { success, error: showError } = useToast()
+  const confirm = useConfirm()
   const navigate = useNavigate()
   const [quizzes, setQuizzes] = useState([])
   const [lessons, setLessons] = useState([])
@@ -86,7 +88,13 @@ export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
   }
 
   const remove = async (q) => {
-    if (!window.confirm(`Delete quiz "${q.title}"? This cannot be undone.`)) return
+    const ok = await confirm({
+      title: 'Delete Quiz',
+      message: `Are you sure you want to delete "${q.title}"? This cannot be undone.`,
+      type: 'danger',
+      confirmText: 'Delete Permanently',
+    })
+    if (!ok) return
     try {
       const r = await fetch(API.TRAINER_COURSES.QUIZ(courseId, q.id), { method: 'DELETE', headers: auth() })
       const text = await r.text()
@@ -105,7 +113,13 @@ export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
   }
 
   const sendQuiz = async (q) => {
-    if (!window.confirm(`Send "${q.title}" to enrolled participants?`)) return
+    const ok = await confirm({
+      title: 'Send Quiz',
+      message: `Are you sure you want to send "${q.title}" to enrolled participants?`,
+      type: 'publish',
+      confirmText: 'Yes, Send',
+    })
+    if (!ok) return
     setSendingQuizId(q.id)
     try {
       const r = await fetch(API.TRAINER_COURSES.SEND_QUIZ(q.id), { method: 'POST', headers: auth() })

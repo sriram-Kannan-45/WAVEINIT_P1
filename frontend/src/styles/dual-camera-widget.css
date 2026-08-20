@@ -89,8 +89,8 @@
 
 .dual-proctor-feed {
   position: relative;
-  width: 156px;
-  height: 104px;
+  width: 160px;
+  height: 120px;
   background: #020617;
   border: 1px solid rgba(51, 65, 85, 0.9);
   border-radius: 10px;
@@ -103,7 +103,8 @@
 .dual-proctor-video {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  background: #000000;
 }
 
 .dual-proctor-badge {
@@ -175,7 +176,7 @@
 .dual-proctor-body.dual-proctor-body--pip {
   position: relative;
   width: 240px;
-  height: 160px;
+  height: 180px;
   padding: 0;
 }
 
@@ -191,7 +192,7 @@
   bottom: 8px;
   right: 8px;
   width: 80px;
-  height: 56px;
+  height: 60px;
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
   z-index: 10;

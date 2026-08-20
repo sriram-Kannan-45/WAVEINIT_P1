@@ -13,6 +13,7 @@ export { default as Avatar } from './Avatar'
 
 // ── Feedback ─────────────────────────────────────────────────────
 export { default as Modal } from './Modal'
+export { AlertModalProvider, useAlertModal, useConfirm, useAlert, usePrompt } from './AlertModal'
 export { default as EmptyState } from './EmptyState'
 export { default as Spinner } from './Spinner'
 export { default as Skeleton, SkeletonCard, SkeletonStatGrid } from './Skeleton'

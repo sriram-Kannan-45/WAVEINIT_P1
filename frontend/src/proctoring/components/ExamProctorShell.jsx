@@ -56,6 +56,7 @@ export default function ExamProctorShell({
   examSession,
   onScreenShareResumed,
   title = 'Assessment',
+  requireScreenShare = false,
 }) {
   /* ── Fullscreen state ─────────────────────────────────────────────── */
   const [isFullscreen, setIsFullscreen] = useState(!!fsApi.element());
@@ -66,7 +67,7 @@ export default function ExamProctorShell({
   const submittedRef = useRef(false);
 
   /* ── Screen share state ───────────────────────────────────────────── */
-  const [isScreenSharing, setIsScreenSharing] = useState(!!screenStream);
+  const [isScreenSharing, setIsScreenSharing] = useState(requireScreenShare ? !!screenStream : true);
   const [screenShareError, setScreenShareError] = useState(null);
   const [isPaused, setIsPaused] = useState(false);
   const [countdown, setCountdown] = useState(30);
@@ -215,6 +216,7 @@ export default function ExamProctorShell({
   }, [clearReconnect]);
 
   useEffect(() => {
+    if (!requireScreenShare) return;
     if (!screenStream) {
       setIsScreenSharing(false);
       return;
@@ -240,7 +242,7 @@ export default function ExamProctorShell({
     return () => {
       track.removeEventListener('ended', onEnded);
     };
-  }, [screenStream, clearReconnect, reportViolation, startReconnectTimer]);
+  }, [requireScreenShare, screenStream, clearReconnect, reportViolation, startReconnectTimer]);
 
   const reEnterFullscreen = async () => {
     try {

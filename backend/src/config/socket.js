@@ -19,19 +19,6 @@ const logger = require('../utils/logger');
 let ioInstance = null;
 
 const initializeSocket = (server) => {
-  const isDev = process.env.NODE_ENV !== 'production';
-  const isLanOrigin = (origin) => /^https?:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$/.test(origin);
-  const allowedSocketOrigins = new Set([
-    process.env.FRONTEND_URL,
-    'http://localhost:5173',
-    'http://localhost:5174',
-    'http://localhost:5175',
-    'http://127.0.0.1:5173',
-    'http://127.0.0.1:5174',
-    'http://127.0.0.1:5175',
-    'https://localhost:5174',
-  ].filter(Boolean));
-
   const io = socketIO(server, {
     cors: {
       origin: true,
@@ -147,7 +134,6 @@ const initializeSocket = (server) => {
     socket.on('notification:markRead', async (data, callback) => {
       try {
         const { notificationId } = data;
-        // This will be handled by the notification controller
         socket.emit('notification:readAck', { notificationId });
         if (callback) callback({ success: true });
       } catch (error) {
@@ -177,7 +163,6 @@ const initializeSocket = (server) => {
 
     // Handle analytics dashboard subscription
     socket.on('analytics:subscribe', (data) => {
-      // Only admins can subscribe to analytics
       if (socket.userRole === 'ADMIN') {
         socket.join('analytics_dashboard');
         logger.debug('Admin subscribed to analytics', { userId: socket.userId });
@@ -207,7 +192,9 @@ const initializeSocket = (server) => {
     require('../socket/events/liveEvents')(io, socket);
     // Register leaderboard subscription events
     require('../socket/events/leaderboardEvents')(io, socket);
-    // Register proctoring events
+    // Register unified monitoring engine events
+    require('../socket/events/monitoringEvents')(io, socket);
+    // Register legacy proctoring events
     require('../socket/events/proctorEvents')(io, socket);
     // Register parallel monitor system events
     require('../socket/events/monitorEvents')(io, socket);
@@ -233,14 +220,11 @@ const setupRedisAdapter = async (io) => {
   try {
     const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 
-    // Create Redis clients
     const pubClient = redis.createClient({ url: redisUrl });
     const subClient = pubClient.duplicate();
 
-    // Connect clients
     await Promise.all([pubClient.connect(), subClient.connect()]);
 
-    // Attach Redis adapter to Socket.IO
     io.adapter(createAdapter(pubClient, subClient));
     io.redisClients = { pubClient, subClient };
     logger.info('Socket.IO Redis adapter connected');

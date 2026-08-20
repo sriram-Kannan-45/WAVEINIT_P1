@@ -2,12 +2,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import AssessmentConsentGate from '../components/ai-quizzes/AssessmentConsentGate'
 import AssessmentQRPairingModal from '../components/assessment/AssessmentQRPairingModal'
-import DualCameraProctorWidget from '../components/assessment/DualCameraProctorWidget'
+import UnifiedMonitoringWidget from '../components/monitoring/UnifiedMonitoringWidget'
 import { API_BASE, BACKEND_ORIGIN } from '../api/api'
 import { useToast } from '../components/Toast'
+import { useConfirm } from '../components/ui/AlertModal'
 import { ProctorProvider, useProctor } from '../proctoring/ProctorContext'
 import useDeviceFingerprint from '../proctoring/hooks/useDeviceFingerprint'
-import useScreenRecorder from '../hooks/useScreenRecorder'
 import { Loader2, AlertCircle, Play, Check, Clock, Send, Save, Terminal, Bug, Trash2, CheckCircle2, XCircle } from 'lucide-react'
 import CodeEditor from '../components/CodeEditor'
 import ProblemPanel from '../components/ProblemPanel'
@@ -53,7 +53,6 @@ function ParticipantCodingAttemptInner({ user }) {
 
   let attemptId = searchParams.get('attemptId')
   let sessionToken = searchParams.get('sessionToken')
-  const sessionIdParam = searchParams.get('sessionId') || `session_${Date.now()}`
   const storageKey = getStorageKey(attemptId)
 
   if (assessmentId) {
@@ -67,10 +66,7 @@ function ParticipantCodingAttemptInner({ user }) {
     }
   }
 
-  const { recording: screenRecording, startRecording, stopRecording } = useScreenRecorder({
-    assessmentType: 'coding', assessmentId, participantId: user?.id,
-    sessionId: sessionIdParam, userToken: user?.token
-  })
+  const confirm = useConfirm()
 
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState(null)
@@ -79,8 +75,6 @@ function ParticipantCodingAttemptInner({ user }) {
   const [qrVerified, setQrVerified] = useState(false)
   const [verifSessionInfo, setVerifSessionInfo] = useState(null)
   const [consented, setConsented] = useState(false)
-  const [screenStream, setScreenStream] = useState(null)
-  const [sessionError, setSessionError] = useState(null)
 
   const [currentProblemIndex, setCurrentProblemIndex] = useState(0)
   const [codeByProblem, setCodeByProblem] = useState({})
@@ -110,7 +104,6 @@ function ParticipantCodingAttemptInner({ user }) {
   const autoSaveRef = useRef(null)
   const serverSaveRef = useRef(null)
   const codeByProblemRef = useRef(codeByProblem)
-  const outputRef = useRef(null)
   const socketRef = useRef(null)
   const startTimeRef = useRef(null)
   const runningRef = useRef(false)
@@ -219,30 +212,12 @@ function ParticipantCodingAttemptInner({ user }) {
     return () => clearInterval(timerRef.current)
   }, [timeLeft, submitted])
 
-  const handleScreenShareResumed = useCallback((newStream) => { setScreenStream(newStream); proctor.setScreenStream(newStream) }, [proctor])
   useEffect(() => { if (timeLeft === 0 && !submitted && !submittedRef.current) handleSubmit(true) }, [timeLeft])
 
   const formatTime = (s) => { const m = Math.floor(s / 60); const sec = s % 60; return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}` }
 
-  const handleScreenShareReady = useCallback(async (stream) => {
-    if (!stream || submittingRef.current) return
-    setScreenStream(stream); setSessionError(null); proctor.setScreenStream(stream)
-    try {
-      const s = await proctor.start({
-        assessmentId: Number(assessmentId), attemptId: Number(attemptId),
-        fingerprintHash: fp, screenSharing: true, assessmentType: 'coding'
-      })
-      await proctor.activate(s.sessionId, s.sessionToken)
-      await startRecording(stream)
-    } catch (err) {
-      setSessionError(err?.message || 'Failed to start proctoring session.')
-      stream.getTracks().forEach(t => t.stop())
-      setScreenStream(null); proctor.setScreenStream(null)
-    }
-  }, [assessmentId, attemptId, fp, proctor, startRecording])
-
   const handleConsented = useCallback(() => setConsented(true), [])
-  const handleCancel = useCallback(() => { if (screenStream) screenStream.getTracks().forEach(t => t.stop()); navigate(`/trainings/${trainingId}`) }, [navigate, trainingId, screenStream])
+  const handleCancel = useCallback(() => { navigate(`/trainings/${trainingId}`) }, [navigate, trainingId])
 
   const currentProblem = problems[currentProblemIndex]
   const handleCodeChange = (value) => { if (!currentProblem) return; setCodeByProblem(prev => ({ ...prev, [currentProblem.id]: value || '' })) }
@@ -314,28 +289,53 @@ function ParticipantCodingAttemptInner({ user }) {
     finally { setSubmitting(false); submittingRef.current = false }
   }
 
-  const handleResetCode = () => {
+  const handleResetCode = async () => {
     if (!currentProblem) return
-    if (!window.confirm('Reset code to starter template? This cannot be undone.')) return
+    const ok = await confirm({
+      title: 'Reset Code Template',
+      message: 'Reset your code to the initial starter template? Your current edits will be cleared.',
+      type: 'warning',
+      confirmText: 'Yes, Reset',
+    })
+    if (!ok) return
     setCodeByProblem(prev => ({ ...prev, [currentProblem.id]: currentProblem.starterCode || '' }))
     setSampleResults([]); setRunStatus(''); setRunTime(null); setRunMemory(null); setSubmitVerdict(null); setOutput('')
   }
 
-  // ── Stop screen share + exit fullscreen ──
-  const handleRecordingCleanup = useCallback(async () => {
-    await stopRecording()
-    if (screenStream) {
-      setScreenStream(null)
+  const endVerificationSession = useCallback(() => {
+    const sId = verifSessionInfo?.sessionId;
+    if (sId) {
+      fetch(`${API_BASE}/assessment-verification/end`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(user?.token ? { Authorization: `Bearer ${user.token}` } : {}),
+        },
+        body: JSON.stringify({ sessionId: sId }),
+      }).catch(() => {});
     }
+  }, [verifSessionInfo, user?.token]);
+
+  // ── Exit fullscreen & cleanup ──
+  const handleRecordingCleanup = useCallback(async () => {
+    endVerificationSession();
     if (fsApi.element()) {
       try { await fsApi.exit() } catch {}
     }
-  }, [stopRecording, screenStream])
+  }, [endVerificationSession])
 
   // ── SUBMIT ASSESSMENT ──
   const handleSubmit = async (isTimeout) => {
     if (submittingRef.current || submittedRef.current) return
-    if (!isTimeout && !confirm('Submit your coding assessment? You cannot make further changes.')) return
+    if (!isTimeout) {
+      const ok = await confirm({
+        title: 'Submit Assessment',
+        message: 'Are you sure you want to submit your coding assessment? You will not be able to make further changes.',
+        type: 'submit',
+        confirmText: 'Yes, Submit',
+      })
+      if (!ok) return
+    }
     submittingRef.current = true
     setSubmitting(true)
     try {
@@ -356,7 +356,7 @@ function ParticipantCodingAttemptInner({ user }) {
       }
       setSubmitted(true); clearInterval(timerRef.current)
 
-      // Stop recording, upload, exit fullscreen, stop media streams
+      // Exit fullscreen & cleanup
       await handleRecordingCleanup()
 
       localStorage.removeItem(getStorageKey(attemptId)); sessionStorage.removeItem(storageKey)
@@ -367,15 +367,10 @@ function ParticipantCodingAttemptInner({ user }) {
 
   const currentLanguage = languageByProblem[currentProblem?.id] || currentProblem?.programmingLanguage || 'javascript'
 
-  useEffect(() => {
-    const onBeforeUnload = () => { if (screenRecording) stopRecording() }
-    window.addEventListener('beforeunload', onBeforeUnload)
-    return () => window.removeEventListener('beforeunload', onBeforeUnload)
-  }, [screenRecording, stopRecording])
-
   if (loading || restoring) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: '#94a3b8' }}><Loader2 size={24} className="animate-spin" /></div>
   if (errorMsg) return <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', padding: 20, textAlign: 'center' }}><AlertCircle size={32} color="#dc2626" style={{ marginBottom: 12 }} /><div style={{ fontSize: 16, fontWeight: 600, color: '#dc2626', marginBottom: 8 }}>{errorMsg}</div><button onClick={() => navigate(`/trainings/${trainingId}`)} style={{ padding: '8px 20px', background: '#0D9488', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Go Back</button></div>
 
+  // Pre-test Step 1: Mobile Camera Pairing via QR Code
   if (!qrVerified && assessment) {
     return (
       <AssessmentQRPairingModal
@@ -394,8 +389,14 @@ function ParticipantCodingAttemptInner({ user }) {
     )
   }
 
+  // Pre-test Step 2: Assessment Consent, Camera Calibration & Fullscreen Gate
   if (!consented) return (
-    <AssessmentConsentGate quiz={assessment ? { id: assessment.id, title: assessment.title, description: assessment.description, timeLimit: assessment.timeLimit } : null} attemptId={Number(attemptId)} onConsented={handleConsented} onCancel={handleCancel} onScreenShareReady={handleScreenShareReady} />
+    <AssessmentConsentGate
+      quiz={assessment ? { id: assessment.id, title: assessment.title, description: assessment.description, timeLimit: assessment.timeLimit } : null}
+      attemptId={Number(attemptId)}
+      onConsented={handleConsented}
+      onCancel={handleCancel}
+    />
   )
 
   const s = {
@@ -426,7 +427,11 @@ function ParticipantCodingAttemptInner({ user }) {
   }
 
   return (
-    <ExamProctorShell onSubmit={handleSubmit} screenStream={screenStream} examSession={proctor.session} onScreenShareResumed={handleScreenShareResumed} title={assessment?.title || 'Coding Assessment'}>
+    <ExamProctorShell
+      onSubmit={handleSubmit}
+      title={assessment?.title || 'Coding Assessment'}
+      requireScreenShare={false}
+    >
       <div style={s.container}>
         <div style={s.header}>
           <div style={s.headerLeft}>
@@ -434,153 +439,94 @@ function ParticipantCodingAttemptInner({ user }) {
             {saveStatus && <span style={{ fontSize: 11, color: '#16a34a', display: 'flex', alignItems: 'center', gap: 3 }}><Save size={10} /> {saveStatus}</span>}
           </div>
           <div style={s.headerRight}>
-            <span style={{ fontSize: 12, color: '#888' }}>Problem {currentProblemIndex + 1} of {problems.length}</span>
-            <div style={s.timer}><Clock size={14} />{formatTime(timeLeft)}</div>
-            <button onClick={handleSubmit} disabled={submitting || submitted} style={s.submitBtn(submitting || submitted)}>
-              {submitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-              {submitted ? 'Submitted' : 'Submit All'}
+            {timeLeft != null && (
+              <div style={s.timer}>
+                <Clock size={13} />
+                <span>{formatTime(timeLeft)}</span>
+              </div>
+            )}
+            <button onClick={() => handleSubmit(false)} disabled={submitting || submitted} style={s.submitBtn(submitting || submitted)}>
+              <Send size={13} />
+              {submitting ? 'Submitting...' : 'Submit Assessment'}
             </button>
           </div>
         </div>
 
         <div style={s.main}>
           <div style={s.leftPanel}>
-            {problems.length > 1 && (
-              <div style={s.problemNav}>
-                {problems.map((p, i) => (
-                  <button key={p.id} onClick={() => setCurrentProblemIndex(i)} style={s.problemBtn(i === currentProblemIndex)}>{i + 1}</button>
-                ))}
-              </div>
-            )}
-            <div style={{ color: '#ccc' }}>
-              <ProblemPanel problem={currentProblem} />
+            <div style={s.problemNav}>
+              {problems.map((p, idx) => (
+                <button key={p.id} onClick={() => setCurrentProblemIndex(idx)} style={s.problemBtn(currentProblemIndex === idx)}>
+                  {`Problem ${idx + 1}`}
+                </button>
+              ))}
             </div>
+            {currentProblem && <ProblemPanel problem={currentProblem} index={currentProblemIndex} total={problems.length} />}
           </div>
 
           <div style={s.rightPanel}>
             <div style={s.editorContainer}>
               <CodeEditor
-                value={codeByProblem[currentProblem?.id] || ''}
+                code={codeByProblem[currentProblem?.id] || ''}
                 language={currentLanguage}
                 onChange={handleCodeChange}
                 onLanguageChange={handleLanguageChange}
-                readOnly={running || submitting || submitted}
-                theme="dark"
+                supportedLanguages={currentProblem?.allowedLanguages || Object.keys(LANGUAGE_MAP)}
               />
             </div>
-
-            {showCustomInput && (
-              <div style={{ borderBottom: '1px solid #333', background: '#16213e', flexShrink: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 12px', background: '#16213e' }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase' }}>Custom Input</span>
-                </div>
-                <textarea value={customInput} onChange={(e) => setCustomInput(e.target.value)} placeholder="Enter your custom input here..." spellCheck={false}
-                  style={{ width: '100%', minHeight: 60, padding: 10, border: 'none', background: '#1a1a2e', color: '#ccc', fontFamily: "'Fira Code', monospace", fontSize: 13, resize: 'vertical', outline: 'none' }} />
-              </div>
-            )}
 
             <div style={s.bottomPanel}>
               <div style={s.tabBar}>
                 <div style={s.tabLeft}>
-                  <button onClick={() => setActiveTab('output')} style={s.tabBtn(activeTab === 'output')}><Terminal size={12} /> Output</button>
-                  {sampleResults.length > 0 && (
-                    <button onClick={() => setActiveTab('testResults')} style={s.tabBtn(activeTab === 'testResults')}><Bug size={12} /> Test Results</button>
-                  )}
-                  {submitVerdict && (
-                    <button onClick={() => setActiveTab('submitResult')} style={s.tabBtn(activeTab === 'submitResult')}><Check size={12} /> Submission</button>
-                  )}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <button onClick={() => setShowCustomInput(prev => !prev)} style={s.actionBtn}>Input</button>
-                  <button onClick={handleResetCode} disabled={running || submitting} style={s.actionBtn} title="Reset code"><Trash2 size={12} /> Reset</button>
-                  <button data-run-button="true" onClick={handleRunCode} disabled={running || submitting || submitted} style={s.runBtn(running || submitting || submitted)}>
-                    {running ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
-                    {running ? 'Running...' : 'Run'}
+                  <button onClick={() => setActiveTab('output')} style={s.tabBtn(activeTab === 'output')}>
+                    <Terminal size={12} /> Execution Output
                   </button>
-                  <button data-submit-button="true" onClick={handleSubmitCode} disabled={running || submitting || submitted} style={s.submitBtn(running || submitting || submitted)}>
-                    {submitting ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                    {submitting ? 'Submitting...' : 'Submit'}
+                  <button onClick={() => setShowCustomInput(prev => !prev)} style={s.actionBtn}>
+                    <Bug size={12} /> {showCustomInput ? 'Hide Custom Input' : 'Custom Input'}
+                  </button>
+                  <button onClick={handleResetCode} style={s.actionBtn} title="Reset starter code">
+                    <Trash2 size={12} /> Reset
+                  </button>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={handleRunCode} disabled={running || submitting || submitted} style={s.runBtn(running || submitting || submitted)}>
+                    <Play size={12} /> {running ? 'Running...' : 'Run Code'}
+                  </button>
+                  <button onClick={handleSubmitCode} disabled={submitting || running || submitted} style={s.submitBtn(submitting || running || submitted)}>
+                    <Check size={12} /> {submitting ? 'Submitting...' : 'Submit Code'}
                   </button>
                 </div>
               </div>
-              <div ref={outputRef} style={s.outputArea}>
-                {judgeStatus && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#818cf8', padding: '8px 0' }}>
-                    <Loader2 size={14} className="animate-spin" />
-                    <span>{judgeStatus}</span>
+
+              {showCustomInput && (
+                <div style={{ padding: '8px 12px', background: '#16213e', borderBottom: '1px solid #0f3460' }}>
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Custom Input (stdin):</div>
+                  <textarea
+                    value={customInput}
+                    onChange={(e) => setCustomInput(e.target.value)}
+                    style={{ width: '100%', height: 50, background: '#1a1a2e', color: '#e0e0e0', border: '1px solid #333', borderRadius: 4, padding: 6, fontSize: 12, fontFamily: "'Fira Code', monospace" }}
+                    placeholder="Enter custom input here..."
+                  />
+                </div>
+              )}
+
+              <div style={s.outputArea}>
+                {judgeStatus && <div style={{ color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 6 }}><Loader2 size={14} className="animate-spin" /> {judgeStatus}</div>}
+                {runStatus && <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ fontWeight: 700 }}>Status:</span> <span style={{ color: runStatus === 'ACCEPTED' ? '#059669' : '#dc2626', fontWeight: 600 }}>{runStatus}</span>{runTime != null && <span style={{ color: '#888', fontSize: 11 }}>({runTime.toFixed(3)}s, {runMemory}MB)</span>}</div>}
+                {submitVerdict && (
+                  <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={s.verdictBadge(submitVerdict)}>{submitVerdict}</span>
+                    {submitPassed != null && <span style={{ fontSize: 12, color: '#888' }}>{submitPassed}/{submitTotal} test cases passed ({submitScore}%)</span>}
                   </div>
                 )}
-
-                {!judgeStatus && activeTab === 'output' && (
-                  <div>
-                    {runTime !== null && (
-                      <div style={{ display: 'flex', gap: 16, marginBottom: 8, padding: '6px 10px', background: '#16213e', borderRadius: 6, fontSize: 11 }}>
-                        <span style={{ color: runStatus === 'ACCEPTED' ? '#4ade80' : '#f87171' }}>
-                          Status: <strong>{runStatus === 'ACCEPTED' ? 'All Samples Passed' : runStatus}</strong>
-                        </span>
-                        <span style={{ color: '#888' }}>Time: <strong>{typeof runTime === 'number' ? runTime.toFixed(3) : runTime}s</strong></span>
-                        <span style={{ color: '#888' }}>Memory: <strong>{typeof runMemory === 'number' ? Math.round(runMemory) : runMemory} MB</strong></span>
-                      </div>
-                    )}
-                    {output && <pre style={{ margin: 0, whiteSpace: 'pre-wrap', color: '#f59e0b', background: '#16213e', padding: '8px 10px', borderRadius: 6 }}>{output}</pre>}
-                    {!output && !runTime && !judgeStatus && (
-                      <div style={{ color: '#666', display: 'flex', alignItems: 'center', gap: 6, padding: '8px 0' }}>
-                        <Terminal size={14} /> Run your code to see output here
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {!judgeStatus && activeTab === 'testResults' && sampleResults.length > 0 && (
-                  <div>
-                    <div style={{ marginBottom: 8, fontWeight: 700, color: '#888', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                      Sample Tests ({sampleResults.filter(t => t.passed).length}/{sampleResults.length})
-                    </div>
-                    {sampleResults.map((tr, i) => (
-                      <div key={i} style={{ marginBottom: 8, borderRadius: 8, border: `1px solid ${tr.passed ? '#064e3b' : '#450a0a'}`, overflow: 'hidden' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: tr.passed ? '#022c22' : '#2d0000' }}>
-                          {tr.passed ? <CheckCircle2 size={14} color="#4ade80" /> : <XCircle size={14} color="#f87171" />}
-                          <span style={{ color: tr.passed ? '#4ade80' : '#f87171', fontSize: 12, fontWeight: 600 }}>Sample Test {i + 1}</span>
-                          <div style={{ marginLeft: 'auto', display: 'flex', gap: 12, fontSize: 11, color: '#888' }}>
-                            <span>Time: {typeof tr.executionTime === 'number' ? tr.executionTime.toFixed(3) : '0.000'}s</span>
-                            {tr.memoryUsed != null && <span>Memory: {Math.round(tr.memoryUsed)} MB</span>}
-                          </div>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
-                          <div style={{ padding: '8px 12px', borderRight: '1px solid #1a1a3e' }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: '#888', textTransform: 'uppercase', marginBottom: 4 }}>Input</div>
-                            <pre style={{ margin: 0, fontSize: 12, color: '#ccc', whiteSpace: 'pre-wrap' }}>{tr.input || '(empty)'}</pre>
-                          </div>
-                          <div style={{ padding: '8px 12px' }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: '#888', textTransform: 'uppercase', marginBottom: 4 }}>Expected Output</div>
-                            <pre style={{ margin: 0, fontSize: 12, color: '#ccc', whiteSpace: 'pre-wrap' }}>{tr.expectedOutput || '(empty)'}</pre>
-                          </div>
-                        </div>
-                        <div style={{ padding: '8px 12px', borderTop: '1px solid #1a1a3e', background: !tr.passed ? '#1a0000' : '#001a0a' }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: '#888', textTransform: 'uppercase', marginBottom: 4 }}>Your Output</div>
-                          <pre style={{ margin: 0, fontSize: 12, color: tr.passed ? '#4ade80' : '#f87171', whiteSpace: 'pre-wrap' }}>{tr.actualOutput || '(empty)'}</pre>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {!judgeStatus && activeTab === 'submitResult' && submitVerdict && (
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, padding: 16, borderRadius: 8, background: '#16213e' }}>
-                      <span style={s.verdictBadge(submitVerdict)}>{submitVerdict}</span>
-                      {submitScore != null && <span style={{ fontSize: 13, color: '#ccc' }}>Score: <strong>{submitScore}</strong></span>}
-                      {submitPassed != null && submitTotal != null && (
-                        <span style={{ fontSize: 13, color: '#ccc' }}>Tests: <strong style={{ color: submitPassed === submitTotal ? '#4ade80' : '#f87171' }}>{submitPassed}</strong>/{submitTotal}</span>
-                      )}
-                    </div>
-                    {sampleResults.length > 0 && (
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 0.5 }}>Sample Test Results</div>
-                    )}
-                    {sampleResults.filter(r => !r.isHidden).map((tr, i) => (
-                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', marginBottom: 4, borderRadius: 6, background: tr.passed ? 'rgba(22,163,74,0.15)' : 'rgba(220,38,38,0.15)' }}>
-                        {tr.passed ? <Check size={12} color="#4ade80" /> : <X size={12} color="#f87171" />}
-                        <span style={{ color: tr.passed ? '#86efac' : '#fca5a5', fontSize: 12 }}>Sample Test {i + 1}</span>
+                {output && <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{output}</pre>}
+                {sampleResults.length > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#888', marginBottom: 4 }}>TEST CASE RESULTS:</div>
+                    {sampleResults.map((tr, idx) => (
+                      <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderRadius: 4, background: tr.passed ? '#05966911' : '#dc262611', border: `1px solid ${tr.passed ? '#05966933' : '#dc262633'}`, marginBottom: 4, fontSize: 12 }}>
+                        {tr.passed ? <CheckCircle2 size={13} color="#059669" /> : <XCircle size={13} color="#dc2626" />}
+                        <span style={{ fontWeight: 600, color: tr.passed ? '#059669' : '#dc2626' }}>{`Test Case ${idx + 1}: ${tr.passed ? 'PASSED' : 'FAILED'}`}</span>
                         <span style={{ marginLeft: 'auto', color: '#888', fontSize: 10 }}>{tr.executionTime != null ? `${Number(tr.executionTime).toFixed(3)}s` : ''}</span>
                       </div>
                     ))}
@@ -595,13 +541,18 @@ function ParticipantCodingAttemptInner({ user }) {
             </div>
           </div>
         </div>
-        {/* Real-time Dual Camera View (Laptop Webcam + Mobile Back Cam) */}
-        <DualCameraProctorWidget
-          assessmentType="CODING"
-          assessmentId={Number(assessmentId)}
+
+        {/* Unified AI Monitoring Engine Widget (Laptop MediaPipe + Mobile YOLO11s) */}
+        <UnifiedMonitoringWidget
+          contextType="CODING"
+          contextId={Number(assessmentId)}
           attemptId={Number(attemptId)}
           sessionId={verifSessionInfo?.sessionId}
+          participantId={user?.id}
           userToken={user?.token}
+          mobileEnabled={true}
+          preCalibrated={true}
+          prePaired={true}
         />
       </div>
     </ExamProctorShell>

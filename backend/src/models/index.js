@@ -62,6 +62,9 @@ const MonitorScreenshot = require('./monitorScreenshot');
 const ProctoringSession = require('./proctoringSession');
 const ProctoringEvent = require('./proctoringEvent');
 const ProctoringReport = require('./proctoringReport');
+const MonitoringSession = require('./monitoringSession');
+const MonitoringEvent = require('./monitoringEvent');
+const MonitoringConfig = require('./monitoringConfig');
 
 // New Enhancements
 const TrainingTrainerAssignment = require('./trainingTrainerAssignment');
@@ -456,10 +459,11 @@ InterviewNotes.belongsTo(User, { foreignKey: 'author_id', as: 'author' });
 Interview.hasMany(InterviewNotes, { foreignKey: 'interview_id', as: 'notes' });
 User.hasMany(InterviewNotes, { foreignKey: 'author_id', as: 'interviewNotes' });
 
-Interview.hasOne(InterviewResult, { foreignKey: 'interview_id', as: 'result' });
-InterviewResult.belongsTo(Interview, { foreignKey: 'interview_id', as: 'interview' });
-InterviewResult.belongsTo(InterviewSession, { foreignKey: 'session_id', as: 'session' });
-InterviewResult.belongsTo(User, { foreignKey: 'decided_by', as: 'decider' });
+// Unified Monitoring Engine Associations
+User.hasMany(MonitoringSession, { foreignKey: 'participantId', as: 'monitoringSessions' });
+MonitoringSession.belongsTo(User, { foreignKey: 'participantId', as: 'participant' });
+MonitoringSession.hasMany(MonitoringEvent, { foreignKey: 'monitoringSessionId', sourceKey: 'sessionId', as: 'events' });
+MonitoringEvent.belongsTo(MonitoringSession, { foreignKey: 'monitoringSessionId', targetKey: 'sessionId', as: 'session' });
 
 module.exports = {
   sequelize,
@@ -500,6 +504,9 @@ module.exports = {
   ProctoringSession,
   ProctoringEvent,
   ProctoringReport,
+  MonitoringSession,
+  MonitoringEvent,
+  MonitoringConfig,
   // Parallel monitor system
   MonitorAttempt,
   MonitorViolation,

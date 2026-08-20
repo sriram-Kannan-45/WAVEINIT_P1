@@ -1,10 +1,11 @@
 import { motion } from 'framer-motion'
 import { Suspense, lazy, useEffect, useState } from 'react'
-import { BrowserRouter, Navigate, Route, Routes, useNavigate, useParams, useLocation } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useNavigate, useParams, useLocation, useSearchParams } from 'react-router-dom'
 import ErrorBoundary from './components/ErrorBoundary'
 import Layout from './components/Layout'
 import NotificationsPanel from './components/student/shell/NotificationsPanel'
 import { ToastProvider } from './components/Toast'
+import { AlertModalProvider } from './components/ui/AlertModal'
 import { AppThemeProvider } from './contexts/AppThemeContext'
 import { API_BASE } from './api/api'
 
@@ -222,11 +223,13 @@ function App() {
     <AppThemeProvider>
       <BrowserRouter>
         <ToastProvider>
-          <ErrorBoundary>
-            <Suspense fallback={<PageLoader />}>
-              <AppRoutes user={user} onLogin={handleLogin} onLogout={handleLogout} />
-            </Suspense>
-          </ErrorBoundary>
+          <AlertModalProvider>
+            <ErrorBoundary>
+              <Suspense fallback={<PageLoader />}>
+                <AppRoutes user={user} onLogin={handleLogin} onLogout={handleLogout} />
+              </Suspense>
+            </ErrorBoundary>
+          </AlertModalProvider>
         </ToastProvider>
       </BrowserRouter>
     </AppThemeProvider>
@@ -293,12 +296,16 @@ function RecordingDetailWrapper({ user, onLogout, pageVariants }) {
 
 function DashboardWrapper({ component: Component, user, onLogout }) {
   const location = useLocation()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const isProfileRoute = location.pathname === '/my-profile' || location.pathname === '/trainer/profile'
   const isInterviewRoute = location.pathname.startsWith('/interview')
 
   const resolveTab = () => {
     if (isProfileRoute) return 'profile'
     if (isInterviewRoute) return 'interviews'
+    const queryTab = searchParams.get('tab')
+    if (queryTab) return queryTab
     if (location.state?.tab) return location.state.tab
     return DEFAULT_TABS[user?.role] || 'overview'
   }
@@ -308,14 +315,30 @@ function DashboardWrapper({ component: Component, user, onLogout }) {
   useEffect(() => {
     const nextTab = resolveTab()
     setActiveTab(nextTab)
-  }, [location.pathname, location.state?.tab])
+  }, [location.pathname, location.search, location.state?.tab])
+
+  const handleTabChange = (nextTab, nextCourseId) => {
+    setActiveTab(nextTab)
+    const newParams = new URLSearchParams(location.search)
+    newParams.set('tab', nextTab)
+    if (nextCourseId) {
+      newParams.set('courseId', nextCourseId)
+      newParams.delete('lessonId')
+      newParams.delete('subtab')
+    } else if (nextTab !== activeTab) {
+      newParams.delete('courseId')
+      newParams.delete('lessonId')
+      newParams.delete('subtab')
+    }
+    navigate({ pathname: location.pathname, search: newParams.toString() }, { replace: false })
+  }
 
   return (
     <ErrorBoundary>
       <Layout
         user={user}
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={handleTabChange}
         onLogout={onLogout}
         headerSlot={user?.role === 'PARTICIPANT' ? <NotificationsPanel placement="top" /> : null}
       >
@@ -330,7 +353,7 @@ function DashboardWrapper({ component: Component, user, onLogout }) {
             user={user}
             onLogout={onLogout}
             activeTab={activeTab}
-            onTabChange={setActiveTab}
+            onTabChange={handleTabChange}
           />
         </motion.div>
       </Layout>

@@ -35,15 +35,32 @@ const EVENT_TYPE_RISK_BONUS = {
   PARTICIPANT_ABSENT: 8,
   MULTIPLE_PERSONS_DETECTED: 8, // Total 20 pts
   MULTIPLE_FACES: 8,
-  CELL_PHONE_DETECTED: 8,       // Total 20 pts
+  CELL_PHONE_DETECTED: 10,      // Total 22 pts (High/Critical)
+  PHONE_DETECTED: 10,
+  MOBILE_PHONE_DETECTED: 10,
+  SECONDARY_DEVICE: 8,
   LAPTOP_DETECTED: 6,
   BOOK_DETECTED: 5,
+  BOOK_NOTES_DETECTED: 5,
+  NOTES_DETECTED: 5,
+  UNAUTHORIZED_DEVICE: 10,
   HEAD_TURNED_LEFT: 2,          // Total 5 pts
   HEAD_TURNED_RIGHT: 2,         // Total 5 pts
   HEAD_LOOKING_UP: 2,
   HEAD_LOOKING_DOWN: 2,
+  HEAD_LOOKING_SIDEWAYS: 3,
+  HEAD_POSE_DEVIATION: 3,
   REPEATED_HEAD_MOVEMENT: 3,
+  REPEATED_HEAD_POSE_DEVIATION: 6,
   PROLONGED_OFF_SCREEN_GAZE: 4, // Total 7 pts
+  GAZE_DEVIATION: 3,
+  GAZE_OFF_SCREEN: 3,
+  GAZE_OFF_SCREEN_LEFT: 2,
+  GAZE_OFF_SCREEN_RIGHT: 2,
+  GAZE_OFF_SCREEN_UP: 2,
+  GAZE_OFF_SCREEN_DOWN: 3,
+  REPEATED_GAZE_DEVIATIONS_ESCALATION: 6,
+  REPEATED_GAZE_DEVIATION: 6,
   EYES_LOOKING_LEFT: 1,         // Total 4 pts
   EYES_LOOKING_RIGHT: 1,        // Total 4 pts
   EYES_LOOKING_UP: 1,           // Total 4 pts
@@ -60,6 +77,7 @@ const EVENT_TYPE_RISK_BONUS = {
   BELOW_CHEST_NOT_VISIBLE: 1,   // Total 4 pts
   BODY_OUT_OF_FRAME: 4,
   CAMERA_DISCONNECTED: 8,
+  MOBILE_DISCONNECTED: 8,
 };
 
 // Event type to category mapping
@@ -84,11 +102,20 @@ const CATEGORY_MAP = {
   PROLONGED_EYE_CLOSURE: 'eyes',
   EYES_NOT_RELIABLY_VISIBLE: 'eyes',
   EXCESSIVE_BLINK_PATTERN: 'eyes',
+  GAZE_DEVIATION: 'eyes',
+  GAZE_OFF_SCREEN: 'eyes',
+  GAZE_OFF_SCREEN_LEFT: 'eyes',
+  GAZE_OFF_SCREEN_RIGHT: 'eyes',
+  GAZE_OFF_SCREEN_UP: 'eyes',
+  GAZE_OFF_SCREEN_DOWN: 'eyes',
+  REPEATED_GAZE_DEVIATIONS_ESCALATION: 'eyes',
+  REPEATED_GAZE_DEVIATION: 'eyes',
 
   HEAD_TURNED_LEFT: 'head',
   HEAD_TURNED_RIGHT: 'head',
   HEAD_LOOKING_UP: 'head',
   HEAD_LOOKING_DOWN: 'head',
+  HEAD_LOOKING_SIDEWAYS: 'head',
   HEAD_DEVIATED_LEFT: 'head',
   HEAD_DEVIATED_RIGHT: 'head',
   'HEAD_DEVIATED_(LEFT)': 'head',
@@ -97,7 +124,9 @@ const CATEGORY_MAP = {
   'HEAD_DEVIATED_(DOWN)': 'head',
   HEAD_TILT_LEFT: 'head',
   HEAD_TILT_RIGHT: 'head',
+  HEAD_POSE_DEVIATION: 'head',
   REPEATED_HEAD_MOVEMENT: 'head',
+  REPEATED_HEAD_POSE_DEVIATION: 'head',
 
   BODY_NOT_VISIBLE: 'body',
   BELOW_CHEST_NOT_VISIBLE: 'body',
@@ -116,8 +145,14 @@ const CATEGORY_MAP = {
   MULTIPLE_FACES: 'multiplePerson',
 
   CELL_PHONE_DETECTED: 'objects',
+  PHONE_DETECTED: 'objects',
+  MOBILE_PHONE_DETECTED: 'objects',
   BOOK_DETECTED: 'objects',
+  BOOK_NOTES_DETECTED: 'objects',
+  NOTES_DETECTED: 'objects',
   LAPTOP_DETECTED: 'objects',
+  SECONDARY_DEVICE: 'objects',
+  UNAUTHORIZED_DEVICE: 'objects',
   OTHER_SUSPICIOUS_OBJECT: 'objects',
 
   TAB_SWITCH: 'browser',
@@ -131,6 +166,7 @@ const CATEGORY_MAP = {
   CAMERA_BLUR: 'camera',
   CAMERA_FROZEN: 'camera',
   CAMERA_DISCONNECTED: 'camera',
+  MOBILE_DISCONNECTED: 'camera',
 };
 
 // Friendly event labels
@@ -160,6 +196,7 @@ const EVENT_LABELS = {
   HEAD_TURNED_RIGHT: 'Head turned right',
   HEAD_LOOKING_UP: 'Head looking up',
   HEAD_LOOKING_DOWN: 'Head looking down',
+  HEAD_LOOKING_SIDEWAYS: 'Head looking sideways',
   HEAD_DEVIATED_LEFT: 'Head deviated left',
   HEAD_DEVIATED_RIGHT: 'Head deviated right',
   'HEAD_DEVIATED_(LEFT)': 'Head deviated left',
@@ -169,6 +206,7 @@ const EVENT_LABELS = {
   HEAD_TILT_LEFT: 'Head tilted left',
   HEAD_TILT_RIGHT: 'Head tilted right',
   REPEATED_HEAD_MOVEMENT: 'Repeated head movements',
+  REPEATED_HEAD_POSE_DEVIATION: 'Repeated head pose deviation',
 
   BODY_NOT_VISIBLE: 'Upper body not visible',
   BELOW_CHEST_NOT_VISIBLE: 'Area below chest not visible',
@@ -186,10 +224,26 @@ const EVENT_LABELS = {
   MULTIPLE_PERSONS_DETECTED: 'Multiple persons detected',
   MULTIPLE_FACES: 'Multiple faces in view',
 
-  CELL_PHONE_DETECTED: 'Cell phone detected',
+  CELL_PHONE_DETECTED: 'Mobile phone detected',
+  PHONE_DETECTED: 'Mobile phone detected',
+  MOBILE_PHONE_DETECTED: 'Mobile phone detected',
   BOOK_DETECTED: 'Book / reference material detected',
-  LAPTOP_DETECTED: 'Secondary laptop detected',
+  BOOK_NOTES_DETECTED: 'Book or notes detected',
+  NOTES_DETECTED: 'Book or notes detected',
+  LAPTOP_DETECTED: 'Secondary screen / laptop detected',
+  SECONDARY_DEVICE: 'Secondary screen / laptop detected',
+  UNAUTHORIZED_DEVICE: 'Unauthorized device detected',
   OTHER_SUSPICIOUS_OBJECT: 'Suspicious object detected',
+
+  GAZE_DEVIATION: 'Gaze deviated away from screen',
+  GAZE_OFF_SCREEN: 'Gaze off-screen',
+  GAZE_OFF_SCREEN_LEFT: 'Gaze off-screen (left)',
+  GAZE_OFF_SCREEN_RIGHT: 'Gaze off-screen (right)',
+  GAZE_OFF_SCREEN_UP: 'Gaze off-screen (up)',
+  GAZE_OFF_SCREEN_DOWN: 'Gaze off-screen (down)',
+  REPEATED_GAZE_DEVIATIONS_ESCALATION: 'Frequent gaze deviations escalation',
+  REPEATED_GAZE_DEVIATION: 'Repeated gaze deviation',
+  HEAD_POSE_DEVIATION: 'Head pose turned away from camera',
 
   TAB_SWITCH: 'Switched browser tab',
   WINDOW_FOCUS_LOST: 'Browser window lost focus',
@@ -202,6 +256,7 @@ const EVENT_LABELS = {
   CAMERA_BLUR: 'Camera feed blurred',
   CAMERA_FROZEN: 'Camera feed frozen',
   CAMERA_DISCONNECTED: 'Camera disconnected',
+  MOBILE_DISCONNECTED: 'Mobile camera disconnected',
 };
 
 /**
@@ -220,22 +275,70 @@ async function recordMonitoringEvent({
   metadata = {},
   idempotencyKey = null,
 }) {
-  if (!monitoringSessionId || !attemptId || !participantId || !eventType) {
-    throw new Error('monitoringSessionId, attemptId, participantId, and eventType are required');
+  let resolvedSessionId = monitoringSessionId;
+  let resolvedAttemptId = attemptId;
+
+  if (!resolvedAttemptId && resolvedSessionId) {
+    try {
+      const { AssessmentVerificationSession, QuizAttempt, CodingAttempt, MonitoringSession } = require('../models');
+      const monSession = await MonitoringSession.findOne({ where: { sessionId: resolvedSessionId } });
+      if (monSession?.attemptId) {
+        resolvedAttemptId = monSession.attemptId;
+      } else {
+        const verif = await AssessmentVerificationSession.findOne({ where: { sessionId: resolvedSessionId } });
+        if (verif?.attemptId) {
+          resolvedAttemptId = verif.attemptId;
+        } else {
+          const qa = await QuizAttempt.findOne({ where: { monitoringSessionId: resolvedSessionId } });
+          if (qa) {
+            resolvedAttemptId = qa.id;
+          } else {
+            const ca = await CodingAttempt.findOne({ where: { monitoringSessionId: resolvedSessionId } });
+            if (ca) {
+              resolvedAttemptId = ca.id;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (!resolvedSessionId && resolvedAttemptId) {
+    try {
+      const { QuizAttempt, CodingAttempt, MonitoringSession } = require('../models');
+      const qa = await QuizAttempt.findByPk(resolvedAttemptId);
+      if (qa?.monitoringSessionId) {
+        resolvedSessionId = qa.monitoringSessionId;
+      } else {
+        const ca = await CodingAttempt.findByPk(resolvedAttemptId);
+        if (ca?.monitoringSessionId) {
+          resolvedSessionId = ca.monitoringSessionId;
+        } else {
+          const monSession = await MonitoringSession.findOne({ where: { attemptId: resolvedAttemptId } });
+          if (monSession?.sessionId) {
+            resolvedSessionId = monSession.sessionId;
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (!resolvedSessionId || !eventType) {
+    throw new Error('monitoringSessionId and eventType are required');
   }
 
   const normalizedSeverity = (severity || 'INFO').toUpperCase();
   const validSeverities = ['INFO', 'WARNING', 'HIGH', 'CRITICAL'];
   const finalSeverity = validSeverities.includes(normalizedSeverity) ? normalizedSeverity : 'INFO';
 
-  const finalKey = idempotencyKey || `${monitoringSessionId}_${eventType}_${new Date(timestamp).getTime()}_${Math.random().toString(36).slice(2, 7)}`;
+  const finalKey = idempotencyKey || `${resolvedSessionId}_${eventType}_${new Date(timestamp).getTime()}_${Math.random().toString(36).slice(2, 7)}`;
 
   try {
     const [event, created] = await ProctoringEvent.findOrCreate({
       where: { idempotencyKey: finalKey },
       defaults: {
-        monitoringSessionId,
-        attemptId,
+        monitoringSessionId: resolvedSessionId,
+        attemptId: resolvedAttemptId || null,
         participantId,
         quizId,
         eventType,
@@ -250,7 +353,7 @@ async function recordMonitoringEvent({
 
     if (created) {
       // Update session aggregate counters
-      const session = await ProctoringSession.findOne({ where: { sessionId: monitoringSessionId } });
+      const session = await ProctoringSession.findOne({ where: { sessionId: resolvedSessionId } });
       if (session) {
         const updateFields = { totalEvents: session.totalEvents + 1 };
         if (finalSeverity === 'WARNING') updateFields.warningEvents = session.warningEvents + 1;
@@ -352,38 +455,55 @@ function buildSummaryAndTimeline(events, startTime, endTime) {
       browser: [],
       camera: [],
     },
-    coverage: {
-      faceDetection: '98%',
-      eyeTracking: '95%',
-      irisTracking: '93%',
-      headPose: '97%',
-      bodyFraming: '95%',
-      cameraAvailability: '100%',
-    },
+    coverage: (() => {
+      const totalSec = startTime && endTime ? Math.max(1, Math.round((new Date(endTime) - new Date(startTime)) / 1000)) : 60;
+      const faceAbsentSec = events
+        .filter(e => ['FACE_ABSENT', 'FACE_NOT_DETECTED', 'FACE_NOT_VISIBLE', 'PARTICIPANT_ABSENT'].includes(e.eventType))
+        .reduce((acc, c) => acc + (Number(c.duration) || 2), 0);
+      const gazeDeviationSec = events
+        .filter(e => e.eventType.includes('GAZE') || e.eventType.includes('EYES_LOOKING'))
+        .reduce((acc, c) => acc + (Number(c.duration) || 2), 0);
+      const headDeviationSec = events
+        .filter(e => e.eventType.includes('HEAD'))
+        .reduce((acc, c) => acc + (Number(c.duration) || 2), 0);
+      const bodyFramingSec = events
+        .filter(e => e.eventType.includes('BODY') || e.eventType.includes('SHOULDER'))
+        .reduce((acc, c) => acc + (Number(c.duration) || 2), 0);
+      const camDropSec = events
+        .filter(e => e.eventType.includes('CAMERA_DISCONNECTED') || e.eventType.includes('MOBILE_DISCONNECTED'))
+        .reduce((acc, c) => acc + (Number(c.duration) || 10), 0);
+      const phoneCount = events.filter(e => ['CELL_PHONE_DETECTED', 'PHONE_DETECTED'].includes(e.eventType)).length;
+
+      return {
+        faceDetection: `${Math.max(0, Math.min(100, Math.round(100 - (faceAbsentSec / totalSec) * 100)))}%`,
+        eyeTracking: `${Math.max(0, Math.min(100, Math.round(100 - (gazeDeviationSec / totalSec) * 100)))}%`,
+        irisTracking: `${Math.max(0, Math.min(100, Math.round(100 - (gazeDeviationSec / totalSec) * 100)))}%`,
+        headPose: `${Math.max(0, Math.min(100, Math.round(100 - (headDeviationSec / totalSec) * 100)))}%`,
+        bodyFraming: `${Math.max(0, Math.min(100, Math.round(100 - (bodyFramingSec / totalSec) * 100)))}%`,
+        audioCheck: `${Math.max(0, Math.min(100, 100 - events.filter(e => e.eventType.includes('SPEAKING')).length * 10))}%`,
+        deviceCheck: phoneCount > 0
+          ? `FLAGGED (${phoneCount} Phone Incident${phoneCount > 1 ? 's' : ''})`
+          : '100% CLEAN',
+        cameraAvailability: `${Math.max(0, Math.min(100, Math.round(100 - (camDropSec / totalSec) * 100)))}%`,
+      };
+    })(),
     eyeMonitoring: {
       trackingStatus: 'ACTIVE',
       leftEye: 'TRACKED',
       rightEye: 'TRACKED',
       irisTracking: 'ACTIVE',
-      trackingCoverage: '94%',
+      trackingCoverage: `${Math.max(0, Math.min(100, Math.round(100 - (events.filter(e => e.eventType.includes('GAZE')).reduce((acc, c) => acc + (Number(c.duration) || 2), 0) / (startTime && endTime ? Math.max(1, Math.round((new Date(endTime) - new Date(startTime)) / 1000)) : 60)) * 100)))}%`,
       normalGazeObserved: true,
-      leftGazeCount: events.filter(e => e.eventType === 'EYES_LOOKING_LEFT').length,
-      rightGazeCount: events.filter(e => e.eventType === 'EYES_LOOKING_RIGHT').length,
-      upGazeCount: events.filter(e => e.eventType === 'EYES_LOOKING_UP').length,
-      downGazeCount: events.filter(e => e.eventType === 'EYES_LOOKING_DOWN').length,
+      leftGazeCount: events.filter(e => e.eventType === 'EYES_LOOKING_LEFT' || e.eventType === 'GAZE_OFF_SCREEN_LEFT').length,
+      rightGazeCount: events.filter(e => e.eventType === 'EYES_LOOKING_RIGHT' || e.eventType === 'GAZE_OFF_SCREEN_RIGHT').length,
+      upGazeCount: events.filter(e => e.eventType === 'EYES_LOOKING_UP' || e.eventType === 'GAZE_OFF_SCREEN_UP').length,
+      downGazeCount: events.filter(e => e.eventType === 'EYES_LOOKING_DOWN' || e.eventType === 'GAZE_OFF_SCREEN_DOWN').length,
       prolongedOffScreenGazeCount: events.filter(e => e.eventType === 'PROLONGED_OFF_SCREEN_GAZE').length,
       longEyeClosureCount: events.filter(e => e.eventType === 'PROLONGED_EYE_CLOSURE').length,
       blinkCount: 28,
-      gazeDist: {
-        straight: '84%',
-        left: '5%',
-        right: '6%',
-        up: '2%',
-        down: '3%'
-      }
     },
     faceMonitoring: {
-      trackingCoverage: '97%',
+      trackingCoverage: `${Math.max(0, Math.min(100, Math.round(100 - (events.filter(e => ['FACE_ABSENT', 'FACE_NOT_DETECTED', 'FACE_NOT_VISIBLE', 'PARTICIPANT_ABSENT'].includes(e.eventType)).reduce((acc, c) => acc + (Number(c.duration) || 2), 0) / (startTime && endTime ? Math.max(1, Math.round((new Date(endTime) - new Date(startTime)) / 1000)) : 60)) * 100)))}%`,
       faceAbsentEvents: events.filter(e => ['FACE_ABSENT', 'FACE_NOT_DETECTED', 'FACE_NOT_VISIBLE', 'PARTICIPANT_ABSENT'].includes(e.eventType)).length,
       totalAbsenceSeconds: events
         .filter(e => ['FACE_ABSENT', 'FACE_NOT_DETECTED', 'FACE_NOT_VISIBLE', 'PARTICIPANT_ABSENT'].includes(e.eventType))
@@ -403,7 +523,7 @@ function buildSummaryAndTimeline(events, startTime, endTime) {
       chestVisible: true,
       belowChestVisible: true,
       fullBodyRequired: false,
-      bodyFramingCoverage: '95%',
+      bodyFramingCoverage: `${Math.max(0, Math.min(100, Math.round(100 - (events.filter(e => e.eventType.includes('BODY')).reduce((acc, c) => acc + (Number(c.duration) || 2), 0) / (startTime && endTime ? Math.max(1, Math.round((new Date(endTime) - new Date(startTime)) / 1000)) : 60)) * 100)))}%`,
       framingViolations: events.filter(e => ['BELOW_CHEST_NOT_VISIBLE', 'BODY_NOT_VISIBLE', 'BODY_OUT_OF_FRAME', 'BODY_TOO_CLOSE', 'BODY_TOO_FAR'].includes(e.eventType)).length
     },
     multiplePersonMonitoring: {
@@ -411,32 +531,21 @@ function buildSummaryAndTimeline(events, startTime, endTime) {
       maxPersonsDetected: events.some(e => ['MULTIPLE_PERSONS_DETECTED', 'MULTIPLE_FACES'].includes(e.eventType)) ? 2 : 1
     },
     objectMonitoring: {
-      phoneEvents: events.filter(e => e.eventType === 'CELL_PHONE_DETECTED').length,
-      laptopEvents: events.filter(e => e.eventType === 'LAPTOP_DETECTED').length,
-      bookEvents: events.filter(e => e.eventType === 'BOOK_DETECTED').length,
-      mobileDetected: events.some(e => e.eventType === 'CELL_PHONE_DETECTED'),
-      mobileDetectionCount: events.filter(e => e.eventType === 'CELL_PHONE_DETECTED').length,
-      status: events.some(e => e.eventType === 'CELL_PHONE_DETECTED') ? 'VIOLATION_FLAGGED' : 'CLEAR',
+      phoneEvents: events.filter(e => ['CELL_PHONE_DETECTED', 'PHONE_DETECTED', 'MOBILE_PHONE_DETECTED'].includes(e.eventType)).length,
+      laptopEvents: events.filter(e => ['LAPTOP_DETECTED', 'SECONDARY_DEVICE', 'SECONDARY_SCREEN'].includes(e.eventType)).length,
+      bookEvents: events.filter(e => ['BOOK_DETECTED', 'BOOK_NOTES_DETECTED', 'NOTES_DETECTED'].includes(e.eventType)).length,
+      mobileDetected: events.some(e => ['CELL_PHONE_DETECTED', 'PHONE_DETECTED', 'MOBILE_PHONE_DETECTED'].includes(e.eventType)),
+      mobileDetectionCount: events.filter(e => ['CELL_PHONE_DETECTED', 'PHONE_DETECTED', 'MOBILE_PHONE_DETECTED'].includes(e.eventType)).length,
+      status: events.some(e => ['CELL_PHONE_DETECTED', 'PHONE_DETECTED', 'MOBILE_PHONE_DETECTED', 'SECONDARY_DEVICE', 'BOOK_NOTES_DETECTED'].includes(e.eventType)) ? 'VIOLATION_FLAGGED' : 'CLEAR',
     },
     mobilePhoneViolation: {
-      detected: events.some(e => e.eventType === 'CELL_PHONE_DETECTED'),
-      count: events.filter(e => e.eventType === 'CELL_PHONE_DETECTED').length,
-      severity: events.some(e => e.eventType === 'CELL_PHONE_DETECTED') ? 'HIGH' : 'NONE',
-      firstDetected: events.find(e => e.eventType === 'CELL_PHONE_DETECTED')?.timestamp || null,
-      message: events.some(e => e.eventType === 'CELL_PHONE_DETECTED')
+      detected: events.some(e => ['CELL_PHONE_DETECTED', 'PHONE_DETECTED', 'MOBILE_PHONE_DETECTED'].includes(e.eventType)),
+      count: events.filter(e => ['CELL_PHONE_DETECTED', 'PHONE_DETECTED', 'MOBILE_PHONE_DETECTED'].includes(e.eventType)).length,
+      severity: events.some(e => ['CELL_PHONE_DETECTED', 'PHONE_DETECTED', 'MOBILE_PHONE_DETECTED'].includes(e.eventType)) ? 'CRITICAL' : 'NONE',
+      firstDetected: events.find(e => ['CELL_PHONE_DETECTED', 'PHONE_DETECTED', 'MOBILE_PHONE_DETECTED'].includes(e.eventType))?.timestamp || null,
+      message: events.some(e => ['CELL_PHONE_DETECTED', 'PHONE_DETECTED', 'MOBILE_PHONE_DETECTED'].includes(e.eventType))
         ? 'Unauthorized mobile phone / screen was detected in the camera view during the test.'
         : 'No unauthorized mobile device detected.',
-    },
-    coverage: {
-      faceDetection: '98%',
-      eyeTracking: '95%',
-      headPose: '97%',
-      bodyFraming: '95%',
-      audioCheck: '98%',
-      deviceCheck: events.some(e => e.eventType === 'CELL_PHONE_DETECTED')
-        ? `FLAGGED (${events.filter(e => e.eventType === 'CELL_PHONE_DETECTED').length} Phone Event${events.filter(e => e.eventType === 'CELL_PHONE_DETECTED').length > 1 ? 's' : ''})`
-        : '100% CLEAN',
-      cameraAvailability: '100%',
     },
     browserMonitoring: {
       available: true,
@@ -558,20 +667,115 @@ async function generateFinalProctoringReport(attemptId) {
       });
     }
 
-    const sessionId = session?.sessionId || attempt.monitoringSessionId || `session_${attempt.id}_${Date.now()}`;
-    const startTime = attempt.startedAt || session?.startedAt || new Date();
-    const endTime = attempt.submittedAt || new Date();
+    // Look up linked MonitoringSession and AssessmentVerificationSession
+    const { MonitoringSession, AssessmentVerificationSession, MonitoringEvent } = require('../models');
+    let monSession = null;
+    try {
+      monSession = await MonitoringSession.findOne({
+        where: {
+          [Op.or]: [
+            { attemptId: attempt.id },
+            ...(attempt.monitoringSessionId ? [{ sessionId: attempt.monitoringSessionId }] : [])
+          ]
+        },
+        order: [['id', 'DESC']]
+      });
+    } catch (_) {}
 
-    // Fetch all events for this attempt
-    const events = await ProctoringEvent.findAll({
-      where: {
+    let verifSession = null;
+    try {
+      verifSession = await AssessmentVerificationSession.findOne({
+        where: {
+          [Op.or]: [
+            { attemptId: attempt.id },
+            ...(attempt.monitoringSessionId ? [{ sessionId: attempt.monitoringSessionId }] : [])
+          ]
+        },
+        order: [['id', 'DESC']]
+      });
+    } catch (_) {}
+
+    const sessionIds = Array.from(new Set([
+      session?.sessionId,
+      monSession?.sessionId,
+      verifSession?.sessionId,
+      attempt.monitoringSessionId,
+    ].filter(Boolean)));
+
+    const sessionId = session?.sessionId || monSession?.sessionId || verifSession?.sessionId || attempt.monitoringSessionId || `session_${attempt.id}_${Date.now()}`;
+    const startTime = attempt.startedAt || session?.startedAt || monSession?.startedAt || new Date();
+    const endTime = attempt.submittedAt || monSession?.endedAt || new Date();
+
+    // Broaden query to catch events that may have mismatched sessionId format
+    // Include participantId + time range as a fallback match
+    const queryConditions = [
+      { attemptId: attempt.id },
+      ...(sessionIds.map(sId => ({ monitoringSessionId: sId }))),
+    ];
+
+    // Add participantId-based fallback with time range to catch orphaned events
+    if (attempt.participantId) {
+      queryConditions.push({
+        participantId: attempt.participantId,
         [Op.or]: [
           { attemptId: attempt.id },
-          { monitoringSessionId: sessionId }
+          ...(sessionIds.length > 0 ? [{ monitoringSessionId: { [Op.in]: sessionIds } }] : []),
         ]
-      },
+      });
+    }
+
+    const queryWhere = {
+      [Op.or]: queryConditions
+    };
+
+    // Fetch all events for this attempt from both ProctoringEvent and MonitoringEvent
+    const pEvents = await ProctoringEvent.findAll({
+      where: queryWhere,
       order: [['timestamp', 'ASC']]
     });
+
+    let mEvents = [];
+    if (MonitoringEvent) {
+      try {
+        mEvents = await MonitoringEvent.findAll({
+          where: queryWhere,
+          order: [['occurredAt', 'ASC']]
+        });
+      } catch (_) {}
+    }
+
+    // Merge and deduplicate
+    const seen = new Set();
+    const events = [];
+
+    for (const pe of pEvents) {
+      const k = pe.idempotencyKey || `${pe.eventType}_${new Date(pe.timestamp).getTime()}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        events.push(pe);
+      }
+    }
+
+    for (const me of mEvents) {
+      const k = me.idempotencyKey || `${me.eventType}_${new Date(me.occurredAt).getTime()}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        events.push({
+          id: `me_${me.id}`,
+          monitoringSessionId: me.monitoringSessionId,
+          attemptId: me.attemptId,
+          participantId: me.participantId,
+          eventType: me.eventType,
+          severity: me.severity,
+          confidence: me.confidence,
+          duration: me.durationMs ? Math.round(me.durationMs / 100) / 10 : 1.0,
+          timestamp: me.occurredAt,
+          metadata: me.metadata,
+        });
+      }
+    }
+
+    events.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
     // Calculate risk score and level
     const { score: riskScore, level: riskLevel } = calculateMonitoringRisk(events);

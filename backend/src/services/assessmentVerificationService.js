@@ -385,6 +385,81 @@ class AssessmentVerificationService {
       participantId: session.participant_id,
     };
   }
+
+  /**
+   * End / close verification session when assessment is submitted or closed.
+   */
+  async endSession({ sessionId, token, participantId, attemptId } = {}) {
+    const { AssessmentVerificationSession, MonitoringSession, Sequelize } = require('../models');
+    const { Op } = Sequelize || require('sequelize');
+    const { getIO } = require('../socket');
+
+    const orClauses = [];
+    if (sessionId) orClauses.push({ session_id: sessionId });
+    if (token) orClauses.push({ token });
+    if (attemptId) orClauses.push({ attempt_id: attemptId });
+    if (participantId && (attemptId || sessionId || token)) {
+      orClauses.push({ participant_id: participantId });
+    }
+
+    const where = orClauses.length > 0 ? { [Op.or]: orClauses } : null;
+
+    let sessions = [];
+    if (where) {
+      sessions = await AssessmentVerificationSession.findAll({ where }).catch(() => []);
+      await AssessmentVerificationSession.update(
+        { status: 'COMPLETED' },
+        { where }
+      ).catch(() => {});
+    }
+
+    // Also close any linked MonitoringSession
+    const monOrClauses = [];
+    if (sessionId) monOrClauses.push({ sessionId });
+    if (token) monOrClauses.push({ mobilePairingToken: token });
+    if (attemptId) monOrClauses.push({ attemptId });
+    if (participantId && (attemptId || sessionId || token)) {
+      monOrClauses.push({ participantId });
+    }
+
+    if (monOrClauses.length > 0) {
+      await MonitoringSession.update(
+        { status: 'COMPLETED', ended_at: new Date() },
+        { where: { [Op.or]: monOrClauses } }
+      ).catch(() => {});
+    }
+
+    // Broadcast session_ended to all session rooms
+    const io = getIO ? getIO() : null;
+    const closedSessionIds = new Set();
+    if (sessionId) closedSessionIds.add(sessionId);
+    for (const s of sessions) {
+      if (s.session_id) closedSessionIds.add(s.session_id);
+    }
+
+    if (io) {
+      for (const sId of closedSessionIds) {
+        io.to(`assessment_verif_${sId}`).emit('assessment_verif:session_ended', {
+          sessionId: sId,
+          status: 'COMPLETED',
+          reason: 'ASSESSMENT_COMPLETED',
+          timestamp: Date.now(),
+        });
+        io.to(`monitoring_room_${sId}`).emit('monitoring:session_ended', {
+          sessionId: sId,
+          status: 'COMPLETED',
+          reason: 'ASSESSMENT_COMPLETED',
+          timestamp: Date.now(),
+        });
+      }
+    }
+
+    return {
+      success: true,
+      sessionId: sessionId || sessions[0]?.session_id || null,
+      status: 'COMPLETED',
+    };
+  }
 }
 
 module.exports = new AssessmentVerificationService();

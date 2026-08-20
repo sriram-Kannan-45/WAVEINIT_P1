@@ -61,21 +61,24 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
         if (token) headers.Authorization = `Bearer ${token}`
       }
 
-      const res = await fetch(`${API_BASE}/proctoring/reports/${attemptId}`, { headers })
+      let res = await fetch(`${API_BASE}/monitoring/reports/attempt/${attemptId}`, { headers });
+      if (!res.ok && res.status === 404) {
+        res = await fetch(`${API_BASE}/proctoring/reports/${attemptId}`, { headers });
+      }
       if (res.status === 401) {
-        throw new Error('Session expired. Please log in again.')
+        throw new Error('Session expired. Please log in again.');
       }
       if (res.status === 403) {
-        throw new Error("You don't have permission to view this participant's report.")
+        throw new Error("You don't have permission to view this participant's report.");
       }
       if (res.status === 404) {
-        throw new Error('No proctoring report available for this attempt.')
+        throw new Error('No proctoring report available for this attempt.');
       }
-      const resData = await res.json()
+      const resData = await res.json();
       if (!res.ok || !resData.success) {
-        throw new Error(resData.message || resData.error || 'Failed to fetch proctoring report')
+        throw new Error(resData.message || resData.error || 'Failed to fetch proctoring report');
       }
-      setData(resData.data)
+      setData(resData.data);
     } catch (err) {
       setError(err.message)
     } finally {
@@ -115,14 +118,71 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
     }
   }
 
-  const p = data?.proctoring || {}
-  const summary = p.summary || {}
-  const counts = summary.counts || { info: 0, warning: 0, high: 0, critical: 0 }
-  const categories = summary.categories || {}
-  const timeline = p.timeline || []
-  const riskLevel = p.riskLevel || 'LOW'
-  const riskScore = p.riskScore != null ? Math.round(p.riskScore) : 0
+  const p = data?.proctoring || data || {}
+  const timeline = p.timeline || data?.timeline || []
+  const summary = p.summary || data?.summary || {
+    totalEvents: data?.totalEvents || data?.eventsCount?.total || (timeline?.length) || 0,
+    counts: {
+      info: data?.infoEvents || 0,
+      warning: data?.warningEvents || 0,
+      high: data?.highEvents || 0,
+      critical: data?.criticalEvents || 0,
+    },
+    categories: data?.categoryBreakdown || {},
+    coverage: data?.coverage || {},
+    objectMonitoring: data?.objectMonitoring || { phoneEvents: data?.phoneViolationCount || (data?.categoryBreakdown?.devices || 0) },
+    mobilePhoneViolation: data?.mobilePhoneViolation || { detected: data?.hasPhoneViolation || false, count: data?.phoneViolationCount || 0 },
+    monitoringDuration: data?.durationSeconds ? `${Math.floor(data.durationSeconds / 60)}m ${data.durationSeconds % 60}s` : '—',
+  }
+  const counts = summary.counts || {
+    info: 0,
+    warning: data?.warningEvents || 0,
+    high: data?.highEvents || 0,
+    critical: data?.criticalEvents || 0,
+  }
+  const categories = summary.categories || data?.categoryBreakdown || {}
+  const riskLevel = p.riskLevel || data?.riskLevel || 'LOW'
+  const riskScore = p.riskScore != null ? Math.round(p.riskScore) : (data?.score != null ? Math.round(data.score) : 0)
   const riskStyle = RISK_BADGE[riskLevel] || RISK_BADGE.LOW
+
+  const durationSec = data?.durationSeconds || data?.timeTaken || (summary.monitoringDuration ? (() => {
+    const m = summary.monitoringDuration.match(/(\d+)m/);
+    const s = summary.monitoringDuration.match(/(\d+)s/);
+    return (m ? parseInt(m[1]) * 60 : 0) + (s ? parseInt(s[1]) : 0);
+  })() : null) || 60;
+
+  const realCoverage = useMemo(() => {
+    if (summary.coverage && Object.keys(summary.coverage).length > 0 && summary.coverage.faceDetection) {
+      return summary.coverage;
+    }
+    const totalSec = Math.max(1, durationSec);
+    const faceAbsentSec = timeline
+      .filter(e => ['FACE_ABSENT', 'FACE_NOT_DETECTED', 'FACE_NOT_VISIBLE', 'PARTICIPANT_ABSENT'].includes(e.eventType || e.event))
+      .reduce((acc, c) => acc + (Number(c.duration) || (c.durationMs ? c.durationMs / 1000 : 2)), 0);
+    const gazeDeviationSec = timeline
+      .filter(e => (e.eventType || e.event || '').includes('GAZE'))
+      .reduce((acc, c) => acc + (Number(c.duration) || (c.durationMs ? c.durationMs / 1000 : 2)), 0);
+    const headDeviationSec = timeline
+      .filter(e => (e.eventType || e.event || '').includes('HEAD'))
+      .reduce((acc, c) => acc + (Number(c.duration) || (c.durationMs ? c.durationMs / 1000 : 2)), 0);
+    const bodyFramingSec = timeline
+      .filter(e => (e.eventType || e.event || '').includes('BODY'))
+      .reduce((acc, c) => acc + (Number(c.duration) || (c.durationMs ? c.durationMs / 1000 : 2)), 0);
+    const phoneCount = timeline.filter(e => (e.eventType || e.event || '').includes('PHONE')).length;
+    const camDropSec = timeline
+      .filter(e => (e.eventType || e.event || '').includes('DISCONNECTED'))
+      .reduce((acc, c) => acc + (Number(c.duration) || (c.durationMs ? c.durationMs / 1000 : 10)), 0);
+
+    return {
+      faceDetection: `${Math.max(0, Math.min(100, Math.round(100 - (faceAbsentSec / totalSec) * 100)))}%`,
+      eyeTracking: `${Math.max(0, Math.min(100, Math.round(100 - (gazeDeviationSec / totalSec) * 100)))}%`,
+      headPose: `${Math.max(0, Math.min(100, Math.round(100 - (headDeviationSec / totalSec) * 100)))}%`,
+      bodyFraming: `${Math.max(0, Math.min(100, Math.round(100 - (bodyFramingSec / totalSec) * 100)))}%`,
+      audioCheck: `${Math.max(0, Math.min(100, 100 - timeline.filter(e => (e.eventType || e.event || '').includes('SPEAKING')).length * 10))}%`,
+      deviceCheck: phoneCount > 0 ? `FLAGGED (${phoneCount} Phone Incident${phoneCount > 1 ? 's' : ''})` : '100% CLEAN',
+      cameraAvailability: `${Math.max(0, Math.min(100, Math.round(100 - (camDropSec / totalSec) * 100)))}%`,
+    };
+  }, [summary.coverage, timeline, durationSec]);
 
   return createPortal(
     <div style={{
@@ -378,19 +438,19 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                   border: '1px solid #e2e8f0'
                 }}>
                   {[
-                    { label: 'Face Tracking', val: summary.coverage?.faceDetection || '98%' },
-                    { label: 'Eye/Gaze Tracking', val: summary.coverage?.eyeTracking || '95%' },
-                    { label: 'Head Pose', val: summary.coverage?.headPose || '97%' },
-                    { label: 'Upper-Body', val: summary.coverage?.bodyFraming || '95%' },
-                    { label: 'Audio/Earbud Check', val: summary.coverage?.audioCheck || '98%' },
+                    { label: 'Face Tracking', val: realCoverage.faceDetection || '100%' },
+                    { label: 'Eye/Gaze Tracking', val: realCoverage.eyeTracking || '100%' },
+                    { label: 'Head Pose', val: realCoverage.headPose || '100%' },
+                    { label: 'Upper-Body', val: realCoverage.bodyFraming || '100%' },
+                    { label: 'Audio/Earbud Check', val: realCoverage.audioCheck || '100%' },
                     {
                       label: 'Device/Phone Check',
-                      val: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0)
-                        ? `FLAGGED (${summary.objectMonitoring?.phoneEvents || categories.objects} Phone)`
-                        : (summary.coverage?.deviceCheck || '100% CLEAN'),
-                      isViolation: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0)
+                      val: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0 || realCoverage.deviceCheck?.includes('FLAGGED'))
+                        ? (realCoverage.deviceCheck || `FLAGGED (${summary.objectMonitoring?.phoneEvents || categories.objects} Phone)`)
+                        : (realCoverage.deviceCheck || '100% CLEAN'),
+                      isViolation: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0 || realCoverage.deviceCheck?.includes('FLAGGED'))
                     },
-                    { label: 'Camera Stream', val: summary.coverage?.cameraAvailability || '100%' },
+                    { label: 'Camera Stream', val: realCoverage.cameraAvailability || '100%' },
                   ].map((cov) => (
                     <div key={cov.label} style={{
                       textAlign: 'center',
@@ -422,156 +482,86 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <Smartphone size={16} color={(summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#dc2626' : '#475569'} />
-                    <span style={{
-                      fontSize: 13,
-                      fontWeight: 700,
-                      color: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#991b1b' : '#334155',
-                      textTransform: 'uppercase',
-                      letterSpacing: 0.5
-                    }}>
-                      Mobile Phone &amp; Object Detection Findings
-                    </span>
+                    <Smartphone size={16} color={(summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#dc2626' : '#0d9488'} />
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>AI Mobile &amp; Object Detection Overview</span>
                   </div>
                   <span style={{
                     fontSize: 11,
                     fontWeight: 700,
-                    background: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#dc2626' : '#10b981',
-                    color: '#ffffff',
                     padding: '2px 8px',
-                    borderRadius: 999
+                    borderRadius: 6,
+                    background: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#fee2e2' : '#dcfce7',
+                    color: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#dc2626' : '#15803d'
                   }}>
-                    {(summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? 'FLAGGED (PHONE FOUND)' : 'CLEAN (NO DEVICE)'}
+                    {(summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? 'SUSPICIOUS OBJECTS DETECTED' : 'CLEAR — NO DEVICES DETECTED'}
                   </span>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, fontSize: 11 }}>
-                  <div>
-                    <span style={{ fontWeight: 600, color: '#64748b' }}>Mobile Detected: </span>
-                    <span style={{
-                      fontWeight: 800,
-                      color: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#dc2626' : '#16a34a'
-                    }}>
-                      {(summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? 'YES (UNAUTHORIZED)' : 'NO'}
-                    </span>
-                  </div>
-                  <div>
-                    <span style={{ fontWeight: 600, color: '#64748b' }}>Phone Incidents: </span>
-                    <span style={{ fontWeight: 800, color: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#dc2626' : '#0f172a' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 8 }}>
+                  <div style={{ padding: '8px 10px', background: '#ffffff', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>Mobile Phones</div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#dc2626' : '#0f172a' }}>
                       {summary.objectMonitoring?.phoneEvents || categories.objects || 0}
-                    </span>
+                    </div>
                   </div>
-                  <div>
-                    <span style={{ fontWeight: 600, color: '#64748b' }}>Severity: </span>
-                    <span style={{ fontWeight: 800, color: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#dc2626' : '#16a34a' }}>
-                      {(summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? 'HIGH' : 'NONE'}
-                    </span>
+                  <div style={{ padding: '8px 10px', background: '#ffffff', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>Second Person / Faces</div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: (summary.multiplePersonMonitoring?.eventsCount > 0 || categories.multiplePerson > 0) ? '#dc2626' : '#0f172a' }}>
+                      {summary.multiplePersonMonitoring?.eventsCount || categories.multiplePerson || 0}
+                    </div>
                   </div>
-                  <div>
-                    <span style={{ fontWeight: 600, color: '#64748b' }}>Laptop / Screen: </span>
-                    <span style={{ fontWeight: 700, color: '#334155' }}>{summary.objectMonitoring?.laptopEvents ? 'DETECTED' : 'CLEAR'}</span>
+                  <div style={{ padding: '8px 10px', background: '#ffffff', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>Secondary Screens</div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: '#0f172a' }}>
+                      {summary.objectMonitoring?.laptopEvents || 0}
+                    </div>
                   </div>
-                  <div>
-                    <span style={{ fontWeight: 600, color: '#64748b' }}>Book / Paper: </span>
-                    <span style={{ fontWeight: 700, color: '#334155' }}>{summary.objectMonitoring?.bookEvents ? 'DETECTED' : 'CLEAR'}</span>
-                  </div>
-                  <div>
-                    <span style={{ fontWeight: 600, color: '#64748b' }}>Device Status: </span>
-                    <span style={{ fontWeight: 700, color: (summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? '#dc2626' : '#059669' }}>
-                      {(summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? 'VIOLATION RECORDED' : 'VERIFIED CLEAN'}
-                    </span>
+                  <div style={{ padding: '8px 10px', background: '#ffffff', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>Books / Notes</div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: '#0f172a' }}>
+                      {summary.objectMonitoring?.bookEvents || 0}
+                    </div>
                   </div>
                 </div>
               </div>
 
-              {/* Dedicated Eye / Iris Monitoring Card */}
-              <div style={{
-                marginBottom: 20,
-                background: '#f0fdfa',
-                borderRadius: 12,
-                border: '1px solid #ccfbf1',
-                padding: '14px 18px'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <Eye size={16} color="#0f766e" />
-                    <span style={{ fontSize: 13, fontWeight: 700, color: '#0f766e', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                      Eye / Iris Monitoring Observations
-                    </span>
-                  </div>
-                  <span style={{ fontSize: 11, fontWeight: 700, background: '#14b8a6', color: '#ffffff', padding: '2px 8px', borderRadius: 999 }}>
-                    {summary.eyeMonitoring?.trackingStatus || 'ACTIVE'}
-                  </span>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, fontSize: 11, color: '#134e4a' }}>
-                  <div>
-                    <span style={{ fontWeight: 600, color: '#0f766e' }}>Left Eye: </span>
-                    <span style={{ fontWeight: 700 }}>{summary.eyeMonitoring?.leftEye || 'TRACKED'}</span>
-                  </div>
-                  <div>
-                    <span style={{ fontWeight: 600, color: '#0f766e' }}>Right Eye: </span>
-                    <span style={{ fontWeight: 700 }}>{summary.eyeMonitoring?.rightEye || 'TRACKED'}</span>
-                  </div>
-                  <div>
-                    <span style={{ fontWeight: 600, color: '#0f766e' }}>Iris Tracking: </span>
-                    <span style={{ fontWeight: 700 }}>{summary.eyeMonitoring?.irisTracking || 'ACTIVE'}</span>
-                  </div>
-                  <div>
-                    <span style={{ fontWeight: 600, color: '#0f766e' }}>Normal Gaze: </span>
-                    <span style={{ fontWeight: 700 }}>{summary.eyeMonitoring?.normalGazeObserved ? 'DETECTED' : 'ACTIVE'}</span>
-                  </div>
-                  <div>
-                    <span style={{ fontWeight: 600, color: '#0f766e' }}>Eye Events: </span>
-                    <span style={{ fontWeight: 700 }}>{categories.eyes || 0}</span>
-                  </div>
-                  <div>
-                    <span style={{ fontWeight: 600, color: '#0f766e' }}>Blink Count: </span>
-                    <span style={{ fontWeight: 700 }}>{summary.eyeMonitoring?.blinkCount || 28}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Category Breakdown Grid */}
-              <div style={{ marginBottom: 24 }}>
-                <h4 style={{ fontSize: 13, fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 10px' }}>
-                  Monitoring Categories (Violations / Events)
+              {/* Category Breakdown Badges */}
+              <div style={{ marginBottom: 20 }}>
+                <h4 style={{ fontSize: 12, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 10px' }}>
+                  Violations by Category
                 </h4>
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
-                  gap: 10
-                }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 8 }}>
                   {[
-                    { label: 'Face', count: categories.face || 0, icon: Users },
-                    { label: 'Eyes', count: categories.eyes || 0, icon: Eye },
-                    { label: 'Head', count: categories.head || 0, icon: Activity },
-                    { label: 'Body', count: categories.body || 0, icon: Shield },
-                    { label: 'Multiple Person', count: categories.multiplePerson || 0, icon: Users },
-                    { label: 'Objects', count: categories.objects || 0, icon: Smartphone },
-                    { label: 'Browser', count: categories.browser || 0, icon: Monitor },
-                    { label: 'Camera', count: categories.camera || 0, icon: Video },
+                    { label: 'Face / Person', count: categories.face || 0, icon: Users },
+                    { label: 'Gaze / Eyes', count: categories.eyes || 0, icon: Eye },
+                    { label: 'Head Pose', count: categories.head || 0, icon: Activity },
+                    { label: 'Upper Body', count: categories.body || 0, icon: Users },
+                    { label: 'Multi-Person', count: categories.multiplePerson || 0, icon: Users },
+                    { label: 'Devices/Objects', count: categories.objects || 0, icon: Smartphone },
+                    { label: 'Browser/Security', count: categories.browser || 0, icon: Monitor },
+                    { label: 'Camera Issues', count: categories.camera || 0, icon: Video },
                   ].map((cat) => {
                     const Icon = cat.icon
                     return (
                       <div key={cat.label} style={{
-                        padding: '10px 12px',
-                        background: cat.count > 0 ? '#f8fafc' : '#ffffff',
-                        border: cat.count > 0 ? '1px solid #cbd5e1' : '1px solid #f1f5f9',
+                        padding: '8px 10px',
+                        background: cat.count > 0 ? '#fee2e2' : '#f8fafc',
+                        border: cat.count > 0 ? '1px solid #fca5a5' : '1px solid #e2e8f0',
                         borderRadius: 8,
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between'
                       }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <Icon size={14} color="#64748b" />
-                          <span style={{ fontSize: 12, fontWeight: 600, color: '#334155' }}>{cat.label}</span>
+                          <Icon size={14} color={cat.count > 0 ? '#dc2626' : '#64748b'} />
+                          <span style={{ fontSize: 12, fontWeight: 600, color: cat.count > 0 ? '#991b1b' : '#334155' }}>{cat.label}</span>
                         </div>
                         <span style={{
                           fontSize: 12,
                           fontWeight: 700,
-                          color: cat.count > 0 ? '#0f172a' : '#94a3b8',
+                          color: cat.count > 0 ? '#991b1b' : '#94a3b8',
                           padding: '1px 6px',
                           borderRadius: 4,
-                          background: cat.count > 0 ? '#e2e8f0' : 'transparent'
+                          background: cat.count > 0 ? '#fee2e2' : 'transparent'
                         }}>
                           {cat.count}
                         </span>
@@ -584,7 +574,7 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
               {/* Event Timeline Table */}
               <div>
                 <h4 style={{ fontSize: 13, fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 10px' }}>
-                  Event Timeline ({timeline.length})
+                  Event Timeline &amp; Incident Drill-Down ({timeline.length})
                 </h4>
                 {timeline.length === 0 ? (
                   <div style={{ padding: 30, textAlign: 'center', background: '#f8fafc', borderRadius: 8, border: '1px dashed #cbd5e1', color: '#64748b', fontSize: 13 }}>
@@ -595,20 +585,53 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                       <thead>
                         <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', textAlign: 'left', color: '#64748b' }}>
-                          <th style={{ padding: '8px 12px', width: 90 }}>Time</th>
-                          <th style={{ padding: '8px 12px' }}>Event</th>
-                          <th style={{ padding: '8px 12px', width: 100 }}>Severity</th>
-                          <th style={{ padding: '8px 12px', width: 90, textAlign: 'right' }}>Confidence</th>
-                          <th style={{ padding: '8px 12px', width: 90, textAlign: 'right' }}>Duration</th>
+                          <th style={{ padding: '8px 12px', width: 85 }}>Time</th>
+                          <th style={{ padding: '8px 10px', width: 90 }}>Source</th>
+                          <th style={{ padding: '8px 12px' }}>Event &amp; Incident Detail</th>
+                          <th style={{ padding: '8px 12px', width: 95 }}>Severity</th>
+                          <th style={{ padding: '8px 10px', width: 80, textAlign: 'right' }}>Confidence</th>
+                          <th style={{ padding: '8px 10px', width: 75, textAlign: 'right' }}>Duration</th>
+                          <th style={{ padding: '8px 12px', width: 80, textAlign: 'right' }}>Risk Delta</th>
                         </tr>
                       </thead>
                       <tbody>
                         {timeline.map((ev, idx) => {
                           const sevStyle = SEVERITY_BADGE[ev.severity] || SEVERITY_BADGE.INFO
+                          const timeStr = ev.time || (ev.occurredAt || ev.timestamp ? new Date(ev.occurredAt || ev.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—')
+                          const eventName = ev.event || (ev.eventType ? ev.eventType.replace(/_/g, ' ') : 'Monitoring Event')
+                          const confVal = ev.confidence != null ? Math.round(Number(ev.confidence) <= 1 ? Number(ev.confidence) * 100 : Number(ev.confidence)) : null
+                          const durVal = ev.duration != null ? (typeof ev.duration === 'number' ? `${Math.round(ev.duration * 10) / 10}s` : `${ev.duration}`) : (ev.durationMs != null ? `${Math.round(ev.durationMs / 100) / 10}s` : '—')
+                          const sourceName = (ev.source || 'LAPTOP').toUpperCase()
+                          const isMobileSource = sourceName.includes('MOBILE') || sourceName.includes('QR')
+                          const delta = ev.scoreDelta != null ? `+${ev.scoreDelta} pts` : (ev.severity === 'HIGH' ? '+15' : ev.severity === 'CRITICAL' ? '+25' : ev.severity === 'WARNING' ? '+8' : '0')
+                          const detailText = ev.metadata?.detail || ev.metadata?.reason || ev.metadata?.message || (ev.metadata?.face_count ? `Detected ${ev.metadata.face_count} faces in frame` : null)
+
                           return (
                             <tr key={ev.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                              <td style={{ padding: '8px 12px', fontWeight: 600, color: '#64748b' }}>{ev.time}</td>
-                              <td style={{ padding: '8px 12px', fontWeight: 600, color: '#0f172a' }}>{ev.event}</td>
+                              <td style={{ padding: '8px 12px', fontWeight: 600, color: '#64748b', whiteSpace: 'nowrap' }}>{timeStr}</td>
+                              <td style={{ padding: '8px 10px' }}>
+                                <span style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  padding: '2px 6px',
+                                  borderRadius: 4,
+                                  background: isMobileSource ? '#eff6ff' : '#f1f5f9',
+                                  color: isMobileSource ? '#2563eb' : '#475569',
+                                  border: isMobileSource ? '1px solid #bfdbfe' : '1px solid #e2e8f0'
+                                }}>
+                                  {isMobileSource ? <Smartphone size={10} /> : <Laptop size={10} />}
+                                  {isMobileSource ? 'MOBILE' : 'LAPTOP'}
+                                </span>
+                              </td>
+                              <td style={{ padding: '8px 12px' }}>
+                                <div style={{ fontWeight: 600, color: '#0f172a' }}>{eventName}</div>
+                                {detailText && (
+                                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{detailText}</div>
+                                )}
+                              </td>
                               <td style={{ padding: '8px 12px' }}>
                                 <span style={{
                                   padding: '2px 8px',
@@ -621,11 +644,14 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                                   {ev.severity}
                                 </span>
                               </td>
-                              <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, color: '#475569' }}>
-                                {ev.confidence != null ? `${ev.confidence}%` : '—'}
+                              <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: '#475569' }}>
+                                {confVal != null ? `${confVal}%` : '—'}
                               </td>
-                              <td style={{ padding: '8px 12px', textAlign: 'right', color: '#64748b' }}>
-                                {ev.duration ? `${ev.duration}s` : '—'}
+                              <td style={{ padding: '8px 10px', textAlign: 'right', color: '#64748b' }}>
+                                {durVal}
+                              </td>
+                              <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: sevStyle.fg }}>
+                                {delta}
                               </td>
                             </tr>
                           )

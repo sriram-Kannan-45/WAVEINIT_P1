@@ -140,6 +140,29 @@ exports.destroy = async (req, res) => {
   } catch (err) { fail(res, 500, err.message); }
 };
 
+const normalizeTestCase = (tc, problemId, index = 0) => {
+  const input = tc?.input != null
+    ? String(tc.input)
+    : (tc?.sampleInput != null ? String(tc.sampleInput) : '');
+  const expectedOutput = tc?.expectedOutput != null
+    ? String(tc.expectedOutput)
+    : (tc?.output != null
+      ? String(tc.output)
+      : (tc?.expected_output != null
+        ? String(tc.expected_output)
+        : (tc?.expected != null
+          ? String(tc.expected)
+          : (tc?.sampleOutput != null ? String(tc.sampleOutput) : ''))));
+  return {
+    problemId,
+    input,
+    expectedOutput,
+    isHidden: Boolean(tc?.isHidden ?? tc?.is_hidden ?? false),
+    description: tc?.description || null,
+    order: tc?.order != null ? Number(tc.order) : index,
+  };
+};
+
 // ── TRAINER: Problems CRUD ──
 
 exports.createProblem = async (req, res) => {
@@ -150,10 +173,19 @@ exports.createProblem = async (req, res) => {
     const problem = await CodingProblem.create({
       assessmentId: assessment.id, title, description, constraints, inputFormat, outputFormat, sampleInput, sampleOutput, explanation, difficulty, programmingLanguage, starterCode, expectedSolution, timeLimit, memoryLimit, marks, tags
     });
-    if (testCases && Array.isArray(testCases)) {
+    if (testCases && Array.isArray(testCases) && testCases.length > 0) {
       for (let i = 0; i < testCases.length; i++) {
-        await CodingTestCase.create({ problemId: problem.id, ...testCases[i], order: i });
+        await CodingTestCase.create(normalizeTestCase(testCases[i], problem.id, i));
       }
+    } else if (sampleInput != null || sampleOutput != null) {
+      await CodingTestCase.create({
+        problemId: problem.id,
+        input: sampleInput != null ? String(sampleInput) : '',
+        expectedOutput: sampleOutput != null ? String(sampleOutput) : '',
+        isHidden: false,
+        description: 'Sample Test Case',
+        order: 0,
+      });
     }
     const full = await CodingProblem.findByPk(problem.id, { include: [{ model: CodingTestCase, as: 'testCases' }] });
     ok(res, { problem: full });
@@ -175,7 +207,7 @@ exports.updateProblem = async (req, res) => {
     if (req.body.testCases && Array.isArray(req.body.testCases)) {
       await CodingTestCase.destroy({ where: { problemId: problem.id } });
       for (let i = 0; i < req.body.testCases.length; i++) {
-        await CodingTestCase.create({ problemId: problem.id, ...req.body.testCases[i], order: i });
+        await CodingTestCase.create(normalizeTestCase(req.body.testCases[i], problem.id, i));
       }
     }
     const full = await CodingProblem.findByPk(problem.id, { include: [{ model: CodingTestCase, as: 'testCases' }] });
@@ -228,10 +260,20 @@ exports.generateFromPrompt = async (req, res) => {
         timeLimit: p.timeLimit || 5, memoryLimit: p.memoryLimit || 256, marks: p.marks || 10,
         tags: p.tags || [], order: i
       });
-      if (p.testCases && Array.isArray(p.testCases)) {
-        for (let j = 0; j < p.testCases.length; j++) {
-          await CodingTestCase.create({ problemId: problem.id, ...p.testCases[j], order: j });
+      const rawTestCases = Array.isArray(p.testCases) ? p.testCases : [];
+      if (rawTestCases.length > 0) {
+        for (let j = 0; j < rawTestCases.length; j++) {
+          await CodingTestCase.create(normalizeTestCase(rawTestCases[j], problem.id, j));
         }
+      } else if (p.sampleInput != null || p.sampleOutput != null) {
+        await CodingTestCase.create({
+          problemId: problem.id,
+          input: p.sampleInput != null ? String(p.sampleInput) : '',
+          expectedOutput: p.sampleOutput != null ? String(p.sampleOutput) : '',
+          isHidden: false,
+          description: 'Sample Test Case',
+          order: 0,
+        });
       }
     }
     const full = await CodingAssessment.findByPk(assessment.id, {
@@ -888,6 +930,12 @@ exports.submitAssessment = async (req, res) => {
       }, { transaction: t });
       return codingResult;
     });
+
+    // Automatically conclude verification and monitoring session and close mobile camera
+    try {
+      const verificationService = require('../services/assessmentVerificationService');
+      await verificationService.endSession({ attemptId: result.attemptId, participantId: req.user.id }).catch(() => {});
+    } catch (_) {}
 
     // Auto-generate proctoring report in background for coding attempt
     try {

@@ -14,6 +14,7 @@ import { getCourseThumbnail, getThumbnailSVG } from '../config/courseThumbnailMa
 import emptyCourseImg from '../assets/illustrations/empty-course.png'
 
 import { useToast } from '../components/Toast'
+import { useConfirm } from '../components/ui/AlertModal'
 import MaterialManager from '../components/trainer/MaterialManager'
 import CourseQuizzesTab from '../components/trainer/CourseQuizzesTab'
 import CourseParticipantsTab from '../components/trainer/CourseParticipantsTab'
@@ -864,6 +865,7 @@ function getTaxonomyInfo(title) {
 
 function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
   const { success, error: showError, info } = useToast()
+  const confirm = useConfirm()
   const [lessons, setLessons] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -924,7 +926,13 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
   }
 
   const remove = async (l) => {
-    if (!window.confirm(`Delete lesson "${l.title}"? This cannot be undone.`)) return
+    const ok = await confirm({
+      title: 'Delete Lesson',
+      message: `Are you sure you want to delete lesson "${l.title}"? This cannot be undone.`,
+      type: 'danger',
+      confirmText: 'Delete Lesson',
+    })
+    if (!ok) return
     try {
       const r = await fetch(API.TRAINER_COURSES.LESSON(courseId, l.id), {
         method: 'DELETE', headers: auth(),

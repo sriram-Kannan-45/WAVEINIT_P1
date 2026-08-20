@@ -12,6 +12,7 @@ import {
 import { SingleAttemptProctoringModal } from '../proctoring/components/TrainerMonitoringReport'
 import { API } from '../api/api'
 import { useToast } from '../components/Toast'
+import { useConfirm } from '../components/ui/AlertModal'
 import CodeEditor from '../components/CodeEditor'
 import {
   colors, btnPrimary, btnSuccess, btnDanger, btnOutline, iconBtn,
@@ -52,6 +53,7 @@ export default function TrainerCodingAssessmentDetails({ user }) {
    ───────────────────────────────────────────────────────────────────────────── */
 export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRefresh, isFullPageRoute }) {
   const toast = useToast()
+  const confirm = useConfirm()
   const auth = () => ({ Authorization: `Bearer ${user?.token}`, 'Content-Type': 'application/json' })
 
   const [assessment, setAssessment] = useState(null)
@@ -88,7 +90,7 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
           title: d.assessment.title || '',
           description: d.assessment.description || '',
           timeLimit: d.assessment.timeLimit || 120,
-          languages: d.assessment.languages || ['javascript', 'python'],
+          languages: Array.isArray(d.assessment.languages) ? d.assessment.languages : ['javascript', 'python'],
         })
       } else {
         toast.error('Assessment not found')
@@ -116,7 +118,13 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
   }
 
   const handleCloseAssessment = async () => {
-    if (!confirm('Close this assessment? Participants will no longer be able to submit.')) return
+    const ok = await confirm({
+      title: 'Close Assessment',
+      message: 'Are you sure you want to close this assessment? Participants will no longer be able to submit.',
+      type: 'warning',
+      confirmText: 'Close Assessment',
+    })
+    if (!ok) return
     try {
       const r = await fetch(API.CODING.CLOSE(assessmentId), { method: 'POST', headers: auth() })
       if (!r.ok) throw new Error('Close failed')
@@ -127,7 +135,13 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
   }
 
   const handleDelete = async () => {
-    if (!confirm('Delete this assessment permanently? This cannot be undone.')) return
+    const ok = await confirm({
+      title: 'Delete Assessment',
+      message: 'Are you sure you want to delete this assessment permanently? This cannot be undone.',
+      type: 'danger',
+      confirmText: 'Delete Permanently',
+    })
+    if (!ok) return
     try {
       const r = await fetch(API.CODING.DELETE(assessmentId), { method: 'DELETE', headers: auth() })
       if (!r.ok) throw new Error('Delete failed')
@@ -701,13 +715,20 @@ function GeneralTabContent({ assessment, trainerDisplayName }) {
    2. PROBLEMS TAB
    ───────────────────────────────────────────────────────────────────────────── */
 function ProblemsTab({ assessment, onRefresh, auth, toast }) {
+  const confirm = useConfirm()
   const [modalOpen, setModalOpen] = useState(false)
   const [editingProblem, setEditingProblem] = useState(null)
   const [showAIWizard, setShowAIWizard] = useState(false)
   const problems = assessment.problems || []
 
   const handleDeleteProblem = async (probId) => {
-    if (!confirm('Delete this problem?')) return
+    const ok = await confirm({
+      title: 'Delete Problem',
+      message: 'Are you sure you want to delete this problem?',
+      type: 'danger',
+      confirmText: 'Delete Problem',
+    })
+    if (!ok) return
     try {
       const r = await fetch(API.CODING.DELETE_PROBLEM(probId), { method: 'DELETE', headers: auth() })
       if (!r.ok) throw new Error('Delete failed')

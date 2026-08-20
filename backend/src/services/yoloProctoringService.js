@@ -143,9 +143,63 @@ class YOLOProctoringService {
           ts: timestamp ? new Date(timestamp) : new Date(),
         });
       } else {
+        // Resolve attemptId if missing
+        let resolvedAttemptId = event.attemptId;
+        let session = null;
+        try {
+          const monitoringService = require('./monitoringService');
+          session = await monitoringService.getSession(sessionId);
+          if (session && !resolvedAttemptId) {
+            resolvedAttemptId = session.attemptId;
+          }
+          if (!resolvedAttemptId) {
+            const { AssessmentVerificationSession, QuizAttempt, CodingAttempt } = require('../models');
+            const verif = await AssessmentVerificationSession.findOne({ where: { sessionId } });
+            if (verif?.attemptId) {
+              resolvedAttemptId = verif.attemptId;
+            } else {
+              const qa = await QuizAttempt.findOne({ where: { monitoringSessionId: sessionId } });
+              if (qa) {
+                resolvedAttemptId = qa.id;
+              } else {
+                const ca = await CodingAttempt.findOne({ where: { monitoringSessionId: sessionId } });
+                if (ca) {
+                  resolvedAttemptId = ca.id;
+                }
+              }
+            }
+          }
+
+          if (!resolvedAttemptId && (participantId || session?.participantId)) {
+            const { QuizAttempt, CodingAttempt } = require('../models');
+            const { Op } = require('sequelize');
+            const pId = Number(participantId || session?.participantId);
+            const qa = await QuizAttempt.findOne({
+              where: {
+                participantId: pId,
+                status: { [Op.in]: ['IN_PROGRESS', 'STARTED', 'in_progress', 'started'] },
+              },
+              order: [['id', 'DESC']],
+            });
+            if (qa) {
+              resolvedAttemptId = qa.id;
+            } else {
+              const ca = await CodingAttempt.findOne({
+                where: {
+                  participantId: pId,
+                  status: { [Op.in]: ['IN_PROGRESS', 'STARTED', 'in_progress', 'started'] },
+                },
+                order: [['id', 'DESC']],
+              });
+              if (ca) resolvedAttemptId = ca.id;
+            }
+          }
+        } catch (_) {}
+
         // Quiz & Coding: Save to ProctoringEvent if ProctoringSession or ExamSession exists
         await ProctoringEvent.create({
           monitoringSessionId: sessionId,
+          attemptId: resolvedAttemptId || null,
           participantId,
           eventType,
           severity: severity || 'INFO',
@@ -162,6 +216,31 @@ class YOLOProctoringService {
           // Non-blocking catch if foreign keys / session table not yet synced
           logger.debug(`[YOLOProctoringService] Event log note: ${e.message}`);
         });
+
+        // Also persist to MonitoringEvent & update MonitoringSession if sessionId exists
+        try {
+          const monitoringService = require('./monitoringService');
+          if (session) {
+            await monitoringService.reportEvent({
+              sessionId: session.sessionId,
+              attemptId: resolvedAttemptId || session.attemptId,
+              participantId: session.participantId,
+              source: cameraSource === 'MOBILE_CAMERA' ? 'MOBILE' : 'LAPTOP',
+              eventType,
+              severity: severity || 'INFO',
+              durationMs: 2000,
+              confidence: confidence || 0.9,
+              metadata: {
+                cameraSource,
+                moduleType,
+                detectedClasses,
+                detectionsCount: detections.length,
+              },
+            });
+          }
+        } catch (monErr) {
+          logger.debug(`[YOLOProctoringService] MonitoringEvent log note: ${monErr.message}`);
+        }
       }
     } catch (e) {
       logger.warn(`[YOLOProctoringService] Persistence error: ${e.message}`);

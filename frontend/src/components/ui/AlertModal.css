@@ -1,0 +1,365 @@
+/* ==========================================================================
+   WAVE INIT LMS — Custom Enterprise SaaS Alert & Confirmation Modal
+   ========================================================================== */
+
+.wam-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 99999 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 16px !important;
+  background: rgba(15, 23, 42, 0.55) !important;
+  backdrop-filter: blur(5px) !important;
+  -webkit-backdrop-filter: blur(5px) !important;
+  box-sizing: border-box !important;
+}
+
+.wam-card {
+  position: relative !important;
+  width: 100% !important;
+  max-width: 420px !important;
+  background: #FFFFFF !important;
+  border-radius: 24px !important;
+  padding: 32px 28px 24px 28px !important;
+  box-shadow: 0 24px 48px -12px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.04) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  text-align: center !important;
+  box-sizing: border-box !important;
+  font-family: inherit !important;
+  overflow: hidden !important;
+}
+
+/* ── Icon Badge with Sparkle Micro-Accents ── */
+.wam-icon-wrapper {
+  position: relative !important;
+  width: 80px !important;
+  height: 80px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-bottom: 20px !important;
+}
+
+.wam-icon-circle {
+  width: 76px !important;
+  height: 76px !important;
+  border-radius: 50% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+/* Sparkle stars around the circle */
+.wam-sparkle {
+  position: absolute !important;
+  pointer-events: none !important;
+  opacity: 0.8 !important;
+}
+
+.wam-sparkle--top-right {
+  top: 2px !important;
+  right: 6px !important;
+}
+
+.wam-sparkle--top-left {
+  top: 14px !important;
+  left: 2px !important;
+}
+
+.wam-sparkle--bottom-right {
+  bottom: 8px !important;
+  right: 0px !important;
+}
+
+/* Theme Variations */
+/* 1. Green / Publish / Submit / Success / Enroll */
+.wam-theme--publish .wam-icon-circle,
+.wam-theme--submit .wam-icon-circle,
+.wam-theme--success .wam-icon-circle,
+.wam-theme--enroll .wam-icon-circle,
+.wam-theme--confirm .wam-icon-circle {
+  background: #EAF8F0 !important;
+  color: #16A34A !important;
+}
+
+.wam-theme--publish .wam-sparkle,
+.wam-theme--submit .wam-sparkle,
+.wam-theme--success .wam-sparkle,
+.wam-theme--enroll .wam-sparkle,
+.wam-theme--confirm .wam-sparkle {
+  color: #86EFAC !important;
+}
+
+/* 2. Danger / Delete / Terminate */
+.wam-theme--danger .wam-icon-circle,
+.wam-theme--delete .wam-icon-circle,
+.wam-theme--terminate .wam-icon-circle,
+.wam-theme--error .wam-icon-circle {
+  background: #FEF2F2 !important;
+  color: #DC2626 !important;
+}
+
+.wam-theme--danger .wam-sparkle,
+.wam-theme--delete .wam-sparkle,
+.wam-theme--terminate .wam-sparkle,
+.wam-theme--error .wam-sparkle {
+  color: #FCA5A5 !important;
+}
+
+/* 3. Warning / Close / Reset / Unsaved */
+.wam-theme--warning .wam-icon-circle,
+.wam-theme--reset .wam-icon-circle,
+.wam-theme--close .wam-icon-circle {
+  background: #FFFBEB !important;
+  color: #D97706 !important;
+}
+
+.wam-theme--warning .wam-sparkle,
+.wam-theme--reset .wam-sparkle,
+.wam-theme--close .wam-sparkle {
+  color: #FDE68A !important;
+}
+
+/* 4. Info / Prompt / Details */
+.wam-theme--info .wam-icon-circle,
+.wam-theme--prompt .wam-icon-circle {
+  background: #EFF6FF !important;
+  color: #2563EB !important;
+}
+
+.wam-theme--info .wam-sparkle,
+.wam-theme--prompt .wam-sparkle {
+  color: #93C5FD !important;
+}
+
+/* 5. Logout */
+.wam-theme--logout .wam-icon-circle {
+  background: #FFF1F2 !important;
+  color: #E11D48 !important;
+}
+
+.wam-theme--logout .wam-sparkle {
+  color: #FDA4AF !important;
+}
+
+/* ── Title & Message ── */
+.wam-title {
+  font-size: 20px !important;
+  font-weight: 700 !important;
+  color: #0F172A !important;
+  line-height: 1.3 !important;
+  margin: 0 0 10px 0 !important;
+  letter-spacing: -0.015em !important;
+}
+
+.wam-message {
+  font-size: 14px !important;
+  font-weight: 400 !important;
+  color: #475569 !important;
+  line-height: 1.55 !important;
+  margin: 0 0 24px 0 !important;
+  word-break: break-word !important;
+}
+
+.wam-highlight {
+  font-weight: 600 !important;
+  color: #16A34A !important;
+}
+
+.wam-theme--danger .wam-highlight,
+.wam-theme--delete .wam-highlight,
+.wam-theme--terminate .wam-highlight,
+.wam-theme--error .wam-highlight {
+  color: #DC2626 !important;
+}
+
+.wam-theme--warning .wam-highlight,
+.wam-theme--reset .wam-highlight {
+  color: #D97706 !important;
+}
+
+/* ── Prompt Input Field ── */
+.wam-prompt-wrapper {
+  width: 100% !important;
+  margin-bottom: 22px !important;
+  text-align: left !important;
+}
+
+.wam-prompt-input {
+  width: 100% !important;
+  box-sizing: border-box !important;
+  background: #F8FAFC !important;
+  border: 1.5px solid #CBD5E1 !important;
+  border-radius: 12px !important;
+  padding: 10px 14px !important;
+  font-size: 14px !important;
+  color: #0F172A !important;
+  outline: none !important;
+  transition: all 0.15s ease !important;
+  font-family: inherit !important;
+}
+
+.wam-prompt-input:focus {
+  background: #FFFFFF !important;
+  border-color: #16A34A !important;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.14) !important;
+}
+
+/* ── Action Buttons ── */
+.wam-actions {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 12px !important;
+  width: 100% !important;
+}
+
+.wam-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 7px !important;
+  padding: 11px 20px !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  border-radius: 12px !important;
+  cursor: pointer !important;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  white-space: nowrap !important;
+  box-sizing: border-box !important;
+  font-family: inherit !important;
+  text-decoration: none !important;
+}
+
+.wam-btn:disabled {
+  opacity: 0.6 !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+}
+
+/* Cancel Button */
+.wam-btn-cancel {
+  flex: 1 !important;
+  background: #FFFFFF !important;
+  border: 1.5px solid #CBD5E1 !important;
+  color: #0F172A !important;
+}
+
+.wam-btn-cancel:hover:not(:disabled) {
+  background: #F8FAFC !important;
+  border-color: #94A3B8 !important;
+  color: #0F172A !important;
+}
+
+.wam-btn-cancel:active:not(:disabled) {
+  background: #F1F5F9 !important;
+}
+
+/* Primary Confirm Button (Green by default) */
+.wam-btn-confirm {
+  flex: 1.2 !important;
+  background: #16A34A !important;
+  border: 1px solid #15803D !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.28) !important;
+}
+
+.wam-btn-confirm:hover:not(:disabled) {
+  background: #15803D !important;
+  border-color: #166534 !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 6px 16px rgba(22, 163, 74, 0.36) !important;
+}
+
+.wam-btn-confirm:active:not(:disabled) {
+  transform: translateY(0) !important;
+}
+
+/* Danger / Delete Confirm Button */
+.wam-btn-confirm--danger {
+  background: #DC2626 !important;
+  border-color: #B91C1C !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.28) !important;
+}
+
+.wam-btn-confirm--danger:hover:not(:disabled) {
+  background: #B91C1C !important;
+  border-color: #991B1B !important;
+  box-shadow: 0 6px 16px rgba(220, 38, 38, 0.36) !important;
+}
+
+/* Warning Confirm Button */
+.wam-btn-confirm--warning {
+  background: #D97706 !important;
+  border-color: #B45309 !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 4px 12px rgba(217, 119, 6, 0.28) !important;
+}
+
+.wam-btn-confirm--warning:hover:not(:disabled) {
+  background: #B45309 !important;
+  border-color: #92400E !important;
+  box-shadow: 0 6px 16px rgba(217, 119, 6, 0.36) !important;
+}
+
+/* Info Confirm Button */
+.wam-btn-confirm--info {
+  background: #2563EB !important;
+  border-color: #1D4ED8 !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28) !important;
+}
+
+.wam-btn-confirm--info:hover:not(:disabled) {
+  background: #1D4ED8 !important;
+  border-color: #1E40AF !important;
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.36) !important;
+}
+
+/* Logout Confirm Button */
+.wam-btn-confirm--logout {
+  background: #E11D48 !important;
+  border-color: #BE123C !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 4px 12px rgba(225, 29, 72, 0.28) !important;
+}
+
+.wam-btn-confirm--logout:hover:not(:disabled) {
+  background: #BE123C !important;
+  border-color: #9F1239 !important;
+  box-shadow: 0 6px 16px rgba(225, 29, 72, 0.36) !important;
+}
+
+/* Spin animation for button loader */
+.wam-spin {
+  animation: wamSpin 1s linear infinite !important;
+}
+
+@keyframes wamSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 480px) {
+  .wam-card {
+    padding: 24px 20px 20px 20px !important;
+    border-radius: 20px !important;
+  }
+  .wam-actions {
+    flex-direction: column-reverse !important;
+    gap: 8px !important;
+  }
+  .wam-btn {
+    width: 100% !important;
+  }
+}

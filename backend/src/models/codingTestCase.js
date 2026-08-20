@@ -14,11 +14,13 @@ const CodingTestCase = sequelize.define('CodingTestCase', {
   },
   input: {
     type: DataTypes.TEXT,
-    allowNull: false
+    allowNull: false,
+    defaultValue: ''
   },
   expectedOutput: {
     type: DataTypes.TEXT,
     allowNull: false,
+    defaultValue: '',
     field: 'expected_output'
   },
   isHidden: {
@@ -39,7 +41,28 @@ const CodingTestCase = sequelize.define('CodingTestCase', {
   tableName: 'coding_test_cases',
   timestamps: true,
   createdAt: 'created_at',
-  updatedAt: 'updated_at'
+  updatedAt: 'updated_at',
+  hooks: {
+    beforeValidate: (tc) => {
+      if (tc.expectedOutput == null) {
+        tc.expectedOutput = tc.output != null
+          ? String(tc.output)
+          : (tc.expected_output != null
+            ? String(tc.expected_output)
+            : (tc.expected != null
+              ? String(tc.expected)
+              : (tc.sampleOutput != null ? String(tc.sampleOutput) : '')));
+      } else {
+        tc.expectedOutput = String(tc.expectedOutput);
+      }
+
+      if (tc.input == null) {
+        tc.input = tc.sampleInput != null ? String(tc.sampleInput) : '';
+      } else {
+        tc.input = String(tc.input);
+      }
+    }
+  }
 });
 
 module.exports = CodingTestCase;

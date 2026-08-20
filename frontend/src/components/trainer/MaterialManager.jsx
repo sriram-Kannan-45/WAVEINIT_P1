@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { API, assetUrl } from '../../api/api'
 import { useToast } from '../Toast'
+import { useConfirm, usePrompt } from '../ui/AlertModal'
 import { colors, btnPrimary, btnSecondary, iconBtn, TYPE_BADGE, lblStyle, inputStyle, typography } from '../../theme/tokens'
 
 const TYPES = [
@@ -92,9 +93,17 @@ function NoteEditor({ value, onChange }) {
     </button>
   )
 
-  const setLink = () => {
+  const prompt = usePrompt()
+
+  const setLink = async () => {
     const previousUrl = editor.getAttributes('link').href
-    const url = window.prompt('URL', previousUrl || 'https://')
+    const url = await prompt({
+      title: 'Insert Link',
+      message: 'Enter the destination URL for this link:',
+      defaultValue: previousUrl || 'https://',
+      placeholder: 'https://example.com',
+      confirmText: 'Insert Link',
+    })
     if (url === null) return
     if (url === '') {
       editor.chain().focus().extendMarkRange('link').unsetLink().run()
@@ -103,8 +112,13 @@ function NoteEditor({ value, onChange }) {
     editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run()
   }
 
-  const insertImage = () => {
-    const url = window.prompt('Image URL')
+  const insertImage = async () => {
+    const url = await prompt({
+      title: 'Insert Image',
+      message: 'Enter the public image URL:',
+      placeholder: 'https://example.com/image.png',
+      confirmText: 'Insert Image',
+    })
     if (url) editor.chain().focus().setImage({ src: url }).run()
   }
 
@@ -246,6 +260,7 @@ function DropZone({ accept, onFile, file, hint, limitMb }) {
 
 export default function MaterialManager({ user, lessonId, lessonTitle, open, onClose, onSaved }) {
   const { success, error: showError, info } = useToast()
+  const confirm = useConfirm()
   const [type, setType] = useState('NOTE')
   const [materials, setMaterials] = useState([])
   const [loading, setLoading] = useState(false)
@@ -366,7 +381,13 @@ export default function MaterialManager({ user, lessonId, lessonTitle, open, onC
   }
 
   const removeMat = async (m) => {
-    if (!window.confirm(`Delete "${m.title}"?`)) return
+    const ok = await confirm({
+      title: 'Delete Material',
+      message: `Are you sure you want to delete "${m.title}"?`,
+      type: 'danger',
+      confirmText: 'Delete',
+    })
+    if (!ok) return
     try {
       const r = await fetch(API.TRAINER_COURSES.MATERIAL(lessonId, m.id), { method: 'DELETE', headers: auth() })
       const d = await r.json()

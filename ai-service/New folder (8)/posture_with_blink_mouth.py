@@ -630,21 +630,87 @@ class EventEngine:
         self.event_queue = queue.Queue()
         self.backend_url = config.get("backend_url", "http://localhost:3001").rstrip("/")
         self.auth_token = config.get("auth_token", "")
+        self.events_sent_count = 0
+        self.events_dropped_count = 0
         self._stop_worker = threading.Event()
         self._worker_thread = threading.Thread(target=self._http_dispatcher_worker, daemon=True)
         self._worker_thread.start()
 
+    def test_backend_connection(self):
+        """Sanity check: Verify backend reachability and auth credentials at startup."""
+        api_endpoint = f"{self.backend_url}/api/proctoring/events"
+        headers = {"Content-Type": "application/json"}
+        if self.auth_token:
+            headers["Authorization"] = f"Bearer {self.auth_token}"
+
+        print("\n" + "=" * 65)
+        print(" [LMS PROCTORING BACKEND CONFIGURATION]")
+        print(f"  • Backend URL : {self.backend_url}")
+        print(f"  • Auth Token  : {'[CONFIGURED]' if self.auth_token else '[NONE / ANONYMOUS]'}")
+        print(f"  • Attempt ID  : {self.cfg.get('attempt_id', 0)}")
+        print(f"  • Session ID  : {self.cfg.get('session_id', 'LMS-SESSION')}")
+        print(f"  • Quiz ID     : {self.cfg.get('quiz_id', 0)}")
+        print("=" * 65)
+
+        p_val = self.cfg.get("participant_id")
+        try:
+            p_id = int(p_val) if (p_val is not None and str(p_val).strip().isdigit()) else 1
+        except Exception:
+            p_id = 1
+
+        test_payload = {
+            "monitoringSessionId": self.cfg.get("session_id", "LMS-SESSION"),
+            "attemptId": self.cfg.get("attempt_id") or 1,
+            "participantId": p_id,
+            "quizId": self.cfg.get("quiz_id") or 0,
+            "eventType": "SYSTEM_STARTUP_CHECK",
+            "severity": "INFO",
+            "confidence": 1.0,
+            "duration": 0.0,
+            "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
+            "metadata": {"source": "python_monitor_startup_probe", "participantName": str(self.cfg.get("participant_name", "Participant"))},
+            "idempotencyKey": f"probe_{int(time.time() * 1000)}",
+        }
+
+        payload_bytes = json.dumps(test_payload, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(api_endpoint, data=payload_bytes, headers=headers, method="POST")
+
+        try:
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                status = getattr(resp, "status", getattr(resp, "code", 200))
+                print(f"[BACKEND OK] Connected to LMS backend ({api_endpoint}) -> HTTP {status}")
+                return True
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="ignore") if hasattr(e, "read") else ""
+            print(f"[BACKEND WARNING] HTTP {e.code} ({e.reason}) from {api_endpoint}")
+            if err_body:
+                print(f"                  Response details: {err_body}")
+            if e.code in (401, 403):
+                print("                  -> Check your --token / PROCTOR_TOKEN argument.")
+            elif e.code == 400:
+                print(f"                  -> Attempt ID missing or invalid (current: {self.cfg.get('attempt_id')}). Events may be rejected!")
+            return False
+        except urllib.error.URLError as e:
+            print(f"[BACKEND WARNING] Cannot connect to {api_endpoint}: {e.reason}")
+            print(f"                  -> Verify LMS backend is running on {self.backend_url}.")
+            return False
+        except Exception as e:
+            print(f"[BACKEND WARNING] Unexpected error connecting to {api_endpoint}: {e}")
+            return False
+
     def _http_dispatcher_worker(self):
-        while not self._stop_worker.is_set():
+        while not self._stop_worker.is_set() or not self.event_queue.empty():
             try:
-                ev = self.event_queue.get(timeout=1.0)
+                ev = self.event_queue.get(timeout=0.5)
             except queue.Empty:
+                if self._stop_worker.is_set():
+                    break
                 continue
 
             if ev is None:
+                self.event_queue.task_done()
                 break
 
-            # Attempt posting to backend endpoint
             api_endpoint = f"{self.backend_url}/api/proctoring/events"
             headers = {"Content-Type": "application/json"}
             if self.auth_token:
@@ -654,23 +720,58 @@ class EventEngine:
             req = urllib.request.Request(api_endpoint, data=payload_bytes, headers=headers, method="POST")
 
             success = False
+            last_error = None
             for attempt in range(3):
                 try:
                     with urllib.request.urlopen(req, timeout=4.0) as resp:
-                        if resp.status in (200, 201):
+                        status = getattr(resp, "status", getattr(resp, "code", 200))
+                        if status in (200, 201):
                             success = True
+                            self.events_sent_count += 1
+                            print(f"  [HTTP DISPATCH OK] Event '{ev.get('eventType')}' -> {api_endpoint} (HTTP {status})")
                             break
+                        else:
+                            last_error = f"Unexpected status {status}"
+                except urllib.error.HTTPError as e:
+                    err_body = e.read().decode("utf-8", errors="ignore") if hasattr(e, "read") else ""
+                    last_error = f"HTTP {e.code}: {e.reason} ({err_body})"
+                    print(f"  [HTTP DISPATCH RETRY {attempt + 1}/3] Event '{ev.get('eventType')}' failed: {last_error}")
+                    time.sleep(0.4 * (2 ** attempt))
+                except urllib.error.URLError as e:
+                    last_error = f"Network error: {e.reason}"
+                    print(f"  [HTTP DISPATCH RETRY {attempt + 1}/3] Event '{ev.get('eventType')}' failed: {last_error}")
+                    time.sleep(0.4 * (2 ** attempt))
                 except Exception as e:
-                    time.sleep(0.5 * (2 ** attempt))
+                    last_error = f"Exception: {str(e)}"
+                    print(f"  [HTTP DISPATCH RETRY {attempt + 1}/3] Event '{ev.get('eventType')}' failed: {last_error}")
+                    time.sleep(0.4 * (2 ** attempt))
+
+            if not success:
+                self.events_dropped_count += 1
+                print(f"  [HTTP DISPATCH FAILED] Event '{ev.get('eventType')}' dropped after 3 attempts. Error: {last_error}")
 
             self.event_queue.task_done()
 
-    def stop(self):
+    def stop(self, timeout=5.0):
+        remaining = getattr(self.event_queue, 'unfinished_tasks', self.event_queue.qsize())
+        if remaining > 0:
+            print(f"[SHUTDOWN] Flushing {remaining} remaining event(s) to backend...")
+
+        # Wait until all queued items have completed dispatch and called task_done()
+        start_t = time.time()
+        while getattr(self.event_queue, 'unfinished_tasks', 0) > 0 and (time.time() - start_t < timeout):
+            time.sleep(0.1)
+
         self._stop_worker.set()
         try:
             self.event_queue.put_nowait(None)
         except Exception:
             pass
+
+        if self._worker_thread.is_alive():
+            self._worker_thread.join(timeout=3.0)
+
+        print(f"[STATS] Proctoring Events Summary: Delivered={self.events_sent_count}, Dropped={self.events_dropped_count}, Total={len(self.timeline)}")
 
     def _tick_risk(self, now):
         dt = max(0.0, now - self.last_risk_update)
@@ -688,7 +789,16 @@ class EventEngine:
              metadata=None, risk_weight=None):
         now = time.time()
         self._tick_risk(now)
-        cooldown = self.cfg.get("event_cooldown_seconds", 5.0)
+
+        # Severity-aware cooldown to ensure high-severity malpractice is not suppressed
+        sev_upper = severity.upper()
+        if sev_upper in ("CRITICAL", "HIGH"):
+            cooldown = self.cfg.get("high_cooldown_seconds", 2.0)
+        elif sev_upper == "WARNING":
+            cooldown = self.cfg.get("warning_cooldown_seconds", 3.0)
+        else:
+            cooldown = self.cfg.get("event_cooldown_seconds", 5.0)
+
         if now - self.cooldowns.get(event_type, 0.0) < cooldown:
             return None
         self.cooldowns[event_type] = now
@@ -704,17 +814,27 @@ class EventEngine:
         iso_ts = datetime.datetime.now().isoformat(timespec="seconds")
         idem_key = f"{self.cfg.get('session_id', 'sess')}_{canon_type}_{int(now*1000)}"
 
+        p_val = self.cfg.get("participant_id")
+        try:
+            p_id = int(p_val) if (p_val is not None and str(p_val).strip().isdigit()) else 1
+        except Exception:
+            p_id = 1
+
+        ev_meta = metadata.copy() if metadata else {}
+        if "participantName" not in ev_meta and self.cfg.get("participant_name"):
+            ev_meta["participantName"] = str(self.cfg.get("participant_name"))
+
         ev = {
             "monitoringSessionId": self.cfg.get("session_id", "LMS-SESSION"),
-            "attemptId": self.cfg.get("attempt_id") or 0,
-            "participantId": self.cfg.get("participant_id") or self.cfg.get("participant_name", "Participant"),
+            "attemptId": self.cfg.get("attempt_id") or 1,
+            "participantId": p_id,
             "quizId": self.cfg.get("quiz_id") or 0,
             "eventType": canon_type,
             "severity": severity.upper(),
             "confidence": round(float(confidence), 3),
             "duration": round(float(duration), 2),
             "timestamp": iso_ts,
-            "metadata": metadata or {},
+            "metadata": ev_meta,
             "idempotencyKey": idem_key,
         }
 
@@ -833,26 +953,39 @@ class ObjectDetector:
 
     def load(self):
         base = SCRIPT_DIR
-        onnx = os.path.join(base, self.cfg.get("model_onnx", ""))
-        weights = os.path.join(base, self.cfg.get("model_weights", ""))
-        cfg_file = os.path.join(base, self.cfg.get("model_config", ""))
+        onnx = os.path.join(base, self.cfg.get("model_onnx", "yolov8n.onnx"))
+        weights = os.path.join(base, self.cfg.get("model_weights", "yolov4-tiny.weights"))
+        cfg_file = os.path.join(base, self.cfg.get("model_config", "yolov4-tiny.cfg"))
+
         if os.path.exists(onnx):
             try:
                 self.net = cv2.dnn.readNetFromONNX(onnx)
                 self.is_onnx = True
-                print("[SETUP] Object detector loaded (YOLO ONNX).")
-            except cv2.error:
+                print(f"[SETUP] Object detector loaded successfully from ONNX model: {onnx}")
+            except cv2.error as e:
                 self.net = None
+                print(f"[ERROR] Failed to load ONNX model {onnx}: {e}")
         elif os.path.exists(weights) and os.path.exists(cfg_file):
             try:
                 self.net = cv2.dnn.readNet(weights, cfg_file)
                 self.is_onnx = False
-                print("[SETUP] Object detector loaded (YOLO weights+cfg).")
-            except cv2.error:
+                print(f"[SETUP] Object detector loaded successfully from YOLO weights+cfg: {weights}")
+            except cv2.error as e:
                 self.net = None
-        if self.net is None:
-            print("[SETUP] Object detection ENABLED in config but no model files found - "
-                  "disabled. Place yolov8n.onnx or yolov4-tiny.{weights,cfg} next to the script.")
+                print(f"[ERROR] Failed to load Darknet model: {e}")
+
+        if self.net is None and self.cfg.get("enabled", False):
+            err_msg = (
+                f"\n{'='*70}\n"
+                f"[OBJECT DETECTOR FATAL ERROR] Object detection is ENABLED in config, but no model file was found!\n"
+                f"Searched paths:\n"
+                f"  - ONNX model: {onnx} (exists: {os.path.exists(onnx)})\n"
+                f"  - Darknet weights: {weights} (exists: {os.path.exists(weights)})\n"
+                f"Please place 'yolov8n.onnx' in '{base}' or disable object detection.\n"
+                f"{'='*70}\n"
+            )
+            print(err_msg)
+            raise FileNotFoundError(f"Object detection enabled but model '{onnx}' not found in {base}.")
 
     def _postprocess_onnx(self, outs, w, h):
         data = outs[0]  # (1, 84, 8400)
@@ -865,10 +998,15 @@ class ObjectDetector:
         dets = []
         for xywh, cid, conf in zip(boxes_xywh[keep], class_ids[keep], confs[keep]):
             cx, cy, bw, bh = xywh
-            x1 = int((cx - bw / 2) * w)
-            y1 = int((cy - bh / 2) * h)
-            x2 = int((cx + bw / 2) * w)
-            y2 = int((cy + bh / 2) * h)
+            # Support both pixel (0..640) and normalized (0..1) coordinate formats
+            if cx > 1.0 or bw > 1.0:
+                cx_n, cy_n, bw_n, bh_n = cx / 640.0, cy / 640.0, bw / 640.0, bh / 640.0
+            else:
+                cx_n, cy_n, bw_n, bh_n = cx, cy, bw, bh
+            x1 = max(0, int((cx_n - bw_n / 2.0) * w))
+            y1 = max(0, int((cy_n - bh_n / 2.0) * h))
+            x2 = min(w, int((cx_n + bw_n / 2.0) * w))
+            y2 = min(h, int((cy_n + bh_n / 2.0) * h))
             dets.append((x1, y1, x2, y2, int(cid), float(conf)))
         return dets
 
@@ -886,10 +1024,10 @@ class ObjectDetector:
                 if conf < self.cfg["confidence_threshold"]:
                     continue
                 cx, cy, bw, bh = row[:4]
-                x1 = int((cx - bw / 2) * w)
-                y1 = int((cy - bh / 2) * h)
-                x2 = int((cx + bw / 2) * w)
-                y2 = int((cy + bh / 2) * h)
+                x1 = max(0, int((cx - bw / 2.0) * w))
+                y1 = max(0, int((cy - bh / 2.0) * h))
+                x2 = min(w, int((cx + bw / 2.0) * w))
+                y2 = min(h, int((cy + bh / 2.0) * h))
                 dets.append((x1, y1, x2, y2, class_id, conf))
         return dets
 
@@ -1450,6 +1588,10 @@ def main():
     parser.add_argument("--token", default=os.getenv("PROCTOR_TOKEN", ""))
     parser.add_argument("--headless", action="store_true", default=os.getenv("PROCTOR_HEADLESS", "false").lower() == "true")
     parser.add_argument("--cam", type=int, default=PROCTOR_CONFIG.get("cam_index", 0))
+    parser.add_argument("--enable-yolo", "--enable-object-detection", action="store_true", default=os.getenv("PROCTOR_ENABLE_YOLO", "false").lower() == "true")
+    parser.add_argument("--yolo-model", default=os.getenv("PROCTOR_YOLO_MODEL", "yolov8n.onnx"))
+    parser.add_argument("--verbose", action="store_true", default=os.getenv("PROCTOR_VERBOSE", "false").lower() == "true")
+    parser.add_argument("--frame-skip-object", type=int, default=int(os.getenv("PROCTOR_FRAME_SKIP_OBJECT", 4)))
     args, _ = parser.parse_known_args()
 
     cfg = PROCTOR_CONFIG.copy()
@@ -1462,8 +1604,15 @@ def main():
     cfg["auth_token"] = args.token
     cfg["headless"] = args.headless
     cfg["cam_index"] = args.cam
+    cfg["frame_skip_object"] = args.frame_skip_object
+    cfg["verbose"] = args.verbose
+    if args.enable_yolo:
+        cfg["object_detection"]["enabled"] = True
+    if args.yolo_model:
+        cfg["object_detection"]["model_onnx"] = args.yolo_model
 
     engine = EventEngine(cfg)
+    engine.test_backend_connection()
 
     face_model_path = FACE_MODEL_PATH
     pose_model_path = ensure_model(POSE_MODEL_PATH, POSE_MODEL_URL)
@@ -1594,6 +1743,8 @@ def main():
         blink_times = deque(maxlen=200)
         fps_history = deque(maxlen=30)
         last_obj_phone_detected = False
+        last_obj_detection_ts = 0.0
+        last_verbose_print_ts = 0.0
         body_smoother = BodySmoother(alpha=cfg.get("body_smoothing_alpha", 0.35))
         world_ratio_estimator = WorldRatioEstimator(cfg)
 
@@ -1675,8 +1826,10 @@ def main():
             # ==================================================================
             # ASYNC RESULT VALIDATION & STALENESS CHECK
             # ==================================================================
-            face_is_stale = (now - shared.get("face_ts", 0.0) > 0.65) if shared.get("face_ts") else True
-            pose_is_stale = (now - shared.get("pose_ts", 0.0) > 0.85) if shared.get("pose_ts") else True
+            # Use realistic staleness thresholds (1.5s / 2.0s) so transient CPU scheduling
+            # delays do not falsely zero out landmarks and reset behavioral trackers.
+            face_is_stale = (now - shared.get("face_ts", 0.0) > 1.50) if shared.get("face_ts") else True
+            pose_is_stale = (now - shared.get("pose_ts", 0.0) > 2.00) if shared.get("pose_ts") else True
 
             # ==================================================================
             # FACE PRESENCE / MULTIPLE FACES
@@ -2403,32 +2556,42 @@ def main():
             # ==================================================================
             # OBJECT DETECTION (optional, every N frames)
             # ==================================================================
-            last_obj_phone_detected = False
             if object_detector is not None and pose_frame_counter % cfg["frame_skip_object"] == 0:
                 dets = object_detector.detect(frame)
                 obj_found = len(dets) > 0
                 if obj_found:
+                    names = sorted({n for (_, _, _, _, n, _) in dets})
+                    has_phone = any("phone" in n.lower() for n in names)
+                    if has_phone:
+                        last_obj_phone_detected = True
+                        last_obj_detection_ts = now
+
                     for (x1, y1, x2, y2, name, conf) in dets:
-                        if "phone" in name.lower():
-                            last_obj_phone_detected = True
                         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 165, 255), 2)
                         draw_text(frame, f"{name.upper()} {conf:.0%}", (x1, y1 - 6),
                                   (0, 165, 255), 0.5, 1, bg=True)
+
                     odur = T["object_visible"].update(True, now)
+                    if cfg.get("debug_mode") or cfg.get("verbose"):
+                        print(f"[OBJECT DETECT] Visible: {names} (phone={has_phone}) | Persistence: {odur:.2f}s / {cfg['object_detection']['persistence_seconds']}s")
+
                     if T["object_visible"].crossed(cfg["object_detection"]["persistence_seconds"]):
-                        names = sorted({n for (_, _, _, _, n, _) in dets})
-                        has_phone = any("phone" in n.lower() for n in names)
                         if has_phone:
                             phone_conf = max(c for (_, _, _, _, n, c) in dets if "phone" in n.lower())
+                            print(f"[EVENT EMIT] >>> CELL_PHONE_DETECTED triggered (Conf: {phone_conf:.2f}, Dur: {odur:.2f}s)")
                             engine.emit("Cell Phone Detected", "HIGH",
                                         confidence=phone_conf,
                                         duration=odur, metadata={"objects": names, "violation": "UNAUTHORIZED_MOBILE_PHONE"})
                         else:
+                            print(f"[EVENT EMIT] >>> Suspicious Object '{names[0]}' triggered (Dur: {odur:.2f}s)")
                             engine.emit(f"Possible {names[0].title()} Detected", "WARNING",
                                         confidence=max(c for (_, _, _, _, _, c) in dets),
                                         duration=odur, metadata={"objects": names})
                 else:
                     T["object_visible"].update(False, now)
+                    # Grace window: Only reset phone status if no phone seen for > 1.0s
+                    if now - last_obj_detection_ts > 1.0:
+                        last_obj_phone_detected = False
 
             # ==================================================================
             # BROWSER EVENTS (external agent ingestion)
@@ -2655,9 +2818,31 @@ def main():
                 draw_text(frame, f"ALERT: MULTIPLE FACES ({face_count})", (img_w // 2 - 140, 36),
                           (0, 0, 255), 0.60, 2, bg=True)
 
+            # ==================================================================
+            # DEBUG / VERBOSE TELEMETRY DUMP (once per second)
+            # ==================================================================
+            if cfg.get("verbose") and (now - last_verbose_print_ts >= 1.0):
+                last_verbose_print_ts = now
+                active_tks = []
+                for tname, tk in T.items():
+                    if tk.is_active or tk.last_dur > 0:
+                        active_tks.append(f"{tname}:{tk.last_dur:.1f}s")
+                for fidx, gt in gaze_trackers.items():
+                    if gt.is_active or gt.last_dur > 0:
+                        active_tks.append(f"gaze[{fidx}]:{gt.last_dur:.1f}s({current_eyes_dir})")
+                for fidx, dt in desk_trackers.items():
+                    if dt.is_active or dt.last_dur > 0:
+                        active_tks.append(f"desk[{fidx}]:{dt.last_dur:.1f}s")
+
+                tks_str = ", ".join(active_tks) if active_tks else "none active"
+                face_age = (now - shared.get("face_ts", 0.0)) if shared.get("face_ts") else -1.0
+                pose_age = (now - shared.get("pose_ts", 0.0)) if shared.get("pose_ts") else -1.0
+                print(f"[VERBOSE {time.strftime('%H:%M:%S')}] Faces:{face_count} (age:{face_age:.2f}s) | Poses:{pose_count} (age:{pose_age:.2f}s) | "
+                      f"Head:{pose_label} (Y:{yaw:+.1f},P:{pitch:+.1f}) | Gaze:{current_eyes_dir} | ActiveTrackers: [{tks_str}]")
+
             # debug header
             if cfg["debug_mode"]:
-                cv2.putText(frame, "DEBUG MODE", (14, img_h - 6),
+                cv2.putText(frame, "DEBUG MODE (Press 'v' for Verbose Console Telemetry)", (14, img_h - 6),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 165, 255), 1)
 
             # ==================================================================
@@ -2671,6 +2856,9 @@ def main():
                 elif key == ord('d'):
                     cfg["debug_mode"] = not cfg["debug_mode"]
                     print("[INFO] Debug mode:", "ON" if cfg["debug_mode"] else "OFF")
+                elif key == ord('v'):
+                    cfg["verbose"] = not cfg.get("verbose", False)
+                    print("[INFO] Verbose real-time telemetry:", "ON" if cfg["verbose"] else "OFF")
                 elif key == ord('r'):
                     engine.emit("Recalibration Started", "INFO", risk_weight=0)
                     baseline = run_calibration(cap, face_lm, pose_lm, cfg, shared, frame_timestamp_ms)

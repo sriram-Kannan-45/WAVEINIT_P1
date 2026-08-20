@@ -20,14 +20,17 @@ import {
   Maximize,
   Wifi,
   SwitchCamera,
+  Code2,
 } from 'lucide-react';
 import { API_BASE, BACKEND_ORIGIN } from '../../api/api';
+import '../../styles/assessment-verification.css';
 
 const PHASE = {
   LOADING: 'loading',
   READY: 'ready',
   CAMERA_REQUEST: 'camera_request',
   STREAMING: 'streaming',
+  COMPLETED: 'completed',
   ERROR: 'error',
 };
 
@@ -234,6 +237,73 @@ export default function AssessmentMobileJoin() {
     frameIntervalRef.current = setInterval(captureAndEmit, 150);
   }, [info?.sessionId, info?.participantId, info?.assessmentType]);
 
+  // Session Closed / Completed Handler: Releases camera hardware immediately
+  const handleSessionClosed = useCallback((reason = 'ASSESSMENT_COMPLETED') => {
+    console.log('[AssessmentMobileJoin] Assessment finished/closed, releasing camera hardware:', reason);
+    if (frameIntervalRef.current) {
+      clearInterval(frameIntervalRef.current);
+      frameIntervalRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+          track.enabled = false;
+        } catch (e) {}
+      });
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      try {
+        videoRef.current.pause();
+        videoRef.current.srcObject = null;
+      } catch (e) {}
+    }
+    if (pcRef.current) {
+      try {
+        pcRef.current.close();
+      } catch (e) {}
+      pcRef.current = null;
+    }
+    if (socketRef.current) {
+      try {
+        socketRef.current.disconnect();
+      } catch (e) {}
+      socketRef.current = null;
+    }
+    setCameraActive(false);
+    setPeerConnected(false);
+    setSocketConnected(false);
+    setPhase(PHASE.COMPLETED);
+  }, []);
+
+  // Periodic polling check to detect if laptop closed / submitted the assessment
+  useEffect(() => {
+    const activeToken = token || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('token') : null) || info?.token;
+    const activeSessionId = info?.sessionId;
+    if ((!activeToken && !activeSessionId) || phase === PHASE.COMPLETED || phase === PHASE.ERROR) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const url = activeToken
+          ? `${API_BASE}/assessment-verification/mobile-status/${activeToken}`
+          : `${API_BASE}/monitoring/sessions/${activeSessionId}/status`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          const isEnded = data?.isEnded || ['COMPLETED', 'ENDED', 'EXPIRED', 'USED', 'SUBMITTED', 'TERMINATED'].includes(data?.status);
+          if (isEnded) {
+            handleSessionClosed('ASSESSMENT_COMPLETED');
+          }
+        }
+      } catch (e) {
+        // Non-blocking
+      }
+    }, 1500);
+
+    return () => clearInterval(interval);
+  }, [token, info, phase, handleSessionClosed]);
+
   // 2. Setup Socket Connection for real-time synchronization with Laptop (Stable lifecycle)
   const sessionId = info?.sessionId;
   const socketToken = info?.socketToken;
@@ -329,6 +399,20 @@ export default function AssessmentMobileJoin() {
       }
     });
 
+    // Assessment ended / submitted by laptop → immediately stop camera
+    socket.on('assessment_verif:session_ended', () => {
+      handleSessionClosed('ASSESSMENT_COMPLETED');
+    });
+    socket.on('assessment_verif:assessment_completed', () => {
+      handleSessionClosed('ASSESSMENT_COMPLETED');
+    });
+    socket.on('monitoring:session_ended', () => {
+      handleSessionClosed('ASSESSMENT_COMPLETED');
+    });
+    socket.on('assessment_verif:session_expired', () => {
+      handleSessionClosed('SESSION_EXPIRED');
+    });
+
     return () => {
       socket.disconnect();
       if (pcRef.current) {
@@ -339,7 +423,7 @@ export default function AssessmentMobileJoin() {
         }
       }
     };
-  }, [sessionId, socketToken, startWebRTCOffer, startFrameCapture]);
+  }, [sessionId, socketToken, startWebRTCOffer, startFrameCapture, handleSessionClosed]);
 
   // 3. Request Mobile Camera Access (Defaults to Back Camera / Environment)
   const enableCamera = useCallback(async (requestedFacingMode = 'environment') => {
@@ -512,17 +596,18 @@ export default function AssessmentMobileJoin() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center justify-center p-4 selection:bg-emerald-500 selection:text-white font-sans">
+    <div className="wi-mobile-page">
       {/* Brand Header */}
-      <div className="flex items-center gap-2.5 mb-5">
-        <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold shadow-sm">
-          <Shield size={20} />
+      <div className="wi-mobile-header">
+        <div className="wi-mobile-shield-icon">
+          <Shield size={24} strokeWidth={2.4} />
         </div>
-        <span className="text-lg font-bold tracking-tight text-white">WAVE INIT LMS</span>
+        <h1 className="wi-mobile-brand-title">WAVE INIT LMS</h1>
+        <p className="wi-mobile-brand-subtitle">Secure Proctoring &bull; Real-time Verification</p>
       </div>
 
       {/* Main Container Card */}
-      <div className="w-full max-w-md bg-slate-800/95 border border-slate-700/80 rounded-3xl p-5 sm:p-6 shadow-2xl backdrop-blur-md">
+      <div className="wi-mobile-card">
         <AnimatePresence mode="wait">
           {/* LOADING PHASE */}
           {phase === PHASE.LOADING && (
@@ -531,12 +616,12 @@ export default function AssessmentMobileJoin() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0 }}
-              className="py-12 flex flex-col items-center justify-center text-center space-y-4"
+              className="wi-mobile-state-box"
             >
-              <Loader2 className="animate-spin text-emerald-400" size={40} />
-              <div className="space-y-1">
-                <h3 className="text-base font-semibold text-white">Validating QR Code</h3>
-                <p className="text-xs text-slate-400">Connecting to verification session...</p>
+              <Loader2 className="animate-spin" size={38} color="#16A34A" />
+              <div>
+                <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#0F172A', margin: '0 0 4px 0' }}>Validating QR Code</h3>
+                <p style={{ fontSize: '12.5px', color: '#64748B', margin: 0 }}>Connecting to verification session...</p>
               </div>
             </motion.div>
           )}
@@ -548,18 +633,19 @@ export default function AssessmentMobileJoin() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
-              className="py-8 flex flex-col items-center text-center space-y-4"
+              className="wi-mobile-state-box"
             >
-              <div className="w-14 h-14 rounded-full bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400">
-                <AlertCircle size={28} />
+              <div className="wi-mobile-error-icon">
+                <AlertCircle size={30} />
               </div>
-              <div className="space-y-2">
-                <h3 className="text-base font-semibold text-rose-300">Verification Error</h3>
-                <p className="text-xs text-slate-300 max-w-xs">{error || 'Invalid or expired QR code.'}</p>
+              <div>
+                <h3 className="wi-mobile-error-title">Verification Error</h3>
+                <p className="wi-mobile-error-msg">{error || 'Invalid or expired QR code.'}</p>
               </div>
               <button
+                type="button"
                 onClick={() => window.location.reload()}
-                className="mt-4 px-5 py-2.5 bg-slate-700 hover:bg-slate-600 active:scale-95 text-white text-xs font-semibold rounded-xl transition flex items-center gap-2 cursor-pointer"
+                className="wi-mobile-btn-retry"
               >
                 <RefreshCw size={14} /> Try Again
               </button>
@@ -573,63 +659,90 @@ export default function AssessmentMobileJoin() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
-              className="space-y-5"
+              style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}
             >
               {/* Assessment Meta Header */}
-              <div className="bg-slate-900/60 border border-slate-700/60 rounded-2xl p-4 space-y-2 text-left">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold tracking-wider text-emerald-400 uppercase">
-                    {info?.assessmentType === 'CODING' ? 'Coding Assessment' : 'AI Quiz'} Verification
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div className="wi-mobile-meta-row">
+                  <span className="wi-mobile-badge-tag">
+                    <Code2 size={13} strokeWidth={2.5} />
+                    {info?.assessmentType === 'CODING' ? 'CODING ASSESSMENT VERIFICATION' : 'AI QUIZ VERIFICATION'}
                   </span>
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                    <Smartphone size={10} /> Back Camera
-                  </span>
+                  <button
+                    type="button"
+                    onClick={toggleCamera}
+                    className="wi-mobile-cam-btn"
+                    title="Camera source"
+                  >
+                    <Camera size={13} strokeWidth={2.2} />
+                    <span>{facingMode === 'environment' ? 'Back Camera' : 'Front Camera'}</span>
+                  </button>
                 </div>
-                <div className="text-sm font-bold text-white truncate">{info?.assessmentTitle}</div>
-                <div className="text-xs text-slate-400">
-                  Participant: <span className="text-slate-200 font-semibold">{info?.participantName}</span>
-                </div>
+
+                <h2 className="wi-mobile-assessment-title">
+                  {info?.assessmentTitle || 'Assessment Verification'}
+                </h2>
+
+                <p className="wi-mobile-participant-row">
+                  Participant: <span className="wi-mobile-participant-name">{info?.participantName || 'Candidate'}</span>
+                </p>
               </div>
 
-              {/* Framing Instructions Card */}
-              <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-2xl p-3.5 flex items-start gap-3 text-left">
-                <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0 mt-0.5">
-                  <Info size={18} />
+              {/* Camera Framing Requirement Card */}
+              <div className="wi-mobile-instruction-card">
+                <div className="wi-mobile-instruction-icon">
+                  <Info size={20} strokeWidth={2.5} />
                 </div>
-                <div className="space-y-1 text-xs">
-                  <span className="font-bold text-emerald-300">Camera Framing Requirement</span>
-                  <p className="text-slate-300 leading-relaxed font-medium">
-                    Position your phone using the <span className="text-emerald-400 font-bold">Back Camera</span> so your <span className="text-emerald-400 font-bold">face</span>, <span className="text-emerald-400 font-bold">upper body</span>, and <span className="text-emerald-400 font-bold">laptop screen</span> are clearly visible.
+                <div className="wi-mobile-instruction-content">
+                  <h3 className="wi-mobile-instruction-title">Camera Framing Requirement</h3>
+                  <p className="wi-mobile-instruction-text">
+                    Position your phone using the <strong>Back Camera</strong> so your{' '}
+                    <span className="wi-mobile-instruction-highlight">face</span>,{' '}
+                    <span className="wi-mobile-instruction-highlight">upper body</span>, and{' '}
+                    <span className="wi-mobile-instruction-highlight">laptop screen</span> are clearly visible.
                   </p>
                 </div>
               </div>
 
-              <div className="text-center space-y-2 py-2">
-                <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mx-auto">
-                  <Camera size={32} />
+              {/* Camera Permission Section */}
+              <div className="wi-mobile-permission-card">
+                <div className="wi-mobile-permission-icon">
+                  <Camera size={34} strokeWidth={2.2} />
                 </div>
-                <div className="space-y-1">
-                  <h3 className="text-base font-semibold text-white">Back Camera Access Required</h3>
-                  <p className="text-xs text-slate-400 leading-relaxed px-2">
-                    Enable camera permission to stream your back camera as the live secondary proctoring view.
-                  </p>
-                </div>
+                <h3 className="wi-mobile-permission-title">Back Camera Access Required</h3>
+                <p className="wi-mobile-permission-desc">
+                  Enable camera permission to stream your back camera as the live secondary proctoring view.
+                </p>
+
+                {error && (
+                  <div style={{
+                    padding: '10px 12px',
+                    background: '#FEF2F2',
+                    border: '1px solid #FECACA',
+                    borderRadius: '12px',
+                    fontSize: '12px',
+                    color: '#DC2626',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '8px',
+                    textAlign: 'left',
+                    width: '100%',
+                    boxSizing: 'border-box'
+                  }}>
+                    <AlertCircle size={16} color="#DC2626" style={{ flexShrink: 0, marginTop: '2px' }} />
+                    <span>{error}</span>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => enableCamera('environment')}
+                  className="wi-mobile-btn-primary"
+                >
+                  <Camera size={18} strokeWidth={2.2} />
+                  <span>Enable Back Camera</span>
+                </button>
               </div>
-
-              {error && (
-                <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-xs text-rose-300 flex items-start gap-2">
-                  <AlertCircle size={15} className="flex-shrink-0 mt-0.5 text-rose-400" />
-                  <span>{error}</span>
-                </div>
-              )}
-
-              <button
-                onClick={() => enableCamera('environment')}
-                className="w-full py-3.5 px-4 bg-emerald-500 hover:bg-emerald-600 active:scale-[0.98] text-slate-950 font-bold text-sm rounded-2xl transition duration-150 shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Camera size={18} />
-                <span>Enable Back Camera</span>
-              </button>
             </motion.div>
           )}
 
@@ -640,21 +753,32 @@ export default function AssessmentMobileJoin() {
               initial={{ opacity: 0, scale: 0.98 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0 }}
-              className="space-y-4"
+              style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}
             >
               {/* Header Badge */}
-              <div className="flex items-center justify-between px-1">
-                <span className="text-xs font-semibold text-slate-300 truncate max-w-[200px]">
-                  {info?.assessmentTitle}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                <span style={{ fontSize: '13px', fontWeight: '700', color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
+                  {info?.assessmentTitle || 'Assessment'}
                 </span>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                  <CheckCircle2 size={13} className="text-emerald-400" />
+                <span style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  padding: '4px 10px',
+                  borderRadius: '20px',
+                  fontSize: '11px',
+                  fontWeight: '700',
+                  background: '#EAF8F0',
+                  color: '#16A34A',
+                  border: '1px solid #DCFCE7'
+                }}>
+                  <CheckCircle2 size={13} color="#16A34A" />
                   <span>Camera Connected</span>
                 </span>
               </div>
 
-              {/* Video Preview with Live Badges and Switch Camera Button */}
-              <div className="relative rounded-2xl overflow-hidden bg-slate-950 border border-emerald-500/40 aspect-[4/3] flex items-center justify-center shadow-inner min-h-[220px]">
+              {/* Video Preview Container */}
+              <div className="wi-mobile-video-wrap">
                 <video
                   ref={(el) => {
                     videoRef.current = el;
@@ -683,14 +807,13 @@ export default function AssessmentMobileJoin() {
                       });
                     }
                   }}
-                  className="w-full h-full object-cover"
                   style={{ transform: facingMode === 'user' ? 'scaleX(-1)' : 'none' }}
                 />
 
                 {/* Top-Left Live Indicator */}
-                <div className="absolute top-3 left-3 px-2.5 py-1 rounded-md bg-slate-900/85 backdrop-blur border border-slate-700/60 text-[11px] font-mono text-emerald-400 flex items-center gap-1.5 z-10 shadow-sm">
-                  <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <span className="font-bold">LIVE PROCTORING</span>
+                <div className="wi-mobile-badge-live">
+                  <div className="wi-mobile-dot-pulse" />
+                  <span>LIVE PROCTORING</span>
                 </div>
 
                 {/* Top-Right Flip/Switch Camera Button */}
@@ -698,37 +821,126 @@ export default function AssessmentMobileJoin() {
                   type="button"
                   onClick={toggleCamera}
                   disabled={isSwitchingCamera}
-                  className="absolute top-3 right-3 px-2.5 py-1.5 rounded-lg bg-slate-900/85 hover:bg-slate-800 backdrop-blur border border-slate-700/70 text-slate-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 z-10 transition active:scale-95 shadow-sm cursor-pointer disabled:opacity-50"
+                  className="wi-mobile-flip-btn"
                   title="Switch between Back and Front Camera"
                 >
-                  <SwitchCamera size={13} className={isSwitchingCamera ? 'animate-spin text-emerald-400' : 'text-emerald-400'} />
+                  <SwitchCamera size={13} className={isSwitchingCamera ? 'animate-spin' : ''} />
                   <span>{facingMode === 'environment' ? 'Back Cam' : 'Front Cam'}</span>
                 </button>
 
                 {/* Bottom-Left Live Connection Status */}
-                <div className="absolute bottom-3 left-3 px-2.5 py-1 rounded-md bg-slate-900/85 backdrop-blur border border-slate-700/60 text-[10px] text-slate-200 flex items-center gap-1.5 z-10 shadow-sm">
-                  <Wifi size={11} className="text-emerald-400" />
-                  <span className="font-semibold text-emerald-300">Live Streaming</span>
+                <div className="wi-mobile-badge-status">
+                  <Wifi size={11} />
+                  <span>Live Streaming</span>
                 </div>
               </div>
 
               {/* Framing Instructions Reminder */}
-              <div className="p-3 bg-emerald-500/10 border border-emerald-500/25 rounded-2xl space-y-1 text-left">
-                <div className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
-                  <CheckCircle2 size={14} /> Verification Ready
+              <div className="wi-mobile-instruction-card">
+                <div className="wi-mobile-instruction-icon">
+                  <CheckCircle2 size={20} color="#16A34A" />
                 </div>
-                <p className="text-[11.5px] text-slate-300 leading-relaxed font-medium">
-                  <strong>Position your phone so your face, upper body, and laptop screen are visible.</strong> Keep this screen active and do not close this browser tab during your assessment. You can tap <strong>Back Cam / Front Cam</strong> above to switch cameras anytime.
-                </p>
+                <div className="wi-mobile-instruction-content">
+                  <h3 className="wi-mobile-instruction-title">Verification Ready</h3>
+                  <p className="wi-mobile-instruction-text">
+                    <strong>Position your phone so your face, upper body, and laptop screen are visible.</strong> Keep this screen active and do not close this browser tab during your assessment.
+                  </p>
+                </div>
               </div>
+            </motion.div>
+          )}
+
+          {/* COMPLETED PHASE */}
+          {phase === PHASE.COMPLETED && (
+            <motion.div
+              key="completed"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0 }}
+              className="wi-mobile-state-box"
+              style={{
+                padding: '28px 16px',
+                textAlign: 'center',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '16px',
+              }}
+            >
+              <div
+                style={{
+                  width: '60px',
+                  height: '60px',
+                  borderRadius: '50%',
+                  background: '#dcfce7',
+                  border: '2px solid #86efac',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#16a34a',
+                }}
+              >
+                <CheckCircle2 size={34} strokeWidth={2.5} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: '800', color: '#0f172a', margin: '0 0 6px 0' }}>
+                  Assessment Completed
+                </h3>
+                <p style={{ fontSize: '13px', color: '#475569', margin: '0 0 10px 0', lineHeight: '1.4' }}>
+                  The assessment on your laptop has ended.
+                </p>
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '6px 14px',
+                    borderRadius: '8px',
+                    background: '#f1f5f9',
+                    border: '1px solid #e2e8f0',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#334155',
+                  }}
+                >
+                  <Shield size={14} color="#16a34a" />
+                  <span>Mobile Camera Safely Disconnected</span>
+                </div>
+              </div>
+              <p style={{ fontSize: '12px', color: '#94a3b8', margin: '4px 0 0 0' }}>
+                You can now safely close this browser tab.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    window.close();
+                  } catch (e) {}
+                }}
+                style={{
+                  padding: '10px 24px',
+                  borderRadius: '10px',
+                  background: '#0f172a',
+                  color: '#ffffff',
+                  border: 'none',
+                  fontSize: '13px',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  marginTop: '4px',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                }}
+              >
+                Close Tab
+              </button>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
 
-      {/* Footer Info */}
-      <div className="mt-6 text-center text-[11px] text-slate-500">
-        WAVE INIT Secure Proctoring &bull; Real-time Verification
+      {/* Bottom Page Footer */}
+      <div className="wi-mobile-footer">
+        <Shield size={14} color="#16A34A" strokeWidth={2.2} />
+        <span><strong>WAVE INIT Secure Proctoring</strong> &bull; Real-time Verification</span>
       </div>
     </div>
   );

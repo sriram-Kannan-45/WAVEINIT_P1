@@ -7,8 +7,21 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { io } from 'socket.io-client'
+import {
+  Shield,
+  Camera,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  RefreshCw,
+  Video,
+  Smartphone,
+  Info,
+  Wifi,
+} from 'lucide-react'
 import { useWebRTC } from '../../hooks/useWebRTC'
 import yoloProctoringService from '../../services/yoloProctoringService'
+import '../../styles/assessment-verification.css'
 
 const PHASE = {
   LOADING: 'loading',
@@ -269,9 +282,24 @@ export default function MobileJoin() {
     s.on('interview-ended', () => {
       clearTimeout(timeoutTimer)
       endedRef.current = true
+      stopCamera()
       setPhase(PHASE.ENDED)
     })
-  }, [info, addLog, updateStatusLabel])
+
+    s.on('room:closed', () => {
+      clearTimeout(timeoutTimer)
+      endedRef.current = true
+      stopCamera()
+      setPhase(PHASE.ENDED)
+    })
+
+    s.on('assessment_verif:session_ended', () => {
+      clearTimeout(timeoutTimer)
+      endedRef.current = true
+      stopCamera()
+      setPhase(PHASE.ENDED)
+    })
+  }, [info, addLog, updateStatusLabel, stopCamera])
 
   // Wire the WebRTC offer/answer/ICE handlers to the socket once connected.
   // Pass socketRef directly so useWebRTC accesses the live socket instance synchronously
@@ -589,24 +617,44 @@ export default function MobileJoin() {
   // ── Error state ─────────────────────────────────────────────────────────
   if (phase === PHASE.ERROR) {
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4 sm:p-6 pb-16">
-        <div className="bg-gray-800 rounded-2xl border border-red-500/30 p-6 sm:p-8 max-w-sm w-full text-center">
-          <div className="text-4xl mb-3">⚠️</div>
-          <h2 className="text-lg font-bold text-white mb-2">Camera Permission Error</h2>
-          <p className="text-gray-400 text-sm mb-6 leading-relaxed">{error}</p>
-          <button
-            onClick={() => {
-              setError(null)
-              if (info) {
-                requestCamera()
-              } else {
-                window.location.reload()
-              }
-            }}
-            className="w-full px-6 py-3.5 min-h-[48px] bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-sm font-semibold rounded-xl transition-colors shadow-md touch-manipulation"
-          >
-            Allow Camera / Try Again
-          </button>
+      <div className="wi-mobile-page">
+        <div className="wi-mobile-header">
+          <div className="wi-mobile-shield-icon">
+            <Shield size={24} strokeWidth={2.4} />
+          </div>
+          <h1 className="wi-mobile-brand-title">WAVE INIT LMS</h1>
+          <p className="wi-mobile-brand-subtitle">Interview Monitoring &bull; Real-time Verification</p>
+        </div>
+
+        <div className="wi-mobile-card">
+          <div className="wi-mobile-state-box">
+            <div className="wi-mobile-error-icon">
+              <AlertCircle size={30} />
+            </div>
+            <div>
+              <h3 className="wi-mobile-error-title">Camera Permission Error</h3>
+              <p className="wi-mobile-error-msg">{error}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setError(null)
+                if (info) {
+                  requestCamera()
+                } else {
+                  window.location.reload()
+                }
+              }}
+              className="wi-mobile-btn-primary"
+            >
+              <RefreshCw size={15} /> Allow Camera / Try Again
+            </button>
+          </div>
+        </div>
+
+        <div className="wi-mobile-footer">
+          <Shield size={14} color="#16A34A" strokeWidth={2.2} />
+          <span><strong>WAVE INIT Secure Proctoring</strong> &bull; Real-time Verification</span>
         </div>
         <MobileDebugPanel logs={logs} isOpen={showDebug} onToggle={() => setShowDebug(!showDebug)} />
       </div>
@@ -616,13 +664,32 @@ export default function MobileJoin() {
   // ── Ended state ─────────────────────────────────────────────────────────
   if (phase === PHASE.ENDED) {
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4 sm:p-6 pb-16">
-        <div className="bg-gray-800 rounded-2xl border border-green-500/30 p-6 sm:p-8 max-w-sm w-full text-center">
-          <div className="text-4xl mb-3">🏁</div>
-          <h2 className="text-lg font-bold text-white mb-2">Interview Ended</h2>
-          <p className="text-gray-400 text-sm leading-relaxed">
-            The camera has been turned off. You can close this page now.
-          </p>
+      <div className="wi-mobile-page">
+        <div className="wi-mobile-header">
+          <div className="wi-mobile-shield-icon">
+            <Shield size={24} strokeWidth={2.4} />
+          </div>
+          <h1 className="wi-mobile-brand-title">WAVE INIT LMS</h1>
+          <p className="wi-mobile-brand-subtitle">Interview Monitoring &bull; Real-time Verification</p>
+        </div>
+
+        <div className="wi-mobile-card">
+          <div className="wi-mobile-state-box">
+            <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#DCFCE7', color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <CheckCircle2 size={32} />
+            </div>
+            <div>
+              <h3 style={{ fontSize: '17px', fontWeight: 700, color: '#0F172A', margin: '0 0 6px 0' }}>Interview Ended</h3>
+              <p style={{ fontSize: '13px', color: '#64748B', lineHeight: 1.5, margin: 0 }}>
+                The camera has been turned off. You can safely close this page now.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="wi-mobile-footer">
+          <Shield size={14} color="#16A34A" strokeWidth={2.2} />
+          <span><strong>WAVE INIT Secure Proctoring</strong> &bull; Real-time Verification</span>
         </div>
         <MobileDebugPanel logs={logs} isOpen={showDebug} onToggle={() => setShowDebug(!showDebug)} />
       </div>
@@ -633,79 +700,122 @@ export default function MobileJoin() {
   const interviewLabel = info?.interviewTitle || info?.interviewType || 'Interview'
 
   return (
-    <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-4 sm:p-6 pb-16">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="bg-gray-800 rounded-2xl border border-gray-700/50 p-6 sm:p-8 max-w-sm w-full text-center"
-      >
-        <div className="text-4xl mb-3">📱</div>
-        <h2 className="text-lg font-bold text-white mb-2" style={{ fontFamily: 'Poppins, sans-serif' }}>
-          Secondary Camera
-        </h2>
+    <div className="wi-mobile-page">
+      {/* Brand Header */}
+      <div className="wi-mobile-header">
+        <div className="wi-mobile-shield-icon">
+          <Shield size={24} strokeWidth={2.4} />
+        </div>
+        <h1 className="wi-mobile-brand-title">WAVE INIT LMS</h1>
+        <p className="wi-mobile-brand-subtitle">Interview Monitoring &bull; Real-time Verification</p>
+      </div>
+
+      <div className="wi-mobile-card">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+          <span className="wi-mobile-badge-tag">
+            <Smartphone size={13} strokeWidth={2.5} />
+            SECONDARY CAMERA
+          </span>
+          <span style={{ fontSize: '12px', fontWeight: 600, color: '#64748B' }}>
+            {interviewLabel}
+          </span>
+        </div>
 
         {phase === PHASE.LOADING && (
-          <div className="flex flex-col items-center gap-3 py-4">
-            <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-            <span className="text-gray-400 text-sm font-medium">Validating QR code…</span>
+          <div className="wi-mobile-state-box">
+            <Loader2 className="animate-spin" size={38} color="#16A34A" />
+            <div>
+              <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#0F172A', margin: '0 0 4px 0' }}>Validating QR Code</h3>
+              <p style={{ fontSize: '12.5px', color: '#64748B', margin: 0 }}>Connecting to interview room...</p>
+            </div>
           </div>
         )}
 
         {phase === PHASE.READY && (
-          <>
-            <p className="text-gray-400 text-sm mb-5 leading-relaxed">
-              Your phone will be used as a secondary monitoring camera during the{' '}
-              <span className="text-white font-semibold">{interviewLabel}</span>.
-              Position it to show your desk and workspace.
-            </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div className="wi-mobile-instruction-card">
+              <div className="wi-mobile-instruction-icon">
+                <Info size={20} strokeWidth={2.5} />
+              </div>
+              <div className="wi-mobile-instruction-content">
+                <h3 className="wi-mobile-instruction-title">Camera Placement</h3>
+                <p className="wi-mobile-instruction-text">
+                  Your phone will be used as a secondary camera during the <strong>{interviewLabel}</strong>. Position it to clearly show your desk and workspace.
+                </p>
+              </div>
+            </div>
 
-            <div className="mb-5 bg-gray-700/50 rounded-xl p-3.5 text-left text-xs text-gray-300 space-y-2.5">
-              <div className="flex items-center justify-between">
+            <div style={{
+              background: '#F8FAFC',
+              border: '1px solid #E2E8F0',
+              borderRadius: '14px',
+              padding: '12px 14px',
+              fontSize: '12px',
+              color: '#334155',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
+              textAlign: 'left'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span>Interviewer laptop</span>
-                <span className={laptopConnected ? 'text-green-400 font-medium' : 'text-amber-400 font-medium'}>
+                <span style={{ color: laptopConnected ? '#16A34A' : '#D97706', fontWeight: 600 }}>
                   {laptopConnected ? '● Online' : '○ Waiting…'}
                 </span>
               </div>
-              <div className="flex items-center justify-between">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span>This phone</span>
-                <span className="text-indigo-300 font-medium">Not connected yet</span>
+                <span style={{ color: '#64748B', fontWeight: 500 }}>Not connected yet</span>
               </div>
             </div>
 
             <button
+              type="button"
               onClick={requestCamera}
-              className="w-full px-6 py-3.5 min-h-[48px] bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-sm font-semibold rounded-xl transition-colors shadow-md touch-manipulation"
+              className="wi-mobile-btn-primary"
             >
-              Allow Camera & Connect
+              <Camera size={18} strokeWidth={2.2} />
+              <span>Allow Camera &amp; Connect</span>
             </button>
-          </>
+          </div>
         )}
 
         {(phase === PHASE.CAMERA || phase === PHASE.CONNECTING || phase === PHASE.CONNECTED) && (
-          <div className="flex flex-col items-center gap-3 py-2">
-            <div className="flex items-center justify-center gap-2 text-xs mb-2 flex-wrap">
-              <span className={`inline-block w-2.5 h-2.5 rounded-full ${videoActive ? 'bg-green-400 animate-pulse' : 'bg-amber-400'}`} />
-              <span className={videoActive ? 'text-green-400 font-medium' : 'text-amber-400 font-medium'}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '12px' }}>
+              <span style={{
+                display: 'inline-block',
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                background: videoActive ? '#16A34A' : '#D97706'
+              }} />
+              <span style={{ color: videoActive ? '#16A34A' : '#D97706', fontWeight: 600 }}>
                 {getStatusText()}
               </span>
             </div>
 
-            {/* SINGLE PERSISTENT VIDEO ELEMENT — never unmounts across phase changes */}
-            <div className="w-full">
+            {/* Video preview */}
+            <div className="wi-mobile-video-wrap">
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
                 muted
-                className="w-full rounded-2xl border border-gray-700/50 bg-black aspect-video object-cover"
               />
-              <p className="text-center text-indigo-300 text-xs mt-2 font-medium">
-                {previewReady ? '📹 Camera Active — Monitoring Mode' : '⏳ Initializing Camera Preview…'}
-              </p>
+              <div className="wi-mobile-badge-live">
+                <div className="wi-mobile-dot-pulse" />
+                <span>MONITORING MODE</span>
+              </div>
+              <div className="wi-mobile-badge-status">
+                <Wifi size={11} />
+                <span>{previewReady ? 'Active' : 'Initializing…'}</span>
+              </div>
             </div>
 
             {phase === PHASE.CONNECTED && (
               <button
+                type="button"
                 onClick={() => {
                   socketRef.current?.disconnect()
                   socketRef.current = null
@@ -714,14 +824,32 @@ export default function MobileJoin() {
                   endedRef.current = true
                   setPhase(PHASE.ENDED)
                 }}
-                className="w-full mt-4 px-6 py-3 min-h-[44px] bg-red-600/80 hover:bg-red-600 active:bg-red-700 text-white text-xs font-semibold rounded-xl transition-colors touch-manipulation"
+                style={{
+                  width: '100%',
+                  minHeight: '44px',
+                  background: '#FEE2E2',
+                  color: '#DC2626',
+                  border: '1px solid #FECACA',
+                  borderRadius: '14px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  transition: 'all 0.15s ease'
+                }}
               >
                 Disconnect Camera
               </button>
             )}
           </div>
         )}
-      </motion.div>
+      </div>
+
+      {/* Bottom Page Footer */}
+      <div className="wi-mobile-footer">
+        <Shield size={14} color="#16A34A" strokeWidth={2.2} />
+        <span><strong>WAVE INIT Secure Proctoring</strong> &bull; Real-time Verification</span>
+      </div>
 
       <MobileDebugPanel logs={logs} isOpen={showDebug} onToggle={() => setShowDebug(!showDebug)} />
     </div>

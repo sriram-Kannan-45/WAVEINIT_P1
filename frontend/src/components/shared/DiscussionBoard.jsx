@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { MessageSquare, HelpCircle, Megaphone, Pin, Trash2, CornerDownRight, Send, RefreshCw } from 'lucide-react'
 import { useToast } from '../Toast'
+import { useConfirm } from '../ui/AlertModal'
 import { API_BASE } from '../../api/api'
 import '../../styles/course-tabs.css'
 
 
 function DiscussionBoard({ user, trainingId }) {
   const { success, error: showError } = useToast()
+  const confirm = useConfirm()
   const [posts, setPosts] = useState([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('ALL') // ALL, DISCUSSION, QUESTION, ANNOUNCEMENT
@@ -118,7 +120,13 @@ function DiscussionBoard({ user, trainingId }) {
   }
 
   const handleDeletePost = async (postId) => {
-    if (!window.confirm('Are you sure you want to delete this post? This will delete all its replies.')) return
+    const ok = await confirm({
+      title: 'Delete Post',
+      message: 'Are you sure you want to delete this post? This will delete all of its replies.',
+      type: 'danger',
+      confirmText: 'Delete Post',
+    })
+    if (!ok) return
 
     try {
       const r = await fetch(`${API_BASE}/discussion/${trainingId}/posts/${postId}`, {

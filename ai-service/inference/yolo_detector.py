@@ -1,8 +1,17 @@
 """
-Enterprise YOLOv8 Proctoring Engine
-====================================
-Singleton camera monitoring and object detection service using Ultralytics YOLO.
-Reused across Quiz, Coding, and Interview modules for PC and Mobile camera streams.
+Enterprise YOLO11s Mobile Camera Proctoring Engine
+===================================================
+Singleton mobile camera monitoring and composition validation engine using Ultralytics YOLO.
+Dedicated exclusively to the Mobile Camera Pipeline (side-angle view) across Quiz, Coding,
+and Interview modules.
+
+Validates:
+  1. Concurrent presence of `person` AND `laptop` classes in side-angle view
+  2. Relative geometric positioning sanity checks
+  3. Multi-frame rolling state machine to prevent single-frame false triggers
+  4. Explicit state transitions:
+     MOBILE_CAMERA_CONNECTING, PERMISSION_REQUIRED, POSITIONING_REQUIRED,
+     WAITING_FOR_PERSON, WAITING_FOR_LAPTOP, VALID, WARNING, VIOLATION, DISCONNECTED
 """
 
 import os
@@ -16,12 +25,13 @@ from collections import deque
 import cv2
 import numpy as np
 
-logger = logging.getLogger("ai-quiz.yolo-proctor")
+logger = logging.getLogger("ai-service.yolo-proctor")
+
 
 class YOLOProctorEngine:
     """
-    Unified YOLO Proctoring Engine that loads the model once and reuses it for
-    concurrent monitoring sessions across Quiz, Coding, and Interview modules.
+    Unified YOLO Mobile Proctoring Engine that loads yolo11s once and validates
+    side-angle camera composition (person + laptop) for Quiz, Coding, and Interview.
     """
     _instance = None
 
@@ -34,47 +44,48 @@ class YOLOProctorEngine:
     def __init__(self):
         if getattr(self, "_initialized", False):
             return
-        
+
         self.model = None
         self.model_path = None
         self.class_names = {}
         self.person_class_id = None
         self.phone_class_ids = []
         self.laptop_class_ids = []
+        self.book_class_ids = []
         self.initialized_ok = False
         self.init_error = None
-        
-        # Session state memory: sessionId -> { last_event: ..., last_time: ..., event_counts: ... }
+
+        # Session state memory: sessionId -> {
+        #   last_event_type, last_state, consecutive_valid_frames,
+        #   consecutive_missing_laptop, consecutive_missing_person,
+        #   history: deque, last_frame_time
+        # }
         self.session_states: Dict[str, Dict[str, Any]] = {}
-        
+
         self._load_model()
         self._initialized = True
 
     def _find_model_file(self) -> Optional[str]:
         """
-        Locates the specified YOLO model weights file across expected candidate paths.
-        Strictly prioritizes newfolder/8/yolov8n.pt and its workspace counterparts.
+        Locates the specified YOLO model weights file across candidate paths,
+        strictly prioritizing yolo11s.pt.
         """
         script_dir = os.path.dirname(os.path.abspath(__file__))
         service_root = os.path.dirname(script_dir)
         workspace_root = os.path.dirname(service_root)
 
         candidates = [
-            # Primary authoritative location
-            os.path.join(service_root, "models", "yolov8n.pt"),
-            # Specified path by user
-            os.path.join(workspace_root, "newfolder", "8", "yolov8n.pt"),
-            os.path.join(service_root, "newfolder", "8", "yolov8n.pt"),
-            # Existing folder paths in workspace
+            # Specified yolo11s locations
             os.path.join(service_root, "New folder (8)", "yolo11s.pt"),
-            os.path.join(service_root, "New folder (8)", "yolov8n.pt"),
             os.path.join(workspace_root, "ai-service", "New folder (8)", "yolo11s.pt"),
-            os.path.join(workspace_root, "ai-service", "New folder (8)", "yolov8n.pt"),
+            os.path.join(service_root, "models", "yolo11s.pt"),
             r"d:\New folder (8)\AI-Based-online-exam-proctoring-System\futurproctor\proctoring\ml_models\yolo11s.pt",
-            r"d:\New folder (8)\best.pt",
+            # Fallback candidates
+            os.path.join(service_root, "models", "yolov8n.pt"),
+            os.path.join(service_root, "New folder (8)", "yolov8n.pt"),
+            os.path.join(workspace_root, "newfolder", "8", "yolov8n.pt"),
         ]
 
-        # Environment variable override if specified
         env_model = os.getenv("YOLO_MODEL_PATH")
         if env_model:
             candidates.insert(0, env_model)
@@ -95,7 +106,7 @@ class YOLOProctorEngine:
 
         model_file = self._find_model_file()
         if not model_file:
-            self.init_error = "YOLO model initialization failed: newfolder/8/yolov8n.pt (file not found)"
+            self.init_error = "YOLO model initialization failed: yolo11s.pt not found in candidate paths"
             logger.error(self.init_error)
             return
 
@@ -103,7 +114,7 @@ class YOLOProctorEngine:
         try:
             logger.info(f"Loading YOLO model from {model_file}...")
             self.model = YOLO(model_file)
-            
+
             # Introspect actual classes
             if hasattr(self.model, "names") and isinstance(self.model.names, dict):
                 self.class_names = self.model.names
@@ -113,19 +124,21 @@ class YOLOProctorEngine:
                 self.class_names = {}
 
             logger.info(f"YOLO model loaded successfully. Total classes: {len(self.class_names)}")
-            logger.info(f"Detected classes: {self.class_names}")
 
             # Identify key class IDs dynamically from real class names
             self.phone_class_ids = []
             self.laptop_class_ids = []
+            self.book_class_ids = []
             for cid, cname in self.class_names.items():
                 name_lower = str(cname).lower()
                 if name_lower in ("person", "candidate", "student", "user"):
                     self.person_class_id = cid
-                elif any(p in name_lower for p in ["phone", "mobile", "cell", "cell phone", "smartphone"]):
+                elif any(p in name_lower for p in ["phone", "cell phone", "mobile", "smartphone"]):
                     self.phone_class_ids.append(cid)
-                elif any(l in name_lower for l in ["laptop", "computer", "notebook"]):
+                elif any(l in name_lower for l in ["laptop", "computer", "notebook", "tv", "monitor"]):
                     self.laptop_class_ids.append(cid)
+                elif any(b in name_lower for b in ["book", "paper", "notes"]):
+                    self.book_class_ids.append(cid)
 
             self.initialized_ok = True
             self.init_error = None
@@ -142,7 +155,7 @@ class YOLOProctorEngine:
             "classes_count": len(self.class_names),
             "classes": self.class_names,
             "error": self.init_error,
-            "active_sessions": len(self.session_states)
+            "active_sessions": len(self.session_states),
         }
 
     def decode_frame(self, b64_frame: str) -> Optional[np.ndarray]:
@@ -158,24 +171,179 @@ class YOLOProctorEngine:
             logger.warning(f"Error decoding base64 frame: {e}")
             return None
 
+    def _get_session_state(self, session_key: str) -> Dict[str, Any]:
+        if session_key not in self.session_states:
+            self.session_states[session_key] = {
+                "last_event_type": None,
+                "last_state": "MOBILE_CAMERA_CONNECTING",
+                "last_emitted_time": 0,
+                "consecutive_valid": 0,
+                "consecutive_no_person": 0,
+                "consecutive_no_laptop": 0,
+                "consecutive_multi_person": 0,
+                "history": deque(maxlen=20),
+                "last_frame_ts": time.time(),
+            }
+        return self.session_states[session_key]
+
+    def validate_mobile_composition(
+        self,
+        detections: List[Dict[str, Any]],
+        img_w: int,
+        img_h: int,
+        session_key: str,
+    ) -> Tuple[str, str, str, float]:
+        """
+        Evaluates side-angle camera composition:
+        Requires both 'person' and 'laptop' present concurrently, with valid
+        relative positioning and rolling consecutive duration.
+
+        Returns: (state, event_type, message, confidence)
+        """
+        state_data = self._get_session_state(session_key)
+
+        persons = [d for d in detections if d["class_name"].lower() == "person" or d["class_id"] == self.person_class_id]
+        laptops = [d for d in detections if d["class_id"] in self.laptop_class_ids or any(k in d["class_name"].lower() for k in ["laptop", "computer", "notebook", "tv", "monitor"])]
+        phones = [d for d in detections if d["class_id"] in self.phone_class_ids or any(k in d["class_name"].lower() for k in ["phone", "cell"])]
+
+        person_count = len(persons)
+        laptop_count = len(laptops)
+        phone_count = len(phones)
+
+        # 1. Check Multiple Persons
+        if person_count > 1:
+            state_data["consecutive_multi_person"] += 1
+            state_data["consecutive_valid"] = 0
+            if state_data["consecutive_multi_person"] >= 2:
+                return (
+                    "VIOLATION",
+                    "MULTIPLE_PERSONS_DETECTED",
+                    f"Multiple people detected ({person_count} persons in view). Ensure you are alone.",
+                    max([p["confidence"] for p in persons] or [0.9]),
+                )
+            return (
+                "WARNING",
+                "MULTIPLE_PERSONS_DETECTED",
+                "Multiple people visible in side camera view.",
+                0.8,
+            )
+        else:
+            state_data["consecutive_multi_person"] = 0
+
+        # 2. Check Unauthorized Secondary Phone in Mobile Feed
+        if phone_count > 0:
+            return (
+                "VIOLATION",
+                "PHONE_DETECTED",
+                "Secondary mobile phone / electronic device detected in view.",
+                max([p["confidence"] for p in phones]),
+            )
+
+        # 3. Check Person Presence
+        if person_count == 0:
+            state_data["consecutive_no_person"] += 1
+            state_data["consecutive_valid"] = 0
+            if state_data["consecutive_no_person"] >= 3:
+                return (
+                    "WAITING_FOR_PERSON",
+                    "NO_PERSON_DETECTED",
+                    "Candidate not detected — position mobile camera so your side profile is visible.",
+                    0.9,
+                )
+            return (
+                "POSITIONING_REQUIRED",
+                "NO_PERSON_DETECTED",
+                "Adjust camera angle to show candidate.",
+                0.7,
+            )
+        else:
+            state_data["consecutive_no_person"] = 0
+
+        # 4. Check Laptop Presence
+        if laptop_count == 0:
+            state_data["consecutive_no_laptop"] += 1
+            state_data["consecutive_valid"] = 0
+            if state_data["consecutive_no_laptop"] >= 3:
+                return (
+                    "WAITING_FOR_LAPTOP",
+                    "LAPTOP_NOT_DETECTED",
+                    "Move phone so your laptop screen and workspace are visible in the frame.",
+                    0.9,
+                )
+            return (
+                "POSITIONING_REQUIRED",
+                "LAPTOP_NOT_DETECTED",
+                "Adjust phone to bring your laptop into view.",
+                0.7,
+            )
+        else:
+            state_data["consecutive_no_laptop"] = 0
+
+        # 5. Relative Geometric Sanity Check
+        # Ensure person and laptop occupy reasonable frame area and are not at opposite extremes
+        p_box = persons[0]["box"]  # [x1, y1, x2, y2]
+        l_box = laptops[0]["box"]
+
+        p_area = (p_box[2] - p_box[0]) * (p_box[3] - p_box[1])
+        l_area = (l_box[2] - l_box[0]) * (l_box[3] - l_box[1])
+        total_frame_area = float(img_w * img_h)
+
+        # Person should be at least 4% of frame; Laptop at least 2% of frame
+        if (p_area / total_frame_area) < 0.04:
+            return (
+                "POSITIONING_REQUIRED",
+                "COMPOSITION_INVALID",
+                "Candidate is too far from mobile camera — move phone closer.",
+                0.75,
+            )
+
+        if (l_area / total_frame_area) < 0.02:
+            return (
+                "POSITIONING_REQUIRED",
+                "COMPOSITION_INVALID",
+                "Laptop is too small or obscured — angle camera closer to desk.",
+                0.75,
+            )
+
+        # Multi-frame consecutive confirmation
+        state_data["consecutive_valid"] += 1
+        avg_conf = (persons[0]["confidence"] + laptops[0]["confidence"]) / 2.0
+
+        if state_data["consecutive_valid"] >= 2:
+            return (
+                "VALID",
+                "COMPOSITION_VALID",
+                "Good side-angle composition — participant and laptop are clearly visible.",
+                round(avg_conf, 2),
+            )
+        else:
+            return (
+                "POSITIONING_REQUIRED",
+                "COMPOSITION_STABILIZING",
+                "Verifying camera position... hold still.",
+                round(avg_conf, 2),
+            )
+
     def analyze_frame(
         self,
         frame_data: str,
         session_id: str = "default",
         participant_id: Optional[Any] = None,
         module_type: str = "QUIZ",
-        camera_source: str = "PC_CAMERA",
+        camera_source: str = "MOBILE_CAMERA",
         confidence_threshold: float = 0.35,
-        timestamp_ms: Optional[int] = None
+        timestamp_ms: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
-        Runs YOLO inference on a single video frame and produces structured proctoring events.
+        Runs YOLO11s inference on a mobile stream frame and produces
+        structured composition states and proctoring telemetry.
         """
         if not self.initialized_ok or self.model is None:
             return {
                 "success": False,
-                "error": self.init_error or "YOLO model initialization failed: newfolder/8/yolov8n.pt",
-                "proctoring_event": None
+                "error": self.init_error or "YOLO model initialization failed: yolo11s.pt",
+                "proctoring_event": None,
+                "composition_state": "DISCONNECTED",
             }
 
         start_time = time.time()
@@ -184,7 +352,8 @@ class YOLOProctorEngine:
             return {
                 "success": False,
                 "error": "Invalid or unreadable image frame",
-                "proctoring_event": None
+                "proctoring_event": None,
+                "composition_state": "DISCONNECTED",
             }
 
         h, w = img.shape[:2]
@@ -193,6 +362,7 @@ class YOLOProctorEngine:
         if max(h, w) > 640:
             scale = 640.0 / max(h, w)
             img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+            h, w = img.shape[:2]
 
         # Run inference
         try:
@@ -202,12 +372,11 @@ class YOLOProctorEngine:
             return {
                 "success": False,
                 "error": f"Inference execution failed: {e}",
-                "proctoring_event": None
+                "proctoring_event": None,
+                "composition_state": "DISCONNECTED",
             }
 
         detections = []
-        person_count = 0
-        phone_count = 0
         detected_classes = []
         max_confidence = 0.0
 
@@ -217,84 +386,84 @@ class YOLOProctorEngine:
                 cls_id = int(box.cls[0].item())
                 conf = float(box.conf[0].item())
                 cls_name = self.class_names.get(cls_id, f"class_{cls_id}")
-                xyxy = box.xyxy[0].tolist()  # [x1, y1, x2, y2]
+                xyxy = box.xyxy[0].tolist()
 
                 detections.append({
                     "class_id": cls_id,
                     "class_name": cls_name,
                     "confidence": round(conf, 4),
-                    "box": [round(coord, 1) for coord in xyxy]
+                    "box": [round(coord, 1) for coord in xyxy],
                 })
 
                 detected_classes.append(cls_name)
                 if conf > max_confidence:
                     max_confidence = conf
 
-                if cls_id == self.person_class_id or str(cls_name).lower() == "person":
-                    person_count += 1
-                elif cls_id in self.phone_class_ids or "phone" in str(cls_name).lower() or "mobile" in str(cls_name).lower():
-                    phone_count += 1
+        # Composition analysis
+        session_key = f"{session_id}_{camera_source}"
+        composition_state, event_type, user_msg, comp_conf = self.validate_mobile_composition(
+            detections, w, h, session_key
+        )
 
-        # Determine Proctoring Event Type based on actual detections
-        event_type = "NO_PERSON_DETECTED"
-        severity = "MEDIUM"
-
-        if phone_count > 0:
-            event_type = "PHONE_DETECTED"
-            severity = "HIGH"
-        elif person_count > 1:
-            event_type = "MULTIPLE_PERSONS_DETECTED"
-            severity = "HIGH"
-        elif person_count == 1:
-            event_type = "PERSON_DETECTED"
-            severity = "INFO"
-        elif len(detections) > 0:
-            event_type = "OBJECT_DETECTED"
-            severity = "LOW"
-        else:
-            event_type = "NO_PERSON_DETECTED"
-            severity = "MEDIUM"
+        severity_map = {
+            "VALID": "INFO",
+            "POSITIONING_REQUIRED": "INFO",
+            "WAITING_FOR_PERSON": "LOW",
+            "WAITING_FOR_LAPTOP": "LOW",
+            "WARNING": "MEDIUM",
+            "VIOLATION": "HIGH",
+            "DISCONNECTED": "HIGH",
+        }
+        severity = severity_map.get(composition_state, "INFO")
 
         inference_time_ms = round((time.time() - start_time) * 1000, 2)
         current_time_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-        # Throttling & Session Tracking: avoid emitting identical events continuously
-        session_key = f"{session_id}_{camera_source}"
-        session_state = self.session_states.setdefault(session_key, {
-            "last_event_type": None,
-            "last_emitted_time": 0,
-            "same_event_count": 0,
-        })
+        # Throttling & state change detection
+        state_data = self._get_session_state(session_key)
+        is_state_change = (state_data["last_event_type"] != event_type) or (state_data["last_state"] != composition_state)
+        time_since_last = time.time() - state_data["last_emitted_time"]
+        should_emit = is_state_change or (severity in ("HIGH", "MEDIUM") and time_since_last > 4.0) or (time_since_last > 12.0)
 
-        is_state_change = (session_state["last_event_type"] != event_type)
-        time_since_last = time.time() - session_state["last_emitted_time"]
-        should_emit_to_backend = is_state_change or (severity in ("HIGH", "MEDIUM") and time_since_last > 4.0) or (time_since_last > 10.0)
-
-        if should_emit_to_backend:
-            session_state["last_event_type"] = event_type
-            session_state["last_emitted_time"] = time.time()
+        if should_emit:
+            state_data["last_event_type"] = event_type
+            state_data["last_state"] = composition_state
+            state_data["last_emitted_time"] = time.time()
 
         proctoring_event = {
             "participantId": participant_id,
             "sessionId": session_id,
             "moduleType": module_type.upper(),
-            "cameraSource": camera_source.upper(),
+            "cameraSource": "MOBILE_CAMERA",
             "eventType": event_type,
+            "compositionState": composition_state,
+            "userMessage": user_msg,
             "severity": severity,
-            "confidence": round(max_confidence, 2) if detections else 1.0,
+            "confidence": round(comp_conf, 2),
             "timestamp": current_time_iso,
             "detectionsCount": len(detections),
             "detectedClasses": detected_classes,
             "inferenceTimeMs": inference_time_ms,
-            "shouldBroadcast": should_emit_to_backend,
-            "status": "MONITORING"
+            "shouldBroadcast": should_emit,
+            "status": "MONITORING",
         }
+
+        phones = [d for d in detections if d["class_id"] in self.phone_class_ids or any(k in d["class_name"].lower() for k in ["phone", "cell"])]
+        persons = [d for d in detections if d["class_name"].lower() == "person" or d["class_id"] == self.person_class_id]
+        laptops = [d for d in detections if d["class_id"] in self.laptop_class_ids or any(k in d["class_name"].lower() for k in ["laptop", "computer", "notebook", "tv", "monitor"])]
+        books = [d for d in detections if d["class_id"] in self.book_class_ids or any(k in d["class_name"].lower() for k in ["book", "paper", "notes"])]
 
         return {
             "success": True,
+            "composition_state": composition_state,
+            "user_message": user_msg,
             "proctoring_event": proctoring_event,
             "detections": detections,
-            "inference_time_ms": inference_time_ms
+            "person_count": len(persons),
+            "phone_count": len(phones),
+            "laptop_count": len(laptops),
+            "book_count": len(books),
+            "inference_time_ms": inference_time_ms,
         }
 
 

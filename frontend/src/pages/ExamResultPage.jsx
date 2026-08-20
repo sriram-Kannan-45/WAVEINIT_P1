@@ -1,16 +1,28 @@
 /**
  * ExamResultPage — post-submit summary at /exam/:sessionId/result.
  *
- * Fetches GET /api/proctor/sessions/:id/result and renders score,
- * percentage, and a per-question breakdown. Classical, calm look —
- * no flashy animations, just clear feedback.
+ * Displays academic score, question-by-question review, and the authoritative
+ * Monitoring & Proctoring Integrity report.
  */
 import { useEffect, useState } from 'react';
-import { Navigate, Link, useNavigate, useParams } from 'react-router-dom';
-import { CheckCircle2, XCircle, ArrowRight, Award, Smartphone, Shield, AlertTriangle } from 'lucide-react';
+import { Navigate, useNavigate, useParams } from 'react-router-dom';
+import {
+  CheckCircle2,
+  XCircle,
+  ArrowRight,
+  Award,
+  Smartphone,
+  Shield,
+  AlertTriangle,
+  Camera,
+  Clock,
+  Activity,
+  Check,
+} from 'lucide-react';
 
 import '../proctoring/exam/exam.css';
 import { proctorApi } from '../proctoring/api';
+import { API_BASE } from '../api/api';
 import useAuthUser from '../proctoring/hooks/useAuthUser';
 
 export default function ExamResultPage() {
@@ -18,16 +30,40 @@ export default function ExamResultPage() {
   const navigate = useNavigate();
   const { user, ready } = useAuthUser();
   const [data, setData] = useState(null);
+  const [monitoringReport, setMonitoringReport] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     if (!ready || !user?.id) return;
     let alive = true;
-    proctorApi.getResult(sessionId)
-      .then(d => { if (alive) setData(d); })
-      .catch(e => { if (alive) setError(e.message || 'Failed to load result'); });
-    return () => { alive = false; };
-  }, [ready, user?.id, sessionId]);
+
+    // Fetch exam result
+    proctorApi
+      .getResult(sessionId)
+      .then((d) => {
+        if (alive) {
+          setData(d);
+          // Fetch unified monitoring report
+          fetch(`${API_BASE}/monitoring/sessions/${sessionId}/report`, {
+            headers: user?.token ? { Authorization: `Bearer ${user.token}` } : {},
+          })
+            .then((r) => r.json())
+            .then((rep) => {
+              if (alive && rep?.success && rep?.data) {
+                setMonitoringReport(rep.data);
+              }
+            })
+            .catch(() => {});
+        }
+      })
+      .catch((e) => {
+        if (alive) setError(e.message || 'Failed to load result');
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [ready, user?.id, user?.token, sessionId]);
 
   if (!ready) {
     return (
@@ -60,33 +96,49 @@ export default function ExamResultPage() {
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-primary-600" />
           </div>
         ) : (
-          <ResultBody data={data} onExit={() => navigate('/participant', { replace: true })} />
+          <ResultBody
+            data={data}
+            monitoringReport={monitoringReport}
+            onExit={() => navigate('/participant', { replace: true })}
+          />
         )}
       </div>
     </div>
   );
 }
 
-function ResultBody({ data, onExit }) {
+function ResultBody({ data, monitoringReport, onExit }) {
   const result = data.result;
   const breakdown = data.breakdown || [];
-  const correct = breakdown.filter(b => b.isCorrect).length;
+  const correct = breakdown.filter((b) => b.isCorrect).length;
   const percentage = result?.percentage ?? 0;
   const passed = percentage >= 50;
 
-  const hasPhoneViolation =
-    data.session?.hasPhoneViolation ||
-    (data.session?.phoneViolations || 0) > 0 ||
-    (data.session?.violationCounts?.CELL_PHONE_DETECTED || 0) > 0 ||
-    data.proctorReport?.summary?.mobilePhoneViolation?.detected ||
-    (data.proctorReport?.summary?.objectMonitoring?.phoneEvents || 0) > 0;
+  const riskLevel = monitoringReport?.riskLevel || data.session?.riskLevel || 'LOW';
+  const riskScore = monitoringReport?.score ?? data.session?.score ?? 0;
+  const integrityFlags = monitoringReport?.integrityFlags || data.session?.integrityFlags || [];
+
+  const getRiskBadge = (level) => {
+    switch (level) {
+      case 'CRITICAL':
+        return { bg: '#fee2e2', text: '#b91c1c', border: '#fca5a5' };
+      case 'HIGH':
+        return { bg: '#ffedd5', text: '#c2410c', border: '#fdba74' };
+      case 'MEDIUM':
+        return { bg: '#fef3c7', text: '#92400e', border: '#fcd34d' };
+      default:
+        return { bg: '#ecfdf5', text: '#047857', border: '#a7f3d0' };
+    }
+  };
+
+  const badge = getRiskBadge(riskLevel);
 
   return (
     <>
       {/* Header card */}
       <section
-        className="border bg-white p-6 text-center sm:p-10"
-        style={{ borderColor: 'var(--exam-border)', borderRadius: 8 }}
+        className="border bg-white p-6 text-center sm:p-10 shadow-sm"
+        style={{ borderColor: 'var(--exam-border)', borderRadius: 12 }}
       >
         <div
           className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full"
@@ -98,10 +150,10 @@ function ResultBody({ data, onExit }) {
           className="text-[11px] font-semibold uppercase tracking-[0.2em]"
           style={{ color: 'var(--exam-text-muted)' }}
         >
-          Exam Submitted
+          Assessment Completed
         </p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight" style={{ color: 'var(--exam-text)' }}>
-          {data.quiz?.title || 'Your result'}
+          {data.quiz?.title || 'Your Result'}
         </h1>
 
         <div className="mt-8 grid grid-cols-3 gap-4 sm:gap-8">
@@ -115,52 +167,95 @@ function ResultBody({ data, onExit }) {
             big
             color={passed ? '#10b981' : '#dc2626'}
           />
-          <Stat
-            label="Correct"
-            value={`${correct}/${breakdown.length}`}
-          />
+          <Stat label="Correct" value={`${correct}/${breakdown.length}`} />
         </div>
 
-        {hasPhoneViolation && (
-          <div
-            className="mt-6 border p-4 text-left"
-            style={{
-              borderColor: '#fca5a5',
-              background: '#fef2f2',
-              borderRadius: 8,
-            }}
-          >
-            <div className="flex items-start gap-3">
-              <Smartphone className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-rose-800">
-                  Proctoring Notice: Mobile Phone Detected
-                </p>
-                <p className="mt-0.5 text-xs text-rose-700 leading-relaxed">
-                  An unauthorized mobile phone was detected in camera view during your test. This violation has been updated and recorded in the official proctoring report for instructor review.
-                </p>
-              </div>
+        {/* ── Unified Monitoring & Integrity Card ── */}
+        <div
+          className="mt-8 border p-5 text-left rounded-xl transition shadow-xs"
+          style={{
+            borderColor: badge.border,
+            background: badge.bg,
+          }}
+        >
+          <div className="flex items-center justify-between border-b pb-3 mb-3" style={{ borderColor: badge.border }}>
+            <div className="flex items-center gap-2">
+              <Shield className="h-5 w-5" style={{ color: badge.text }} />
+              <h3 className="text-sm font-bold uppercase tracking-wider" style={{ color: badge.text }}>
+                Monitoring Integrity Summary
+              </h3>
+            </div>
+            <span
+              className="px-2.5 py-0.5 text-xs font-bold rounded-full uppercase tracking-wider border"
+              style={{ background: '#ffffff', color: badge.text, borderColor: badge.border }}
+            >
+              Risk: {riskLevel} ({riskScore} pts)
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+            <div>
+              <span className="text-slate-500 block text-[10px] uppercase font-semibold">Laptop Feed</span>
+              <span className="font-bold text-slate-800 flex items-center gap-1 mt-0.5">
+                <Camera size={12} className="text-emerald-600" />
+                {monitoringReport?.laptopStatus || 'ACTIVE'}
+              </span>
+            </div>
+            <div>
+              <span className="text-slate-500 block text-[10px] uppercase font-semibold">Mobile Feed</span>
+              <span className="font-bold text-slate-800 flex items-center gap-1 mt-0.5">
+                <Smartphone size={12} className="text-emerald-600" />
+                {monitoringReport?.mobileStatus || (monitoringReport?.mobileEnabled ? 'PAIRED' : 'DISABLED')}
+              </span>
+            </div>
+            <div>
+              <span className="text-slate-500 block text-[10px] uppercase font-semibold">Events Ingested</span>
+              <span className="font-bold text-slate-800 flex items-center gap-1 mt-0.5">
+                <Activity size={12} className="text-slate-600" />
+                {monitoringReport?.totalEvents ?? data.session?.totalEvents ?? 0}
+              </span>
+            </div>
+            <div>
+              <span className="text-slate-500 block text-[10px] uppercase font-semibold">Calibration</span>
+              <span className="font-bold text-slate-800 flex items-center gap-1 mt-0.5">
+                <Check size={12} className="text-emerald-600" />
+                {monitoringReport?.calibrationPassed ? 'Verified' : 'Bypassed'}
+              </span>
             </div>
           </div>
-        )}
+
+          {integrityFlags.length > 0 && (
+            <div className="mt-3 pt-2.5 border-t border-rose-200 text-rose-800 text-xs flex items-start gap-2">
+              <AlertTriangle size={14} className="shrink-0 mt-0.5 text-rose-600" />
+              <div>
+                <p className="font-bold">Integrity Flags Recorded:</p>
+                <ul className="list-disc list-inside mt-0.5 text-[11px] space-y-0.5">
+                  {integrityFlags.map((flag, idx) => (
+                    <li key={idx}>{flag.replace(/_/g, ' ')}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+        </div>
 
         <button
           onClick={onExit}
-          className="mt-8 inline-flex items-center gap-1.5 px-5 py-2.5 text-sm font-semibold text-white"
-          style={{ background: 'var(--exam-accent)', borderRadius: 6 }}
+          className="mt-8 inline-flex items-center gap-1.5 px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-95 transition"
+          style={{ background: 'var(--exam-accent)', borderRadius: 8 }}
         >
-          Back to dashboard <ArrowRight className="h-3.5 w-3.5" />
+          Back to Dashboard <ArrowRight className="h-3.5 w-3.5" />
         </button>
       </section>
 
-      {/* Breakdown */}
+      {/* Question-by-question Breakdown */}
       {breakdown.length > 0 && (
-        <section className="mt-6">
+        <section className="mt-8">
           <h2
             className="mb-3 text-[11px] font-semibold uppercase tracking-wider"
             style={{ color: 'var(--exam-text-muted)' }}
           >
-            Question-by-question
+            Question-by-question Review
           </h2>
           <div className="space-y-3">
             {breakdown.map((b, i) => (
@@ -216,7 +311,7 @@ function BreakdownRow({ index, row }) {
           >
             Question {index + 1} · {ok ? 'Correct' : 'Incorrect'} · {Number(row.score).toFixed(0)}/100
           </p>
-          <p className="question-text mt-1 text-sm" style={{ color: 'var(--exam-text)' }}>
+          <p className="question-text mt-1 text-sm font-medium" style={{ color: 'var(--exam-text)' }}>
             {row.questionText}
           </p>
           {row.questionType === 'MCQ' && Array.isArray(row.options) && (
@@ -235,8 +330,8 @@ function BreakdownRow({ index, row }) {
                   >
                     <span>{String.fromCharCode(65 + oi)}.</span>
                     <span>{opt}</span>
-                    {isCorrect && <span className="ml-auto text-[10px] uppercase">correct</span>}
-                    {wasSelected && !isCorrect && <span className="ml-auto text-[10px] uppercase">your answer</span>}
+                    {isCorrect && <span className="ml-auto text-[10px] uppercase font-bold text-emerald-700">correct</span>}
+                    {wasSelected && !isCorrect && <span className="ml-auto text-[10px] uppercase font-bold text-rose-700">your answer</span>}
                   </li>
                 );
               })}

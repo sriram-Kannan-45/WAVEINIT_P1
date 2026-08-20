@@ -1,17 +1,18 @@
 /**
  * useInterviewDetectors Hook
- * Client-side AI monitoring detectors for interviews.
- * Performs real-time frame inspection for:
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Client-side monitoring detectors for the Interview module.
+ * Integrates with the unified MonitoringEngineClient (MediaPipe Laptop pipeline)
+ * and emits structured alerts for:
  *   - Tab switches / blur / copy-paste
- *   - Face absence & Multiple faces
- *   - In-Ear Audio Device / Earbud detection
- *   - Mobile Phone in view
- *   - Camera track lifecycle
+ *   - Face absence & Multiple faces (MediaPipe)
+ *   - 3D Iris Gaze & Head Pose telemetry
+ *   - Camera track lifecycle & disconnects
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { API_BASE } from '../api/api';
-import yoloProctoringService from '../services/yoloProctoringService';
+import monitoringClient from '../proctoring/engine/MonitoringEngineClient';
 
 export class AIMonitorProvider {
   async analyzeFrame(_frameData) {
@@ -23,6 +24,7 @@ export function useInterviewDetectors({
   socket,
   sessionId,
   interviewId,
+  participantId,
   enabled = true,
   mediaStream = null,
 }) {
@@ -33,32 +35,19 @@ export function useInterviewDetectors({
 
   const [aiStatus, setAiStatus] = useState({
     faceDetected: true,
-    audioDeviceDetected: false,
-    phoneDetected: false,
-    yoloEvent: 'PERSON_DETECTED',
-    yoloConfidence: 1.0,
+    gaze: 'ON_SCREEN',
+    headPose: { yaw: 0, pitch: 0, roll: 0 },
     cameraStatus: 'Monitoring',
     lastCheck: Date.now(),
   });
 
-  const detectorRef = useRef(null);
-  const faceAbsentCountRef = useRef(0);
-  const audioDeviceCountRef = useRef(0);
-  const phoneCountRef = useRef(0);
-  const frameCanvasRef = useRef(null);
   const videoElementRef = useRef(null);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined' && 'FaceDetector' in window && !detectorRef.current) {
-      try {
-        detectorRef.current = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 4 });
-      } catch (_) {}
-    }
-  }, []);
 
   const emitAlert = useCallback(
     (alertType, severity, sourceDevice, message, metadata) => {
       if (!socket || !sessionId || !enabledRef.current) return;
+
+      // 1. Emit to interview room socket
       socket.emit('interview-alert', {
         sessionId,
         interviewId,
@@ -68,6 +57,16 @@ export function useInterviewDetectors({
         message,
         metadata: metadata || {},
         timestamp: new Date().toISOString(),
+      });
+
+      // 2. Report to unified monitoring engine API
+      monitoringClient.reportEvent({
+        source: sourceDevice === 'MOBILE' ? 'MOBILE' : 'LAPTOP',
+        eventType: alertType,
+        severity: severity || 'MEDIUM',
+        durationMs: 1500,
+        confidence: 0.9,
+        metadata: { ...metadata, message },
       });
     },
     [socket, sessionId, interviewId]
@@ -116,43 +115,44 @@ export function useInterviewDetectors({
     };
   }, [enabled, emitAlert]);
 
-  // 2. Shared YOLOv8 Live Proctoring Stream Loop
+  // 2. Unified MediaPipe Laptop Monitoring Loop
   useEffect(() => {
-    if (!enabled || !mediaStream || !socket || !sessionId) return;
+    if (!enabled || !mediaStream || !sessionId) return;
 
-    const monitorId = yoloProctoringService.startMonitoring({
-      source: mediaStream,
-      socket,
+    if (!videoElementRef.current) {
+      const video = document.createElement('video');
+      video.autoplay = true;
+      video.playsInline = true;
+      video.muted = true;
+      videoElementRef.current = video;
+    }
+
+    const videoEl = videoElementRef.current;
+    videoEl.srcObject = mediaStream;
+    videoEl.play().catch(() => {});
+
+    monitoringClient.init({
       sessionId,
-      participantId: 1,
-      moduleType: 'INTERVIEW',
-      cameraSource: 'PC_CAMERA',
-      interviewId,
-      fps: 5,
-      onDetection: ({ event }) => {
-        if (event) {
-          setAiStatus((prev) => ({
-            ...prev,
-            yoloEvent: event.eventType,
-            yoloConfidence: event.confidence,
-            faceDetected: event.eventType !== 'NO_PERSON_DETECTED',
-            phoneDetected: event.eventType === 'PHONE_DETECTED',
-            lastCheck: Date.now(),
-          }));
-        }
-      },
-      onStatusChange: ({ status }) => {
-        setAiStatus((prev) => ({
-          ...prev,
-          cameraStatus: status,
-        }));
-      },
+      participantId: participantId || 1,
+      contextType: 'INTERVIEW',
+      socket,
+    });
+
+    monitoringClient.startLaptopMonitoring(mediaStream, videoEl, (metrics) => {
+      setAiStatus((prev) => ({
+        ...prev,
+        faceDetected: metrics.faceDetected,
+        gaze: metrics.gaze,
+        headPose: metrics.headPose,
+        cameraStatus: 'Monitoring',
+        lastCheck: Date.now(),
+      }));
     });
 
     return () => {
-      yoloProctoringService.stopMonitoring(monitorId);
+      monitoringClient.stopLaptopMonitoring();
     };
-  }, [enabled, mediaStream, socket, sessionId, interviewId]);
+  }, [enabled, mediaStream, sessionId, participantId, socket]);
 
   // 3. Detect Camera Disabled / Track Ended
   const monitorTrack = useCallback(

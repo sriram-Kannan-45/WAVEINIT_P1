@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ArrowLeft, BookOpen, FileText, Sparkles, ClipboardList, Folder,
@@ -494,9 +494,28 @@ function MyCoursesList({ user, onOpen }) {
 // ════════════════════════════════════════════════════════════════════════════
 function CourseView({ user, courseId, onBack, onOpenLesson }) {
   const { error: showError } = useToast()
-  const [tab, setTab] = useState('overview')
+  const [searchParams] = useSearchParams()
+  const location = useLocation()
+  const navigate = useNavigate()
+
+  const querySubtab = searchParams.get('subtab') || 'overview'
+  const [tab, setTabState] = useState(querySubtab)
   const [overview, setOverview] = useState(null)
   const [loading, setLoading] = useState(true)
+
+  const setTab = (nextTab) => {
+    setTabState(nextTab)
+    const newParams = new URLSearchParams(location.search)
+    newParams.set('subtab', nextTab)
+    navigate({ pathname: location.pathname, search: newParams.toString() }, { replace: true })
+  }
+
+  useEffect(() => {
+    const qTab = searchParams.get('subtab')
+    if (qTab && qTab !== tab) {
+      setTabState(qTab)
+    }
+  }, [searchParams])
 
   useEffect(() => {
     let aborted = false
@@ -1513,12 +1532,11 @@ function ProgressView({ user, courseId, stats, enrollment }) {
 // ════════════════════════════════════════════════════════════════════════════
 // LESSON DETAIL — Materials / Quiz / Assessment
 // ════════════════════════════════════════════════════════════════════════════
+// LESSON DETAIL — Modern Redesign
+// ════════════════════════════════════════════════════════════════════════════
 function LessonView({ user, lessonId, onBack }) {
   const { error: showError, success } = useToast()
-  const navigate = useNavigate()
   const [data, setData] = useState(null)
-  const [tab, setTab] = useState('materials')
-  const [openAssessmentId, setOpenAssessmentId] = useState(null)
 
   const fetchLesson = async () => {
     try {
@@ -1529,24 +1547,6 @@ function LessonView({ user, lessonId, onBack }) {
     } catch (e) { showError(e.message) }
   }
   useEffect(() => { fetchLesson() }, [lessonId])
-
-  const handleStartQuiz = async (quizId) => {
-    const token = user?.token
-    const currentTrainingId = data?.trainingProgramId
-    try {
-      const startUrl = `${API_BASE}/quizzes/${quizId}/start`
-      const res = await fetch(startUrl, { method: 'POST', headers: auth(token) })
-      const response = await res.json()
-      if (!res.ok) { showError(response.error || 'Failed to start quiz'); return }
-      if (response.quiz?.proctoringEnabled) {
-        navigate(`/participant/exam/${quizId}`, {
-          state: { attemptId: response.attemptId, quizData: response.quiz }
-        })
-      } else {
-        navigate(`/trainings/${currentTrainingId}/quizzes/${quizId}/attempt?attemptId=${response.attemptId}&sessionToken=${response.sessionToken}`)
-      }
-    } catch (err) { showError(err.message) }
-  }
 
   const markViewed = async () => {
     try {
@@ -1563,295 +1563,449 @@ function LessonView({ user, lessonId, onBack }) {
 
   if (!data) {
     return (
-      <div className="wl-detail-page">
+      <div className="wl-detail-page" style={{ fontFamily: "'Poppins', sans-serif" }}>
         <div className="wl-detail-loading-row">
           <div className="skeleton" style={{ height: 24, width: 100 }} />
         </div>
-        <div className="skeleton" style={{ height: 100, borderRadius: 12 }} />
-        <div className="skeleton" style={{ height: 36, borderRadius: 8, marginTop: 8 }} />
-        <div className="skeleton" style={{ height: 280, borderRadius: 12, marginTop: 8 }} />
+        <div className="skeleton" style={{ height: 120, borderRadius: 16 }} />
+        <div className="skeleton" style={{ height: 180, borderRadius: 16, marginTop: 16 }} />
+        <div className="skeleton" style={{ height: 120, borderRadius: 16, marginTop: 16 }} />
       </div>
     )
   }
 
-  const SUBTABS = [
-    { key: 'materials',  label: 'Materials',  icon: <Folder size={13} /> },
-    { key: 'quiz',       label: 'Quiz',       icon: <Sparkles size={13} /> },
-    { key: 'assessment', label: 'Assessment', icon: <ClipboardList size={13} /> },
-  ]
+  const isCompleted = data.progress?.status === 'COMPLETED' || data.progress?.contentViewed
+  const cleanTitle = (data.lesson?.title || 'Lesson Details').replace(/^Module:\s*/i, '')
+  const materials = data.materials || []
 
   return (
-    <div className="wl-detail-page">
-      {/* Top Row */}
+    <div className="wl-detail-page" style={{ fontFamily: "'Poppins', sans-serif", maxWidth: 1100, margin: '0 auto', paddingBottom: 40 }}>
+      {/* ── Top Navigation Row ── */}
       <motion.div
         className="wl-detail-top-row"
         initial={{ opacity: 0, y: -6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25 }}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}
       >
-        <nav className="wl-detail-breadcrumb">
-          <a href="#" onClick={(e) => { e.preventDefault(); onBack() }}>Course</a>
-          <span className="wl-detail-breadcrumb-sep">/</span>
-          <span>{data.lesson.title}</span>
+        <nav className="wl-detail-breadcrumb" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, flex: 1, minWidth: 0, paddingRight: 16 }}>
+          <a
+            href="#"
+            onClick={(e) => { e.preventDefault(); onBack() }}
+            style={{ color: '#64748B', textDecoration: 'none', fontWeight: 500, whiteSpace: 'nowrap' }}
+            onMouseEnter={(e) => e.currentTarget.style.color = '#16A34A'}
+            onMouseLeave={(e) => e.currentTarget.style.color = '#64748B'}
+          >
+            Course
+          </a>
+          <span className="wl-detail-breadcrumb-sep" style={{ color: '#CBD5E1' }}>/</span>
+          <span style={{ color: '#0F172A', fontWeight: 600 }}>
+            {cleanTitle}
+          </span>
         </nav>
-        <button className="wl-detail-back" onClick={onBack}>
-          <ArrowLeft size={12} /> Back to course
+        <button
+          className="wl-detail-back"
+          onClick={onBack}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '8px 16px',
+            borderRadius: 10,
+            background: '#FFFFFF',
+            border: '1px solid #E2E8F0',
+            color: '#334155',
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: 'pointer',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+            transition: 'all 150ms ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = '#F8FAFC'
+            e.currentTarget.style.borderColor = '#CBD5E1'
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = '#FFFFFF'
+            e.currentTarget.style.borderColor = '#E2E8F0'
+          }}
+        >
+          <ArrowLeft size={14} /> Back to course
         </button>
       </motion.div>
 
-      {/* Hero Card — Lesson */}
+      {/* ── Hero Card — Module Header ── */}
       <motion.div
-        className="wl-detail-hero"
-        initial={{ opacity: 0, y: 12 }}
+        initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+        transition={{ duration: 0.3 }}
+        style={{
+          background: '#FFFFFF',
+          border: '1px solid #E2E8F0',
+          borderRadius: 16,
+          padding: '24px 28px',
+          boxShadow: '0 1px 3px rgba(15, 23, 42, 0.03), 0 6px 16px -4px rgba(15, 23, 42, 0.04)',
+          marginBottom: 20,
+        }}
       >
-        <div className="wl-detail-hero-info" style={{ width: '100%' }}>
-          <div className="wl-detail-hero-top">
-            <div className="wl-detail-hero-text">
-              <h1 className="wl-detail-hero-title">{data.lesson.title}</h1>
-              {data.lesson.description && (
-                <p className="wl-detail-hero-desc" style={{ marginBottom: 0 }}>{data.lesson.description}</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 5,
+            padding: '4px 10px',
+            borderRadius: 20,
+            background: '#F0FDF4',
+            color: '#16A34A',
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: 0.3,
+            textTransform: 'uppercase',
+          }}>
+            <BookOpen size={12} /> Learning Module
+          </span>
+        </div>
+
+        <h1 style={{
+          fontFamily: "'Poppins', sans-serif",
+          fontSize: 22,
+          fontWeight: 700,
+          color: '#0F172A',
+          margin: '0 0 10px',
+          lineHeight: 1.35,
+          letterSpacing: '-0.015em',
+        }}>
+          {cleanTitle}
+        </h1>
+
+        {data.lesson.description && (
+          <p style={{
+            margin: '0 0 16px',
+            fontSize: 14,
+            lineHeight: 1.6,
+            color: '#64748B',
+            fontFamily: "'Poppins', sans-serif",
+          }}>
+            {data.lesson.description}
+          </p>
+        )}
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, paddingTop: 12, borderTop: '1px solid #F1F5F9' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 12px',
+              borderRadius: 8,
+              fontSize: 12,
+              fontWeight: 600,
+              background: isCompleted ? '#F0FDF4' : data.progress?.status === 'IN_PROGRESS' ? '#FFFBEB' : '#F1F5F9',
+              color: isCompleted ? '#16A34A' : data.progress?.status === 'IN_PROGRESS' ? '#D97706' : '#64748B',
+            }}>
+              <span style={{
+                width: 6, height: 6, borderRadius: '50%',
+                background: isCompleted ? '#16A34A' : data.progress?.status === 'IN_PROGRESS' ? '#D97706' : '#94A3B8'
+              }} />
+              {isCompleted ? 'Completed' : data.progress?.status === 'IN_PROGRESS' ? 'In Progress' : 'Not Started'}
+            </span>
+
+            {materials.length > 0 && (
+              <span style={{ fontSize: 12.5, color: '#64748B', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                <Folder size={14} color="#94A3B8" /> {materials.length} resource{materials.length > 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+
+          {!data.progress?.contentViewed && (
+            <button
+              onClick={markViewed}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                height: 36,
+                padding: '0 18px',
+                borderRadius: 9,
+                background: '#16A34A',
+                color: '#FFFFFF',
+                fontSize: 12.5,
+                fontWeight: 600,
+                border: 'none',
+                cursor: 'pointer',
+                boxShadow: '0 2px 6px rgba(22, 163, 74, 0.25)',
+                transition: 'all 150ms ease',
+                fontFamily: "'Poppins', sans-serif",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = '#15803D'}
+              onMouseLeave={(e) => e.currentTarget.style.background = '#16A34A'}
+            >
+              <CheckCircle2 size={14} /> Mark as viewed
+            </button>
+          )}
+        </div>
+      </motion.div>
+
+      {/* ── Content Area: Lesson Summary & Materials ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        {/* Lesson Summary Card */}
+        {data.lesson.content && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25, delay: 0.05 }}
+            style={{
+              background: '#FFFFFF',
+              border: '1px solid #E2E8F0',
+              borderRadius: 16,
+              padding: '22px 26px',
+              boxShadow: '0 1px 3px rgba(15, 23, 42, 0.02)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: 8,
+                background: '#F0FDF4', color: '#16A34A',
+                display: 'flex', alignItems: 'center', justifyContent: 'center'
+              }}>
+                <FileText size={15} />
+              </div>
+              <h3 style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', margin: 0, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Lesson Summary & Notes
+              </h3>
+            </div>
+            <div style={{
+              fontSize: 14,
+              color: '#334155',
+              whiteSpace: 'pre-wrap',
+              lineHeight: 1.7,
+              background: '#F8FAFC',
+              padding: '14px 18px',
+              borderRadius: 12,
+              border: '1px solid #F1F5F9',
+            }}>
+              {data.lesson.content}
+            </div>
+          </motion.div>
+        )}
+
+        {/* Learning Materials Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25, delay: 0.1 }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: 8,
+                background: '#F0FDF4', color: '#16A34A',
+                display: 'flex', alignItems: 'center', justifyContent: 'center'
+              }}>
+                <Folder size={15} />
+              </div>
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', margin: 0 }}>
+                Learning Materials
+              </h3>
+              {materials.length > 0 && (
+                <span style={{
+                  padding: '2px 8px', borderRadius: 12,
+                  background: '#E2E8F0', color: '#475569',
+                  fontSize: 11, fontWeight: 700
+                }}>
+                  {materials.length}
+                </span>
               )}
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
-            <StatusPill status={data.progress.status} />
-            {!data.progress.contentViewed && (
-              <button
-                onClick={markViewed}
-                className="wl-btn-primary"
-                style={{ height: 34, padding: '0 16px', fontSize: 12 }}
-              >
-                <CheckCircle2 size={12} /> Mark as viewed
-              </button>
-            )}
-          </div>
-        </div>
-      </motion.div>
 
-      {/* Sub-tabs */}
-      <motion.div
-        className="wl-detail-tabs"
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25, delay: 0.08 }}
-      >
-        <div className="wl-detail-tabs-list">
-          {SUBTABS.map(t => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={`wl-detail-tab ${tab === t.key ? 'wl-detail-tab--active' : ''}`}
-              aria-selected={tab === t.key}
-              role="tab"
-            >
-              {t.icon}
-              <span>{t.label}</span>
-            </button>
-          ))}
-        </div>
-      </motion.div>
-
-      {/* Content */}
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={tab}
-          className="wl-detail-content-wrapper"
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-        >
-          {tab === 'materials' && (
-            <div className="wl-detail-content wl-detail-content--full">
-              <div className="wl-lessons-surface">
-                {data.lesson.content && (
-                  <div className="enterprise-card" style={{ padding: 20, marginBottom: 12 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
-                      Lesson Summary
-                    </div>
-                    <div style={{ fontSize: 14, color: '#4B5563', whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>{data.lesson.content}</div>
-                  </div>
-                )}
-                {(data.materials || []).length > 0 ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {data.materials.map(m => (
-                      <MaterialCard key={m.id} material={m} />
-                    ))}
-                  </div>
-                ) : !data.lesson.content ? (
-                  <div className="wl-lessons-empty">
-                    <div className="wl-lessons-empty-icon">
-                      <Folder size={32} />
-                    </div>
-                    <h3>No materials posted yet</h3>
-                  </div>
-                ) : null}
-              </div>
+          {materials.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {materials.map((m, idx) => (
+                <MaterialCard key={m.id || idx} material={m} />
+              ))}
             </div>
-          )}
-
-          {tab === 'quiz' && (
-            <div className="wl-detail-content wl-detail-content--full">
-              <div className="wl-lessons-surface">
-                {(data.quizzes || []).length === 0 ? (
-                  <div className="wl-lessons-empty">
-                    <div className="wl-lessons-empty-icon">
-                      <Sparkles size={32} />
-                    </div>
-                    <h3>No quiz attached</h3>
-                    <p>This lesson does not have a quiz yet.</p>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {data.quizzes.map(q => (
-                      <div key={q.quizId} className="enterprise-card" style={{ padding: 18, display: 'flex', alignItems: 'center', gap: 14 }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <div style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>{q.title}</div>
-                            {q.myStatus !== 'NOT_STARTED' && (
-                              q.resultStatus === 'PUBLISHED' ? (
-                                <span className="wl-detail-status-badge wl-detail-status-badge--published" style={{ fontSize: 9 }}>Result Available</span>
-                              ) : (
-                                <span className="wl-detail-status-badge wl-detail-status-badge--draft" style={{ fontSize: 9 }}>Pending Result</span>
-                              )
-                            )}
-                          </div>
-                          <div style={{ fontSize: 11, color: '#6B7280', marginTop: 2 }}>
-                            {q.questionCount} questions · {q.isMandatory ? 'Mandatory' : 'Optional'}
-                            {q.myStatus !== 'NOT_STARTED' && (
-                              <> · <span style={{ fontWeight: 600, color: q.myStatus === 'IN_PROGRESS' ? '#d97706' : q.resultStatus === 'PUBLISHED' ? '#16a34a' : '#d97706' }}>
-                                {q.myStatus === 'IN_PROGRESS' ? 'In Progress' : q.resultStatus === 'PUBLISHED' ? `Submitted${q.myScore != null ? ` (${q.myScore.toFixed(0)}%)` : ''}` : 'Result Pending'}
-                              </span></>
-                            )}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => {
-                            if (q.myStatus === 'IN_PROGRESS') handleStartQuiz(q.quizId)
-                            else if (q.myStatus !== 'NOT_STARTED' && q.resultStatus === 'PUBLISHED') navigate(`/trainings/${data.trainingProgramId}/quizzes/${q.quizId}/result`)
-                            else handleStartQuiz(q.quizId)
-                          }}
-                          disabled={q.myStatus !== 'NOT_STARTED' && q.myStatus !== 'IN_PROGRESS' && q.resultStatus !== 'PUBLISHED'}
-                          className="wl-btn-primary"
-                          style={{
-                            height: 36, padding: '0 16px', fontSize: 12,
-                            opacity: (q.myStatus !== 'NOT_STARTED' && q.myStatus !== 'IN_PROGRESS' && q.resultStatus !== 'PUBLISHED') ? 0.5 : 1,
-                          }}
-                        >
-                          {q.myStatus === 'IN_PROGRESS' ? <><PlayCircle size={12} /> Resume</>
-                            : q.myStatus !== 'NOT_STARTED' ? (q.resultStatus === 'PUBLISHED' ? <><Eye size={12} /> View Result</> : 'Attempted')
-                            : <><PlayCircle size={12} /> Start Quiz</>}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+          ) : !data.lesson.content ? (
+            <div style={{
+              background: '#FFFFFF',
+              border: '1px solid #E2E8F0',
+              borderRadius: 16,
+              padding: '36px 20px',
+              textAlign: 'center',
+            }}>
+              <div style={{
+                width: 48, height: 48, borderRadius: 14,
+                background: '#F1F5F9', color: '#94A3B8',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                marginBottom: 10,
+              }}>
+                <Folder size={24} />
               </div>
+              <h4 style={{ fontSize: 15, fontWeight: 600, color: '#0F172A', margin: '0 0 4px' }}>
+                No materials posted yet
+              </h4>
+              <p style={{ fontSize: 13, color: '#64748B', margin: 0 }}>
+                Your trainer will upload lesson materials and notes here.
+              </p>
             </div>
-          )}
-
-          {tab === 'assessment' && (
-            <div className="wl-detail-content wl-detail-content--full">
-              <div className="wl-lessons-surface">
-                {(data.assessments || []).length === 0 ? (
-                  <div className="wl-lessons-empty">
-                    <div className="wl-lessons-empty-icon">
-                      <ClipboardList size={32} />
-                    </div>
-                    <h3>No assessment for this lesson</h3>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {data.assessments.map(a => (
-                      <div key={a.assessmentId} className="enterprise-card" style={{ padding: 18 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div>
-                            <div style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>{a.title}</div>
-                            <div style={{ fontSize: 11, color: '#6B7280' }}>
-                              Max score: {a.maxScore} · Status: <strong>{a.myStatus}</strong>
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => setOpenAssessmentId(a.assessmentId)}
-                            className={a.myStatus === 'NOT_STARTED' ? 'wl-btn-primary' : 'wl-btn-secondary wl-btn-secondary--teal'}
-                            style={{ height: 36, padding: '0 16px', fontSize: 12 }}
-                          >
-                            {a.myStatus === 'NOT_STARTED' ? 'Submit' : 'View / Resubmit'}
-                          </button>
-                        </div>
-                        {a.instructions && (
-                          <div style={{
-                            marginTop: 12, padding: 14, background: '#f9fafb', borderRadius: 10,
-                            fontSize: 13, color: '#4B5563', whiteSpace: 'pre-wrap', lineHeight: 1.6,
-                          }}>
-                            {a.instructions}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+          ) : null}
         </motion.div>
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {openAssessmentId && (
-          <AssessmentModal
-            user={user}
-            assessmentId={openAssessmentId}
-            onClose={() => { setOpenAssessmentId(null); fetchLesson() }}
-          />
-        )}
-      </AnimatePresence>
+      </div>
     </div>
   )
 }
 
 function MaterialCard({ material }) {
   const m = material
+
+  // Clean fallback title if title is "." or empty
+  let displayTitle = (m.title || '').trim()
+  if (!displayTitle || displayTitle === '.' || displayTitle === '-') {
+    if (m.fileUrl) {
+      const parts = m.fileUrl.split('/')
+      displayTitle = decodeURIComponent(parts[parts.length - 1] || 'Course Attachment')
+    } else {
+      displayTitle = `${m.materialType || 'Reference'} Material`
+    }
+  }
+
+  const typeConfig = {
+    PDF:   { bg: '#FEF2F2', color: '#DC2626', label: 'PDF Document', icon: <FileText size={16} /> },
+    VIDEO: { bg: '#F5F3FF', color: '#7C3AED', label: 'Video Lesson', icon: <Video size={16} /> },
+    PPT:   { bg: '#FFF7ED', color: '#EA580C', label: 'Presentation', icon: <Presentation size={16} /> },
+    NOTE:  { bg: '#F0FDF4', color: '#16A34A', label: 'Study Note', icon: <FilePenLine size={16} /> },
+    LINK:  { bg: '#EFF6FF', color: '#2563EB', label: 'External Link', icon: <LinkIcon size={16} /> },
+    IMAGE: { bg: '#ECFEFF', color: '#0891B2', label: 'Diagram / Image', icon: <ImageIcon size={16} /> },
+  }
+
+  const cfg = typeConfig[m.materialType] || typeConfig.NOTE
+
   return (
-    <div className="enterprise-card" style={{ padding: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+    <div
+      style={{
+        background: '#FFFFFF',
+        border: '1px solid #E2E8F0',
+        borderRadius: 14,
+        padding: '16px 20px',
+        boxShadow: '0 1px 2px rgba(15, 23, 42, 0.02)',
+        transition: 'all 150ms ease',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 12,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = '#CBD5E1'
+        e.currentTarget.style.boxShadow = '0 4px 12px -2px rgba(15, 23, 42, 0.05)'
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = '#E2E8F0'
+        e.currentTarget.style.boxShadow = '0 1px 2px rgba(15, 23, 42, 0.02)'
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
           <div style={{
-            width: 28, height: 28, borderRadius: 6,
-            background: '#f0fdfa', color: '#0D9488',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 38,
+            height: 38,
+            borderRadius: 10,
+            background: cfg.bg,
+            color: cfg.color,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
           }}>
-            {MAT_ICON[m.materialType]}
+            {cfg.icon}
           </div>
-          <span style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>{m.title}</span>
+          <div style={{ minWidth: 0 }}>
+            <div style={{
+              fontSize: 14,
+              fontWeight: 600,
+              color: '#0F172A',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              fontFamily: "'Poppins', sans-serif",
+            }}>
+              {displayTitle}
+            </div>
+            <div style={{ fontSize: 11.5, color: '#64748B', display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+              <span style={{ fontWeight: 600, color: cfg.color }}>{cfg.label}</span>
+              {m.fileSize && <span>· {(m.fileSize / 1024).toFixed(1)} KB</span>}
+            </div>
+          </div>
         </div>
+
         {(m.fileUrl || m.linkUrl) && (
           <a
             href={m.fileUrl ? assetUrl(m.fileUrl) : m.linkUrl}
-            target="_blank" rel="noreferrer"
-            className="wl-btn-secondary wl-btn-secondary--teal"
-            style={{ height: 30, padding: '0 10px', fontSize: 11, textDecoration: 'none' }}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              height: 34,
+              padding: '0 14px',
+              borderRadius: 8,
+              background: '#F0FDF4',
+              border: '1px solid #BBF7D0',
+              color: '#15803D',
+              fontSize: 12,
+              fontWeight: 600,
+              textDecoration: 'none',
+              cursor: 'pointer',
+              transition: 'all 150ms ease',
+              flexShrink: 0,
+              fontFamily: "'Poppins', sans-serif",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = '#DCFCE7'
+              e.currentTarget.style.borderColor = '#86EFAC'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = '#F0FDF4'
+              e.currentTarget.style.borderColor = '#BBF7D0'
+            }}
           >
-            <ExternalLink size={11} /> Open
+            <ExternalLink size={13} /> Open
           </a>
         )}
       </div>
+
       {m.materialType === 'NOTE' && m.content && (
         <div
           dangerouslySetInnerHTML={{ __html: m.content }}
-          style={{ fontSize: 14, color: '#4B5563', lineHeight: 1.6 }}
+          style={{
+            fontSize: 13.5,
+            color: '#475569',
+            lineHeight: 1.65,
+            background: '#F8FAFC',
+            padding: '12px 16px',
+            borderRadius: 10,
+            border: '1px solid #F1F5F9',
+          }}
         />
       )}
+
       {m.materialType === 'IMAGE' && m.fileUrl && (
-        <img src={assetUrl(m.fileUrl)} alt={m.title} style={{ maxWidth: '100%', borderRadius: 10, marginTop: 4 }} />
+        <img
+          src={assetUrl(m.fileUrl)}
+          alt={displayTitle}
+          style={{ maxWidth: '100%', maxHeight: 400, objectFit: 'contain', borderRadius: 10, border: '1px solid #E2E8F0' }}
+        />
       )}
+
       {m.materialType === 'VIDEO' && m.fileUrl && (
-        <video src={assetUrl(m.fileUrl)} controls style={{ maxWidth: '100%', borderRadius: 10, marginTop: 4 }} />
+        <video
+          src={assetUrl(m.fileUrl)}
+          controls
+          style={{ width: '100%', maxHeight: 420, borderRadius: 10, background: '#000' }}
+        />
       )}
+
       {m.materialType === 'LINK' && m.content && (
-        <p style={{ margin: '4px 0 0', color: '#6B7280', fontSize: 13 }}>{m.content}</p>
+        <p style={{ margin: 0, color: '#64748B', fontSize: 13 }}>{m.content}</p>
       )}
     </div>
   )
@@ -2087,28 +2241,82 @@ function ExploreCatalog({ user, onEnrollSuccess }) {
 // PUBLIC ENTRY — switches between list / course / lesson
 // ════════════════════════════════════════════════════════════════════════════
 export default function ParticipantCourses({ user, initialCourseId }) {
+  const [searchParams] = useSearchParams()
   const location = useLocation()
-  const activeCourseId = initialCourseId || location.state?.courseId || null
-  const [view, setView] = useState({
-    mode: activeCourseId ? 'course' : 'list',
-    courseId: activeCourseId,
-    lessonId: null
-  })
+  const navigate = useNavigate()
 
+  const paramCourseId = searchParams.get('courseId') ? Number(searchParams.get('courseId')) : null
+  const paramLessonId = searchParams.get('lessonId') ? Number(searchParams.get('lessonId')) : null
+  const activeCourseId = paramCourseId || initialCourseId || location.state?.courseId || null
+
+  const getInitialView = () => {
+    if (paramLessonId && activeCourseId) {
+      return { mode: 'lesson', courseId: activeCourseId, lessonId: paramLessonId }
+    }
+    if (activeCourseId) {
+      return { mode: 'course', courseId: activeCourseId, lessonId: null }
+    }
+    return { mode: 'list', courseId: null, lessonId: null }
+  }
+
+  const [view, setView] = useState(getInitialView)
+
+  // Sync state with URL search params whenever browser Back/Forward/Navigation happens
   useEffect(() => {
-    if (location.state?.courseId) {
-      setView({ mode: 'course', courseId: location.state.courseId, lessonId: null })
-    } else if (location.state?.courseId === null) {
+    const cId = searchParams.get('courseId') ? Number(searchParams.get('courseId')) : (initialCourseId || location.state?.courseId || null)
+    const lId = searchParams.get('lessonId') ? Number(searchParams.get('lessonId')) : null
+    if (lId && cId) {
+      setView({ mode: 'lesson', courseId: cId, lessonId: lId })
+    } else if (cId) {
+      setView({ mode: 'course', courseId: cId, lessonId: null })
+    } else {
       setView({ mode: 'list', courseId: null, lessonId: null })
     }
-  }, [location.state?.courseId])
+  }, [searchParams, location.state?.courseId, initialCourseId])
+
+  const navigateToCourse = (courseId) => {
+    const newParams = new URLSearchParams(location.search)
+    newParams.set('tab', 'myEnrollments')
+    newParams.set('courseId', courseId)
+    newParams.delete('lessonId')
+    navigate({ pathname: location.pathname, search: newParams.toString() })
+  }
+
+  const navigateToLesson = (courseId, lessonId) => {
+    const newParams = new URLSearchParams(location.search)
+    newParams.set('tab', 'myEnrollments')
+    newParams.set('courseId', courseId)
+    newParams.set('lessonId', lessonId)
+    navigate({ pathname: location.pathname, search: newParams.toString() })
+  }
+
+  const navigateBackToCourse = (courseId) => {
+    const newParams = new URLSearchParams(location.search)
+    newParams.set('tab', 'myEnrollments')
+    if (courseId) {
+      newParams.set('courseId', courseId)
+    } else {
+      newParams.delete('courseId')
+    }
+    newParams.delete('lessonId')
+    navigate({ pathname: location.pathname, search: newParams.toString() })
+  }
+
+  const navigateBackToList = () => {
+    const newParams = new URLSearchParams(location.search)
+    newParams.set('tab', 'myEnrollments')
+    newParams.delete('courseId')
+    newParams.delete('lessonId')
+    newParams.delete('subtab')
+    navigate({ pathname: location.pathname, search: newParams.toString() })
+  }
 
   if (view.mode === 'lesson') {
     return (
       <LessonView
         user={user}
         lessonId={view.lessonId}
-        onBack={() => setView({ mode: 'course', courseId: view.courseId })}
+        onBack={() => navigateBackToCourse(view.courseId)}
       />
     )
   }
@@ -2117,13 +2325,13 @@ export default function ParticipantCourses({ user, initialCourseId }) {
       <CourseView
         user={user}
         courseId={view.courseId}
-        onBack={() => setView({ mode: 'list', courseId: null, lessonId: null })}
-        onOpenLesson={(lessonId) => setView({ mode: 'lesson', courseId: view.courseId, lessonId })}
+        onBack={navigateBackToList}
+        onOpenLesson={(lessonId) => navigateToLesson(view.courseId, lessonId)}
       />
     )
   }
   return (
-    <MyCoursesList user={user} onOpen={(courseId) => setView({ mode: 'course', courseId, lessonId: null })} />
+    <MyCoursesList user={user} onOpen={navigateToCourse} />
   )
 }
 

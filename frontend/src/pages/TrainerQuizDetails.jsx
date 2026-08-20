@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { API, API_BASE } from '../api/api'
 import { useToast } from '../components/Toast'
+import { useConfirm } from '../components/ui/AlertModal'
 import { TrainerProctoringDashboard } from '../proctoring'
 import { SingleAttemptProctoringModal } from '../proctoring/components/TrainerMonitoringReport'
 
@@ -63,6 +64,7 @@ export default function TrainerQuizDetails({ user, onLogout }) {
   const { quizId } = useParams()
   const navigate = useNavigate()
   const toast = useToast()
+  const confirm = useConfirm()
   const auth = () => ({ Authorization: `Bearer ${user?.token}`, 'Content-Type': 'application/json' })
 
   const [quiz, setQuiz] = useState(null)
@@ -104,7 +106,13 @@ export default function TrainerQuizDetails({ user, onLogout }) {
   }
 
   const handleDelete = async () => {
-    if (!confirm('Delete this quiz permanently? This cannot be undone.')) return
+    const ok = await confirm({
+      title: 'Delete Quiz',
+      message: 'Are you sure you want to delete this quiz permanently? This cannot be undone.',
+      type: 'danger',
+      confirmText: 'Delete Permanently',
+    })
+    if (!ok) return
     try {
       const r = await fetch(API.TRAINER_COURSES.QUIZ(quiz?.courseId || 0, quizId), {
         method: 'DELETE', headers: auth()
@@ -322,6 +330,7 @@ function GeneralTab({ quiz, onPublish, onDelete, publishing, onRefresh, auth }) 
 }
 
 function QuestionsTab({ quiz, onRefresh, auth, toast }) {
+  const confirm = useConfirm()
   const [questions, setQuestions] = useState(quiz.questions || [])
   const [showForm, setShowForm] = useState(false)
   const [editQ, setEditQ] = useState(null)
@@ -337,7 +346,13 @@ function QuestionsTab({ quiz, onRefresh, auth, toast }) {
   }
 
   const handleDelete = async (qId) => {
-    if (!confirm('Delete this question?')) return
+    const ok = await confirm({
+      title: 'Delete Question',
+      message: 'Are you sure you want to delete this question?',
+      type: 'danger',
+      confirmText: 'Delete Question',
+    })
+    if (!ok) return
     try {
       const r = await fetch(API.TRAINER_COURSES.QUIZ_QUESTION(qId), { method: 'DELETE', headers: auth() })
       if (!r.ok) throw new Error('Delete failed')

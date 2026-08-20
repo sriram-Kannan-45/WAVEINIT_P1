@@ -22,7 +22,10 @@ export const ToastProvider = ({ children }) => {
     setToasts(prev => prev.filter(t => t.id !== id))
   }, [])
 
+  const recentToastsRef = useRef(new Map())
+
   const addToast = useCallback((message, optionsOrDesc = {}) => {
+    if (!message) return null
     const id = `${Date.now()}_${Math.random().toString(36).substring(2, 6)}`
     let options = {}
     if (typeof optionsOrDesc === 'string') {
@@ -37,6 +40,22 @@ export const ToastProvider = ({ children }) => {
       description = '',
       action = null
     } = options
+
+    // Deduplication check: prevent identical toast (type + message + description) within 2000ms
+    const dedupKey = `${type}:${message}:${description}`
+    const now = Date.now()
+    const lastTime = recentToastsRef.current.get(dedupKey) || 0
+    if (now - lastTime < 2000) {
+      return null
+    }
+    recentToastsRef.current.set(dedupKey, now)
+
+    // Clean up stale entries (>10s)
+    for (const [k, timestamp] of recentToastsRef.current.entries()) {
+      if (now - timestamp > 10000) {
+        recentToastsRef.current.delete(k)
+      }
+    }
 
     const toast = { id, message, description, type, action, duration }
     setToasts(prev => {

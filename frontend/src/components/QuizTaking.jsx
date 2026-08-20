@@ -434,115 +434,87 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
           }
           missingCountRef.current = 0
 
-          // Spatial Head Turn, Gaze, and Upper-Body Framing tracking
-          if (skinPixels > 20) {
-            const centroidX = sumX / skinPixels
-            const centroidY = sumY / skinPixels
-            const normX = centroidX / w
-            const normY = centroidY / h
-
-            // 1. Head Pose deviations
-            if (normX < 0.28) {
-              reportMonitoringEvent('HEAD_TURNED_LEFT', 'WARNING', {
-                confidence: 0.92,
-                duration: 2.0,
-                metadata: { offsetRatio: Math.round(normX * 100) / 100 }
-              })
-            } else if (normX > 0.72) {
-              reportMonitoringEvent('HEAD_TURNED_RIGHT', 'WARNING', {
-                confidence: 0.92,
-                duration: 2.0,
-                metadata: { offsetRatio: Math.round(normX * 100) / 100 }
-              })
-            } else if (normY > 0.75) {
-              reportMonitoringEvent('HEAD_LOOKING_DOWN', 'WARNING', {
-                confidence: 0.88,
-                duration: 2.0,
-                metadata: { offsetRatio: Math.round(normY * 100) / 100 }
-              })
-            } else if (normY < 0.18) {
-              reportMonitoringEvent('HEAD_LOOKING_UP', 'WARNING', {
-                confidence: 0.88,
-                duration: 2.0,
-                metadata: { offsetRatio: Math.round(normY * 100) / 100 }
-              })
-            }
-
-            // 2. Eye & Gaze Horizontal/Vertical Sclera-Iris Asymmetry analysis
-            const eyeRegionY = Math.max(0, Math.floor(centroidY - 18))
-            const eyeRegionH = 24
-            let leftHalfLuma = 0, rightHalfLuma = 0, upperLuma = 0, lowerLuma = 0
-            let eyePixelCount = 0
-
-            for (let ey = eyeRegionY; ey < Math.min(h, eyeRegionY + eyeRegionH); ey += 2) {
-              for (let ex = Math.max(0, Math.floor(centroidX - 28)); ex < Math.min(w, Math.floor(centroidX + 28)); ex += 2) {
-                const pIdx = (ey * w + ex) * 4
-                const pLuma = 0.299 * d[pIdx] + 0.587 * d[pIdx + 1] + 0.114 * d[pIdx + 2]
-                eyePixelCount++
-                if (ex < centroidX) leftHalfLuma += pLuma
-                else rightHalfLuma += pLuma
-                if (ey < eyeRegionY + 12) upperLuma += pLuma
-                else lowerLuma += pLuma
-              }
-            }
-
-            if (eyePixelCount > 30) {
-              const hDiff = (rightHalfLuma - leftHalfLuma) / Math.max(1, leftHalfLuma + rightHalfLuma)
-              const vDiff = (lowerLuma - upperLuma) / Math.max(1, upperLuma + lowerLuma)
-
-              if (hDiff > 0.22) {
-                reportMonitoringEvent('EYES_LOOKING_RIGHT', 'WARNING', {
-                  confidence: 0.89,
-                  duration: 2.0,
-                  metadata: { direction: 'RIGHT', asymmetry: Math.round(hDiff * 100) / 100 }
-                })
-              } else if (hDiff < -0.22) {
-                reportMonitoringEvent('EYES_LOOKING_LEFT', 'WARNING', {
-                  confidence: 0.89,
-                  duration: 2.0,
-                  metadata: { direction: 'LEFT', asymmetry: Math.round(hDiff * 100) / 100 }
-                })
-              } else if (vDiff > 0.24) {
-                reportMonitoringEvent('EYES_LOOKING_DOWN', 'WARNING', {
-                  confidence: 0.86,
-                  duration: 2.0,
-                  metadata: { direction: 'DOWN', asymmetry: Math.round(vDiff * 100) / 100 }
-                })
-              }
-            }
-
-            // 3. Below-Chest & Upper Body Framing analysis
-            if (skinRatio < 0.035 && isPresent) {
-              reportMonitoringEvent('BELOW_CHEST_NOT_VISIBLE', 'WARNING', {
-                confidence: 0.84,
-                duration: 2.5,
-                metadata: { skinRatio: Math.round(skinRatio * 1000) / 1000, message: 'Upper body and area below chest not clearly framed' }
-              })
-            }
-          }
+          // NOTE: Gaze, Head Pose, Eye Direction, and Body Framing tracking
+          // is handled exclusively by MonitoringEngineClient.js which uses
+          // proper sustained-deviation thresholds (3.5s+), rolling-window
+          // grace models (5 allowed in 5min), and per-event-type cooldowns.
+          // Duplicate reporting here was removed (Bug 18 / Addendum #8)
+          // because it logged events on every frame without sustained
+          // confirmation, producing 8+ "Eyes looking left" events in <1min.
         }
       } catch (_) {
         // Frame analysis fallback
       }
     }, 1800)
 
-    // Tab visibility & Window blur listeners
+    // Tab visibility & Window blur listeners with confirmation timers
+    let tabTimer = null
+    let blurTimer = null
+
     const handleVisibilityChange = () => {
-      if (document.hidden) {
-        reportMonitoringEvent('TAB_SWITCH', 'WARNING', { type: 'PAGE_VISIBILITY_HIDDEN' })
+      if (document.hidden || document.visibilityState === 'hidden') {
+        if (!tabTimer) {
+          tabTimer = setTimeout(() => {
+            if (document.hidden || document.visibilityState === 'hidden') {
+              reportMonitoringEvent('TAB_SWITCH', 'WARNING', {
+                type: 'PAGE_VISIBILITY_HIDDEN',
+                duration: 2.0,
+                metadata: {
+                  hasFocus: document.hasFocus(),
+                  visibilityState: document.visibilityState,
+                  isFullscreen: !!fsApi.element(),
+                }
+              })
+            }
+            tabTimer = null
+          }, 2000) // 2.0s confirmation window
+        }
+      } else {
+        if (tabTimer) {
+          clearTimeout(tabTimer)
+          tabTimer = null
+        }
       }
     }
+
     const handleWindowBlur = () => {
-      reportMonitoringEvent('WINDOW_BLUR', 'WARNING', { type: 'WINDOW_BLUR' })
+      if (document.hidden || document.visibilityState === 'hidden') return
+      if (!blurTimer) {
+        blurTimer = setTimeout(() => {
+          if (!document.hasFocus() && !(document.hidden || document.visibilityState === 'hidden')) {
+            reportMonitoringEvent('WINDOW_BLUR', 'INFO', {
+              type: 'WINDOW_BLUR',
+              duration: 2.0,
+              metadata: {
+                hasFocus: document.hasFocus(),
+                visibilityState: document.visibilityState,
+                isFullscreen: !!fsApi.element(),
+              }
+            })
+          }
+          blurTimer = null
+        }, 2000) // 2.0s confirmation window
+      }
+    }
+
+    const handleWindowFocus = () => {
+      if (blurTimer) {
+        clearTimeout(blurTimer)
+        blurTimer = null
+      }
     }
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('blur', handleWindowBlur)
+    window.addEventListener('focus', handleWindowFocus)
 
     return () => {
       clearInterval(interval)
+      if (tabTimer) clearTimeout(tabTimer)
+      if (blurTimer) clearTimeout(blurTimer)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.removeEventListener('blur', handleWindowBlur)
+      window.removeEventListener('focus', handleWindowFocus)
     }
   }, [attemptId, reportMonitoringEvent, terminated])
 

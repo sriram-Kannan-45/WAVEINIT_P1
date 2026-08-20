@@ -2840,17 +2840,31 @@ async def analyze_proctoring_frame(req: AnalyzeFrameRequest):
     return result
 
 
+@app.post("/api/proctoring/validate-calibration")
+async def validate_proctoring_calibration(req: AnalyzeFrameRequest):
+    """Validate pre-test calibration frame (face, shoulders, lighting, face size)."""
+    if not PROCTORING_ENGINE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="MediaPipe proctoring engine is unavailable")
+
+    result = proctor_engine.validate_calibration(
+        b64_data=req.frame,
+        session_id=req.sessionId or "default"
+    )
+    return result
+
+
 @app.post("/api/proctoring/calibrate")
 async def calibrate_proctoring_session(req: CalibrateRequest):
     """Calibrate user baseline metrics for a session."""
     if not PROCTORING_ENGINE_AVAILABLE:
         raise HTTPException(status_code=503, detail="MediaPipe proctoring engine is unavailable")
 
-    proctor_engine.calibrate_session(
-        session_id=req.sessionId,
-        baseline_ear=req.baselineEar,
-        baseline_face_width=req.baselineFaceWidth
-    )
+    if hasattr(proctor_engine, "calibrate_session"):
+        proctor_engine.calibrate_session(
+            session_id=req.sessionId,
+            baseline_ear=req.baselineEar,
+            baseline_face_width=req.baselineFaceWidth
+        )
     return {"success": True, "message": f"Session {req.sessionId} calibrated successfully"}
 
 

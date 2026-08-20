@@ -1,8 +1,9 @@
 /**
- * Scoped styling for Assessment Verification Modal
- * WAVE INIT LMS — Enterprise Assessment Verification UI
+ * Scoped styling for Assessment Verification Modal & Mobile QR Proctoring
+ * WAVE INIT LMS — Enterprise Assessment Verification & Mobile Secondary Proctoring
  */
 
+/* ── Modal Overlay (Desktop) ── */
 .wi-verif-overlay {
   position: fixed;
   inset: 0;
@@ -55,4 +56,472 @@
   display: flex;
   flex-direction: column;
   gap: 0.625rem;
+}
+
+
+/* ==========================================================================
+   WAVE INIT LMS — Mobile QR Secondary Proctoring Page Styles
+   Optimized for 360px, 375px, 390px, 412px mobile screens
+   ========================================================================== */
+
+.wi-mobile-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  width: 100%;
+  background: #F8FAFC;
+  color: #0F172A;
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 24px 16px 40px 16px;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ── Top Brand Header ── */
+.wi-mobile-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  margin-bottom: 18px;
+  width: 100%;
+}
+
+.wi-mobile-shield-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #DCFCE7;
+  color: #16A34A;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.15);
+}
+
+.wi-mobile-brand-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #0F172A;
+  margin: 0 0 2px 0;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+
+.wi-mobile-brand-subtitle {
+  font-size: 12px;
+  font-weight: 500;
+  color: #64748B;
+  margin: 0;
+  letter-spacing: 0.1px;
+}
+
+/* ── Main Container Card ── */
+.wi-mobile-card {
+  width: 100%;
+  max-width: 420px;
+  background: #FFFFFF;
+  border: 1.5px solid #E2E8F0;
+  border-radius: 24px;
+  padding: 20px 18px;
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.05), 0 8px 10px -6px rgba(15, 23, 42, 0.02);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0 auto;
+}
+
+/* ── Assessment Meta Header ── */
+.wi-mobile-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+
+.wi-mobile-badge-tag {
+  background: #EAF8F0;
+  color: #16A34A;
+  border: 1px solid #DCFCE7;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: uppercase;
+}
+
+.wi-mobile-cam-btn {
+  border: 1.5px solid #CBD5E1;
+  background: #FFFFFF;
+  color: #16A34A;
+  border-radius: 10px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  font-family: inherit;
+}
+
+.wi-mobile-cam-btn:hover:not(:disabled) {
+  background: #F8FAFC;
+  border-color: #94A3B8;
+}
+
+.wi-mobile-cam-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.wi-mobile-assessment-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #0F172A;
+  line-height: 1.35;
+  margin: 0;
+  word-break: break-word;
+  text-align: left;
+}
+
+.wi-mobile-participant-row {
+  font-size: 13px;
+  color: #64748B;
+  margin: 0;
+  font-weight: 400;
+  text-align: left;
+}
+
+.wi-mobile-participant-name {
+  color: #16A34A;
+  font-weight: 600;
+}
+
+/* ── Camera Framing Requirement Card ── */
+.wi-mobile-instruction-card {
+  background: #F0FDF4;
+  border: 1.5px solid #DCFCE7;
+  border-radius: 16px;
+  padding: 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  text-align: left;
+  box-sizing: border-box;
+}
+
+.wi-mobile-instruction-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #DCFCE7;
+  color: #16A34A;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.wi-mobile-instruction-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.wi-mobile-instruction-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #16A34A;
+  margin: 0;
+}
+
+.wi-mobile-instruction-text {
+  font-size: 12px;
+  line-height: 1.55;
+  color: #334155;
+  margin: 0;
+  font-weight: 400;
+}
+
+.wi-mobile-instruction-highlight {
+  color: #16A34A;
+  font-weight: 600;
+}
+
+/* ── Camera Permission Section (Pre-enable) ── */
+.wi-mobile-permission-card {
+  background: #FFFFFF;
+  border: 1px solid #F1F5F9;
+  border-radius: 18px;
+  padding: 20px 14px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+}
+
+.wi-mobile-permission-icon {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  background: #EAF8F0;
+  color: #16A34A;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 2px;
+  transition: transform 0.2s ease;
+}
+
+.wi-mobile-permission-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0F172A;
+  margin: 0;
+}
+
+.wi-mobile-permission-desc {
+  font-size: 12.5px;
+  color: #64748B;
+  line-height: 1.5;
+  margin: 0;
+  max-width: 290px;
+}
+
+/* ── Primary Action Button ── */
+.wi-mobile-btn-primary {
+  width: 100%;
+  min-height: 48px;
+  background: #16A34A;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 14px;
+  padding: 13px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(22, 163, 74, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.wi-mobile-btn-primary:hover:not(:disabled) {
+  background: #15803D;
+  box-shadow: 0 6px 18px rgba(22, 163, 74, 0.32);
+}
+
+.wi-mobile-btn-primary:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.wi-mobile-btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ── Live Streaming Video Container ── */
+.wi-mobile-video-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  min-height: 220px;
+  border-radius: 18px;
+  overflow: hidden;
+  background: #000000;
+  border: 2px solid #22C55E;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wi-mobile-video-wrap video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Overlay Badges */
+.wi-mobile-badge-live {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  color: #4ADE80;
+  font-size: 10.5px;
+  font-weight: 700;
+  font-family: monospace;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  z-index: 10;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.wi-mobile-dot-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4ADE80;
+  animation: wiPulse 1.5s infinite;
+}
+
+@keyframes wiPulse {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.7); }
+  70% { transform: scale(1.1); box-shadow: 0 0 0 6px rgba(74, 222, 128, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
+}
+
+.wi-mobile-flip-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #FFFFFF;
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  z-index: 10;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.wi-mobile-flip-btn:hover {
+  background: rgba(15, 23, 42, 0.95);
+}
+
+.wi-mobile-badge-status {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  color: #86EFAC;
+  font-size: 10.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  z-index: 10;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ── Bottom Page Footer ── */
+.wi-mobile-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 22px;
+  font-size: 11.5px;
+  color: #64748B;
+  font-weight: 500;
+  text-align: center;
+}
+
+/* ── Error & Loading States ── */
+.wi-mobile-state-box {
+  padding: 32px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 14px;
+}
+
+.wi-mobile-error-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #FEE2E2;
+  color: #DC2626;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wi-mobile-error-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #DC2626;
+  margin: 0;
+}
+
+.wi-mobile-error-msg {
+  font-size: 12.5px;
+  color: #475569;
+  line-height: 1.5;
+  margin: 0;
+  max-width: 300px;
+}
+
+.wi-mobile-btn-retry {
+  padding: 10px 20px;
+  background: #F1F5F9;
+  border: 1px solid #CBD5E1;
+  color: #0F172A;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: inherit;
+}
+
+@media (max-width: 375px) {
+  .wi-mobile-page {
+    padding: 16px 12px 32px 12px;
+  }
+  .wi-mobile-card {
+    padding: 16px 14px;
+    border-radius: 20px;
+  }
+  .wi-mobile-brand-title {
+    font-size: 18px;
+  }
+  .wi-mobile-assessment-title {
+    font-size: 15.5px;
+  }
 }

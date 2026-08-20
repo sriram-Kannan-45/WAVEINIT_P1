@@ -27,6 +27,7 @@ import ParticipantMonitorCard from './ParticipantMonitorCard';
 import { GlassCard, GhostButton } from './ui';
 import { useSocket, useSocketEvent } from '../../hooks/useSocket';
 import { useToast } from '../../components/Toast';
+import { useConfirm } from '../../components/ui/AlertModal';
 import RecordingReplay from './RecordingReplay';
 
 const VIOLATION_ICONS = {
@@ -56,6 +57,7 @@ const STATUS_FILTERS = ['ALL', 'ACTIVE', 'PENDING', 'SUBMITTED', 'TERMINATED'];
 
 export default function TrainerProctoringDashboard({ quizId, quizTitle }) {
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const {
     sessions, refresh, forceTerminate, isLoading,
     observedStreams, observe, unobserve, observedSessions,
@@ -159,7 +161,13 @@ export default function TrainerProctoringDashboard({ quizId, quizTitle }) {
   }, [sessions, observedSessions, observe]);
 
   const handleTerminate = async (s) => {
-    if (!window.confirm(`Force-terminate ${s.participant?.name}'s exam?`)) return;
+    const ok = await confirm({
+      title: 'Terminate Exam',
+      message: `Are you sure you want to force-terminate ${s.participant?.name || 'this participant'}'s exam?`,
+      type: 'danger',
+      confirmText: 'Terminate Exam',
+    });
+    if (!ok) return;
     await forceTerminate(s.sessionId, 'Trainer terminated');
     if (selectedSession?.sessionId === s.sessionId) setSelectedSession(null);
   };

@@ -230,6 +230,124 @@ class AssessmentVerificationController {
       return res.status(500).json({ error: error.message || 'Failed to verify assessment' });
     }
   }
+
+  /**
+   * POST /api/assessment-verification/end
+   * Laptop or assessment submission notifies backend that assessment has finished.
+   * Broadcasts session_ended to close mobile camera stream immediately.
+   */
+  async endVerificationSession(req, res) {
+    try {
+      const participantId = req.user?.id;
+      const { sessionId, token, attemptId } = req.body;
+
+      const result = await verificationService.endSession({ sessionId, token, participantId, attemptId });
+
+      const io = getIO();
+      if (io && result.sessionId) {
+        io.to(`assessment_verif_${result.sessionId}`).emit('assessment_verif:session_ended', {
+          sessionId: result.sessionId,
+          status: 'COMPLETED',
+          reason: 'ASSESSMENT_COMPLETED',
+          timestamp: Date.now(),
+        });
+        io.to(`monitoring_room_${result.sessionId}`).emit('monitoring:session_ended', {
+          sessionId: result.sessionId,
+          status: 'COMPLETED',
+          reason: 'ASSESSMENT_COMPLETED',
+          timestamp: Date.now(),
+        });
+      }
+
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      logger.error('Error ending assessment verification session', { error: error.message });
+      return res.status(500).json({ error: error.message || 'Failed to end verification session' });
+    }
+  }
+
+  /**
+   * GET /api/assessment-verification/mobile-status/:token
+   * Public polling endpoint for mobile device to detect when assessment ends.
+   */
+  async getMobileStatus(req, res) {
+    try {
+      const { token } = req.params;
+      const { AssessmentVerificationSession, MonitoringSession, QuizAttempt, CodingAttempt, Sequelize } = require('../models');
+      const { Op } = Sequelize || require('sequelize');
+
+      let session = await AssessmentVerificationSession.findOne({
+        where: {
+          [Op.or]: [
+            { token },
+            { session_id: token },
+          ],
+        },
+      });
+
+      let monitoringSession = null;
+      if (!session) {
+        monitoringSession = await MonitoringSession.findOne({
+          where: {
+            [Op.or]: [
+              { mobilePairingToken: token },
+              { sessionId: token },
+            ],
+          },
+        });
+      }
+
+      if (!session && !monitoringSession) {
+        return res.status(404).json({ success: false, error: 'Session not found' });
+      }
+
+      let sessionStatus = session?.status || monitoringSession?.status;
+      let isEnded = ['COMPLETED', 'USED', 'ENDED', 'EXPIRED', 'SUBMITTED', 'TERMINATED'].includes(sessionStatus);
+
+      // Check linked attempt if available
+      const attemptId = session?.attempt_id || monitoringSession?.attemptId;
+      if (!isEnded && attemptId) {
+        const qa = await QuizAttempt.findByPk(attemptId).catch(() => null);
+        const ca = !qa ? await CodingAttempt.findByPk(attemptId).catch(() => null) : null;
+        const att = qa || ca;
+        if (att && ['SUBMITTED', 'COMPLETED', 'AUTO_SUBMITTED', 'TERMINATED'].includes(att.status)) {
+          isEnded = true;
+          sessionStatus = 'COMPLETED';
+          if (session) await session.update({ status: 'COMPLETED' }).catch(() => {});
+          if (monitoringSession) await monitoringSession.update({ status: 'COMPLETED' }).catch(() => {});
+        }
+      }
+
+      const activeSessionId = session?.session_id || monitoringSession?.sessionId;
+      if (isEnded && activeSessionId) {
+        const io = getIO();
+        if (io) {
+          io.to(`assessment_verif_${activeSessionId}`).emit('assessment_verif:session_ended', {
+            sessionId: activeSessionId,
+            status: 'COMPLETED',
+            reason: 'ASSESSMENT_COMPLETED',
+            timestamp: Date.now(),
+          });
+          io.to(`monitoring_room_${activeSessionId}`).emit('monitoring:session_ended', {
+            sessionId: activeSessionId,
+            status: 'COMPLETED',
+            reason: 'ASSESSMENT_COMPLETED',
+            timestamp: Date.now(),
+          });
+        }
+      }
+
+      return res.json({
+        success: true,
+        sessionId: activeSessionId,
+        status: sessionStatus,
+        isEnded,
+        mobileVerified: session?.mobile_verified ?? true,
+      });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
 }
 
 module.exports = new AssessmentVerificationController();

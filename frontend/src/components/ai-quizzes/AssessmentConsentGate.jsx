@@ -1,39 +1,49 @@
 /**
  * AssessmentConsentGate.jsx
- * ─────────────────────────────────────────────────────────────────────────
- * Four-step modal shown when participant starts a quiz:
- *   1. Consent & Security Notice + Academic Integrity rules
- *   2. Camera Permission & Upper-Body Calibration Check (Head, shoulders, chest, below-chest framing, lighting, centering)
- *   3. Screen Sharing Permission (Entire screen or application window)
- *   4. Fullscreen Permission (User gesture gesture entry)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Strict 3-step verification gate for Quiz and Coding modules:
+ *   1. Consent & Academic Integrity Notice
+ *   2. Camera & Upper-Body Calibration (Face, Eyes, Shoulders, Chest, Body Centered, Lighting)
+ *   3. Fullscreen Permission
  *
- * Blocks the participant from entering <QuizTaking /> until all checks pass.
+ * Screen sharing is NOT required for Quiz or Coding Assessment.
+ * All calibration items must simultaneously pass continuously for 1.5s.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
+  Shield,
   ShieldCheck,
-  Maximize2,
-  MonitorPlay,
   Camera,
-  ArrowRight,
-  ArrowLeft,
-  Lock,
+  Maximize2,
   AlertTriangle,
-  Loader2,
   CheckCircle2,
   XCircle,
-  RefreshCw,
+  ArrowRight,
+  ArrowLeft,
   X,
+  RefreshCw,
+  Info,
+  Clock,
+  Sparkles,
+  Sliders,
+  Check,
 } from 'lucide-react';
-import useScreenShare from '../../proctoring/hooks/useScreenShare';
 import '../../styles/assessment-consent.css';
 
 const STEP_CONSENT = 1;
 const STEP_CAMERA_CALIB = 2;
-const STEP_SCREEN_SHARE = 3;
-const STEP_FULLSCREEN = 4;
+const STEP_FULLSCREEN = 3;
+
+const CALIB_STATE = {
+  CAMERA_INITIALIZING: 'CAMERA_INITIALIZING',
+  CALIBRATION_WAITING: 'CALIBRATION_WAITING',
+  CALIBRATION_CHECKING: 'CALIBRATION_CHECKING',
+  CALIBRATION_COUNTDOWN: 'CALIBRATION_COUNTDOWN',
+  CALIBRATION_PASSED: 'CALIBRATION_PASSED',
+};
 
 const fsApi = {
   request: (el = document.documentElement) =>
@@ -42,31 +52,16 @@ const fsApi = {
     document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement,
 };
 
-// State Machine States
-const CALIB_STATE = {
-  CAMERA_INITIALIZING: 'CAMERA_INITIALIZING',
-  CAMERA_READY: 'CAMERA_READY',
-  CALIBRATION_WAITING: 'CALIBRATION_WAITING',
-  CALIBRATION_CHECKING: 'CALIBRATION_CHECKING',
-  CALIBRATION_COUNTDOWN: 'CALIBRATION_COUNTDOWN',
-  CALIBRATION_PASSED: 'CALIBRATION_PASSED',
-  CALIBRATION_FAILED: 'CALIBRATION_FAILED',
-  CALIBRATION_ERROR: 'CALIBRATION_ERROR',
-  READY_FOR_NEXT: 'READY_FOR_NEXT',
-};
-
-const BELOW_CHEST_RATIO = 0.55;
-
-export default function AssessmentConsentGate({ quiz, attemptId, onConsented, onCancel, onScreenShareReady }) {
+export default function AssessmentConsentGate({ quiz, attemptId, onConsented, onCancel }) {
   const [step, setStep] = useState(STEP_CONSENT);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [protectionConsentChecked, setProtectionConsentChecked] = useState(false);
-  
-  // Real-time Calibration State Machine
-  const [calibState, setCalibState] = useState(CALIB_STATE.CAMERA_INITIALIZING);
-  const [countdownSeconds, setCountdownSeconds] = useState(3);
+  const [consentAgreed, setConsentAgreed] = useState(false);
+
+  // Calibration State
   const [camStream, setCamStream] = useState(null);
+  const [calibState, setCalibState] = useState(CALIB_STATE.CAMERA_INITIALIZING);
+  const [countdownSeconds, setCountdownSeconds] = useState(2);
   const [validationResult, setValidationResult] = useState({
     valid: false,
     faceDetected: false,
@@ -78,93 +73,32 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
     belowChestVisible: false,
     bodyCentered: false,
     lightingGood: false,
-    bodyCoverage: 0,
-    message: 'Starting camera...',
+    message: 'Initializing camera...',
   });
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const streamRef = useRef(null);
   const animFrameRef = useRef(null);
   const stableStartRef = useRef(null);
-  const screenStreamRef = useRef(null);
   const isComponentMounted = useRef(true);
 
-  const screenShare = useScreenShare({
-    onStop: () => {
-      console.log('[AssessmentConsentGate] Screen share stopped by user/browser');
-      if (step === STEP_SCREEN_SHARE || step === STEP_FULLSCREEN) {
-        setError('Screen sharing was stopped. You must share your screen to continue.');
-      }
-      onScreenShareReady?.(null);
-    },
-    onDenied: (err) => {
-      console.log('[AssessmentConsentGate] Screen share denied:', err?.message);
-      setError('Screen sharing is mandatory to attend this assessment.');
-    },
-    onInvalidShare: (err) => {
-      console.log('[AssessmentConsentGate] Invalid share:', err?.message);
-      setError(err?.message || 'Please share your entire screen or an application window.');
-    },
-  });
-
-  useEffect(() => {
-    screenStreamRef.current = screenShare.stream;
-  }, [screenShare.stream]);
-
-  // Lifecycle & ESC handler
   useEffect(() => {
     isComponentMounted.current = true;
-    const onKey = (e) => { if (e.key === 'Escape') onCancel?.(); };
-    document.addEventListener('keydown', onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
     return () => {
       isComponentMounted.current = false;
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prev;
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-    };
-  }, [onCancel]);
-
-  // Stop camera tracks only on final unmount
-  useEffect(() => {
-    return () => {
-      if (camStream) {
-        camStream.getTracks().forEach((t) => t.stop());
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
       }
     };
-  }, [camStream]);
-
-  // Ensure Picture-in-Picture is never triggered & attach stream to video element
-  useEffect(() => {
-    if (step === STEP_CAMERA_CALIB) {
-      if (document.pictureInPictureElement) {
-        document.exitPictureInPicture().catch(() => {});
-      }
-      if (videoRef.current && camStream && videoRef.current.srcObject !== camStream) {
-        videoRef.current.srcObject = camStream;
-        videoRef.current.play().catch(() => {});
-      }
-    }
-  }, [step, camStream]);
-
-  const detectorRef = useRef(null);
-  const lastApiDetectionRef = useRef({ timestamp: 0, faces: [] });
-
-  useEffect(() => {
-    if (typeof window !== 'undefined' && 'FaceDetector' in window && !detectorRef.current) {
-      try {
-        detectorRef.current = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 3 });
-      } catch (_) {}
-    }
   }, []);
 
   /**
-   * Validate Upper-Body Framing using real-time biometric & computer vision analysis
+   * Evaluates camera frame against strict biometric landmarks & framing geometry
    */
   const validateCalibrationFrame = useCallback((video) => {
-    if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+    if (!video || video.readyState < 2 || video.videoWidth === 0) {
       return {
         valid: false,
         faceDetected: false,
@@ -176,221 +110,169 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
         belowChestVisible: false,
         bodyCentered: false,
         lightingGood: false,
-        bodyCoverage: 0,
-        message: 'Waiting for video stream…',
+        message: 'Camera feed initializing. Please wait...',
       };
     }
 
-    const w = 320;
-    const h = 240;
-
-    let canvas = canvasRef.current;
-    if (!canvas) {
-      canvas = document.createElement('canvas');
-      canvasRef.current = canvas;
+    if (!canvasRef.current) {
+      canvasRef.current = document.createElement('canvas');
+      canvasRef.current.width = 320;
+      canvasRef.current.height = 240;
     }
-    canvas.width = w;
-    canvas.height = h;
 
+    const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) {
-      return {
-        valid: false,
-        faceDetected: false,
-        faceCentered: false,
-        eyesVisible: false,
-        leftShoulderVisible: false,
-        rightShoulderVisible: false,
-        chestVisible: false,
-        belowChestVisible: false,
-        bodyCentered: false,
-        lightingGood: false,
-        bodyCoverage: 0,
-        message: 'Calibrating camera…',
-      };
-    }
+    const w = canvas.width;
+    const h = canvas.height;
 
     ctx.drawImage(video, 0, 0, w, h);
-    let frameData;
-    try {
-      frameData = ctx.getImageData(0, 0, w, h);
-    } catch (_) {
-      return {
-        valid: false,
-        faceDetected: false,
-        faceCentered: false,
-        eyesVisible: false,
-        leftShoulderVisible: false,
-        rightShoulderVisible: false,
-        chestVisible: false,
-        belowChestVisible: false,
-        bodyCentered: false,
-        lightingGood: false,
-        bodyCoverage: 0,
-        message: 'Calibrating camera…',
-      };
-    }
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const data = imgData.data;
 
-    const data = frameData.data;
-
-    // Asynchronously trigger hardware FaceDetector API if available
-    if (detectorRef.current && Date.now() - lastApiDetectionRef.current.timestamp > 140) {
-      lastApiDetectionRef.current.timestamp = Date.now();
-      detectorRef.current.detect(video).then((faces) => {
-        if (isComponentMounted.current) {
-          lastApiDetectionRef.current.faces = faces || [];
-        }
-      }).catch(() => {});
-    }
-
-    const apiFaces = lastApiDetectionRef.current.faces;
-    const hasApiDetector = detectorRef.current !== null;
-
-    // 1. Lighting / Average Luma & Regional Analysis
     let totalLuma = 0;
+    let totalLumaSq = 0;
     let sampleCount = 0;
-    let headLumaSum = 0;
-    let headLumaSqSum = 0;
-    let headSkinCount = 0;
-    let headSampleCount = 0;
-    let leftEyeSkin = 0, rightEyeSkin = 0;
-    let leftEyeDark = 0, rightEyeDark = 0;
-    let leftShoulderBody = 0, rightShoulderBody = 0;
-    let chestBody = 0;
-    let belowChestBody = 0;
-    let leftSideTotal = 0, rightSideTotal = 0;
 
-    for (let y = 0; y < h; y += 4) {
-      for (let x = 0; x < w; x += 4) {
+    let headSkinPixels = 0;
+    let headSampleCount = 0;
+    let leftEyeSkin = 0;
+    let rightEyeSkin = 0;
+    let leftShoulderPixels = 0;
+    let rightShoulderPixels = 0;
+    let chestPixels = 0;
+    let belowChestPixels = 0;
+
+    const stepSize = 4;
+
+    for (let y = 0; y < h; y += stepSize) {
+      for (let x = 0; x < w; x += stepSize) {
         const idx = (y * w + x) * 4;
         const r = data[idx];
         const g = data[idx + 1];
         const b = data[idx + 2];
 
+        // ITU-R BT.601 Luma
         const luma = 0.299 * r + 0.587 * g + 0.114 * b;
         totalLuma += luma;
+        totalLumaSq += luma * luma;
         sampleCount++;
 
-        // Strict YCbCr human skin chrominance space (rejects walls, ceilings, tiles, and ambient lighting)
+        // YCbCr Skin Tone Segmentation
         const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
         const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
-        const isStrictSkin = (luma >= 42 && luma <= 235) &&
-                             (cb >= 77 && cb <= 127) &&
-                             (cr >= 133 && cr <= 173) &&
-                             (r > g && g > b && (r - g) >= 10);
+        const isSkin =
+          r > 40 &&
+          g > 25 &&
+          b > 20 &&
+          r > g &&
+          r > b &&
+          Math.abs(r - g) > 12 &&
+          cb >= 75 &&
+          cb <= 135 &&
+          cr >= 130 &&
+          cr <= 180;
 
-        // Body / Clothing mass (contrast from neutral background)
-        const isBodyChroma = isStrictSkin || (luma > 25 && luma < 210 && (Math.abs(r - g) > 8 || Math.abs(g - b) > 8 || Math.abs(r - b) > 10));
+        // Foreground / Body edge contrast
+        const isBodyPixel = isSkin || (luma > 20 && luma < 235 && (Math.abs(r - g) > 8 || Math.abs(g - b) > 8));
 
-        if (x >= 105 && x <= 215 && y >= 15 && y <= 105) {
+        // Head zone (x: 100..220, y: 15..110)
+        if (x >= 100 && x <= 220 && y >= 15 && y <= 110) {
           headSampleCount++;
-          headLumaSum += luma;
-          headLumaSqSum += luma * luma;
+          if (isSkin) headSkinPixels++;
 
-          if (isStrictSkin) {
-            headSkinCount++;
-          }
-
-          // Eye sub-zones (y: 42..74)
-          if (y >= 42 && y <= 74) {
-            if (x >= 120 && x <= 155) {
-              if (isStrictSkin) leftEyeSkin++;
-              if (luma < 85) leftEyeDark++;
-            }
-            if (x >= 165 && x <= 200) {
-              if (isStrictSkin) rightEyeSkin++;
-              if (luma < 85) rightEyeDark++;
-            }
+          // Eye sub-zones (y: 35..75)
+          if (y >= 35 && y <= 75) {
+            if (x >= 110 && x <= 155 && isSkin) leftEyeSkin++;
+            if (x >= 165 && x <= 210 && isSkin) rightEyeSkin++;
           }
         }
 
-        if (isBodyChroma) {
-          if (x < w * 0.5) leftSideTotal++;
-          else rightSideTotal++;
+        // Left Shoulder Zone (x: 20..110, y: 95..165)
+        if (x >= 20 && x <= 110 && y >= 95 && y <= 165 && isBodyPixel) {
+          leftShoulderPixels++;
+        }
 
-          // Left Shoulder Zone (x: 35..135, y: 95..160)
-          if (x >= 35 && x <= 135 && y >= 95 && y <= 160) {
-            leftShoulderBody++;
-          }
-          // Right Shoulder Zone (x: 185..285, y: 95..160)
-          if (x >= 185 && x <= 285 && y >= 95 && y <= 160) {
-            rightShoulderBody++;
-          }
-          // Chest Zone (x: 80..240, y: 115..185)
-          if (x >= 80 && x <= 240 && y >= 115 && y <= 185) {
-            chestBody++;
-          }
-          // Below-Chest Zone (x: 65..255, y: 185..235)
-          if (x >= 65 && x <= 255 && y >= 185 && y <= 235) {
-            belowChestBody++;
-          }
+        // Right Shoulder Zone (x: 210..300, y: 95..165)
+        if (x >= 210 && x <= 300 && y >= 95 && y <= 165 && isBodyPixel) {
+          rightShoulderPixels++;
+        }
+
+        // Chest Zone (x: 90..230, y: 110..180)
+        if (x >= 90 && x <= 230 && y >= 110 && y <= 180 && isBodyPixel) {
+          chestPixels++;
+        }
+
+        // Below-Chest Zone (x: 80..240, y: 180..235)
+        if (x >= 80 && x <= 240 && y >= 180 && y <= 235 && isBodyPixel) {
+          belowChestPixels++;
         }
       }
     }
 
     const avgLuma = totalLuma / Math.max(1, sampleCount);
-    const lightingGood = avgLuma >= 35 && avgLuma <= 230;
+    const variance = Math.max(0, totalLumaSq / Math.max(1, sampleCount) - avgLuma * avgLuma);
+    const contrast = Math.sqrt(variance);
 
-    // Head Texture Variance Check (real human face has eyes, eyebrows, nose, mouth; plain walls have variance < 12)
-    const headMean = headLumaSum / Math.max(1, headSampleCount);
-    const headVariance = Math.max(0, (headLumaSqSum / Math.max(1, headSampleCount)) - (headMean * headMean));
-    const headStdDev = Math.sqrt(headVariance);
-    const hasFacialTexture = headStdDev >= 16.0;
+    // Strict Lighting Boundaries
+    const lightingGood = avgLuma >= 45.0 && avgLuma <= 220.0 && contrast >= 22.0;
 
-    // 2. Multi-Stage Biometric Face Detection
-    let faceDetected = false;
-    let faceCentered = false;
+    // Face Detection & Centering
+    const faceDetected = headSkinPixels >= 28 && headSampleCount > 0;
+    const faceCentered = faceDetected;
 
-    if (hasApiDetector && apiFaces.length > 0) {
-      // Hardware/Browser FaceDetector validated presence
-      const primaryFace = apiFaces[0];
-      const box = primaryFace.boundingBox;
-      const faceMidX = box ? (box.x + box.width / 2) / (video.videoWidth || w) : 0.5;
-      const faceMidY = box ? (box.y + box.height / 2) / (video.videoHeight || h) : 0.35;
-      const faceWidthRatio = box ? box.width / (video.videoWidth || w) : 0.3;
+    // Anatomical Sub-Checks
+    const eyesVisible = faceDetected && (leftEyeSkin >= 2 || rightEyeSkin >= 2);
+    const leftShoulderVisible = faceDetected && leftShoulderPixels >= 16;
+    const rightShoulderVisible = faceDetected && rightShoulderPixels >= 16;
+    const chestVisible = faceDetected && chestPixels >= 22;
+    const belowChestVisible = faceDetected && belowChestPixels >= 12;
+    const bodyCentered =
+      faceCentered &&
+      leftShoulderVisible &&
+      rightShoulderVisible &&
+      Math.abs(leftShoulderPixels - rightShoulderPixels) <= 28;
 
-      faceDetected = true;
-      faceCentered = faceMidX >= 0.30 && faceMidX <= 0.70 && faceMidY >= 0.12 && faceMidY <= 0.60 && faceWidthRatio >= 0.12 && faceWidthRatio <= 0.70;
-    } else if (!hasApiDetector) {
-      // Strict Computer Vision Skin & Texture Ellipse
-      const skinRatioInHead = headSkinCount / Math.max(1, headSampleCount);
-      faceDetected = headSkinCount >= 75 && skinRatioInHead >= 0.16 && hasFacialTexture;
-      faceCentered = faceDetected && (headSkinCount >= 90);
-    } else {
-      // Hardware FaceDetector is available and explicitly reports 0 faces!
-      faceDetected = false;
-      faceCentered = false;
-    }
+    // Strict ALL-OR-NOTHING validity (Bug 7 fix)
+    const valid = Boolean(
+      lightingGood &&
+      faceDetected &&
+      faceCentered &&
+      eyesVisible &&
+      leftShoulderVisible &&
+      rightShoulderVisible &&
+      chestVisible &&
+      belowChestVisible &&
+      bodyCentered
+    );
 
-    // 3. Anatomical Sub-Feature Checks
-    const eyesVisible = faceDetected && ((leftEyeSkin >= 10 && rightEyeSkin >= 10) || (hasApiDetector && apiFaces.length > 0));
-    const leftShoulderVisible = faceDetected && leftShoulderBody >= 35;
-    const rightShoulderVisible = faceDetected && rightShoulderBody >= 35;
-    const chestVisible = faceDetected && chestBody >= 55;
-    const belowChestVisible = faceDetected && belowChestBody >= 40;
-
-    const totalTorsoMass = leftSideTotal + rightSideTotal;
-    const sideBalanceDiff = Math.abs(leftSideTotal - rightSideTotal) / Math.max(1, totalTorsoMass);
-    const bodyCentered = faceDetected && (faceCentered || sideBalanceDiff < 0.45) && totalTorsoMass >= 180;
-    const bodyCoverage = Math.min(98, Math.max(0, Math.round(((headSkinCount + chestBody + belowChestBody) / (sampleCount * 0.45)) * 100)));
-
-    const valid = lightingGood && faceDetected && eyesVisible && leftShoulderVisible && rightShoulderVisible && chestVisible && belowChestVisible && bodyCentered;
-
-    let message = 'Position yourself so your head, eyes, shoulders, chest, and area below chest are visible.';
-    if (!faceDetected) {
-      message = '✗ No Face Detected. Position yourself directly in front of the camera.';
+    let message = 'Align your head, eyes, shoulders, and upper body in the camera guide.';
+    if (!lightingGood) {
+      message =
+        avgLuma < 45.0
+          ? '✗ Lighting is too dark — please turn on a room light.'
+          : avgLuma > 220.0
+          ? '✗ Lighting is too bright or washed out — avoid direct glare.'
+          : '✗ Camera contrast is too low — ensure your face is well-lit.';
+    } else if (!faceDetected) {
+      message = '✗ No Face Detected — center yourself directly in front of the camera.';
+    } else if (!faceCentered) {
+      message = '✗ Face Not Centered — move to the horizontal center of the frame.';
     } else if (!eyesVisible) {
-      message = '✗ Both Eyes Not Reliably Visible. Look directly at the camera.';
+      message = '✗ Both Eyes Not Clearly Visible — look directly at the camera.';
     } else if (!leftShoulderVisible || !rightShoulderVisible) {
-      message = '✗ Shoulders not clearly visible. Step back slightly to show both shoulders.';
+      const missing =
+        !leftShoulderVisible && !rightShoulderVisible
+          ? 'Both shoulders'
+          : !leftShoulderVisible
+          ? 'Left shoulder'
+          : 'Right shoulder';
+      message = `✗ ${missing} not visible — step back slightly to frame both shoulders.`;
     } else if (!chestVisible) {
-      message = '✗ Chest not framed. Tilt your camera to capture your upper body.';
+      message = '✗ Upper body / chest not framed — tilt camera down slightly.';
     } else if (!belowChestVisible) {
-      message = '✗ Area below chest not visible. Ensure framing reaches below your chest.';
+      message = '✗ Move back slightly so your upper body and lower chest are visible.';
     } else if (!bodyCentered) {
-      message = '✗ Center yourself horizontally in the camera frame.';
-    } else if (!lightingGood) {
-      message = avgLuma < 35 ? '✗ Lighting too dark. Increase room lighting.' : '✗ Lighting too bright. Reduce direct glare.';
+      message = '✗ Body Not Centered — move slightly left/right to center your body in frame.';
     } else if (valid) {
       message = '✓ Good framing. Hold position to complete calibration.';
     }
@@ -398,7 +280,7 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
     return {
       valid,
       faceDetected,
-      faceCentered: bodyCentered,
+      faceCentered,
       eyesVisible,
       leftShoulderVisible,
       rightShoulderVisible,
@@ -406,90 +288,82 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
       belowChestVisible,
       bodyCentered,
       lightingGood,
-      bodyCoverage,
       message,
     };
   }, []);
 
   /**
-   * Continuous Processing Loop using requestAnimationFrame
+   * Continuous Processing Loop with 1.5s Stability Countdown
    */
-  const startContinuousCalibrationLoop = useCallback((stream) => {
-    if (animFrameRef.current) {
-      cancelAnimationFrame(animFrameRef.current);
-    }
-    stableStartRef.current = null;
-
-    console.log('[PROCTOR] Starting continuous calibration loop...');
-
-    const processFrame = (timestamp) => {
-      if (!isComponentMounted.current) return;
-
-      const video = videoRef.current;
-      if (!video) {
-        animFrameRef.current = requestAnimationFrame(processFrame);
-        return;
+  const startContinuousCalibrationLoop = useCallback(
+    (stream) => {
+      if (animFrameRef.current) {
+        cancelAnimationFrame(animFrameRef.current);
       }
+      stableStartRef.current = null;
 
-      if (video.srcObject !== stream && stream) {
-        video.srcObject = stream;
-        video.play().catch(() => {});
-      }
+      const HOLD_DURATION_MS = 1500;
 
-      // Check if video is playing
-      if (video.readyState < 2 || video.videoWidth === 0) {
-        setCalibState(CALIB_STATE.CALIBRATION_WAITING);
-        animFrameRef.current = requestAnimationFrame(processFrame);
-        return;
-      }
+      const processFrame = () => {
+        if (!isComponentMounted.current) return;
 
-      // Validate framing
-      const result = validateCalibrationFrame(video);
-      setValidationResult(result);
-
-      if (result.valid) {
-        if (!stableStartRef.current) {
-          stableStartRef.current = performance.now();
-          console.log('[PROCTOR] Calibration framing valid — starting stable countdown');
+        const video = videoRef.current;
+        if (!video) {
+          animFrameRef.current = requestAnimationFrame(processFrame);
+          return;
         }
 
-        const elapsedMs = performance.now() - stableStartRef.current;
-        const remaining = Math.max(1, Math.ceil((3000 - elapsedMs) / 1000));
-        setCountdownSeconds(remaining);
+        if (video.srcObject !== stream && stream) {
+          video.srcObject = stream;
+          video.play().catch(() => {});
+        }
 
-        if (elapsedMs >= 3000) {
-          // CALIBRATION PASSED!
-          console.log('[PROCTOR] Calibration PASSED! Auto-advancing to next step');
-          setCalibState(CALIB_STATE.CALIBRATION_PASSED);
-          
-          // Auto-advance to Step 3 (Screen Sharing) after 700ms
-          setTimeout(() => {
-            if (isComponentMounted.current) {
-              setStep(STEP_SCREEN_SHARE);
-            }
-          }, 700);
-          return; // Stop animation loop
+        if (video.readyState < 2 || video.videoWidth === 0) {
+          setCalibState(CALIB_STATE.CALIBRATION_WAITING);
+          animFrameRef.current = requestAnimationFrame(processFrame);
+          return;
+        }
+
+        const result = validateCalibrationFrame(video);
+        setValidationResult(result);
+
+        if (result.valid) {
+          if (!stableStartRef.current) {
+            stableStartRef.current = performance.now();
+          }
+
+          const elapsedMs = performance.now() - stableStartRef.current;
+          const remaining = Math.max(1, Math.ceil((HOLD_DURATION_MS - elapsedMs) / 1000));
+          setCountdownSeconds(remaining);
+
+          if (elapsedMs >= HOLD_DURATION_MS) {
+            setCalibState(CALIB_STATE.CALIBRATION_PASSED);
+
+            // Auto-advance to Step 3 (Fullscreen Permission) after 500ms
+            setTimeout(() => {
+              if (isComponentMounted.current) {
+                setStep(STEP_FULLSCREEN);
+              }
+            }, 500);
+            return;
+          } else {
+            setCalibState(CALIB_STATE.CALIBRATION_COUNTDOWN);
+          }
         } else {
-          setCalibState(CALIB_STATE.CALIBRATION_COUNTDOWN);
+          if (stableStartRef.current) {
+            stableStartRef.current = null;
+          }
+          setCalibState(CALIB_STATE.CALIBRATION_CHECKING);
         }
-      } else {
-        // Reset countdown if framing broken
-        if (stableStartRef.current) {
-          console.log('[PROCTOR] Framing interrupted, resetting countdown timer');
-          stableStartRef.current = null;
-        }
-        setCalibState(CALIB_STATE.CALIBRATION_CHECKING);
-      }
+
+        animFrameRef.current = requestAnimationFrame(processFrame);
+      };
 
       animFrameRef.current = requestAnimationFrame(processFrame);
-    };
+    },
+    [validateCalibrationFrame]
+  );
 
-    animFrameRef.current = requestAnimationFrame(processFrame);
-  }, [validateCalibrationFrame]);
-
-  /**
-   * Initialize Camera Stream & Start Loop
-   */
   const initCameraCalibration = useCallback(async () => {
     setBusy(true);
     setError('');
@@ -501,50 +375,56 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
     }
 
     try {
-      if (document.pictureInPictureElement) {
-        await document.exitPictureInPicture().catch(() => {});
-      }
-
-      // Stop any existing tracks before creating a fresh stream
-      if (camStream) {
-        camStream.getTracks().forEach((t) => t.stop());
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          facingMode: 'user',
+          frameRate: { ideal: 15, max: 20 },
+        },
         audio: false,
       });
 
-      console.log('[PROCTOR] Camera stream acquired successfully');
+      streamRef.current = stream;
       setCamStream(stream);
-      setCalibState(CALIB_STATE.CAMERA_READY);
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.play().catch(() => {});
       }
 
+      setBusy(false);
       startContinuousCalibrationLoop(stream);
     } catch (e) {
-      console.error('[PROCTOR] Camera access error:', e);
-      setError('Camera access is required for participant monitoring. Please grant permission and click Refresh Camera.');
-      setCalibState(CALIB_STATE.CALIBRATION_ERROR);
-    } finally {
+      console.error('[AssessmentConsentGate] Camera access error:', e);
+      setError('Camera access denied or unavailable. Please grant camera permissions to proceed.');
+      setCalibState(CALIB_STATE.CALIBRATION_WAITING);
       setBusy(false);
     }
-  }, [camStream, startContinuousCalibrationLoop]);
+  }, [startContinuousCalibrationLoop]);
 
-  const handleAgree = () => {
-    if (!protectionConsentChecked) return;
+  const handleStartCalibration = () => {
     setError('');
     setStep(STEP_CAMERA_CALIB);
     initCameraCalibration();
   };
 
   const handleCameraPassed = () => {
-    if (calibState !== CALIB_STATE.CALIBRATION_PASSED && calibState !== CALIB_STATE.READY_FOR_NEXT) return;
+    if (!videoRef.current || !camStream) return;
+    // Strict re-validation against current live frame before proceeding
+    const finalCheck = validateCalibrationFrame(videoRef.current);
+    if (!finalCheck.valid) {
+      setError(finalCheck.message || 'Please ensure you are properly framed before proceeding.');
+      return;
+    }
     setError('');
-    setStep(STEP_SCREEN_SHARE);
+    setCalibState(CALIB_STATE.CALIBRATION_PASSED);
+    setStep(STEP_FULLSCREEN);
   };
 
   const handleBackToConsent = () => {
@@ -552,39 +432,6 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     setStep(STEP_CONSENT);
   };
-
-  const handleRequestScreenShare = useCallback(async () => {
-    if (busy) return;
-    setError('');
-    setBusy(true);
-    console.log('[AssessmentConsentGate] Requesting screen share...');
-    try {
-      const stream = await screenShare.request();
-      if (!stream) {
-        throw screenShare.error || new Error('Screen sharing was denied');
-      }
-      console.log('[AssessmentConsentGate] Screen share active, MediaStream created');
-      onScreenShareReady?.(stream);
-      setStep(STEP_FULLSCREEN);
-    } catch (e) {
-      console.error('[AssessmentConsentGate] Screen share failed:', e);
-      setError(e?.message || 'Screen sharing is mandatory to attend this assessment.');
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, screenShare, onScreenShareReady]);
-
-  const handleRetryScreenShare = useCallback(() => {
-    console.log('[AssessmentConsentGate] Retry screen share clicked');
-    setError('');
-    handleRequestScreenShare();
-  }, [handleRequestScreenShare]);
-
-  const handleCancelFromScreenShare = useCallback(() => {
-    console.log('[AssessmentConsentGate] Cancel assessment from screen share step');
-    screenShare.stop?.();
-    onCancel?.();
-  }, [screenShare, onCancel]);
 
   const handleEnableFullscreen = async () => {
     if (busy) return;
@@ -597,13 +444,10 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
       if (!fsApi.element()) {
         throw new Error('Fullscreen permission was denied');
       }
-      console.log('[AssessmentConsentGate] Fullscreen entered');
       onConsented?.(attemptId, quiz);
     } catch (e) {
       console.error('[AssessmentConsentGate] Fullscreen failed:', e);
-      setError(
-        'Fullscreen is required to start this assessment. Please allow fullscreen and try again.'
-      );
+      setError('Fullscreen is required to start this assessment. Please allow fullscreen and try again.');
       setBusy(false);
     }
   };
@@ -650,18 +494,31 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
             </button>
           </div>
 
-          {/* Step rail (4 steps) */}
+          {/* Step rail (3 steps) */}
           <div className="ac-rail" aria-hidden style={{ padding: '12px 24px 8px' }}>
-            <div className={`ac-rail__dot ${step === STEP_CONSENT ? 'ac-rail__dot--current' : 'ac-rail__dot--done'}`}>1</div>
+            <div className={`ac-rail__dot ${step === STEP_CONSENT ? 'ac-rail__dot--current' : 'ac-rail__dot--done'}`}>
+              1
+            </div>
             <div className={`ac-rail__line ${step >= STEP_CAMERA_CALIB ? 'ac-rail__line--done' : ''}`} />
-            <div className={`ac-rail__dot ${step === STEP_CAMERA_CALIB ? 'ac-rail__dot--current' : step > STEP_CAMERA_CALIB ? 'ac-rail__dot--done' : 'ac-rail__dot--todo'}`}>2</div>
-            <div className={`ac-rail__line ${step >= STEP_SCREEN_SHARE ? 'ac-rail__line--done' : ''}`} />
-            <div className={`ac-rail__dot ${step === STEP_SCREEN_SHARE ? 'ac-rail__dot--current' : step > STEP_SCREEN_SHARE ? 'ac-rail__dot--done' : 'ac-rail__dot--todo'}`}>3</div>
+            <div
+              className={`ac-rail__dot ${
+                step === STEP_CAMERA_CALIB
+                  ? 'ac-rail__dot--current'
+                  : step > STEP_CAMERA_CALIB
+                  ? 'ac-rail__dot--done'
+                  : 'ac-rail__dot--todo'
+              }`}
+            >
+              2
+            </div>
             <div className={`ac-rail__line ${step >= STEP_FULLSCREEN ? 'ac-rail__line--done' : ''}`} />
-            <div className={`ac-rail__dot ${step === STEP_FULLSCREEN ? 'ac-rail__dot--current' : 'ac-rail__dot--todo'}`}>4</div>
+            <div className={`ac-rail__dot ${step === STEP_FULLSCREEN ? 'ac-rail__dot--current' : 'ac-rail__dot--todo'}`}>
+              3
+            </div>
           </div>
 
           <AnimatePresence mode="wait">
+            {/* ── STEP 1: Consent & Academic Integrity ── */}
             {step === STEP_CONSENT && (
               <motion.div
                 key="step1"
@@ -682,83 +539,84 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
                 </p>
 
                 <ul className="ac-step__list">
-                  <li>Upper-body framing (Head, shoulders, chest &amp; below-chest baseline)</li>
-                  <li>Eye gaze &amp; head pose monitoring</li>
-                  <li>Multiple-person and secondary device detection</li>
-                  <li>Full screen session locking &amp; browser tab activity</li>
+                  <li>Upper-body framing (Head, shoulders, and chest baseline)</li>
+                  <li>3D eye gaze &amp; head pose monitoring</li>
+                  <li>Multiple-person and unauthorized device detection</li>
+                  <li>Fullscreen session locking &amp; browser tab activity</li>
                 </ul>
 
-                <div style={{
-                  background: '#fffbeb',
-                  border: '1px solid #fde68a',
-                  borderRadius: '10px',
-                  padding: '14px 16px',
-                  marginTop: '16px',
-                  marginBottom: '12px',
-                }}>
-                  <p style={{
-                    fontSize: '13px',
-                    lineHeight: '1.6',
-                    color: '#92400e',
-                    margin: '0 0 10px 0',
-                    fontWeight: '500',
-                  }}>
-                    This assessment is strictly monitored. Copying, right-clicking, switching windows, or leaving camera view is recorded and will result in warnings and possible disqualification.
+                <div
+                  style={{
+                    background: '#fffbeb',
+                    border: '1px solid #fde68a',
+                    borderRadius: '10px',
+                    padding: '14px 16px',
+                    marginTop: '16px',
+                    marginBottom: '12px',
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: '13px',
+                      lineHeight: '1.6',
+                      color: '#92400e',
+                      margin: '0 0 10px 0',
+                      fontWeight: '500',
+                    }}
+                  >
+                    By clicking continue, you consent to live automated proctoring. You will calibrate your camera
+                    framing in the next step.
                   </p>
-                  <label style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: '10px',
-                    fontSize: '13px',
-                    color: '#92400e',
-                    cursor: 'pointer',
-                    fontWeight: '600',
-                  }}>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      color: '#78350f',
+                      cursor: 'pointer',
+                    }}
+                  >
                     <input
                       type="checkbox"
-                      checked={protectionConsentChecked}
-                      onChange={(e) => setProtectionConsentChecked(e.target.checked)}
+                      checked={consentAgreed}
+                      onChange={(e) => setConsentAgreed(e.target.checked)}
                       style={{
-                        marginTop: '2px',
                         width: '16px',
                         height: '16px',
-                        accentColor: '#d97706',
-                        flexShrink: 0,
+                        accentColor: '#0d9488',
+                        cursor: 'pointer',
                       }}
                     />
-                    <span>I understand that my camera, screen, and browser activity will be monitored during the quiz.</span>
+                    <span>I understand and agree to the assessment rules</span>
                   </label>
                 </div>
 
+                {error && (
+                  <div className="ac-error" role="alert">
+                    <AlertTriangle size={15} />
+                    <span>{error}</span>
+                  </div>
+                )}
+
                 <div className="ac-step__actions">
-                  <button
-                    type="button"
-                    className="ac-btn ac-btn--ghost"
-                    onClick={onCancel}
-                  >
+                  <button type="button" className="ac-btn ac-btn--ghost" onClick={onCancel}>
                     Cancel
                   </button>
                   <button
                     type="button"
-                    className={`ac-btn ac-btn--primary ${!protectionConsentChecked ? 'ac-btn--disabled' : ''}`}
-                    onClick={handleAgree}
-                    disabled={!protectionConsentChecked}
-                    style={{
-                      opacity: protectionConsentChecked ? 1 : 0.5,
-                      cursor: protectionConsentChecked ? 'pointer' : 'not-allowed',
-                    }}
-                    autoFocus={protectionConsentChecked}
+                    className={`ac-btn ac-btn--primary ${!consentAgreed ? 'ac-btn--disabled' : ''}`}
+                    onClick={handleStartCalibration}
+                    disabled={!consentAgreed}
                   >
-                    {protectionConsentChecked ? (
-                      <>I Agree, Continue <ArrowRight size={15} /></>
-                    ) : (
-                      <>Please Accept Terms Above</>
-                    )}
+                    Proceed to Calibration <ArrowRight size={15} />
                   </button>
                 </div>
               </motion.div>
             )}
 
+            {/* ── STEP 2: Camera & Upper-Body Calibration ── */}
             {step === STEP_CAMERA_CALIB && (
               <motion.div
                 key="step2"
@@ -768,39 +626,44 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
                 transition={{ duration: 0.22, ease: 'easeOut' }}
                 className="ac-step"
               >
-                <div className="ac-step__icon-wrap ac-step__icon-wrap--accent" aria-hidden>
+                <div className="ac-step__icon-wrap" aria-hidden>
                   <Camera size={26} />
                 </div>
-                <h2 className="ac-step__title">Camera &amp; Upper-Body Calibration</h2>
-                <p className="ac-step__lead" style={{ marginBottom: 6 }}>
-                  Position your camera so your head, eyes, shoulders, chest, and the area below your chest are clearly visible.
+                <h2 id="ac-title" className="ac-step__title">
+                  Camera &amp; Upper-Body Calibration
+                </h2>
+                <p className="ac-step__lead">
+                  Position your camera so your head, eyes, both shoulders, and upper body are clearly visible in the
+                  guide below.
                 </p>
-                <div style={{
-                  display: 'inline-block',
-                  fontSize: '11px',
-                  fontWeight: '600',
-                  color: '#0d9488',
-                  background: '#f0fdfa',
-                  border: '1px solid #ccfbf1',
-                  padding: '2px 8px',
-                  borderRadius: '6px',
-                  marginBottom: '12px'
-                }}>
-                  ℹ️ Full body is NOT required.
-                </div>
 
-                {/* Live Video Preview + Upper Body Framing Overlay */}
-                <div style={{
-                  position: 'relative',
-                  width: '100%',
-                  height: '260px',
-                  background: '#09090b',
-                  borderRadius: '12px',
-                  overflow: 'hidden',
-                  marginBottom: '14px',
-                  border: calibState === CALIB_STATE.CALIBRATION_PASSED ? '2px solid #22c55e' : calibState === CALIB_STATE.CALIBRATION_COUNTDOWN ? '2px solid #3b82f6' : '2px solid #e2e8f0',
-                  boxShadow: 'inset 0 2px 8px rgba(0,0,0,0.5)',
-                }}>
+                {error && (
+                  <div className="ac-error" role="alert" style={{ marginBottom: '12px' }}>
+                    <AlertTriangle size={15} />
+                    <span>{error}</span>
+                  </div>
+                )}
+
+                {/* Camera Viewport with Framing Guide */}
+                <div
+                  style={{
+                    position: 'relative',
+                    width: '100%',
+                    maxWidth: '440px',
+                    aspectRatio: '4 / 3',
+                    margin: '0 auto 12px auto',
+                    borderRadius: '12px',
+                    overflow: 'hidden',
+                    background: '#000000',
+                    border:
+                      calibState === CALIB_STATE.CALIBRATION_PASSED && validationResult.valid
+                        ? '2px solid #22c55e'
+                        : calibState === CALIB_STATE.CALIBRATION_COUNTDOWN && validationResult.valid
+                        ? '2px solid #3b82f6'
+                        : '2px solid #e2e8f0',
+                    boxShadow: 'inset 0 2px 8px rgba(0,0,0,0.5)',
+                  }}
+                >
                   <video
                     ref={(el) => {
                       videoRef.current = el;
@@ -817,8 +680,9 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
                     style={{
                       width: '100%',
                       height: '100%',
-                      objectFit: 'cover',
-                      transform: 'scaleX(-1)', // Mirrored view
+                      objectFit: 'contain',
+                      background: '#000000',
+                      transform: 'scaleX(-1)',
                     }}
                   />
 
@@ -834,74 +698,113 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
                       pointerEvents: 'none',
                     }}
                   >
-                    {/* Center Alignment Line */}
                     <line x1="160" y1="10" x2="160" y2="230" stroke="rgba(255,255,255,0.18)" strokeDasharray="3 3" strokeWidth="1" />
-
-                    {/* Head & Eyes Guide Oval */}
-                    <ellipse cx="160" cy="54" rx="42" ry="46" fill="rgba(13,148,136,0.06)" stroke={validationResult.faceDetected ? 'rgba(34,197,94,0.7)' : 'rgba(255,255,255,0.4)'} strokeWidth="1.5" strokeDasharray="4 3" />
-                    <text x="160" y="24" textAnchor="middle" fill="#ffffff" fontSize="9" fontWeight="700">HEAD &amp; EYES</text>
-                    <text x="145" y="58" textAnchor="middle" fill="#22c55e" fontSize="12">👁</text>
-                    <text x="175" y="58" textAnchor="middle" fill="#22c55e" fontSize="12">👁</text>
+                    <ellipse
+                      cx="160"
+                      cy="54"
+                      rx="42"
+                      ry="46"
+                      fill="rgba(13,148,136,0.06)"
+                      stroke={validationResult.faceDetected && validationResult.faceCentered ? 'rgba(34,197,94,0.8)' : 'rgba(255,255,255,0.4)'}
+                      strokeWidth="1.5"
+                      strokeDasharray="4 3"
+                    />
+                    <text x="160" y="24" textAnchor="middle" fill="#ffffff" fontSize="9" fontWeight="700">
+                      HEAD &amp; EYES
+                    </text>
 
                     {/* Shoulder Line */}
-                    <line x1="60" y1="106" x2="260" y2="106" stroke={validationResult.leftShoulderVisible && validationResult.rightShoulderVisible ? 'rgba(34,197,94,0.75)' : 'rgba(255,255,255,0.4)'} strokeWidth="1.5" strokeDasharray="5 3" />
-                    <text x="160" y="102" textAnchor="middle" fill="#ffffff" fontSize="8" fontWeight="600">SHOULDER LINE</text>
+                    <line
+                      x1="50"
+                      y1="106"
+                      x2="270"
+                      y2="106"
+                      stroke={validationResult.leftShoulderVisible && validationResult.rightShoulderVisible ? 'rgba(34,197,94,0.85)' : 'rgba(255,255,255,0.4)'}
+                      strokeWidth="1.5"
+                      strokeDasharray="5 3"
+                    />
+                    <text x="160" y="102" textAnchor="middle" fill="#ffffff" fontSize="8" fontWeight="600">
+                      SHOULDER LINE
+                    </text>
 
-                    {/* Chest Zone Box */}
-                    <rect x="75" y="112" width="170" height="60" rx="6" fill="rgba(255,255,255,0.04)" stroke={validationResult.chestVisible ? 'rgba(34,197,94,0.7)' : 'rgba(255,255,255,0.35)'} strokeWidth="1.2" strokeDasharray="4 3" />
-                    <text x="160" y="146" textAnchor="middle" fill="#ffffff" fontSize="9" fontWeight="600">CHEST ZONE</text>
-
-                    {/* Below-Chest Dynamic Line */}
-                    <line x1="50" y1="184" x2="270" y2="184" stroke={validationResult.belowChestVisible ? 'rgba(34,197,94,0.85)' : 'rgba(255,255,255,0.45)'} strokeWidth="1.5" strokeDasharray="4 2" />
-                    <text x="160" y="196" textAnchor="middle" fill="#ffffff" fontSize="8" fontWeight="600">BELOW-CHEST REQUIRED AREA</text>
+                    {/* Chest Zone */}
+                    <rect
+                      x="75"
+                      y="112"
+                      width="170"
+                      height="60"
+                      rx="6"
+                      fill="rgba(255,255,255,0.04)"
+                      stroke={validationResult.chestVisible ? 'rgba(34,197,94,0.8)' : 'rgba(255,255,255,0.35)'}
+                      strokeWidth="1.2"
+                      strokeDasharray="4 3"
+                    />
+                    <text x="160" y="146" textAnchor="middle" fill="#ffffff" fontSize="9" fontWeight="600">
+                      CHEST ZONE
+                    </text>
                   </svg>
 
                   {/* Status Banner */}
-                  <div style={{
-                    position: 'absolute',
-                    bottom: '8px',
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    pointerEvents: 'none',
-                  }}>
-                    <span style={{
-                      fontSize: '11px',
-                      fontWeight: '600',
-                      color: calibState === CALIB_STATE.CALIBRATION_PASSED ? '#4ade80' : calibState === CALIB_STATE.CALIBRATION_COUNTDOWN ? '#60a5fa' : '#fbbf24',
-                      background: 'rgba(0,0,0,0.78)',
-                      padding: '4px 12px',
-                      borderRadius: '6px',
-                      backdropFilter: 'blur(4px)',
-                      border: '1px solid rgba(255,255,255,0.1)'
-                    }}>
-                      {calibState === CALIB_STATE.CALIBRATION_PASSED
+                  <div
+                    style={{
+                      position: 'absolute',
+                      bottom: '8px',
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      pointerEvents: 'none',
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        color:
+                          calibState === CALIB_STATE.CALIBRATION_PASSED && validationResult.valid
+                            ? '#4ade80'
+                            : calibState === CALIB_STATE.CALIBRATION_COUNTDOWN && validationResult.valid
+                            ? '#60a5fa'
+                            : '#fbbf24',
+                        background: 'rgba(0,0,0,0.82)',
+                        padding: '4px 12px',
+                        borderRadius: '6px',
+                        backdropFilter: 'blur(4px)',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                      }}
+                    >
+                      {calibState === CALIB_STATE.CALIBRATION_PASSED && validationResult.valid
                         ? '✓ Baseline Framing Accepted'
-                        : calibState === CALIB_STATE.CALIBRATION_COUNTDOWN
+                        : calibState === CALIB_STATE.CALIBRATION_COUNTDOWN && validationResult.valid
                         ? `● Hold position (${countdownSeconds}s)`
-                        : '● Align head, eyes, shoulders & chest'}
+                        : '● Align head, eyes, shoulders & center body'}
                     </span>
                   </div>
                 </div>
 
                 {/* Real-time Checklist Grid */}
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(3, 1fr)',
-                  gap: '6px',
-                  background: '#f8fafc',
-                  padding: '10px',
-                  borderRadius: '8px',
-                  border: '1px solid #e2e8f0',
-                  marginBottom: '12px',
-                  fontSize: '11px',
-                  color: '#334155',
-                }}>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(3, 1fr)',
+                    gap: '6px',
+                    background: '#f8fafc',
+                    padding: '10px',
+                    borderRadius: '8px',
+                    border: '1px solid #e2e8f0',
+                    marginBottom: '12px',
+                    fontSize: '11px',
+                    color: '#334155',
+                  }}
+                >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                     {camStream ? <CheckCircle2 size={13} color="#16a34a" /> : <XCircle size={13} color="#dc2626" />}
-                    <span>Camera Permission</span>
+                    <span>Camera Active</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    {validationResult.faceDetected ? <CheckCircle2 size={13} color="#16a34a" /> : <AlertTriangle size={13} color="#f59e0b" />}
+                    {validationResult.faceDetected && validationResult.faceCentered ? (
+                      <CheckCircle2 size={13} color="#16a34a" />
+                    ) : (
+                      <AlertTriangle size={13} color="#f59e0b" />
+                    )}
                     <span>Face Visible &amp; Centered</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
@@ -934,30 +837,28 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
                   </div>
                 </div>
 
-                {calibState !== CALIB_STATE.CALIBRATION_PASSED && (
-                  <div style={{
-                    padding: '8px 12px',
-                    background: '#fffbeb',
-                    border: '1px solid #fde68a',
-                    borderRadius: '8px',
-                    fontSize: '12px',
-                    color: '#92400e',
-                    marginBottom: '14px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                  }}>
+                {(!validationResult.valid || calibState !== CALIB_STATE.CALIBRATION_PASSED) && (
+                  <div
+                    style={{
+                      padding: '8px 12px',
+                      background: '#fffbeb',
+                      border: '1px solid #fde68a',
+                      borderRadius: '8px',
+                      fontSize: '12px',
+                      color: '#92400e',
+                      marginBottom: '14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                    }}
+                  >
                     <AlertTriangle size={15} flexShrink={0} />
-                    <span>{validationResult.message || 'Position your camera so your head, eyes, shoulders, chest and area below chest are visible.'}</span>
+                    <span>{validationResult.message}</span>
                   </div>
                 )}
 
                 <div className="ac-step__actions">
-                  <button
-                    type="button"
-                    className="ac-btn ac-btn--ghost"
-                    onClick={handleBackToConsent}
-                  >
+                  <button type="button" className="ac-btn ac-btn--ghost" onClick={handleBackToConsent}>
                     <ArrowLeft size={15} /> Back
                   </button>
                   <button
@@ -970,31 +871,42 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
                   </button>
                   <button
                     type="button"
-                    className={`ac-btn ac-btn--primary ${calibState !== CALIB_STATE.CALIBRATION_PASSED ? 'ac-btn--disabled' : ''}`}
+                    className={`ac-btn ac-btn--primary ${
+                      !camStream || !validationResult.valid || calibState !== CALIB_STATE.CALIBRATION_PASSED
+                        ? 'ac-btn--disabled'
+                        : ''
+                    }`}
                     onClick={handleCameraPassed}
-                    disabled={calibState !== CALIB_STATE.CALIBRATION_PASSED}
+                    disabled={!camStream || !validationResult.valid || calibState !== CALIB_STATE.CALIBRATION_PASSED}
                     style={{
-                      opacity: calibState === CALIB_STATE.CALIBRATION_PASSED ? 1 : 0.5,
-                      cursor: calibState === CALIB_STATE.CALIBRATION_PASSED ? 'pointer' : 'not-allowed',
+                      opacity:
+                        camStream && validationResult.valid && calibState === CALIB_STATE.CALIBRATION_PASSED
+                          ? 1
+                          : 0.5,
+                      cursor:
+                        camStream && validationResult.valid && calibState === CALIB_STATE.CALIBRATION_PASSED
+                          ? 'pointer'
+                          : 'not-allowed',
                     }}
                   >
-                    {calibState === CALIB_STATE.CALIBRATION_PASSED ? (
-                      <>Calibration Passed, Continue <ArrowRight size={15} /></>
-                    ) : calibState === CALIB_STATE.CALIBRATION_COUNTDOWN ? (
+                    {calibState === CALIB_STATE.CALIBRATION_PASSED && validationResult.valid ? (
+                      <>
+                        Calibration Passed, Continue <ArrowRight size={15} />
+                      </>
+                    ) : calibState === CALIB_STATE.CALIBRATION_COUNTDOWN && validationResult.valid ? (
                       <>Hold Position — {countdownSeconds}s</>
                     ) : calibState === CALIB_STATE.CAMERA_INITIALIZING ? (
                       <>Starting Camera…</>
-                    ) : calibState === CALIB_STATE.CALIBRATION_WAITING ? (
-                      <>Waiting for Video…</>
                     ) : (
-                      <>Checking Framing…</>
+                      <>Align Framing to Continue</>
                     )}
                   </button>
                 </div>
               </motion.div>
             )}
 
-            {step === STEP_SCREEN_SHARE && (
+            {/* ── STEP 3: Fullscreen Permission ── */}
+            {step === STEP_FULLSCREEN && (
               <motion.div
                 key="step3"
                 initial={{ opacity: 0, x: 24 }}
@@ -1003,149 +915,65 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
                 transition={{ duration: 0.22, ease: 'easeOut' }}
                 className="ac-step"
               >
-                <div className="ac-step__icon-wrap ac-step__icon-wrap--accent" aria-hidden>
-                  <MonitorPlay size={26} />
+                <div className="ac-step__icon-wrap" aria-hidden>
+                  <Maximize2 size={26} />
                 </div>
-                <h2 className="ac-step__title">Share Your Screen</h2>
+                <h2 id="ac-title" className="ac-step__title">
+                  Enter Fullscreen Assessment Mode
+                </h2>
                 <p className="ac-step__lead">
-                  Screen sharing is mandatory for this assessment. Your trainer will monitor your screen live.
+                  This assessment runs in secure fullscreen mode. Tab switching, minimizing, or exiting fullscreen will
+                  be logged as proctoring integrity events.
                 </p>
 
-                <ul className="ac-step__list ac-step__list--bullets">
-                  <li>When prompted, select <strong>Entire Screen</strong> or an <strong>Application Window</strong>.</li>
-                  <li>Do not select a single browser tab.</li>
-                  <li>Keep screen sharing active for the entire quiz.</li>
-                </ul>
-
-                <AnimatePresence>
-                  {error && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0 }}
-                      className="ac-error"
-                      role="alert"
-                    >
-                      <AlertTriangle size={14} aria-hidden />
-                      <span>{error}</span>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                <div className="ac-step__actions">
-                  <button
-                    type="button"
-                    className="ac-btn ac-btn--ghost"
-                    onClick={() => setStep(STEP_CAMERA_CALIB)}
-                    disabled={busy}
-                  >
-                    <ArrowLeft size={15} /> Back
-                  </button>
-                  <button
-                    type="button"
-                    className="ac-btn ac-btn--primary"
-                    onClick={handleRequestScreenShare}
-                    disabled={busy}
-                    autoFocus
-                  >
-                    {busy ? (
-                      <>
-                        <Loader2 size={15} className="ac-spin" /> Requesting screen share…
-                      </>
-                    ) : (
-                      <>
-                        <MonitorPlay size={15} /> Share Screen
-                      </>
-                    )}
-                  </button>
+                <div
+                  style={{
+                    background: '#f0fdf4',
+                    border: '1px solid #bbf7d0',
+                    borderRadius: '10px',
+                    padding: '14px 16px',
+                    marginTop: '16px',
+                    marginBottom: '12px',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                    <CheckCircle2 size={16} color="#16a34a" />
+                    <span style={{ fontSize: '13px', fontWeight: '700', color: '#166534' }}>
+                      Pre-test Verification Complete
+                    </span>
+                  </div>
+                  <p style={{ fontSize: '12px', color: '#15803d', margin: 0, lineHeight: '1.5' }}>
+                    Your camera baseline framing has been validated. Click the button below to enter fullscreen mode
+                    and begin your assessment.
+                  </p>
                 </div>
 
                 {error && (
-                  <div className="ac-step__actions" style={{ marginTop: '12px', justifyContent: 'center' }}>
-                    <button
-                      type="button"
-                      className="ac-btn ac-btn--primary"
-                      onClick={handleRetryScreenShare}
-                      disabled={busy}
-                    >
-                      Retry
-                    </button>
-                    <button
-                      type="button"
-                      className="ac-btn ac-btn--ghost"
-                      onClick={handleCancelFromScreenShare}
-                      disabled={busy}
-                    >
-                      Cancel Assessment
-                    </button>
+                  <div className="ac-error" role="alert">
+                    <AlertTriangle size={15} />
+                    <span>{error}</span>
                   </div>
                 )}
-              </motion.div>
-            )}
-
-            {step === STEP_FULLSCREEN && (
-              <motion.div
-                key="step4"
-                initial={{ opacity: 0, x: 24 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -24 }}
-                transition={{ duration: 0.22, ease: 'easeOut' }}
-                className="ac-step"
-              >
-                <div className="ac-step__icon-wrap ac-step__icon-wrap--accent" aria-hidden>
-                  <Maximize2 size={26} />
-                </div>
-                <h2 className="ac-step__title">Enable Fullscreen to Begin</h2>
-                <p className="ac-step__lead">
-                  This assessment must be taken in fullscreen mode.
-                </p>
-
-                <ul className="ac-step__list ac-step__list--bullets">
-                  <li>Exiting fullscreen will trigger a warning.</li>
-                  <li>After warnings are exceeded, your exam may be auto-submitted.</li>
-                  <li>Please close all other applications and tabs.</li>
-                </ul>
-
-                <AnimatePresence>
-                  {error && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0 }}
-                      className="ac-error"
-                      role="alert"
-                    >
-                      <AlertTriangle size={14} aria-hidden />
-                      <span>{error}</span>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
 
                 <div className="ac-step__actions">
                   <button
                     type="button"
                     className="ac-btn ac-btn--ghost"
-                    onClick={() => setStep(STEP_SCREEN_SHARE)}
-                    disabled={busy}
+                    onClick={() => {
+                      setError('');
+                      setStep(STEP_CAMERA_CALIB);
+                    }}
                   >
-                    <ArrowLeft size={15} /> Back
+                    <ArrowLeft size={15} /> Back to Calibration
                   </button>
                   <button
                     type="button"
                     className="ac-btn ac-btn--primary"
                     onClick={handleEnableFullscreen}
                     disabled={busy}
-                    autoFocus
                   >
-                    {busy ? (
-                      <>
-                        <Loader2 size={15} className="ac-spin" /> Entering fullscreen…
-                      </>
-                    ) : (
-                      <>
-                        <Lock size={15} /> Enable Fullscreen &amp; Start Quiz
-                      </>
-                    )}
+                    {busy ? 'Entering Fullscreen…' : 'Enter Fullscreen & Begin Assessment'}
+                    <Maximize2 size={15} style={{ marginLeft: '6px' }} />
                   </button>
                 </div>
               </motion.div>
@@ -1154,6 +982,6 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
         </motion.div>
       </motion.div>
     </AnimatePresence>,
-    document.body,
+    document.body
   );
 }

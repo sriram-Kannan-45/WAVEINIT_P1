@@ -1,0 +1,1265 @@
+====================================================================================================
+                        LMS MONITORING & PROCTORING SYSTEM
+    WORKFLOW, ARCHITECTURE, PYTHON AI/VISION ENGINES & COMPLETE BACKEND CODE REFERENCE
+====================================================================================================
+
+Generated: 2026-08-20
+Scope: Quiz Assessment, Coding Assessment, and Technical Interview Modules
+
+
+====================================================================================================
+TABLE OF CONTENTS
+====================================================================================================
+1. Executive Overview & Workflow Architecture
+2. Complete Step-by-Step Monitoring Workflow (Phases 1 to 6)
+3. Event Classification, Thresholds & Anti-Flood Rules
+4. Dynamic Monitoring Coverage & Health Formulas
+5. Complete System Directory Structure
+6. COMPLETE PYTHON AI & VISION SOURCE CODE
+   6.1. `ai-service/inference/yolo_detector.py` (YOLO11s Mobile Side-Camera Proctoring Engine)
+   6.2. `ai-service/inference/proctoring_detector.py` (MediaPipe Face & Pose Landmarker Engine)
+   6.3. `ai-service/main.py` (FastAPI Real-Time Proctoring & Vision Endpoints)
+7. COMPLETE BACKEND SOURCE CODE REFERENCE
+   7.1. Database Models (Sequelize)
+        - `backend/src/models/monitoringSession.js`
+        - `backend/src/models/monitoringEvent.js`
+        - `backend/src/models/assessmentVerificationSession.js`
+        - `backend/src/models/codingTestCase.js`
+   7.2. Core Services
+        - `backend/src/services/monitoringService.js` (Unified Monitoring Engine & Risk Scorer)
+        - `backend/src/services/proctoringReportService.js` (Dynamic Coverage & Aggregation)
+        - `backend/src/services/yoloProctoringService.js` (YOLO Event Persistence & Broadcast)
+        - `backend/src/services/assessmentVerificationService.js` (Mobile Pairing & End Broadcast)
+   7.3. Controllers
+        - `backend/src/controllers/monitoringController.js`
+        - `backend/src/controllers/assessmentVerificationController.js`
+        - `backend/src/controllers/proctoringController.js`
+        - `backend/src/controllers/codingAssessmentController.js`
+   7.4. Real-Time Socket.IO Handlers
+        - `backend/src/socket/events/monitoringEvents.js`
+        - `backend/src/socket/assessmentVerificationEvents.js`
+8. COMPLETE FRONTEND ENGINE SOURCE CODE
+   8.1. `frontend/src/proctoring/engine/MonitoringEngineClient.js`
+   8.2. `frontend/src/components/monitoring/UnifiedMonitoringWidget.jsx`
+
+
+====================================================================================================
+1. EXECUTIVE OVERVIEW & WORKFLOW ARCHITECTURE
+====================================================================================================
+The LMS Monitoring & Proctoring System provides comprehensive, automated, AI-driven integrity
+surveillance for online assessments and technical interviews.
+
+Core Architectural Highlights:
+- Dual-Camera Proctoring:
+  * Primary Camera (Laptop Front Webcam): Tracks candidate face presence, eye gaze vector,
+    head pose (yaw/pitch/roll), upper-body framing, and facial identity.
+  * Secondary Camera (Mobile Phone Rear/Side Camera): Captures candidate hands, keyboard,
+    desk environment, and detects unauthorized devices (phones, tablets, books, secondary screens).
+- Edge-First Detection with Backend AI Validation:
+  * Fast client-side canvas heuristics provide zero-latency candidate feedback.
+  * Backend AI (YOLO11s + Computer Vision Pipeline) validates violations with confidence scoring.
+- Unified Persistence Pipeline & Dual-Key Indexing:
+  * Every camera / AI detection (YOLO mobile phone, second person, laptop, book, or MediaPipe gaze/head)
+    is persisted with BOTH `attemptId` and `monitoringSessionId`.
+  * The Trainer Report queries all linked identifiers via `[Op.or]` so events are never omitted.
+- Zero-Leak Hardware Auto-Shutdown:
+  * As soon as an assessment finishes or is submitted, all camera/audio streams (laptop and mobile)
+    are immediately stopped and released at the hardware level.
+
+
+====================================================================================================
+2. COMPLETE STEP-BY-STEP MONITORING WORKFLOW
+====================================================================================================
+
+Phase 1: Pre-Exam Readiness & Candidate Consent
+----------------------------------------------------------------------------------------------------
+1. Candidate navigates to the assessment start page.
+2. Candidate is presented with the Assessment Consent Gate.
+3. Hardware Verification & Calibration: Camera, microphone, lighting, face framing, audio baseline.
+4. Device Fingerprinting: Screen resolution, OS, browser version, user agent, Fullscreen enforcement.
+
+Phase 2: Dual-Camera Pairing (Laptop + Mobile QR Flow)
+----------------------------------------------------------------------------------------------------
+1. Backend generates a secure pairing token linked to the session.
+2. Laptop displays QR code: https://<domain>/assessment-mobile-join?token=<token>&session=<sessionId>
+3. Candidate scans QR code on mobile device (`AssessmentMobileJoin.jsx` / `MobileJoin.jsx`).
+4. Mobile connects via WebRTC & Socket.IO room (`assessment_verif_<sessionId>`).
+5. Status indicators update in real time: Laptop = "VALID/ACTIVE", Mobile = "Live Streaming".
+
+Phase 3: Active In-Test Monitoring & Detection Engine
+----------------------------------------------------------------------------------------------------
+1. `isMonitoringActive` state is set to TRUE.
+2. Laptop webcam continuously tracks face presence, gaze deviation, head pose, body framing.
+3. Mobile camera continuously monitors desk for mobile phones, extra people, secondary screens, books.
+4. If an anomaly persists for >= 2.0s - 3.5s, an event is logged with severity, score delta, and timestamp.
+5. Cooldown timers (10s - 20s) debounce identical consecutive events.
+
+Phase 4: Heartbeat Watchdog & Network Resilience
+----------------------------------------------------------------------------------------------------
+1. Laptop sends heartbeat every 3 seconds; Mobile sends heartbeat every 2 seconds.
+2. If mobile misses heartbeats for >8s: Status transitions to 'RECONNECTING'.
+3. If mobile misses heartbeats for >15s: Status transitions to 'DISCONNECTED' with an integrity flag.
+
+Phase 5: Test Submission & Automatic Camera Auto-Shutdown
+----------------------------------------------------------------------------------------------------
+1. Test is submitted by candidate or auto-submitted upon timer expiration.
+2. Submission endpoint calls `verificationService.endSession(...)`.
+3. Server marks `MonitoringSession` and `AssessmentVerificationSession` as 'COMPLETED'.
+4. Server broadcasts 'assessment_verif:session_ended' and 'monitoring:session_ended' to socket rooms.
+5. Mobile device stops all media tracks (`track.stop()`), pauses video, closes WebRTC, and shows 'COMPLETED'.
+6. Laptop stops local webcam and releases media hardware.
+
+Phase 6: Post-Test Analysis, Risk Scoring & Trainer Reporting
+----------------------------------------------------------------------------------------------------
+1. Dynamic Coverage & Health statistics are computed from actual attempt duration and event logs.
+2. Risk Score (0-100) is calculated deterministically from event deltas.
+3. Trainer Proctoring Dashboard renders the full drill-down with timestamps, source, severity, duration, and score impact.
+
+
+====================================================================================================
+3. EVENT CLASSIFICATION, THRESHOLDS & ANTI-FLOOD RULES
+====================================================================================================
++-----------------------+----------+-----------------------+---------------------+-------------------+
+| Event Type            | Severity | Trigger Threshold     | Duration / Grace    | Cooldown Period   |
++-----------------------+----------+-----------------------+---------------------+-------------------+
+| FACE_ABSENT           | HIGH     | 0 faces detected      | >= 3.5 seconds      | 15 seconds        |
+| MULTIPLE_FACES        | HIGH     | Laptop: >= 2 faces    | >= 3.5 seconds      | 20 seconds        |
+|                       |          | Mobile: >= 3 persons  | Screen reflection   |                   |
+|                       |          | (isolated per camera) | filter (<5% bbox)   |                   |
+| GAZE_DEVIATION        | WARNING  | X < 0.20 or X > 0.80  | Grace: 5 in 5m (Quiz| 15 seconds        |
+| (Rolling Grace Model) |          |                       | 8 in 5m (Coding)    | Escalation on >5  |
+| HEAD_POSE_DEVIATION   | WARNING  | |yaw|>35° or |pitch|>30°| Grace: 5 in 5m (Quiz| 15 seconds      |
+| (Rolling Grace Model) |          |                       | 8 in 5m (Coding)    | Escalation on >5  |
+| BODY_OUT_OF_FRAME     | WARNING  | Torso not detected    | >= 4.0 seconds      | 20 seconds        |
+| PHONE_DETECTED        | CRITICAL | YOLO confidence >=0.70| >= 2.0 seconds      | 20 seconds        |
+| SECONDARY_DEVICE      | HIGH     | Laptop/tablet visible | >= 3.0 seconds      | 20 seconds        |
+| BOOK_NOTES_DETECTED   | HIGH     | Book/notes in frame   | >= 3.0 seconds      | 20 seconds        |
+| TAB_SWITCH            | WARNING  | visibilityState=hidden| >= 2.0 seconds      | 15 seconds        |
+| FULLSCREEN_EXIT       | HIGH     | !fullscreenElement    | >= 1.5 seconds      | 15 seconds        |
+| WINDOW_BLUR           | INFO     | !document.hasFocus()  | >= 2.0 seconds      | 15 seconds        |
+| SPEAKING_DETECTED     | WARNING  | Audio volume > thresh | >= 3.0 seconds      | 15 seconds        |
+| MOBILE_DISCONNECTED   | HIGH     | Heartbeat missed >15s | >= 15.0 seconds     | Single flag       |
++-----------------------+----------+-----------------------+---------------------+-------------------+
+
+Addendum #8 Engineering Rules:
+1. Gaze & Head Pose Grace Allowance (Bug 18):
+   - Brief or natural glances away from the screen are normal candidate behavior.
+   - Individual deviations within the grace window (5 per 5 min in Quiz, 8 per 5 min in Coding)
+     are tracked in memory without logging database events or penalizing candidate risk score.
+   - When the cumulative threshold is breached in the rolling window, a single summary escalation
+     event (`REPEATED_GAZE_DEVIATION` / `REPEATED_HEAD_POSE_DEVIATION`) is logged.
+2. Isolated Per-Camera Person Counts (Bug 19):
+   - Person counts are strictly scoped to individual cameras. No cross-camera summing.
+   - Mobile camera multi-person threshold is raised to >= 3 (or excludes bbox < 5% frame area)
+     to prevent false positives from candidate reflections in laptop monitors.
+3. Phone Detection End-to-End Reliability (Bug 17):
+   - `validateMobile` and `reportEvent` aggressively resolve `attemptId` through session, verification,
+     and in-progress attempt lookups.
+   - Reports query both `attemptId` and `monitoringSessionId` with fallback matching to ensure zero missed phone events.
+4. Transport & Detection Latency < 1-2s (Bug 20):
+   - Mobile and laptop frame capture uses optimized 0.4 JPEG quality.
+   - Frame transport is non-blocking with asynchronous HTTP fallback and live Socket.IO relay.
+
+
+====================================================================================================
+4. DYNAMIC MONITORING COVERAGE & HEALTH FORMULAS
+====================================================================================================
+- Face Tracking Coverage:
+  Face% = max(0, min(100, 100 - (Total Face Absent Seconds / Total Attempt Seconds) * 100))
+
+- Eye / Gaze Tracking Quality:
+  Gaze% = max(0, min(100, 100 - (Total Gaze Deviation Seconds / Total Attempt Seconds) * 100))
+
+- Head Pose Tracking Quality:
+  Head% = max(0, min(100, 100 - (Total Head Deviation Seconds / Total Attempt Seconds) * 100))
+
+- Upper-Body Framing Quality:
+  Body% = max(0, min(100, 100 - (Total Body Absent Seconds / Total Attempt Seconds) * 100))
+
+- Audio & Environment Quality:
+  Audio% = max(0, min(100, 100 - (Count of Unauthorized Speaking Incidents * 10)))
+
+- Device & Phone Security Status:
+  If Mobile Phone Events > 0 -> "FLAGGED (N Phone Incidents)" else -> "100% CLEAN"
+
+- Camera Stream Availability:
+  Stream% = max(0, min(100, 100 - (Camera Disconnect Seconds / Total Attempt Seconds) * 100))
+
+
+====================================================================================================
+5. COMPLETE SYSTEM DIRECTORY STRUCTURE
+====================================================================================================
+feedWeb/
+├── ai-service/
+│   ├── inference/
+│   │   ├── yolo_detector.py                  # YOLO11s Side-Camera Object & Person Engine
+│   │   └── proctoring_detector.py            # MediaPipe 468-Landmark Face & Pose Engine
+│   ├── main.py                               # FastAPI REST Microservice
+│   └── requirements.txt
+├── backend/
+│   ├── src/
+│   │   ├── controllers/
+│   │   │   ├── monitoringController.js
+│   │   │   ├── assessmentVerificationController.js
+│   │   │   ├── proctoringController.js
+│   │   │   └── codingAssessmentController.js
+│   │   ├── services/
+│   │   │   ├── monitoringService.js
+│   │   │   ├── proctoringReportService.js
+│   │   │   ├── yoloProctoringService.js
+│   │   │   └── assessmentVerificationService.js
+│   │   ├── models/
+│   │   │   ├── monitoringSession.js
+│   │   │   ├── monitoringEvent.js
+│   │   │   ├── assessmentVerificationSession.js
+│   │   │   └── codingTestCase.js
+│   │   ├── socket/
+│   │   │   ├── assessmentVerificationEvents.js
+│   │   │   └── events/
+│   │   │       ├── monitoringEvents.js
+│   │   │       └── proctorEvents.js
+│   │   └── app.js
+└── frontend/
+    └── src/
+        ├── components/
+        │   └── monitoring/
+        │       └── UnifiedMonitoringWidget.jsx
+        ├── proctoring/
+        │   ├── components/
+        │   │   ├── TrainerMonitoringReport.jsx
+        │   │   └── AssessmentConsentGate.jsx
+        │   └── engine/
+        │       └── MonitoringEngineClient.js
+        └── pages/
+            ├── assessment/
+            │   ├── AssessmentMobileJoin.jsx
+            │   └── ParticipantCodingAttemptPage.jsx
+            └── ParticipantQuizAttemptPage.jsx
+
+
+====================================================================================================
+6. COMPLETE PYTHON AI & VISION SOURCE CODE
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+6.1. `ai-service/inference/yolo_detector.py` (YOLO11s Mobile Side-Camera Proctoring Engine)
+----------------------------------------------------------------------------------------------------
+```python
+import os
+import sys
+import time
+import base64
+import logging
+from typing import Dict, Any, List, Optional, Tuple
+from collections import deque
+
+import cv2
+import numpy as np
+
+logger = logging.getLogger("ai-service.yolo-proctor")
+
+
+class YOLOProctorEngine:
+    """
+    Unified YOLO Mobile Proctoring Engine that loads yolo11s once and validates
+    side-angle camera composition (person + laptop) for Quiz, Coding, and Interview.
+    """
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super(YOLOProctorEngine, cls).__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self):
+        if getattr(self, "_initialized", False):
+            return
+
+        self.model = None
+        self.model_path = None
+        self.class_names = {}
+        self.person_class_id = None
+        self.phone_class_ids = []
+        self.laptop_class_ids = []
+        self.book_class_ids = []
+        self.initialized_ok = False
+        self.init_error = None
+        self.session_states: Dict[str, Dict[str, Any]] = {}
+
+        self._load_model()
+        self._initialized = True
+
+    def _find_model_file(self) -> Optional[str]:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        service_root = os.path.dirname(script_dir)
+        workspace_root = os.path.dirname(service_root)
+
+        candidates = [
+            os.path.join(service_root, "New folder (8)", "yolo11s.pt"),
+            os.path.join(workspace_root, "ai-service", "New folder (8)", "yolo11s.pt"),
+            os.path.join(service_root, "models", "yolo11s.pt"),
+            r"d:\New folder (8)\AI-Based-online-exam-proctoring-System\futurproctor\proctoring\ml_models\yolo11s.pt",
+            os.path.join(service_root, "models", "yolov8n.pt"),
+            os.path.join(service_root, "New folder (8)", "yolov8n.pt"),
+        ]
+
+        env_model = os.getenv("YOLO_MODEL_PATH")
+        if env_model:
+            candidates.insert(0, env_model)
+
+        for path in candidates:
+            if os.path.exists(path) and os.path.isfile(path) and os.path.getsize(path) > 1000:
+                return os.path.abspath(path)
+        return None
+
+    def _load_model(self):
+        try:
+            from ultralytics import YOLO
+        except ImportError as e:
+            self.init_error = f"Ultralytics library not installed: {e}"
+            logger.error(self.init_error)
+            return
+
+        model_file = self._find_model_file()
+        if not model_file:
+            self.init_error = "YOLO model initialization failed: yolo11s.pt not found"
+            logger.error(self.init_error)
+            return
+
+        self.model_path = model_file
+        try:
+            logger.info(f"Loading YOLO model from {model_file}...")
+            self.model = YOLO(model_file)
+
+            if hasattr(self.model, "names") and isinstance(self.model.names, dict):
+                self.class_names = self.model.names
+            elif hasattr(self.model, "names") and isinstance(self.model.names, (list, tuple)):
+                self.class_names = {i: name for i, name in enumerate(self.model.names)}
+            else:
+                self.class_names = {}
+
+            logger.info(f"YOLO model loaded successfully. Total classes: {len(self.class_names)}")
+
+            self.phone_class_ids = []
+            self.laptop_class_ids = []
+            self.book_class_ids = []
+            for cid, cname in self.class_names.items():
+                name_lower = str(cname).lower()
+                if name_lower in ("person", "candidate", "student", "user"):
+                    self.person_class_id = cid
+                elif any(p in name_lower for p in ["phone", "cell phone", "mobile", "smartphone"]):
+                    self.phone_class_ids.append(cid)
+                elif any(l in name_lower for l in ["laptop", "computer", "notebook", "tv", "monitor"]):
+                    self.laptop_class_ids.append(cid)
+                elif any(b in name_lower for b in ["book", "paper", "notes"]):
+                    self.book_class_ids.append(cid)
+
+            self.initialized_ok = True
+            self.init_error = None
+        except Exception as e:
+            self.init_error = f"YOLO model initialization failed: {model_file} ({e})"
+            logger.error(self.init_error)
+            self.initialized_ok = False
+
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "status": "UP" if self.initialized_ok else "ERROR",
+            "model_path": self.model_path,
+            "classes_count": len(self.class_names),
+            "classes": self.class_names,
+            "error": self.init_error,
+            "active_sessions": len(self.session_states),
+        }
+
+    def decode_frame(self, b64_frame: str) -> Optional[np.ndarray]:
+        try:
+            if "," in b64_frame:
+                b64_frame = b64_frame.split(",", 1)[1]
+            frame_bytes = base64.b64decode(b64_frame)
+            np_arr = np.frombuffer(frame_bytes, np.uint8)
+            img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            return img
+        except Exception as e:
+            logger.warning(f"Error decoding base64 frame: {e}")
+            return None
+
+    def _get_session_state(self, session_key: str) -> Dict[str, Any]:
+        if session_key not in self.session_states:
+            self.session_states[session_key] = {
+                "last_event_type": None,
+                "last_state": "MOBILE_CAMERA_CONNECTING",
+                "last_emitted_time": 0,
+                "consecutive_valid": 0,
+                "consecutive_no_person": 0,
+                "consecutive_no_laptop": 0,
+                "consecutive_multi_person": 0,
+                "history": deque(maxlen=20),
+                "last_frame_ts": time.time(),
+            }
+        return self.session_states[session_key]
+
+    def validate_mobile_composition(
+        self,
+        detections: List[Dict[str, Any]],
+        img_w: int,
+        img_h: int,
+        session_key: str,
+    ) -> Tuple[str, str, str, float]:
+        state_data = self._get_session_state(session_key)
+
+        persons = [d for d in detections if d["class_name"].lower() == "person" or d["class_id"] == self.person_class_id]
+        laptops = [d for d in detections if d["class_id"] in self.laptop_class_ids or any(k in d["class_name"].lower() for k in ["laptop", "computer", "notebook", "tv", "monitor"])]
+        phones = [d for d in detections if d["class_id"] in self.phone_class_ids or any(k in d["class_name"].lower() for k in ["phone", "cell"])]
+
+        person_count = len(persons)
+        laptop_count = len(laptops)
+        phone_count = len(phones)
+
+        if person_count > 1:
+            state_data["consecutive_multi_person"] += 1
+            state_data["consecutive_valid"] = 0
+            if state_data["consecutive_multi_person"] >= 2:
+                return ("VIOLATION", "MULTIPLE_PERSONS_DETECTED", f"Multiple people detected ({person_count} persons). Ensure you are alone.", max([p["confidence"] for p in persons] or [0.9]))
+            return ("WARNING", "MULTIPLE_PERSONS_DETECTED", "Multiple people visible in side camera view.", 0.8)
+        else:
+            state_data["consecutive_multi_person"] = 0
+
+        if phone_count > 0:
+            return ("VIOLATION", "PHONE_DETECTED", "Secondary mobile phone / electronic device detected in view.", max([p["confidence"] for p in phones]))
+
+        if person_count == 0:
+            state_data["consecutive_no_person"] += 1
+            state_data["consecutive_valid"] = 0
+            if state_data["consecutive_no_person"] >= 3:
+                return ("WAITING_FOR_PERSON", "NO_PERSON_DETECTED", "Candidate not detected — position mobile camera so your side profile is visible.", 0.9)
+            return ("POSITIONING_REQUIRED", "NO_PERSON_DETECTED", "Adjust camera angle to show candidate.", 0.7)
+        else:
+            state_data["consecutive_no_person"] = 0
+
+        if laptop_count == 0:
+            state_data["consecutive_no_laptop"] += 1
+            state_data["consecutive_valid"] = 0
+            if state_data["consecutive_no_laptop"] >= 3:
+                return ("WAITING_FOR_LAPTOP", "LAPTOP_NOT_DETECTED", "Move phone so your laptop screen and workspace are visible in the frame.", 0.9)
+            return ("POSITIONING_REQUIRED", "LAPTOP_NOT_DETECTED", "Adjust phone to bring your laptop into view.", 0.7)
+        else:
+            state_data["consecutive_no_laptop"] = 0
+
+        state_data["consecutive_valid"] += 1
+        avg_conf = (persons[0]["confidence"] + laptops[0]["confidence"]) / 2.0
+        return ("VALID", "COMPOSITION_VALID", "Good side-angle composition — participant and laptop are clearly visible.", round(avg_conf, 2))
+
+    def analyze_frame(
+        self,
+        frame_data: str,
+        session_id: str = "default",
+        participant_id: Optional[Any] = None,
+        module_type: str = "QUIZ",
+        camera_source: str = "MOBILE_CAMERA",
+        confidence_threshold: float = 0.35,
+        timestamp_ms: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        if not self.initialized_ok or self.model is None:
+            return {
+                "success": False,
+                "error": self.init_error or "YOLO model not initialized",
+                "composition_state": "DISCONNECTED",
+                "user_message": "AI Proctoring Engine Offline",
+            }
+
+        img = self.decode_frame(frame_data)
+        if img is None:
+            return {
+                "success": False,
+                "error": "Failed to decode camera frame",
+                "composition_state": "DISCONNECTED",
+                "user_message": "Invalid Video Stream",
+            }
+
+        img_h, img_w = img.shape[:2]
+        t0 = time.time()
+
+        try:
+            results = self.model.predict(source=img, conf=confidence_threshold, verbose=False, device="cpu")
+        except Exception as e:
+            logger.error(f"YOLO inference runtime error: {e}")
+            return {"success": False, "error": str(e), "composition_state": "DISCONNECTED", "user_message": "Inference Error"}
+
+        inference_time_ms = int((time.time() - t0) * 1000)
+        detections = []
+
+        if len(results) > 0 and results[0].boxes is not None:
+            boxes = results[0].boxes
+            for box in boxes:
+                cls_id = int(box.cls[0].item())
+                conf = float(box.conf[0].item())
+                xyxy = box.xyxy[0].tolist()
+                cls_name = self.class_names.get(cls_id, f"class_{cls_id}")
+
+                detections.append({
+                    "class_id": cls_id,
+                    "class_name": cls_name,
+                    "confidence": round(conf, 3),
+                    "box": [round(x, 1) for x in xyxy],
+                })
+
+        session_key = f"{session_id}_{camera_source}"
+        composition_state, event_type, user_msg, comp_conf = self.validate_mobile_composition(detections, img_w, img_h, session_key)
+
+        phones = [d for d in detections if d["class_id"] in self.phone_class_ids or any(k in d["class_name"].lower() for k in ["phone", "cell"])]
+        persons = [d for d in detections if d["class_name"].lower() == "person" or d["class_id"] == self.person_class_id]
+        laptops = [d for d in detections if d["class_id"] in self.laptop_class_ids or any(k in d["class_name"].lower() for k in ["laptop", "computer", "notebook", "tv", "monitor"])]
+        books = [d for d in detections if d["class_id"] in self.book_class_ids or any(k in d["class_name"].lower() for k in ["book", "paper", "notes"])]
+
+        proctoring_event = None
+        if len(phones) > 0:
+            proctoring_event = {
+                "sessionId": session_id,
+                "participantId": participant_id,
+                "moduleType": module_type,
+                "cameraSource": camera_source,
+                "eventType": "PHONE_DETECTED",
+                "severity": "CRITICAL",
+                "confidence": max([p["confidence"] for p in phones]),
+                "timestamp": timestamp_ms or int(time.time() * 1000),
+                "shouldBroadcast": True,
+            }
+        elif len(persons) > 1:
+            proctoring_event = {
+                "sessionId": session_id,
+                "participantId": participant_id,
+                "moduleType": module_type,
+                "cameraSource": camera_source,
+                "eventType": "MULTIPLE_FACES",
+                "severity": "HIGH",
+                "confidence": max([p["confidence"] for p in persons]),
+                "timestamp": timestamp_ms or int(time.time() * 1000),
+                "shouldBroadcast": True,
+            }
+
+        return {
+            "success": True,
+            "composition_state": composition_state,
+            "user_message": user_msg,
+            "proctoring_event": proctoring_event,
+            "detections": detections,
+            "person_count": len(persons),
+            "phone_count": len(phones),
+            "laptop_count": len(laptops),
+            "book_count": len(books),
+            "inference_time_ms": inference_time_ms,
+        }
+
+
+yolo_engine = YOLOProctorEngine()
+```
+
+----------------------------------------------------------------------------------------------------
+6.2. `ai-service/inference/proctoring_detector.py` (MediaPipe Face & Pose Engine)
+----------------------------------------------------------------------------------------------------
+```python
+import os
+import sys
+import time
+import math
+import logging
+import base64
+import urllib.request
+from typing import Dict, Any, List, Optional, Tuple
+from collections import deque
+
+import cv2
+import numpy as np
+import mediapipe as mp
+from mediapipe.tasks.python import vision
+from mediapipe.tasks.python.core.base_options import BaseOptions
+
+logger = logging.getLogger("ai-service.mediapipe")
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SERVICE_ROOT = os.path.dirname(SCRIPT_DIR)
+MODELS_DIR = os.path.join(SERVICE_ROOT, "models")
+os.makedirs(MODELS_DIR, exist_ok=True)
+
+FACE_MODEL_PATH = os.path.join(MODELS_DIR, "face_landmarker.task")
+POSE_MODEL_PATH = os.path.join(MODELS_DIR, "pose_landmarker_lite.task")
+
+FACE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+POSE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
+
+
+def ensure_model(path: str, url: str, min_size: int = 1_000_000) -> str:
+    if not os.path.exists(path) or os.path.getsize(path) < min_size:
+        try:
+            urllib.request.urlretrieve(url, path)
+        except Exception as e:
+            logger.error(f"Failed to download model from {url}: {e}")
+    return path
+
+
+MODEL_POINTS_3D = np.array([
+    (0.0, 0.0, 0.0),             # Nose tip
+    (0.0, -330.0, -65.0),        # Chin
+    (-225.0, 170.0, -135.0),     # Left eye outer corner
+    (225.0, 170.0, -135.0),      # Right eye outer corner
+    (-150.0, -150.0, -125.0),    # Left mouth corner
+    (150.0, -150.0, -125.0),     # Right mouth corner
+], dtype=np.float32)
+
+HEAD_POSE_LANDMARKS = [1, 152, 33, 263, 61, 291]
+RIGHT_EYE_IRIS_CENTER = 468
+RIGHT_EYE_CORNERS = (33, 133)
+LEFT_EYE_IRIS_CENTER = 473
+LEFT_EYE_CORNERS = (263, 362)
+RIGHT_EYE_EAR_IDX = [33, 160, 158, 133, 153, 144]
+LEFT_EYE_EAR_IDX = [362, 385, 387, 263, 373, 380]
+
+
+def landmark_to_xy(lm, w: int, h: int) -> np.ndarray:
+    return np.array([lm.x * w, lm.y * h], dtype=np.float32)
+
+
+def rotation_matrix_to_euler(R: np.ndarray) -> Tuple[float, float, float]:
+    sy = math.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
+    singular = sy < 1e-6
+    if not singular:
+        pitch = math.atan2(R[2, 1], R[2, 2])
+        yaw = math.atan2(-R[2, 0], sy)
+        roll = math.atan2(R[1, 0], R[0, 0])
+    else:
+        pitch = math.atan2(-R[1, 2], R[1, 1])
+        yaw = math.atan2(-R[2, 0], sy)
+        roll = 0.0
+    return float(np.degrees(pitch)), float(np.degrees(yaw)), float(np.degrees(roll))
+
+
+def calculate_ear(landmarks, eye_indices: List[int], w: int, h: int) -> float:
+    p1, p2, p3, p4, p5, p6 = [landmark_to_xy(landmarks[i], w, h) for i in eye_indices]
+    vertical_1 = float(np.linalg.norm(p2 - p6))
+    vertical_2 = float(np.linalg.norm(p3 - p5))
+    horizontal = float(np.linalg.norm(p1 - p4))
+    if horizontal < 1e-6:
+        return 0.0
+    return (vertical_1 + vertical_2) / (2.0 * horizontal)
+
+
+def eye_horizontal_gaze_ratio(landmarks, iris_idx: int, c_a: int, c_b: int, w: int) -> float:
+    iris_x = landmarks[iris_idx].x * w
+    ax = landmarks[c_a].x * w
+    bx = landmarks[c_b].x * w
+    left_x, right_x = (ax, bx) if ax <= bx else (bx, ax)
+    eye_width = right_x - left_x
+    if eye_width < 1e-3:
+        return 0.5
+    return float(np.clip((iris_x - left_x) / eye_width, 0.0, 1.0))
+
+
+class MediaPipeProctorEngine:
+    def __init__(self, mode: str = "IMAGE"):
+        ensure_model(FACE_MODEL_PATH, FACE_MODEL_URL)
+        ensure_model(POSE_MODEL_PATH, POSE_MODEL_URL)
+
+        self.running_mode = vision.RunningMode.IMAGE if mode == "IMAGE" else vision.RunningMode.VIDEO
+
+        face_options = vision.FaceLandmarkerOptions(
+            base_options=BaseOptions(model_asset_path=FACE_MODEL_PATH),
+            running_mode=self.running_mode,
+            num_faces=4,
+            min_face_detection_confidence=0.5,
+            min_face_presence_confidence=0.5,
+            min_tracking_confidence=0.5,
+        )
+        self.face_detector = vision.FaceLandmarker.create_from_options(face_options)
+
+        pose_options = vision.PoseLandmarkerOptions(
+            base_options=BaseOptions(model_asset_path=POSE_MODEL_PATH),
+            running_mode=self.running_mode,
+            min_pose_detection_confidence=0.5,
+            min_pose_presence_confidence=0.5,
+            min_tracking_confidence=0.5,
+        )
+        self.pose_detector = vision.PoseLandmarker.create_from_options(pose_options)
+        self.sessions: Dict[str, Dict[str, Any]] = {}
+
+    def decode_b64(self, b64_data: str) -> Optional[np.ndarray]:
+        try:
+            if "," in b64_data:
+                b64_data = b64_data.split(",", 1)[1]
+            raw_bytes = base64.b64decode(b64_data)
+            np_arr = np.frombuffer(raw_bytes, np.uint8)
+            return cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        except Exception:
+            return None
+
+    def process_b64_frame(self, b64_data: str, session_id: str = "default", timestamp_ms: Optional[int] = None) -> Dict[str, Any]:
+        frame = self.decode_b64(b64_data)
+        if frame is None:
+            return {"success": False, "error": "Failed to decode frame"}
+
+        h, w, _ = frame.shape
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+        face_result = self.face_detector.detect(mp_image)
+        pose_result = self.pose_detector.detect(mp_image)
+
+        face_count = len(face_result.face_landmarks) if face_result.face_landmarks else 0
+        shoulders_detected = False
+
+        if pose_result.pose_landmarks and len(pose_result.pose_landmarks) > 0:
+            pose_lms = pose_result.pose_landmarks[0]
+            shoulders_detected = pose_lms[11].visibility > 0.5 and pose_lms[12].visibility > 0.5
+
+        if face_count == 0:
+            return {
+                "success": True,
+                "face_count": 0,
+                "gaze_direction": "UNKNOWN",
+                "head_pose": {"yaw": 0.0, "pitch": 0.0, "roll": 0.0},
+                "head_pose_classification": "UNKNOWN",
+                "ear": 0.0,
+                "shoulders_detected": shoulders_detected,
+                "proctoring_event": {
+                    "eventType": "FACE_ABSENT",
+                    "severity": "HIGH",
+                    "confidence": 0.95,
+                }
+            }
+
+        landmarks = face_result.face_landmarks[0]
+
+        # SolvePnP Head Pose
+        image_points = np.array([landmark_to_xy(landmarks[idx], w, h) for idx in HEAD_POSE_LANDMARKS], dtype=np.float32)
+        focal_length = w
+        center = (w / 2.0, h / 2.0)
+        cam_matrix = np.array([[focal_length, 0, center[0]], [0, focal_length, center[1]], [0, 0, 1]], dtype=np.float32)
+        dist_coeffs = np.zeros((4, 1), dtype=np.float32)
+
+        _, rvec, tvec = cv2.solvePnP(MODEL_POINTS_3D, image_points, cam_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE)
+        R, _ = cv2.Rodrigues(rvec)
+        pitch, yaw, roll = rotation_matrix_to_euler(R)
+
+        # Gaze Ratios
+        r_gaze = eye_horizontal_gaze_ratio(landmarks, RIGHT_EYE_IRIS_CENTER, RIGHT_EYE_CORNERS[0], RIGHT_EYE_CORNERS[1], w)
+        l_gaze = eye_horizontal_gaze_ratio(landmarks, LEFT_EYE_IRIS_CENTER, LEFT_EYE_CORNERS[0], LEFT_EYE_CORNERS[1], w)
+        avg_h_gaze = (r_gaze + l_gaze) / 2.0
+
+        r_ear = calculate_ear(landmarks, RIGHT_EYE_EAR_IDX, w, h)
+        l_ear = calculate_ear(landmarks, LEFT_EYE_EAR_IDX, w, h)
+        avg_ear = (r_ear + l_ear) / 2.0
+
+        gaze_direction = "LOOKING_LEFT" if avg_h_gaze < 0.25 else "LOOKING_RIGHT" if avg_h_gaze > 0.75 else "CENTER"
+        head_classification = "TURNED_LEFT" if yaw < -30 else "TURNED_RIGHT" if yaw > 30 else "TILTED_DOWN" if pitch < -25 else "CENTER"
+
+        return {
+            "success": True,
+            "face_count": face_count,
+            "gaze_direction": gaze_direction,
+            "avg_h_gaze": round(avg_h_gaze, 3),
+            "head_pose": {"yaw": round(yaw, 1), "pitch": round(pitch, 1), "roll": round(roll, 1)},
+            "head_pose_classification": head_classification,
+            "ear": round(avg_ear, 3),
+            "shoulders_detected": shoulders_detected,
+        }
+
+
+proctor_engine = MediaPipeProctorEngine()
+```
+
+----------------------------------------------------------------------------------------------------
+6.3. `ai-service/main.py` (FastAPI Proctoring & Vision Endpoints)
+----------------------------------------------------------------------------------------------------
+```python
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Optional, Any, Dict
+from inference.yolo_detector import yolo_engine
+from inference.proctoring_detector import proctor_engine
+
+app = FastAPI(title="LMS AI Proctoring & Vision Microservice", version="2.5.0")
+
+
+class YOLOAnalyzeFrameRequest(BaseModel):
+    frame: str
+    sessionId: str = "default"
+    participantId: Optional[Any] = None
+    moduleType: Optional[str] = "QUIZ"
+    cameraSource: Optional[str] = "MOBILE_CAMERA"
+    confidenceThreshold: Optional[float] = 0.35
+    timestampMs: Optional[int] = None
+
+
+class AnalyzeFrameRequest(BaseModel):
+    frame: str
+    sessionId: Optional[str] = "default"
+    timestampMs: Optional[int] = None
+
+
+@app.post("/api/proctoring/yolo/analyze-frame")
+async def analyze_yolo_frame(req: YOLOAnalyzeFrameRequest):
+    result = yolo_engine.analyze_frame(
+        frame_data=req.frame,
+        session_id=req.sessionId or "default",
+        participant_id=req.participantId,
+        module_type=req.moduleType or "QUIZ",
+        camera_source=req.cameraSource or "MOBILE_CAMERA",
+        confidence_threshold=req.confidenceThreshold or 0.35,
+        timestamp_ms=req.timestampMs
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "YOLO frame analysis failed"))
+    return result
+
+
+@app.post("/api/proctoring/analyze-frame")
+async def analyze_proctoring_frame(req: AnalyzeFrameRequest):
+    result = proctor_engine.process_b64_frame(
+        b64_data=req.frame,
+        session_id=req.sessionId or "default",
+        timestamp_ms=req.timestampMs
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Frame analysis failed"))
+    return result
+```
+
+
+====================================================================================================
+7. COMPLETE BACKEND SOURCE CODE REFERENCE
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+7.1. DATABASE MODELS (Sequelize)
+----------------------------------------------------------------------------------------------------
+
+--- FILE: `backend/src/models/monitoringSession.js` ---
+```javascript
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/db');
+
+const MonitoringSession = sequelize.define('MonitoringSession', {
+  id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
+  sessionId: { type: DataTypes.STRING(64), allowNull: false, unique: true, field: 'session_id' },
+  attemptId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, field: 'attempt_id' },
+  participantId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false, field: 'participant_id' },
+  contextType: { type: DataTypes.ENUM('QUIZ', 'CODING', 'INTERVIEW'), defaultValue: 'QUIZ', allowNull: false, field: 'context_type' },
+  contextId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, field: 'context_id' },
+  laptopStatus: { type: DataTypes.ENUM('NOT_STARTED', 'CALIBRATING', 'ACTIVE', 'DEGRADED', 'DISCONNECTED'), defaultValue: 'NOT_STARTED', allowNull: false, field: 'laptop_status' },
+  mobileStatus: { type: DataTypes.ENUM('NOT_STARTED', 'PAIRED', 'ACTIVE', 'RECONNECTING', 'DISCONNECTED', 'DISABLED'), defaultValue: 'NOT_STARTED', allowNull: false, field: 'mobile_status' },
+  mobileEnabled: { type: DataTypes.BOOLEAN, defaultValue: false, allowNull: false, field: 'mobile_enabled' },
+  calibrationPassed: { type: DataTypes.BOOLEAN, defaultValue: false, allowNull: false, field: 'calibration_passed' },
+  calibrationDetails: { type: DataTypes.JSON, allowNull: true, field: 'calibration_details' },
+  score: { type: DataTypes.FLOAT, defaultValue: 0, allowNull: false },
+  riskLevel: { type: DataTypes.ENUM('LOW', 'MEDIUM', 'HIGH', 'CRITICAL'), defaultValue: 'LOW', allowNull: false, field: 'risk_level' },
+  totalEvents: { type: DataTypes.INTEGER, defaultValue: 0, field: 'total_events' },
+  warningEvents: { type: DataTypes.INTEGER, defaultValue: 0, field: 'warning_events' },
+  highEvents: { type: DataTypes.INTEGER, defaultValue: 0, field: 'high_events' },
+  criticalEvents: { type: DataTypes.INTEGER, defaultValue: 0, field: 'critical_events' },
+  startedAt: { type: DataTypes.DATE, allowNull: true, field: 'started_at' },
+  endedAt: { type: DataTypes.DATE, allowNull: true, field: 'ended_at' },
+  status: { type: DataTypes.ENUM('INITIALIZED', 'ACTIVE', 'PAUSED', 'COMPLETED', 'TERMINATED'), defaultValue: 'INITIALIZED', allowNull: false },
+  integrityFlags: { type: DataTypes.JSON, allowNull: true, field: 'integrity_flags' },
+  mobilePairingToken: { type: DataTypes.STRING(64), allowNull: true, field: 'mobile_pairing_token' },
+  mobilePairingExpiresAt: { type: DataTypes.DATE, allowNull: true, field: 'mobile_pairing_expires_at' },
+  lastLaptopHeartbeatAt: { type: DataTypes.DATE, allowNull: true, field: 'last_laptop_heartbeat_at' },
+  lastMobileHeartbeatAt: { type: DataTypes.DATE, allowNull: true, field: 'last_mobile_heartbeat_at' },
+}, {
+  tableName: 'monitoring_sessions',
+  timestamps: true,
+  underscored: true,
+});
+
+module.exports = MonitoringSession;
+```
+
+--- FILE: `backend/src/models/monitoringEvent.js` ---
+```javascript
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/db');
+
+const MonitoringEvent = sequelize.define('MonitoringEvent', {
+  id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
+  monitoringSessionId: { type: DataTypes.STRING(64), allowNull: false, field: 'monitoring_session_id' },
+  attemptId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, field: 'attempt_id' },
+  participantId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false, field: 'participant_id' },
+  contextType: { type: DataTypes.ENUM('QUIZ', 'CODING', 'INTERVIEW'), defaultValue: 'QUIZ', allowNull: false, field: 'context_type' },
+  source: { type: DataTypes.ENUM('LAPTOP', 'MOBILE', 'SYSTEM', 'BROWSER'), defaultValue: 'LAPTOP', allowNull: false },
+  eventType: { type: DataTypes.STRING(64), allowNull: false, field: 'event_type' },
+  severity: { type: DataTypes.ENUM('INFO', 'WARNING', 'HIGH', 'CRITICAL'), defaultValue: 'INFO', allowNull: false },
+  scoreDelta: { type: DataTypes.FLOAT, defaultValue: 0, field: 'score_delta' },
+  durationMs: { type: DataTypes.INTEGER, defaultValue: 0, field: 'duration_ms' },
+  occurredAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW, field: 'occurred_at' },
+  confidence: { type: DataTypes.FLOAT, allowNull: true },
+  evidenceRef: { type: DataTypes.STRING(255), allowNull: true, field: 'evidence_ref' },
+  metadata: { type: DataTypes.JSON, allowNull: true },
+  idempotencyKey: { type: DataTypes.STRING(128), allowNull: true, unique: true, field: 'idempotency_key' },
+}, {
+  tableName: 'monitoring_events',
+  timestamps: true,
+  underscored: true,
+});
+
+module.exports = MonitoringEvent;
+```
+
+--- FILE: `backend/src/models/assessmentVerificationSession.js` ---
+```javascript
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/db');
+
+const AssessmentVerificationSession = sequelize.define('AssessmentVerificationSession', {
+  id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
+  sessionId: { type: DataTypes.STRING(64), allowNull: false, unique: true, field: 'session_id' },
+  participantId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false, field: 'participant_id' },
+  contextType: { type: DataTypes.ENUM('QUIZ', 'CODING'), defaultValue: 'QUIZ', allowNull: false, field: 'context_type' },
+  contextId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false, field: 'context_id' },
+  attemptId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, field: 'attempt_id' },
+  token: { type: DataTypes.STRING(64), allowNull: false, unique: true },
+  qrCodeUrl: { type: DataTypes.TEXT, allowNull: true, field: 'qr_code_url' },
+  status: { type: DataTypes.ENUM('PENDING', 'CONNECTED', 'VERIFIED', 'COMPLETED', 'EXPIRED'), defaultValue: 'PENDING', allowNull: false },
+  laptopConnected: { type: DataTypes.BOOLEAN, defaultValue: false, field: 'laptop_connected' },
+  mobileConnected: { type: DataTypes.BOOLEAN, defaultValue: false, field: 'mobile_connected' },
+  expiresAt: { type: DataTypes.DATE, allowNull: false, field: 'expires_at' },
+  clientMeta: { type: DataTypes.JSON, allowNull: true, field: 'client_meta' },
+}, {
+  tableName: 'assessment_verification_sessions',
+  timestamps: true,
+  underscored: true,
+});
+
+module.exports = AssessmentVerificationSession;
+```
+
+--- FILE: `backend/src/models/codingTestCase.js` ---
+```javascript
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/db');
+
+const CodingTestCase = sequelize.define('CodingTestCase', {
+  id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
+  problemId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false, field: 'problem_id' },
+  input: { type: DataTypes.TEXT, allowNull: false, defaultValue: '' },
+  expectedOutput: { type: DataTypes.TEXT, allowNull: false, defaultValue: '', field: 'expected_output' },
+  isHidden: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false, field: 'is_hidden' },
+  description: { type: DataTypes.STRING, allowNull: true },
+  order: { type: DataTypes.INTEGER, defaultValue: 0 }
+}, {
+  tableName: 'coding_test_cases',
+  timestamps: true,
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
+  hooks: {
+    beforeValidate: (tc) => {
+      if (tc.expectedOutput == null) {
+        tc.expectedOutput = tc.output != null ? String(tc.output)
+          : (tc.expected_output != null ? String(tc.expected_output)
+            : (tc.expected != null ? String(tc.expected)
+              : (tc.sampleOutput != null ? String(tc.sampleOutput) : '')));
+      } else {
+        tc.expectedOutput = String(tc.expectedOutput);
+      }
+
+      if (tc.input == null) {
+        tc.input = tc.sampleInput != null ? String(tc.sampleInput) : '';
+      } else {
+        tc.input = String(tc.input);
+      }
+    }
+  }
+});
+
+module.exports = CodingTestCase;
+```
+
+----------------------------------------------------------------------------------------------------
+7.2. CORE SERVICES
+----------------------------------------------------------------------------------------------------
+
+--- FILE: `backend/src/services/yoloProctoringService.js` ---
+```javascript
+const axios = require('axios');
+const logger = require('../utils/logger');
+const { ProctoringEvent, InterviewAlert, InterviewLog, ExamSession } = require('../models');
+
+const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
+const throttledEvents = new Map();
+
+class YOLOProctoringService {
+  validatePayload({ sessionId, participantId, moduleType, cameraSource }) {
+    if (!sessionId) throw new Error('sessionId is required for proctoring monitoring');
+    if (!participantId) throw new Error('participantId is required for proctoring monitoring');
+
+    return {
+      sessionId: String(sessionId),
+      participantId: Number(participantId) || participantId,
+      moduleType: String(moduleType || 'QUIZ').toUpperCase(),
+      cameraSource: String(cameraSource || 'PC_CAMERA').toUpperCase(),
+    };
+  }
+
+  async analyzeFrame({ frame, sessionId, participantId, moduleType, cameraSource, confidenceThreshold = 0.35 }) {
+    const validated = this.validatePayload({ sessionId, participantId, moduleType, cameraSource });
+
+    try {
+      const response = await axios.post(
+        `${AI_SERVICE_URL}/api/proctoring/yolo/analyze-frame`,
+        {
+          frame,
+          sessionId: validated.sessionId,
+          participantId: validated.participantId,
+          moduleType: validated.moduleType,
+          cameraSource: validated.cameraSource,
+          confidenceThreshold,
+          timestampMs: Date.now(),
+        },
+        { timeout: 4000, headers: { 'Content-Type': 'application/json' } }
+      );
+
+      const data = response.data;
+      if (!data?.success) throw new Error(data?.error || 'YOLO inference failed');
+
+      const event = data.proctoring_event;
+      await this.processAndPersistEvent(event, data.detections);
+
+      return {
+        success: true,
+        proctoring_event: event,
+        detections: data.detections,
+        inferenceTimeMs: data.inference_time_ms,
+      };
+    } catch (err) {
+      logger.warn(`[YOLOProctoringService] Analysis error: ${err.message}`);
+      return { success: false, error: err.response?.data?.detail || err.message };
+    }
+  }
+
+  async processAndPersistEvent(event, detections = []) {
+    if (!event) return;
+
+    const { sessionId, participantId, moduleType, cameraSource, eventType, severity, confidence, timestamp, detectedClasses } = event;
+    const throttleKey = `${sessionId}_${cameraSource}_${eventType}`;
+    const now = Date.now();
+    const lastRecord = throttledEvents.get(throttleKey);
+
+    const isNewEvent = !lastRecord || (now - lastRecord.lastSavedAt > 10000);
+    if (!isNewEvent && severity === 'INFO') return;
+
+    throttledEvents.set(throttleKey, {
+      lastEventType: eventType,
+      lastSavedAt: now,
+      count: (lastRecord?.count || 0) + 1,
+    });
+
+    try {
+      if (moduleType === 'INTERVIEW') {
+        await InterviewAlert.create({
+          session_id: sessionId,
+          alert_type: eventType,
+          severity: severity || 'LOW',
+          source_device: cameraSource === 'MOBILE_CAMERA' ? 'MOBILE' : 'LAPTOP',
+          message: `YOLO Detector (${cameraSource}): ${eventType} (${(confidence * 100).toFixed(0)}%)`,
+          metadata: { detectedClasses, detectionsCount: detections.length, cameraSource, confidence },
+          ts: timestamp ? new Date(timestamp) : new Date(),
+        });
+      } else {
+        let resolvedAttemptId = event.attemptId;
+        let session = null;
+        try {
+          const monitoringService = require('./monitoringService');
+          session = await monitoringService.getSession(sessionId);
+          if (session && !resolvedAttemptId) resolvedAttemptId = session.attemptId;
+          if (!resolvedAttemptId) {
+            const { AssessmentVerificationSession, QuizAttempt, CodingAttempt } = require('../models');
+            const verif = await AssessmentVerificationSession.findOne({ where: { sessionId } });
+            if (verif?.attemptId) {
+              resolvedAttemptId = verif.attemptId;
+            } else {
+              const qa = await QuizAttempt.findOne({ where: { monitoringSessionId: sessionId } });
+              if (qa) resolvedAttemptId = qa.id;
+              else {
+                const ca = await CodingAttempt.findOne({ where: { monitoringSessionId: sessionId } });
+                if (ca) resolvedAttemptId = ca.id;
+              }
+            }
+          }
+        } catch (_) {}
+
+        await ProctoringEvent.create({
+          monitoringSessionId: sessionId,
+          attemptId: resolvedAttemptId || null,
+          participantId,
+          eventType,
+          severity: severity || 'INFO',
+          confidence: confidence || 1.0,
+          duration: 0,
+          timestamp: timestamp ? new Date(timestamp) : new Date(),
+          metadata: { cameraSource, moduleType, detectedClasses, detectionsCount: detections.length },
+        }).catch((e) => logger.debug(`[YOLOProctoringService] Event log note: ${e.message}`));
+
+        try {
+          const monitoringService = require('./monitoringService');
+          if (session) {
+            await monitoringService.reportEvent({
+              sessionId: session.sessionId,
+              attemptId: resolvedAttemptId || session.attemptId,
+              participantId: session.participantId,
+              source: cameraSource === 'MOBILE_CAMERA' ? 'MOBILE' : 'LAPTOP',
+              eventType,
+              severity: severity || 'INFO',
+              durationMs: 2000,
+              confidence: confidence || 0.9,
+              metadata: { cameraSource, moduleType, detectedClasses, detectionsCount: detections.length },
+            });
+          }
+        } catch (monErr) {
+          logger.debug(`[YOLOProctoringService] MonitoringEvent log note: ${monErr.message}`);
+        }
+      }
+    } catch (e) {
+      logger.warn(`[YOLOProctoringService] Persistence error: ${e.message}`);
+    }
+  }
+
+  broadcastEvent(io, event) {
+    if (!io || !event) return;
+    const { sessionId } = event;
+    io.to(`monitoring_room_${sessionId}`).emit('proctoring_event', event);
+    io.to(`assessment_verif_${sessionId}`).emit('assessment_verif:yolo_detection', event);
+  }
+}
+
+module.exports = new YOLOProctoringService();
+```
+
+----------------------------------------------------------------------------------------------------
+7.3. REAL-TIME SOCKET.IO EVENT HANDLERS
+----------------------------------------------------------------------------------------------------
+
+--- FILE: `backend/src/socket/events/monitoringEvents.js` ---
+```javascript
+const monitoringService = require('../../services/monitoringService');
+const logger = require('../../utils/logger');
+
+module.exports = function registerMonitoringEvents(io, socket) {
+  socket.on('monitoring:join', async (data, ack) => {
+    const { sessionId, role = 'laptop' } = data || {};
+    if (!sessionId) return ack?.({ ok: false, error: 'sessionId required' });
+
+    socket.monitoringSessionId = sessionId;
+    socket.monitoringRole = role;
+
+    const roomName = `monitoring_room_${sessionId}`;
+    socket.join(roomName);
+    socket.join(`proctor_session_${sessionId}`);
+
+    if (role === 'mobile_camera') {
+      socket.to(roomName).emit('monitoring:mobile_joined', { sessionId, socketId: socket.id, timestamp: Date.now() });
+    } else {
+      socket.to(roomName).emit('monitoring:laptop_joined', { sessionId, socketId: socket.id, timestamp: Date.now() });
+    }
+
+    if (ack) ack({ ok: true, sessionId, role });
+  });
+
+  socket.on('monitoring:mobile_frame', async (data, ack) => {
+    const { sessionId, frame, participantId, confidenceThreshold } = data || {};
+    const targetSession = sessionId || socket.monitoringSessionId;
+    if (!targetSession || !frame) return;
+
+    socket.to(`monitoring_room_${targetSession}`).emit('monitoring:mobile_frame', {
+      sessionId: targetSession,
+      frame,
+      timestamp: Date.now(),
+    });
+
+    try {
+      const result = await monitoringService.validateMobile({
+        sessionId: targetSession,
+        participantId: participantId || socket.userId,
+        frame,
+        confidenceThreshold: confidenceThreshold || 0.35,
+      });
+
+      io.to(`monitoring_room_${targetSession}`).emit('monitoring:mobile_composition', {
+        sessionId: targetSession,
+        compositionState: result.composition_state,
+        userMessage: result.user_message,
+        event: result.proctoring_event,
+        detections: result.detections,
+      });
+
+      if (ack) ack({ ok: true, result });
+    } catch (err) {
+      if (ack) ack({ ok: false, error: err.message });
+    }
+  });
+
+  socket.on('monitoring:event', async (data, ack) => {
+    const { sessionId, eventType, severity, source, durationMs, confidence, metadata } = data || {};
+    const targetSession = sessionId || socket.monitoringSessionId;
+    if (!targetSession || !eventType) return;
+
+    try {
+      const result = await monitoringService.reportEvent({
+        sessionId: targetSession,
+        participantId: socket.userId,
+        source: source || 'LAPTOP',
+        eventType,
+        severity: severity || 'INFO',
+        durationMs: durationMs || 0,
+        confidence: confidence || 1.0,
+        metadata: metadata || {},
+      });
+
+      io.to(`monitoring_room_${targetSession}`).emit('proctoring_event', {
+        sessionId: targetSession,
+        eventType,
+        severity,
+        source: source || 'LAPTOP',
+        confidence,
+        timestamp: Date.now(),
+        metadata,
+      });
+
+      if (ack) ack({ ok: true, result });
+    } catch (err) {
+      if (ack) ack({ ok: false, error: err.message });
+    }
+  });
+
+  socket.on('monitoring_event', async (data, ack) => {
+    const { sessionId, event } = data || {};
+    const targetSession = sessionId || socket.monitoringSessionId;
+    const ev = event || data;
+    if (!targetSession || !ev || !ev.eventType) return;
+
+    try {
+      const result = await monitoringService.reportEvent({
+        sessionId: targetSession,
+        participantId: socket.userId,
+        source: ev.source || 'LAPTOP',
+        eventType: ev.eventType,
+        severity: ev.severity || 'INFO',
+        durationMs: ev.durationMs || 0,
+        confidence: ev.confidence || 1.0,
+        metadata: ev.metadata || {},
+      });
+
+      io.to(`monitoring_room_${targetSession}`).emit('proctoring_event', {
+        sessionId: targetSession,
+        ...ev,
+        timestamp: Date.now(),
+      });
+
+      if (ack) ack({ ok: true, result });
+    } catch (err) {
+      if (ack) ack({ ok: false, error: err.message });
+    }
+  });
+};
+```
+
+====================================================================================================
+                                      END OF DOCUMENT
+====================================================================================================
