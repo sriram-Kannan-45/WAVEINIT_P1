@@ -5,27 +5,73 @@ const logger = require('../utils/logger');
 // ── Aiven MySQL Configuration ──────────────────────────────────────────
 // All credentials MUST come from environment variables.
 // Never hardcode passwords in source control.
-const dbName   = process.env.DB_NAME   || 'training_db';
-const dbUser   = process.env.DB_USER   || 'avnadmin';
-const dbPass   = process.env.DB_PASS   || process.env.DB_PASSWORD || '';
-const dbHost   = process.env.DB_HOST   || 'localhost';
-const dbPort   = parseInt(process.env.DB_PORT, 10) || 3306;
+let dbName   = process.env.DB_NAME   || 'training_db';
+let dbUser   = process.env.DB_USER   || 'avnadmin';
+let dbPass   = process.env.DB_PASS   || process.env.DB_PASSWORD || '';
+let dbHost   = process.env.DB_HOST   || 'localhost';
+let dbPort   = parseInt(process.env.DB_PORT, 10) || 3306;
 const isProduction = process.env.NODE_ENV === 'production';
-const dbUrl = process.env.DATABASE_URL || process.env.DB_URL;
-const isPostgres = (dbUrl && (dbUrl.startsWith('postgres://') || dbUrl.startsWith('postgresql://'))) || process.env.DB_DIALECT === 'postgres' || dbPort === 5432;
-const dbDialect = isPostgres ? 'postgres' : (process.env.DB_DIALECT || 'mysql');
 
-let sequelize;
-if (dbUrl) {
-  sequelize = new Sequelize(dbUrl, {
+let dbDialect = process.env.DB_DIALECT || 'mysql';
+const rawDbUrl = process.env.DATABASE_URL || process.env.DB_URL;
+
+if (rawDbUrl && typeof rawDbUrl === 'string' && rawDbUrl.trim()) {
+  try {
+    let urlStr = rawDbUrl.trim();
+    if (!urlStr.includes('://')) {
+      urlStr = 'postgresql://' + urlStr;
+    }
+    const parsed = new URL(urlStr);
+    if (parsed.protocol.startsWith('postgres')) {
+      dbDialect = 'postgres';
+    } else if (parsed.protocol.startsWith('mysql')) {
+      dbDialect = 'mysql';
+    }
+    if (parsed.hostname) dbHost = parsed.hostname;
+    if (parsed.port) dbPort = parseInt(parsed.port, 10);
+    if (parsed.username) dbUser = decodeURIComponent(parsed.username);
+    if (parsed.password) dbPass = decodeURIComponent(parsed.password);
+    if (parsed.pathname && parsed.pathname.length > 1) {
+      dbName = decodeURIComponent(parsed.pathname.slice(1));
+    }
+  } catch (err) {
+    logger.warn('Could not parse DATABASE_URL with URL parser, using regex fallback', { error: err.message });
+    const match = rawDbUrl.match(/^(?:(?<protocol>[a-zA-Z0-9_-]+):\/\/)?(?:(?<user>[^:]+):(?<pass>.+)@)?(?<host>[^:/]+)(?::(?<port>\d+))?\/(?<db>.+)$/);
+    if (match && match.groups) {
+      if (match.groups.protocol && match.groups.protocol.startsWith('postgres')) dbDialect = 'postgres';
+      if (match.groups.user) dbUser = decodeURIComponent(match.groups.user);
+      if (match.groups.pass) dbPass = decodeURIComponent(match.groups.pass);
+      if (match.groups.host) dbHost = match.groups.host;
+      if (match.groups.port) dbPort = parseInt(match.groups.port, 10);
+      if (match.groups.db) dbName = decodeURIComponent(match.groups.db);
+    }
+  }
+}
+
+if (dbPort === 5432 || (dbHost && (dbHost.includes('supabase') || dbHost.includes('neon') || dbHost.includes('postgres')))) {
+  dbDialect = 'postgres';
+}
+
+const isPostgres = dbDialect === 'postgres';
+
+const sequelize = new Sequelize(
+  dbName,
+  dbUser,
+  dbPass,
+  {
+    host: dbHost,
+    port: dbPort,
     dialect: dbDialect,
     logging: isProduction ? false : console.log,
-    dialectOptions: isProduction ? {
+    dialectOptions: (isProduction || isPostgres) ? {
       ssl: {
         require: true,
         rejectUnauthorized: false,
       },
-    } : {},
+      connectTimeout: 30000,
+    } : {
+      connectTimeout: 30000,
+    },
     pool: {
       max: isProduction ? 5 : 10,
       min: 0,
@@ -33,66 +79,28 @@ if (dbUrl) {
       idle: 10000,
       evict: 1000,
     },
+    retry: {
+      match: [
+        /ETIMEDOUT/,
+        /EHOSTUNREACH/,
+        /ECONNRESET/,
+        /ECONNREFUSED/,
+        /PROTOCOL_CONNECTION_LOST/,
+        /ER_CON_COUNT_ERROR/,
+        /ER_CON_LOST/,
+      ],
+      max: 5,
+    },
     define: {
       freezeTableName: true,
     },
-  });
-} else {
-  sequelize = new Sequelize(
-    dbName,
-    dbUser,
-    dbPass,
-    {
-      host: dbHost,
-      port: dbPort,
-      dialect: dbDialect,
-      logging: isProduction ? false : console.log,
-      dialectOptions: (isProduction && isPostgres) ? {
-        ssl: {
-          require: true,
-          rejectUnauthorized: false,
-        },
-      } : (isProduction ? {
-        ssl: {
-          require: true,
-          rejectUnauthorized: true,
-          ca: process.env.DB_SSL_CA || undefined,
-        },
-        connectTimeout: 30000,
-      } : {
-        connectTimeout: 30000,
-      }),
-      pool: {
-        max: isProduction ? 5 : 10,
-        min: 0,
-        acquire: 30000,
-        idle: 10000,
-        evict: 1000,
-      },
-      retry: {
-        match: [
-          /ETIMEDOUT/,
-          /EHOSTUNREACH/,
-          /ECONNRESET/,
-          /ECONNREFUSED/,
-          /PROTOCOL_CONNECTION_LOST/,
-          /ER_CON_COUNT_ERROR/,
-          /ER_CON_LOST/,
-        ],
-        max: 5,
-      },
-      define: {
-        freezeTableName: true,
-      },
-    }
-  );
-}
+  }
+);
 
-// Skip createDatabase for Aiven — the database already exists on the cloud instance.
-// On localhost, we still try to create it if it doesn't exist.
+// Skip createDatabase for Cloud databases (Aiven, Supabase, Render)
 const createDatabase = async () => {
-  if (isProduction) {
-    logger.info('☁️  Production mode — skipping database creation (Aiven manages this)');
+  if (isProduction || isPostgres) {
+    logger.info('☁️ Cloud database mode — skipping database creation');
     return;
   }
   try {
@@ -114,7 +122,7 @@ const createDatabase = async () => {
 const connectDB = async () => {
   try {
     await createDatabase();
-    logger.logAlways(`🔗 Connecting to MySQL: ${dbHost}:${dbPort}/${dbName} ...`);
+    logger.logAlways(`🔗 Connecting to ${dbDialect.toUpperCase()}: ${dbHost}:${dbPort}/${dbName} ...`);
     await sequelize.authenticate();
     logger.logAlways('✅ Database connected successfully');
     
@@ -161,10 +169,11 @@ const connectDB = async () => {
     });
     logger.info('✅ Database schema verified');
     
-    // Manual database migration for ai_questions to support new quiz question formats
-    try {
-      const [columns] = await sequelize.query("SHOW COLUMNS FROM `ai_questions`");
-      const columnNames = columns.map(c => c.Field);
+    // Manual database migrations for MySQL
+    if (!isPostgres) {
+      try {
+        const [columns] = await sequelize.query("SHOW COLUMNS FROM `ai_questions`");
+        const columnNames = columns.map(c => c.Field);
       
       // Check and add acceptable_answers column
       if (!columnNames.includes('acceptable_answers')) {
@@ -855,9 +864,10 @@ const connectDB = async () => {
         logger.error('⚠️ Error creating proctoring tables', { error: pErr.message });
       }
 
-      logger.info('✅ Manual schema migration checks completed successfully');
-    } catch (migError) {
-      logger.error('⚠️ Error applying manual schema migrations', { error: migError.message });
+        logger.info('✅ Manual schema migration checks completed successfully');
+      } catch (migError) {
+        logger.error('⚠️ Error applying manual schema migrations', { error: migError.message });
+      }
     }
     
   } catch (error) {
