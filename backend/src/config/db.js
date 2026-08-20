@@ -11,34 +11,21 @@ const dbPass   = process.env.DB_PASS   || process.env.DB_PASSWORD || '';
 const dbHost   = process.env.DB_HOST   || 'localhost';
 const dbPort   = parseInt(process.env.DB_PORT, 10) || 3306;
 const isProduction = process.env.NODE_ENV === 'production';
+const dbUrl = process.env.DATABASE_URL || process.env.DB_URL;
+const isPostgres = (dbUrl && (dbUrl.startsWith('postgres://') || dbUrl.startsWith('postgresql://'))) || process.env.DB_DIALECT === 'postgres' || dbPort === 5432;
+const dbDialect = isPostgres ? 'postgres' : (process.env.DB_DIALECT || 'mysql');
 
-// SSL config for Aiven (required for cloud connections)
-const sslConfig = isProduction ? {
-  require: true,
-  rejectUnauthorized: true,
-  ca: process.env.DB_SSL_CA || undefined,
-} : undefined;
-
-const sequelize = new Sequelize(
-  dbName,
-  dbUser,
-  dbPass,
-  {
-    host: dbHost,
-    port: dbPort,
-    dialect: 'mysql',
+let sequelize;
+if (dbUrl) {
+  sequelize = new Sequelize(dbUrl, {
+    dialect: dbDialect,
     logging: isProduction ? false : console.log,
-    ssl: sslConfig,
     dialectOptions: isProduction ? {
       ssl: {
         require: true,
-        rejectUnauthorized: true,
-        ca: process.env.DB_SSL_CA || undefined,
+        rejectUnauthorized: false,
       },
-      connectTimeout: 30000,
-    } : {
-      connectTimeout: 30000,
-    },
+    } : {},
     pool: {
       max: isProduction ? 5 : 10,
       min: 0,
@@ -46,23 +33,60 @@ const sequelize = new Sequelize(
       idle: 10000,
       evict: 1000,
     },
-    retry: {
-      match: [
-        /ETIMEDOUT/,
-        /EHOSTUNREACH/,
-        /ECONNRESET/,
-        /ECONNREFUSED/,
-        /PROTOCOL_CONNECTION_LOST/,
-        /ER_CON_COUNT_ERROR/,
-        /ER_CON_LOST/,
-      ],
-      max: 5,
-    },
     define: {
       freezeTableName: true,
     },
-  }
-);
+  });
+} else {
+  sequelize = new Sequelize(
+    dbName,
+    dbUser,
+    dbPass,
+    {
+      host: dbHost,
+      port: dbPort,
+      dialect: dbDialect,
+      logging: isProduction ? false : console.log,
+      dialectOptions: (isProduction && isPostgres) ? {
+        ssl: {
+          require: true,
+          rejectUnauthorized: false,
+        },
+      } : (isProduction ? {
+        ssl: {
+          require: true,
+          rejectUnauthorized: true,
+          ca: process.env.DB_SSL_CA || undefined,
+        },
+        connectTimeout: 30000,
+      } : {
+        connectTimeout: 30000,
+      }),
+      pool: {
+        max: isProduction ? 5 : 10,
+        min: 0,
+        acquire: 30000,
+        idle: 10000,
+        evict: 1000,
+      },
+      retry: {
+        match: [
+          /ETIMEDOUT/,
+          /EHOSTUNREACH/,
+          /ECONNRESET/,
+          /ECONNREFUSED/,
+          /PROTOCOL_CONNECTION_LOST/,
+          /ER_CON_COUNT_ERROR/,
+          /ER_CON_LOST/,
+        ],
+        max: 5,
+      },
+      define: {
+        freezeTableName: true,
+      },
+    }
+  );
+}
 
 // Skip createDatabase for Aiven — the database already exists on the cloud instance.
 // On localhost, we still try to create it if it doesn't exist.
