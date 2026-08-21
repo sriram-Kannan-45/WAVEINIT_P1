@@ -74,6 +74,24 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_5187400E023147039278F40A86D7D954 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_8BB674CF42D547C68E4E439115D4740D }}
 
+      - name: Configure Azure App Settings
+        uses: azure/appservice-settings@v1
+        with:
+          app-name: 'waveinit-lms-ai'
+          app-settings-json: |
+            [
+              {
+                "name": "SCM_DO_BUILD_DURING_DEPLOYMENT",
+                "value": "true",
+                "slotSetting": false
+              },
+              {
+                "name": "WEBSITES_PORT",
+                "value": "8000",
+                "slotSetting": false
+              }
+            ]
+
       - name: Deploy AI service to Azure
         uses: azure/webapps-deploy@v3
         with:

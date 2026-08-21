@@ -44,6 +44,8 @@ __pycache__/
 antenv/
 .antenv/
 antenv.tar.gz
+output.tar.zst
+oryx-manifest.toml
 .python_packages/
 
 # Misc
