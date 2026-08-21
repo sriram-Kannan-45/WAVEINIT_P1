@@ -1,0 +1,81 @@
+name: Build and Deploy AI Python Service to Azure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'ai-service/**'
+      - '.github/workflows/ai-service.yml'
+
+  workflow_dispatch:
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Upgrade pip
+        run: |
+          python -m pip install --upgrade pip
+
+      - name: Install AI service dependencies
+        working-directory: ai-service
+        run: |
+          pip install -r requirements.txt
+
+      - name: Verify dependencies
+        working-directory: ai-service
+        run: |
+          python -c "import fastapi; import uvicorn; import gunicorn; import cv2; import mediapipe; print('AI dependencies OK')"
+
+      - name: Upload AI service artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-service
+          path: ai-service
+          include-hidden-files: true
+
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+
+      - name: Download AI service artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ai-service
+          path: ./ai-service
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_5AE7FB17471D40BB84F32E4BB2E07E91 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_5187400E023147039278F40A86D7D954 }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_8BB674CF42D547C68E4E439115D4740D }}
+
+      - name: Deploy AI service to Azure
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: 'waveinit-lms-ai'
+          slot-name: 'Production'
+          package: ./ai-service
