@@ -1,20 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import basicSsl from '@vitejs/plugin-basic-ssl'
 import fs from 'node:fs'
 import path from 'node:path'
 
 /**
- * HTTPS for local development (needed so a phone on the same LAN can get a
- * secure context for camera access). Create a mkcert pair:
- *
- *   mkcert -install
- *   mkdir .cert
- *   mkcert -key-file .cert/localhost-key.pem -cert-file .cert/localhost.pem localhost 192.168.x.x
- *
- * or set HTTPS_KEY / HTTPS_CERT env vars. If no certs exist, basicSsl plugin automatically
- * generates a development SSL certificate so HTTPS is always enabled.
+ * HTTPS for local development (optional custom certs via .cert or env vars).
  */
 function loadHttps() {
   const key = process.env.HTTPS_KEY
@@ -34,8 +25,7 @@ const customHttps = loadHttps()
 export default defineConfig({
   plugins: [
     react(),
-    tailwindcss(),
-    ...(customHttps ? [] : [basicSsl()])
+    tailwindcss()
   ],
   resolve: {
     dedupe: ['react', 'react-dom']
@@ -43,7 +33,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0', // listen on all interfaces so LAN devices can connect
     port: 5174,
-    https: customHttps || true,
+    ...(customHttps ? { https: customHttps } : {}),
     proxy: {
       // All /api/* calls → Node backend on port 3001 (127.0.0.1 prevents IPv6 DNS lookup delays)
       '/api': {
