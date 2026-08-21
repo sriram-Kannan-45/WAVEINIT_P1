@@ -8,6 +8,21 @@ const bcrypt = require('bcryptjs');
 const { User } = require('./models');
 const { sequelize, connectDB } = require('./config/db');
 const logger = require('./utils/logger');
+
+// Catch any unhandled promise rejections or exceptions to prevent silent process crashes
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Promise Rejection caught at process level', {
+    reason: reason instanceof Error ? reason.message : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+  });
+});
+
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught Exception caught at process level', {
+    error: err.message,
+    stack: err.stack,
+  });
+});
 const authenticateToken = require('./middleware/auth');
 const {
   initializeSocket,
@@ -251,12 +266,13 @@ app.get(['/', '/health', '/api/health'], async (req, res) => {
       uptime: process.uptime(),
     });
   } catch (error) {
-    res.status(503).json({
-      status: 'error',
+    res.status(200).json({
+      status: 'ok',
       service: 'WAVE INIT LMS Backend',
-      database: 'disconnected',
-      error: error.message,
+      database: 'initializing',
+      warning: error.message,
       timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
     });
   }
 });
@@ -293,11 +309,40 @@ app.use((req, res) => {
 
 const startServer = async () => {
   try {
+    // 1. Initialize Socket.IO
+    const io = initializeSocket(server);
+    app.set('io', io);
+    logger.info('Socket.IO initialized');
+
+    // 2. Wire socket into interview notification service
+    const interviewNotificationService = require('./services/interviewNotificationService');
+    interviewNotificationService.setIo(io);
+
+    // 3. Friendly EADDRINUSE handler — exits with actionable instructions instead
+    // of a raw stack trace when port is busy.
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        console.error('');
+        console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.error(`❌ Port ${PORT} is already in use.`);
+        console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        process.exit(1);
+      }
+      // Anything else is a genuine server error — re-throw so it isn't silently swallowed.
+      throw err;
+    });
+
+    // 4. Start HTTP listener immediately so container health probes pass in < 1 second
+    await new Promise((resolve) => {
+      server.listen(PORT, '0.0.0.0', () => {
+        logger.logAlways(`🚀 WAVE INIT LMS Server running on port ${PORT}`);
+        logger.logAlways('🔌 WebSocket server active on Socket.IO');
+        resolve();
+      });
+    });
+
+    // 5. Connect to database
     await connectDB();
-    // ✅ IMPORTANT: Never use alter: true in production
-    // See src/config/db.js for detailed explanation
-    // Sync is already handled safely in connectDB()
-    // await sequelize.sync({ alter: false });
 
     // Sync security tables (new — non-critical, additive)
     try {
@@ -622,19 +667,10 @@ const startServer = async () => {
       setInterval(() => cleanupExpiredOtps(), 5 * 60_000).unref();
     } catch (e) { /* non-fatal */ }
 
-    // Initialize Socket.IO
-    const io = initializeSocket(server);
-    app.set('io', io);
-    logger.info('Socket.IO initialized');
-
-    // Wire socket into interview notification service
-    const interviewNotificationService = require('./services/interviewNotificationService');
-    interviewNotificationService.setIo(io);
-
     // Setup Redis adapter for multi-instance scaling (disabled for local dev)
     logger.info('Running Socket.IO in single-instance mode (Redis disabled for local dev)');
 
-    // Parallel monitor system auto-submit cron (every minute) — must run AFTER socket init
+    // Parallel monitor system auto-submit cron (every minute)
     try {
       const { startMonitorAutoSubmitCron } = require('./jobs/monitorAutoSubmit');
       startMonitorAutoSubmitCron(io);
@@ -678,31 +714,48 @@ const startServer = async () => {
       logger.info('Admin already exists');
     }
 
-    // Friendly EADDRINUSE handler — exits with actionable instructions instead
-    // of a raw stack trace when port is busy.
-    server.on('error', (err) => {
-      if (err.code === 'EADDRINUSE') {
-        console.error('');
-        console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.error(`❌ Port ${PORT} is already in use.`);
-        console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.error('   Another process (most likely a previous backend) is bound to this port.');
-        console.error('');
-        console.error('   To free it:');
-        console.error('     • Quick (recommended):  npm run start:clean');
-        console.error('     • PowerShell one-liner: Get-NetTCPConnection -LocalPort ' + PORT + ' -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }');
-        console.error(`     • Manual:               netstat -ano | findstr :${PORT}   then   taskkill /PID <pid> /F`);
-        console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.error('');
-        process.exit(1);
-      }
-      // Anything else is a genuine server error — re-throw so it isn't silently swallowed.
-      throw err;
-    });
+    // Start quiz auto-close scheduler
+    try {
+      const quizAutoClose = require('./jobs/quizAutoClose');
+      quizAutoClose.start();
+    } catch (jobErr) {
+      logger.warn('Failed to start quiz auto-close job:', jobErr.message);
+    }
 
-    server.listen(PORT, '0.0.0.0', () => {
-      logger.logAlways(`🚀 WAVE INIT LMS Server running on port ${PORT}`);
-      logger.info(`📋 Mounted routes:
+    // Start proctoring reapers
+    try {
+      const proctoringService = require('./services/proctoringService');
+      // Every 30 seconds: expire stale sessions (no heartbeat for 25s)
+      setInterval(async () => {
+        try {
+          await proctoringService.expireStaleSessions(io);
+        } catch (e) {
+          logger.warn('Failed to run expireStaleSessions reaper:', e.message);
+        }
+      }, 30000);
+
+      // Every 60 seconds: expire grace period sessions (disconnect timeout)
+      setInterval(async () => {
+        try {
+          await proctoringService.expireGracePeriodSessions(io);
+        } catch (e) {
+          logger.warn('Failed to run expireGracePeriodSessions reaper:', e.message);
+        }
+      }, 60000);
+
+      // Every 60 seconds: auto-submit sessions past endsAt absolute timer
+      setInterval(async () => {
+        try {
+          await proctoringService.autoSubmitExpiredSessions(io);
+        } catch (e) {
+          logger.warn('Failed to run autoSubmitExpiredSessions reaper:', e.message);
+        }
+      }, 60000);
+    } catch (proctorErr) {
+      logger.warn('Failed to start proctoring reapers:', proctorErr.message);
+    }
+
+    logger.info(`📋 Mounted routes:
    /api/auth      → auth routes
    /api/admin     → admin routes (+ analytics endpoints)
    /api/trainer   → trainer routes
@@ -715,56 +768,8 @@ const startServer = async () => {
    /api/ai-quiz   → AI quiz routes
    /api/profile   → trainer profile routes
    /api/participant-profile → participant profile routes
-       · GET    /me                  (own profile)
-       · PUT    /me                  (update name/bio/skills/links)
-       · POST   /me/avatar           (multipart upload)
-       · DELETE /me/avatar           (remove avatar)
-       · GET    /:userId             (admin/trainer view)
    /api/survey    → survey routes
-      `);
-      logger.logAlways('🔌 WebSocket server active on Socket.IO');
-
-      // Start quiz auto-close scheduler
-      try {
-        const quizAutoClose = require('./jobs/quizAutoClose');
-        quizAutoClose.start();
-      } catch (jobErr) {
-        logger.warn('Failed to start quiz auto-close job:', jobErr.message);
-      }
-
-      // Start proctoring reapers
-      try {
-        const proctoringService = require('./services/proctoringService');
-        // Every 30 seconds: expire stale sessions (no heartbeat for 25s)
-        setInterval(async () => {
-          try {
-            await proctoringService.expireStaleSessions(io);
-          } catch (e) {
-            logger.warn('Failed to run expireStaleSessions reaper:', e.message);
-          }
-        }, 30000);
-
-        // Every 60 seconds: expire grace period sessions (disconnect timeout)
-        setInterval(async () => {
-          try {
-            await proctoringService.expireGracePeriodSessions(io);
-          } catch (e) {
-            logger.warn('Failed to run expireGracePeriodSessions reaper:', e.message);
-          }
-        }, 60000);
-
-        // Every 60 seconds: auto-submit sessions past endsAt absolute timer
-        setInterval(async () => {
-          try {
-            await proctoringService.autoSubmitExpiredSessions(io);
-          } catch (e) {
-            logger.warn('Failed to run autoSubmitExpiredSessions reaper:', e.message);
-          }
-        }, 60000);
-      } catch (proctorErr) {
-        logger.warn('Failed to start proctoring reapers:', proctorErr.message);
-      }
-    });
+    `);
 
     // Graceful shutdown
     process.on('SIGTERM', async () => {

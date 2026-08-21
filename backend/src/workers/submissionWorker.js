@@ -21,11 +21,15 @@ if (REDIS_URL) {
   });
 
   redisConn.on('error', (err) => {
-    logger.warn('[SubmissionWorker] Redis connection error', { error: err.message });
+    logger.warn('[SubmissionWorker] Redis connection error', {
+      host: redisConn.options?.host || 'remote',
+      port: redisConn.options?.port || 6379,
+      error: err.message,
+    });
   });
 
   redisConn.on('ready', () => {
-    logger.info('[SubmissionWorker] Redis connected');
+    logger.info('[SubmissionWorker] Redis connected successfully');
     connection = redisConn;
   });
 
@@ -34,7 +38,11 @@ if (REDIS_URL) {
   });
 
   redisConn.connect().catch((err) => {
-    logger.warn('[SubmissionWorker] Redis unavailable, worker will process synchronously', { error: err.message });
+    logger.warn('[SubmissionWorker] Redis unavailable, worker will process synchronously', {
+      host: redisConn.options?.host || 'remote',
+      port: redisConn.options?.port || 6379,
+      error: err.message,
+    });
     connection = null;
   });
 } else {

@@ -24,11 +24,15 @@ function createRedisConnection() {
   });
 
   conn.on('error', (err) => {
-    logger.warn('[SubmissionQueue] Redis connection error', { error: err.message });
+    logger.warn('[SubmissionQueue] Redis connection error', {
+      host: conn.options?.host || 'remote',
+      port: conn.options?.port || 6379,
+      error: err.message,
+    });
   });
 
   conn.on('ready', () => {
-    logger.info('[SubmissionQueue] Redis connected');
+    logger.info('[SubmissionQueue] Redis connected successfully');
     connection = conn;
     if (!submissionQueue) {
       submissionQueue = new Queue('coding-submissions', {
@@ -49,7 +53,11 @@ function createRedisConnection() {
   });
 
   conn.connect().catch((err) => {
-    logger.warn('[SubmissionQueue] Redis unavailable, using in-process queue fallback', { error: err.message });
+    logger.warn('[SubmissionQueue] Redis unavailable, using synchronous submission processing fallback', {
+      host: conn.options?.host || 'remote',
+      port: conn.options?.port || 6379,
+      error: err.message,
+    });
     connection = null;
   });
 }
@@ -58,18 +66,24 @@ createRedisConnection();
 
 async function enqueueSubmission({ submissionId, attemptId, problemId, code, language, timeLimit, memoryLimit, testCases, participantId, assessmentId, io }) {
   if (submissionQueue) {
-    const job = await submissionQueue.add('evaluate', {
-      submissionId, attemptId, problemId, code, language, timeLimit, memoryLimit,
-      testCases, participantId, assessmentId,
-    }, {
-      jobId: `sub-${submissionId}`,
-      priority: 1,
-    });
-    logger.info(`[SubmissionQueue] Enqueued submission ${submissionId} as job ${job.id}`);
-    return job.id;
+    try {
+      const job = await submissionQueue.add('evaluate', {
+        submissionId, attemptId, problemId, code, language, timeLimit, memoryLimit,
+        testCases, participantId, assessmentId,
+      }, {
+        jobId: `sub-${submissionId}`,
+        priority: 1,
+      });
+      logger.info(`[SubmissionQueue] Enqueued submission ${submissionId} as job ${job.id}`);
+      return job.id;
+    } catch (err) {
+      logger.warn('[SubmissionQueue] Failed to enqueue to BullMQ, falling back to synchronous processing', {
+        error: err.message,
+      });
+    }
   }
 
-  logger.info('[SubmissionQueue] Queue unavailable, processing inline');
+  logger.info('[SubmissionQueue] Processing submission synchronously');
   const { evaluateSubmission } = require('../workers/submissionWorker');
   await evaluateSubmission({
     submissionId, attemptId, problemId, code, language, timeLimit, memoryLimit,
