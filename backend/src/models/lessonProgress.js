@@ -3,17 +3,17 @@ const { sequelize } = require('../config/db');
 
 const LessonProgress = sequelize.define('LessonProgress', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   lessonId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'lesson_id'
   },
   participantId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'participant_id'
   },

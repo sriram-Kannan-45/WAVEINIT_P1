@@ -3,17 +3,17 @@ const { sequelize } = require('../config/db');
 
 const SurveyAnswer = sequelize.define('SurveyAnswer', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   feedbackId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'feedback_id'
   },
   questionId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'question_id'
   },

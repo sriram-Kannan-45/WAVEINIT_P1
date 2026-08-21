@@ -3,17 +3,17 @@ const { sequelize } = require('../config/db');
 
 const Feedback = sequelize.define('Feedback', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   participantId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'participant_id'
   },
   trainingId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'training_id'
   },

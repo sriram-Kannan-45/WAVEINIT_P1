@@ -14,12 +14,12 @@ const { sequelize } = require('../config/db');
  */
 const Lesson = sequelize.define('Lesson', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   courseId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     // Nullable while legacy training-scoped lessons exist; new lessons must
     // always set this. Backend route validation enforces presence.
     allowNull: true,
@@ -27,12 +27,12 @@ const Lesson = sequelize.define('Lesson', {
   },
   trainingId: {
     // Deprecated — kept nullable for backward compat.
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'training_id'
   },
   trainerId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'trainer_id'
   },
@@ -48,7 +48,7 @@ const Lesson = sequelize.define('Lesson', {
     // Optional rich-text summary shown at the top of the lesson before
     // materials. Per-material content (notes, files, links) is in
     // lesson_materials. Kept for legacy lesson rendering paths.
-    type: DataTypes.TEXT('long'),
+    type: DataTypes.TEXT,
     allowNull: true
   },
   orderIndex: {

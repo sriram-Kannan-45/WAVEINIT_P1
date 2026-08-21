@@ -8,8 +8,8 @@
     "start:clean": "kill-port 3001 && node src/app.js",
     "dev": "nodemon src/app.js",
     "dev:clean": "kill-port 3001 && nodemon src/app.js",
-    "test": "jest --no-coverage",
-    "test:routes": "jest src/routes --no-coverage"
+    "test": "jest --no-coverage --passWithNoTests",
+    "test:routes": "jest src/routes --no-coverage --passWithNoTests"
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.1.2",

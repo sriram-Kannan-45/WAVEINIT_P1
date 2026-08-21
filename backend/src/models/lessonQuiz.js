@@ -5,17 +5,17 @@ const { sequelize } = require('../config/db');
 // resultStatus is the per-lesson-quiz gate the trainer flips to reveal scores.
 const LessonQuiz = sequelize.define('LessonQuiz', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   lessonId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'lesson_id'
   },
   quizId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'quiz_id'
   },

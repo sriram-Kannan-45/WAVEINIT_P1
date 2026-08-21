@@ -7,17 +7,17 @@ const { sequelize } = require('../config/db');
  */
 const Attendance = sequelize.define('Attendance', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   userId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'user_id'
   },
   sessionId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'session_id'
   },
@@ -33,7 +33,7 @@ const Attendance = sequelize.define('Attendance', {
     field: 'leave_time'
   },
   durationSeconds: {
-    type: DataTypes.INTEGER.UNSIGNED,
+    type: DataTypes.INTEGER,
     allowNull: true,
     field: 'duration_seconds',
     comment: 'Calculated upon leaving'

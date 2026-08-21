@@ -3,22 +3,22 @@ const { sequelize } = require('../config/db');
 
 const CodingAssessment = sequelize.define('CodingAssessment', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   courseId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'course_id'
   },
   trainingId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'training_id'
   },
   trainerId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'trainer_id'
   },

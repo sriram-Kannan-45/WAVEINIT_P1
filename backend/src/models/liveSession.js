@@ -7,7 +7,7 @@ const { sequelize } = require('../config/db');
  */
 const LiveSession = sequelize.define('LiveSession', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
@@ -20,12 +20,12 @@ const LiveSession = sequelize.define('LiveSession', {
     allowNull: true
   },
   trainerId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'trainer_id'
   },
   trainingId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'training_id',
     comment: 'Optional link to an existing Training'
@@ -64,7 +64,7 @@ const LiveSession = sequelize.define('LiveSession', {
   },
   // Max participants allowed
   maxParticipants: {
-    type: DataTypes.INTEGER.UNSIGNED,
+    type: DataTypes.INTEGER,
     defaultValue: 50,
     field: 'max_participants'
   }

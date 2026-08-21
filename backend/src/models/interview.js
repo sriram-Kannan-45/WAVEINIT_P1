@@ -3,7 +3,7 @@ const { sequelize } = require('../config/db');
 
 const Interview = sequelize.define('Interview', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true,
   },
@@ -14,19 +14,19 @@ const Interview = sequelize.define('Interview', {
     unique: true,
   },
   candidate_id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     references: { model: 'users', key: 'id' },
     onDelete: 'CASCADE',
   },
   interviewer_id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     references: { model: 'users', key: 'id' },
     onDelete: 'CASCADE',
   },
   created_by: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     references: { model: 'users', key: 'id' },
   },

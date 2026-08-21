@@ -3,22 +3,22 @@ const { sequelize } = require('../config/db');
 
 const QuizCopyViolation = sequelize.define('QuizCopyViolation', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true,
   },
   attemptId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'attempt_id',
   },
   quizId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'quiz_id',
   },
   participantId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'participant_id',
   },

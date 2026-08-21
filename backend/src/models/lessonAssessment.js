@@ -3,12 +3,12 @@ const { sequelize } = require('../config/db');
 
 const LessonAssessment = sequelize.define('LessonAssessment', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   lessonId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'lesson_id'
   },

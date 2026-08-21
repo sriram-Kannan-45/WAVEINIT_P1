@@ -3,12 +3,12 @@ const { sequelize } = require('../config/db');
 
 const InterviewRecording = sequelize.define('InterviewRecording', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true,
   },
   session_id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     references: { model: 'interview_sessions', key: 'id' },
     onDelete: 'CASCADE',
@@ -22,7 +22,7 @@ const InterviewRecording = sequelize.define('InterviewRecording', {
     allowNull: false,
   },
   file_size: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
   },
   mime_type: {
@@ -43,7 +43,7 @@ const InterviewRecording = sequelize.define('InterviewRecording', {
     defaultValue: 'RECORDING',
   },
   uploaded_by: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     references: { model: 'users', key: 'id' },
   },

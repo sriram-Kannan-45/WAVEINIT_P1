@@ -3,17 +3,17 @@ const { sequelize } = require('../config/db');
 
 const CodingSubmission = sequelize.define('CodingSubmission', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   attemptId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'attempt_id'
   },
   problemId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'problem_id'
   },

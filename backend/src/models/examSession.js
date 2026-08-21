@@ -16,7 +16,7 @@ const { sequelize } = require('../config/db');
 
 const ExamSession = sequelize.define('ExamSession', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true,
   },
@@ -27,29 +27,29 @@ const ExamSession = sequelize.define('ExamSession', {
     field: 'assessment_type',
   },
   quizId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'quiz_id',
   },
   assessmentId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'assessment_id',
   },
   attemptId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'attempt_id',
     comment: 'Linked QuizAttempt.id (null for coding)',
   },
   codingAttemptId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'coding_attempt_id',
     comment: 'Linked CodingAttempt.id (null for quiz)',
   },
   participantId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'participant_id',
   },
@@ -60,7 +60,7 @@ const ExamSession = sequelize.define('ExamSession', {
     field: 'session_token',
   },
   deviceFingerprintId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'device_fingerprint_id',
   },
@@ -137,7 +137,7 @@ const ExamSession = sequelize.define('ExamSession', {
     field: 'termination_reason',
   },
   encryptedPayload: {
-    type: DataTypes.TEXT('long'),
+    type: DataTypes.TEXT,
     allowNull: true,
     field: 'encrypted_payload',
   },

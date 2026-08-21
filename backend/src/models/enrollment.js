@@ -19,24 +19,24 @@ const { sequelize } = require('../config/db');
  */
 const Enrollment = sequelize.define('Enrollment', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   participantId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'participant_id'
   },
   courseId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     // Nullable while legacy training-only enrollments exist.
     allowNull: true,
     field: 'course_id'
   },
   trainingId: {
     // Deprecated — kept nullable for backward compat.
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'training_id'
   },

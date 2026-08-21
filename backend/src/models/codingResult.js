@@ -3,23 +3,23 @@ const { sequelize } = require('../config/db');
 
 const CodingResult = sequelize.define('CodingResult', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   attemptId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     unique: true,
     field: 'attempt_id'
   },
   assessmentId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'assessment_id'
   },
   participantId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'participant_id'
   },
@@ -84,7 +84,7 @@ const CodingResult = sequelize.define('CodingResult', {
     field: 'published_at'
   },
   publishedBy: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'published_by'
   }

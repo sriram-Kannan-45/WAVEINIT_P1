@@ -3,7 +3,7 @@ const { sequelize } = require('../config/db');
 
 const InterviewSession = sequelize.define('InterviewSession', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true,
   },
@@ -14,7 +14,7 @@ const InterviewSession = sequelize.define('InterviewSession', {
     unique: true,
   },
   interview_id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     references: { model: 'interviews', key: 'id' },
     onDelete: 'CASCADE',

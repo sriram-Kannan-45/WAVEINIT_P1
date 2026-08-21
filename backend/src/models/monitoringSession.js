@@ -9,7 +9,7 @@ const { sequelize } = require('../config/db');
  */
 const MonitoringSession = sequelize.define('MonitoringSession', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true,
   },
@@ -21,13 +21,13 @@ const MonitoringSession = sequelize.define('MonitoringSession', {
     comment: 'Unique UUID/identifier for the monitoring session',
   },
   attemptId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'attempt_id',
     comment: 'Associated QuizAttempt.id, CodingAttempt.id, or Interview.id',
   },
   participantId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'participant_id',
     comment: 'Participant User.id',
@@ -40,7 +40,7 @@ const MonitoringSession = sequelize.define('MonitoringSession', {
     comment: 'Assessment module type',
   },
   contextId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'context_id',
     comment: 'AIQuiz.id, CodingAssessment.id, or Interview.id',

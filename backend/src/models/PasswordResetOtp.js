@@ -3,7 +3,7 @@ const { sequelize } = require('../config/db');
 
 const PasswordResetOtp = sequelize.define('PasswordResetOtp', {
   id: {
-    type: DataTypes.INTEGER.UNSIGNED,
+    type: DataTypes.INTEGER,
     autoIncrement: true,
     primaryKey: true
   },
@@ -24,7 +24,7 @@ const PasswordResetOtp = sequelize.define('PasswordResetOtp', {
     defaultValue: false
   },
   attempts: {
-    type: DataTypes.INTEGER.UNSIGNED,
+    type: DataTypes.INTEGER,
     defaultValue: 0,
     comment: 'Number of failed verify attempts; record invalidated after 5'
   },

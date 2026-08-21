@@ -3,12 +3,12 @@ const { sequelize } = require('../config/db');
 
 const SurveyQuestion = sequelize.define('SurveyQuestion', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   trainingId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true, // If null, applies to all trainings. If set, specific to one.
     field: 'training_id'
   },

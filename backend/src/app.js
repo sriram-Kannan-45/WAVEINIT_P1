@@ -245,6 +245,7 @@ app.get(['/', '/health', '/api/health'], async (req, res) => {
     await sequelize.authenticate();
     res.json({
       status: 'ok',
+      service: 'WAVE INIT LMS Backend',
       database: 'connected',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
@@ -252,6 +253,7 @@ app.get(['/', '/health', '/api/health'], async (req, res) => {
   } catch (error) {
     res.status(503).json({
       status: 'error',
+      service: 'WAVE INIT LMS Backend',
       database: 'disconnected',
       error: error.message,
       timestamp: new Date().toISOString(),
@@ -699,7 +701,7 @@ const startServer = async () => {
     });
 
     server.listen(PORT, '0.0.0.0', () => {
-      logger.logAlways(`🚀 WAVE INIT LMS Server running on http://localhost:${PORT}`);
+      logger.logAlways(`🚀 WAVE INIT LMS Server running on port ${PORT}`);
       logger.info(`📋 Mounted routes:
    /api/auth      → auth routes
    /api/admin     → admin routes (+ analytics endpoints)

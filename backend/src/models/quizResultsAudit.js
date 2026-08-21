@@ -13,12 +13,12 @@ const { sequelize } = require('../config/db');
  */
 const QuizResultsAudit = sequelize.define('QuizResultsAudit', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true,
   },
   quizId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'quiz_id',
   },
@@ -28,24 +28,24 @@ const QuizResultsAudit = sequelize.define('QuizResultsAudit', {
     defaultValue: 'published',
   },
   performedBy: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'performed_by',
   },
   enrolledCount: {
-    type: DataTypes.INTEGER.UNSIGNED,
+    type: DataTypes.INTEGER,
     allowNull: false,
     defaultValue: 0,
     field: 'enrolled_count',
   },
   completedCount: {
-    type: DataTypes.INTEGER.UNSIGNED,
+    type: DataTypes.INTEGER,
     allowNull: false,
     defaultValue: 0,
     field: 'completed_count',
   },
   pendingCount: {
-    type: DataTypes.INTEGER.UNSIGNED,
+    type: DataTypes.INTEGER,
     allowNull: false,
     defaultValue: 0,
     field: 'pending_count',

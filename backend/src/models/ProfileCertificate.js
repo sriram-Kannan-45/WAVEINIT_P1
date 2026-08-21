@@ -2,8 +2,8 @@ const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/db');
 
 const ProfileCertificate = sequelize.define('ProfileCertificate', {
-  id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
-  profileId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false, field: 'profile_id' },
+  id: { type: DataTypes.BIGINT, autoIncrement: true, primaryKey: true },
+  profileId: { type: DataTypes.BIGINT, allowNull: false, field: 'profile_id' },
   title: { type: DataTypes.STRING(200), allowNull: false },
   issuer: { type: DataTypes.STRING(200), allowNull: true },
   credentialId: { type: DataTypes.STRING(200), allowNull: true, field: 'credential_id' },

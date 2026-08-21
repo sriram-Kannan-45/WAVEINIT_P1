@@ -3,7 +3,7 @@ const { sequelize } = require('../config/db');
 
 const Note = sequelize.define('Note', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
@@ -32,11 +32,11 @@ const Note = sequelize.define('Note', {
     allowNull: true
   },
   trainerId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false
   },
   trainingId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true
   },
   status: {

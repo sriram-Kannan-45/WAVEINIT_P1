@@ -6,17 +6,17 @@ const { sequelize } = require('../config/db');
 // LessonQuiz.resultStatus is PUBLISHED by the trainer.
 const QuizProgress = sequelize.define('QuizProgress', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   lessonQuizId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'lesson_quiz_id'
   },
   participantId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'participant_id'
   },

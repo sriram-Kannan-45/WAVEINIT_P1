@@ -9,7 +9,7 @@ const { sequelize } = require('../config/db');
  */
 const MonitoringEvent = sequelize.define('MonitoringEvent', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true,
   },
@@ -20,13 +20,13 @@ const MonitoringEvent = sequelize.define('MonitoringEvent', {
     comment: 'Associated MonitoringSession.sessionId',
   },
   attemptId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'attempt_id',
     comment: 'Associated QuizAttempt.id, CodingAttempt.id, or Interview.id',
   },
   participantId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'participant_id',
     comment: 'Participant User.id',

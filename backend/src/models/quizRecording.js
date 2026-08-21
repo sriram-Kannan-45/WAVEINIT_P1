@@ -3,7 +3,7 @@ const { sequelize } = require('../config/db');
 
 const QuizRecording = sequelize.define('QuizRecording', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
@@ -14,17 +14,17 @@ const QuizRecording = sequelize.define('QuizRecording', {
     field: 'assessment_type'
   },
   quizId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'quiz_id'
   },
   participantId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'participant_id'
   },
   trainerId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'trainer_id'
   },

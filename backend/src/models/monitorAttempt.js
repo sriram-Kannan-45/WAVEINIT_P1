@@ -3,22 +3,22 @@ const { sequelize } = require('../config/db');
 
 const MonitorAttempt = sequelize.define('MonitorAttempt', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true,
   },
   testId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'test_id',
   },
   participantId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'participant_id',
   },
   sessionId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'session_id',
   },
@@ -44,7 +44,7 @@ const MonitorAttempt = sequelize.define('MonitorAttempt', {
     field: 'ends_at',
   },
   duration: {
-    type: DataTypes.INTEGER.UNSIGNED,
+    type: DataTypes.INTEGER,
     allowNull: false,
     defaultValue: 0,
     field: 'duration',

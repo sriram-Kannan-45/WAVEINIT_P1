@@ -3,12 +3,12 @@ const { sequelize } = require('../config/db');
 
 const ActivityLog = sequelize.define('ActivityLog', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   userId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true
   },
   userName: {
@@ -26,7 +26,7 @@ const ActivityLog = sequelize.define('ActivityLog', {
     comment: 'User, Training, Note, Feedback, Enrollment'
   },
   entityId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true
   },
   details: {

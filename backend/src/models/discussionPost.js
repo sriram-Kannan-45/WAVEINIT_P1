@@ -8,17 +8,17 @@ const { sequelize } = require('../config/db');
  */
 const DiscussionPost = sequelize.define('DiscussionPost', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   trainingId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'training_id'
   },
   userId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'user_id'
   },
@@ -38,7 +38,7 @@ const DiscussionPost = sequelize.define('DiscussionPost', {
     field: 'is_pinned'
   },
   parentId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'parent_id'
   }

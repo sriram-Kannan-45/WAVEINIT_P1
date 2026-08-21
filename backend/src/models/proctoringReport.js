@@ -3,12 +3,12 @@ const { sequelize } = require('../config/db');
 
 const ProctoringReport = sequelize.define('ProctoringReport', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true,
   },
   attemptId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     unique: true,
     field: 'attempt_id',

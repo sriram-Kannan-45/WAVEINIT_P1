@@ -3,12 +3,12 @@ const { sequelize } = require('../config/db');
 
 const CodingTestCase = sequelize.define('CodingTestCase', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   problemId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'problem_id'
   },

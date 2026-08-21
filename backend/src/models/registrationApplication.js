@@ -11,7 +11,7 @@ const { sequelize } = require('../config/db');
  */
 const RegistrationApplication = sequelize.define('RegistrationApplication', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true,
   },
@@ -77,7 +77,7 @@ const RegistrationApplication = sequelize.define('RegistrationApplication', {
   },
   // ── Training Selection ──
   trainingId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'training_id',
   },
@@ -92,7 +92,7 @@ const RegistrationApplication = sequelize.define('RegistrationApplication', {
     field: 'resume_url',
   },
   profilePhotoUrl: {
-    type: DataTypes.TEXT('medium'),
+    type: DataTypes.TEXT,
     allowNull: true,
     field: 'profile_photo_url',
   },
@@ -133,7 +133,7 @@ const RegistrationApplication = sequelize.define('RegistrationApplication', {
     defaultValue: 'PENDING',
   },
   reviewerId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'reviewer_id',
     comment: 'Admin who reviewed the application',
@@ -150,7 +150,7 @@ const RegistrationApplication = sequelize.define('RegistrationApplication', {
   },
   // ── Post-Approval ──
   userId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'user_id',
     comment: 'Link to created User account after approval',
@@ -174,7 +174,7 @@ const RegistrationApplication = sequelize.define('RegistrationApplication', {
     comment: 'Temp plain password shown once then cleared',
   },
   trainerId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'trainer_id',
   },
@@ -184,7 +184,7 @@ const RegistrationApplication = sequelize.define('RegistrationApplication', {
     field: 'credentials_sent_at',
   },
   credentialsSentBy: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'credentials_sent_by',
   },

@@ -3,17 +3,17 @@ const { sequelize } = require('../config/db');
 
 const AIQuiz = sequelize.define('AIQuiz', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   courseId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'course_id'
   },
   lessonId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'lesson_id'
   },
@@ -30,17 +30,17 @@ const AIQuiz = sequelize.define('AIQuiz', {
     field: 'is_mandatory'
   },
   documentId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'document_id'
   },
   trainerId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'trainer_id'
   },
   trainingId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'training_id'
   },
@@ -141,7 +141,7 @@ const AIQuiz = sequelize.define('AIQuiz', {
   },
   // ── Legacy booleans (kept for backward compatibility, driven by status) ──
   quizId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'quiz_id'
   },
@@ -151,7 +151,7 @@ const AIQuiz = sequelize.define('AIQuiz', {
     field: 'question_count'
   },
   createdBy: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'created_by'
   },

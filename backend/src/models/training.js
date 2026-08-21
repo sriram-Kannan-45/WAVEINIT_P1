@@ -18,7 +18,7 @@ const { sequelize } = require('../config/db');
  */
 const Training = sequelize.define('Training', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
@@ -37,7 +37,7 @@ const Training = sequelize.define('Training', {
   },
   // ── Legacy fields (deprecated — kept nullable for backward compat) ──
   trainerId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'trainer_id'
   },
@@ -57,7 +57,7 @@ const Training = sequelize.define('Training', {
   },
   // ── New required field ──
   createdBy: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'created_by'
   },

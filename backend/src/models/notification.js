@@ -3,12 +3,12 @@ const { sequelize } = require('../config/db');
 
 const Notification = sequelize.define('Notification', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   userId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'user_id'
   },
@@ -32,7 +32,7 @@ const Notification = sequelize.define('Notification', {
     field: 'action_url'
   },
   relatedEntityId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'related_entity_id'
   },

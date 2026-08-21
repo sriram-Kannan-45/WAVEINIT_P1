@@ -9,7 +9,7 @@ const { sequelize } = require('../config/db');
  */
 const MonitoringConfig = sequelize.define('MonitoringConfig', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true,
   },
@@ -33,7 +33,7 @@ const MonitoringConfig = sequelize.define('MonitoringConfig', {
     comment: 'JSON payload with configuration values',
   },
   updatedBy: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'updated_by',
     comment: 'Admin or Trainer User.id who last modified this setting',

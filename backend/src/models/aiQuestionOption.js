@@ -3,12 +3,12 @@ const { sequelize } = require('../config/db');
 
 const AIQuestionOption = sequelize.define('AIQuestionOption', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true,
   },
   questionId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'question_id',
     references: {

@@ -3,12 +3,12 @@ const { sequelize } = require('../config/db');
 
 const AIQuestion = sequelize.define('AIQuestion', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   quizId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'quiz_id'
   },

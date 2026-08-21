@@ -3,12 +3,12 @@ const { sequelize } = require('../config/db');
 
 const InterviewAlert = sequelize.define('InterviewAlert', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true,
   },
   session_id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     references: { model: 'interview_sessions', key: 'id' },
     onDelete: 'CASCADE',

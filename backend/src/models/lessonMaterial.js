@@ -16,12 +16,12 @@ const { sequelize } = require('../config/db');
  */
 const LessonMaterial = sequelize.define('LessonMaterial', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true
   },
   lessonId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'lesson_id'
   },
@@ -36,7 +36,7 @@ const LessonMaterial = sequelize.define('LessonMaterial', {
   },
   content: {
     // Rich-text HTML for NOTE; description text for LINK; null otherwise.
-    type: DataTypes.TEXT('long'),
+    type: DataTypes.TEXT,
     allowNull: true
   },
   fileUrl: {

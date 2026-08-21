@@ -3,7 +3,7 @@ const { sequelize } = require('../config/db');
 
 const ProctoringEvent = sequelize.define('ProctoringEvent', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true,
   },
@@ -14,19 +14,19 @@ const ProctoringEvent = sequelize.define('ProctoringEvent', {
     comment: 'Associated session_id string'
   },
   attemptId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'attempt_id',
     comment: 'Associated QuizAttempt.id'
   },
   participantId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'participant_id',
     comment: 'Participant User.id'
   },
   quizId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: true,
     field: 'quiz_id',
     comment: 'AIQuiz.id or null for coding assessment'
