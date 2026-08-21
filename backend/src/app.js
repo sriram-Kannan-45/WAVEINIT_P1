@@ -239,8 +239,8 @@ app.put('/api/update-profile', authenticateToken, upload.single('profilePic'), p
 const { testMail } = require('./controllers/forgotPasswordController');
 app.get('/api/test-mail', testMail);
 
-// Health check
-app.get('/health', async (req, res) => {
+// Health check (supports root, /health, and /api/health for Azure & cloud probes)
+app.get(['/', '/health', '/api/health'], async (req, res) => {
   try {
     await sequelize.authenticate();
     res.json({
