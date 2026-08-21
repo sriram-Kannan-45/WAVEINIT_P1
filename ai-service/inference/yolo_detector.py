@@ -16,6 +16,13 @@ Validates:
 
 import os
 import sys
+
+# Ensure headless execution
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+os.environ["MPLBACKEND"] = "Agg"
+os.environ["OPENCV_VIDEOIO_PRIORITY_MSMF"] = "0"
+os.environ["YOLO_VERBOSE"] = "False"
+
 import time
 import base64
 import logging

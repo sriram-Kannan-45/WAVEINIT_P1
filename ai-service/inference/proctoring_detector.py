@@ -8,6 +8,13 @@ Dedicated exclusively to the Laptop Camera Pipeline across Quiz, Coding, and Int
 
 import os
 import sys
+
+# Ensure headless execution
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+os.environ["MPLBACKEND"] = "Agg"
+os.environ["OPENCV_VIDEOIO_PRIORITY_MSMF"] = "0"
+os.environ["GLOG_minloglevel"] = "2"
+
 import time
 import math
 import logging

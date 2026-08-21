@@ -1,17 +1,18 @@
-b"""
+"""
 AI Quiz Generator Microservice - Enterprise Edition
 Uses LangChain + Gemini to generate quizzes from documents.
-
-Enhanced with:
-- Advanced prompt engineering with Bloom's taxonomy
-- Response caching for improved performance
-- Structured JSON output validation
-- Semantic similarity filtering for question diversity
-- Retry logic with exponential backoff
-- Comprehensive error handling and logging
 """
 import os
 import sys
+
+# Force headless execution for OpenCV, Qt, Matplotlib, and MediaPipe on Linux server environments
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+os.environ["MPLBACKEND"] = "Agg"
+os.environ["OPENCV_VIDEOIO_PRIORITY_MSMF"] = "0"
+os.environ["YOLO_VERBOSE"] = "False"
+os.environ["PYTHONUNBUFFERED"] = "1"
+os.environ["GLOG_minloglevel"] = "2"
+
 import logging
 import asyncio
 import hashlib
