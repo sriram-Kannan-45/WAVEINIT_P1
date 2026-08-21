@@ -13,6 +13,12 @@ export YOLO_VERBOSE="False"
 export PYTHONUNBUFFERED="1"
 export GLOG_minloglevel="2"
 
+# 0. Install system graphics & GL libraries if running on a Debian/Ubuntu container
+if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq && apt-get install -y -qq --no-install-recommends libgl1 libglib2.0-0 libxcb1 libxext6 || true
+fi
+
 # 1. Activate Python virtual environment safely if present (do not fail if absent)
 if [ -f "/antenv/bin/activate" ]; then
     echo "Using virtual environment at /antenv"

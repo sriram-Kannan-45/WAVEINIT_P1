@@ -1553,6 +1553,16 @@ Return ONLY the JSON:
     }
 
 # ── API Endpoints ─────────────────────────────────────
+@app.get("/")
+def root():
+    """Root endpoint returning basic service info."""
+    return {
+        "service": "LMS AI Quiz Generator",
+        "status": "running",
+        "version": "3.0.0",
+        "docs": "/docs"
+    }
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
