@@ -10,7 +10,6 @@ const TrainerProfile = sequelize.define('TrainerProfile', {
   userId: {
     type: DataTypes.BIGINT.UNSIGNED,
     allowNull: false,
-    unique: true,
     field: 'user_id'
   },
   dob: {
@@ -75,7 +74,10 @@ const TrainerProfile = sequelize.define('TrainerProfile', {
   tableName: 'trainer_profiles',
   timestamps: true,
   createdAt: 'created_at',
-  updatedAt: 'updated_at'
+  updatedAt: 'updated_at',
+  indexes: [
+    { unique: true, fields: ['user_id'], name: 'trainer_profiles_user_id_uq' },
+  ]
 });
 
 module.exports = TrainerProfile;

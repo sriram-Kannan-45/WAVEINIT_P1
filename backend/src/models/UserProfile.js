@@ -3,7 +3,7 @@ const { sequelize } = require('../config/db');
 
 const UserProfile = sequelize.define('UserProfile', {
   id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
-  userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false, unique: true, field: 'user_id' },
+  userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false, field: 'user_id' },
   headline: { type: DataTypes.STRING(200), allowNull: true },
   about: { type: DataTypes.TEXT, allowNull: true },
   phone: { type: DataTypes.STRING(20), allowNull: true },
@@ -23,6 +23,9 @@ const UserProfile = sequelize.define('UserProfile', {
   timestamps: true,
   createdAt: 'created_at',
   updatedAt: 'updated_at',
+  indexes: [
+    { unique: true, fields: ['user_id'], name: 'user_profiles_user_id_uq' },
+  ],
 });
 
 module.exports = UserProfile;

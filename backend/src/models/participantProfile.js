@@ -21,7 +21,6 @@ const ParticipantProfile = sequelize.define(
     userId: {
       type: DataTypes.BIGINT.UNSIGNED,
       allowNull: false,
-      unique: true,
       field: 'user_id',
     },
     displayName: {
@@ -89,6 +88,9 @@ const ParticipantProfile = sequelize.define(
     timestamps: true,
     createdAt: 'created_at',
     updatedAt: 'updated_at',
+    indexes: [
+      { unique: true, fields: ['user_id'], name: 'participant_profiles_user_id_uq' },
+    ],
   }
 );
 
