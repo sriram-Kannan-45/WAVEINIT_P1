@@ -35,12 +35,15 @@ jobs:
       - name: Install AI service dependencies
         working-directory: ai-service
         run: |
-          pip install -r requirements.txt
+          pip install --no-cache-dir opencv-python-headless>=4.8.0.76
+          pip install --no-cache-dir -r requirements.txt
+          pip uninstall -y opencv-python opencv-contrib-python 2>/dev/null || true
+          pip install --no-cache-dir --no-deps opencv-python-headless>=4.8.0.76
 
       - name: Verify dependencies and app entrypoint
         working-directory: ai-service
         run: |
-          python -c "import fastapi, uvicorn, gunicorn, cv2, mediapipe; from main import app; print('AI application & dependencies verified successfully')"
+          python -c "import cv2; print('OpenCV version:', cv2.__version__); import fastapi, uvicorn, gunicorn, mediapipe; from main import app; print('✅ AI application & dependencies verified successfully')"
           chmod +x startup.sh
 
       - name: Upload AI service artifact
