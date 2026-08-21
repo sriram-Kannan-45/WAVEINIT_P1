@@ -1,73 +1,34 @@
 const { Queue } = require('bullmq');
-const IORedis = require('ioredis');
 const logger = require('../utils/logger');
+const { getRedisClient, isRedisReady } = require('../config/redis');
 
-const REDIS_URL = process.env.REDIS_URL;
-
-let connection = null;
 let submissionQueue = null;
 
-function createRedisConnection() {
-  if (!REDIS_URL) {
-    logger.info('[SubmissionQueue] Redis not configured; using synchronous submission processing.');
-    return;
-  }
-  const IORedis = require('ioredis');
-  const conn = new IORedis(REDIS_URL, {
-    maxRetriesPerRequest: null,
-    enableReadyCheck: false,
-    retryStrategy: (times) => {
-      if (times > 3) return null;
-      return Math.min(times * 50, 2000);
-    },
-    lazyConnect: true,
-  });
-
-  conn.on('error', (err) => {
-    logger.warn('[SubmissionQueue] Redis connection error', {
-      host: conn.options?.host || 'remote',
-      port: conn.options?.port || 6379,
-      error: err.message,
-    });
-  });
-
-  conn.on('ready', () => {
-    logger.info('[SubmissionQueue] Redis connected successfully');
-    connection = conn;
-    if (!submissionQueue) {
-      submissionQueue = new Queue('coding-submissions', {
-        connection: conn,
-        defaultJobOptions: {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 2000 },
-          removeOnComplete: 100,
-          removeOnFail: 50,
-        },
-      });
-    }
-  });
-
-  conn.on('close', () => {
-    connection = null;
+function getSubmissionQueue() {
+  const client = getRedisClient();
+  if (!client || !isRedisReady()) {
     submissionQueue = null;
-  });
-
-  conn.connect().catch((err) => {
-    logger.warn('[SubmissionQueue] Redis unavailable, using synchronous submission processing fallback', {
-      host: conn.options?.host || 'remote',
-      port: conn.options?.port || 6379,
-      error: err.message,
+    return null;
+  }
+  if (!submissionQueue) {
+    submissionQueue = new Queue('coding-submissions', {
+      connection: client,
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: 100,
+        removeOnFail: 50,
+      },
     });
-    connection = null;
-  });
+  }
+  return submissionQueue;
 }
 
-createRedisConnection();
-
 async function enqueueSubmission({ submissionId, attemptId, problemId, code, language, timeLimit, memoryLimit, testCases, participantId, assessmentId, io }) {
-  if (submissionQueue) {
+  const queue = getSubmissionQueue();
+  if (queue) {
     try {
-      const job = await submissionQueue.add('evaluate', {
+      const job = await queue.add('evaluate', {
         submissionId, attemptId, problemId, code, language, timeLimit, memoryLimit,
         testCases, participantId, assessmentId,
       }, {
@@ -83,7 +44,7 @@ async function enqueueSubmission({ submissionId, attemptId, problemId, code, lan
     }
   }
 
-  logger.info('[SubmissionQueue] Processing submission synchronously');
+  logger.info('[SubmissionQueue] Processing submission synchronously (Redis queue not active)');
   const { evaluateSubmission } = require('../workers/submissionWorker');
   await evaluateSubmission({
     submissionId, attemptId, problemId, code, language, timeLimit, memoryLimit,
@@ -92,12 +53,13 @@ async function enqueueSubmission({ submissionId, attemptId, problemId, code, lan
 }
 
 async function getJobStatus(submissionId) {
-  if (!submissionQueue) return null;
-  const job = await submissionQueue.getJob(`sub-${submissionId}`);
+  const queue = getSubmissionQueue();
+  if (!queue) return null;
+  const job = await queue.getJob(`sub-${submissionId}`);
   if (!job) return null;
   const state = await job.getState();
   const progress = job.progress;
   return { state, progress, failedReason: job.failedReason };
 }
 
-module.exports = { submissionQueue, enqueueSubmission, getJobStatus, connection };
+module.exports = { submissionQueue, enqueueSubmission, getJobStatus };

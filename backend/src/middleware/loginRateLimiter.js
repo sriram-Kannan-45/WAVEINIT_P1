@@ -195,6 +195,8 @@ setInterval(() => {
   for (const [email, rec] of store.entries()) {
     if (rec.lockoutUntil && now >= rec.lockoutUntil) {
       store.delete(email);
+    } else if (rec.lastAttempt && now - rec.lastAttempt > LOCKOUT_MS) {
+      store.delete(email);
     }
   }
 }, CLEANUP_INTERVAL_MS).unref();

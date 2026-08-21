@@ -5,49 +5,7 @@ const { sequelize } = require('../config/db');
 const { CodingSubmission, CodingProblem, CodingTestCase } = require('../models');
 const logger = require('../utils/logger');
 
-const REDIS_URL = process.env.REDIS_URL;
-let connection = null;
-
-if (REDIS_URL) {
-  const IORedis = require('ioredis');
-  const redisConn = new IORedis(REDIS_URL, {
-    maxRetriesPerRequest: null,
-    enableReadyCheck: false,
-    retryStrategy: (times) => {
-      if (times > 3) return null;
-      return Math.min(times * 50, 2000);
-    },
-    lazyConnect: true,
-  });
-
-  redisConn.on('error', (err) => {
-    logger.warn('[SubmissionWorker] Redis connection error', {
-      host: redisConn.options?.host || 'remote',
-      port: redisConn.options?.port || 6379,
-      error: err.message,
-    });
-  });
-
-  redisConn.on('ready', () => {
-    logger.info('[SubmissionWorker] Redis connected successfully');
-    connection = redisConn;
-  });
-
-  redisConn.on('close', () => {
-    connection = null;
-  });
-
-  redisConn.connect().catch((err) => {
-    logger.warn('[SubmissionWorker] Redis unavailable, worker will process synchronously', {
-      host: redisConn.options?.host || 'remote',
-      port: redisConn.options?.port || 6379,
-      error: err.message,
-    });
-    connection = null;
-  });
-} else {
-  logger.info('[SubmissionWorker] Redis not configured; using synchronous submission processing.');
-}
+const { getRedisClient, isRedisReady } = require('../config/redis');
 
 const judgeEngine = new JudgeEngine();
 
@@ -214,9 +172,10 @@ async function evaluateSubmission({ submissionId, attemptId, problemId, code, la
 let submissionWorker = null;
 
 function startWorker(io) {
-  if (!connection) {
-    logger.warn('[SubmissionWorker] Redis unavailable, worker will process synchronously');
-    return;
+  const connection = getRedisClient();
+  if (!connection || !isRedisReady()) {
+    logger.info('[SubmissionWorker] Redis not connected; submissions will be processed synchronously.');
+    return null;
   }
 
   if (submissionWorker) {

@@ -29,6 +29,7 @@ const {
   setupRedisAdapter,
   cleanupSocket,
 } = require('./config/socket');
+const { initRedis, closeRedis } = require('./config/redis');
 
 // Security middleware
 const { detectSqlInjection, detectXss, detectPathTraversal, detectAnomalies } = require('./security/threatDetector');
@@ -649,16 +650,6 @@ const startServer = async () => {
       logger.warn('Could not start assessment session expiry job', { error: e.message });
     }
 
-    // Background heartbeat reaper (60s)
-    try {
-      const proctoring = require('./services/proctoringService');
-      setInterval(() => {
-        proctoring.expireStaleSessions().catch(err =>
-          logger.warn('proctor reaper error', { err: err.message }),
-        );
-      }, 60_000).unref();
-    } catch (e) { /* non-fatal */ }
-
     // Background OTP cleanup — removes expired & old-used rows every 5 min
     // (replaces MongoDB TTL index since we use Sequelize/MySQL).
     try {
@@ -666,6 +657,9 @@ const startServer = async () => {
       cleanupExpiredOtps(); // run once at startup
       setInterval(() => cleanupExpiredOtps(), 5 * 60_000).unref();
     } catch (e) { /* non-fatal */ }
+
+    // Setup Redis (fail-fast, leak-free)
+    await initRedis();
 
     // Setup Redis adapter for multi-instance scaling (disabled for local dev)
     logger.info('Running Socket.IO in single-instance mode (Redis disabled for local dev)');
@@ -777,6 +771,7 @@ const startServer = async () => {
       server.close(async () => {
         logger.logAlways('HTTP server closed');
         await cleanupSocket(io);
+        await closeRedis();
         await sequelize.close();
         process.exit(0);
       });
@@ -787,6 +782,7 @@ const startServer = async () => {
       server.close(async () => {
         logger.logAlways('HTTP server closed');
         await cleanupSocket(io);
+        await closeRedis();
         await sequelize.close();
         process.exit(0);
       });
