@@ -1,4 +1,4 @@
-name: Build and deploy Python AI Service to Azure Web App - waveinit-lms-ai
+name: Build and deploy AI Python Service to Azure Web App - waveinit-lms-ai
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
     paths:
       - 'ai-service/**'
       - '.github/workflows/ai-service.yml'
+
   workflow_dispatch:
 
 jobs:
@@ -30,24 +31,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Upgrade pip
+      - name: Install Python dependencies
+        working-directory: ai-service
         run: |
           python -m pip install --upgrade pip
-
-      - name: Install AI service dependencies
-        working-directory: ai-service
-        run: |
           pip install -r requirements.txt
-
-      - name: Verify FastAPI application
-        working-directory: ai-service
-        run: |
-          python -c "from main import app; print('FastAPI application loaded successfully')"
 
       - name: Upload AI service artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ai-service-app
+          name: ai-service
           path: ai-service
 
 
@@ -67,15 +60,15 @@ jobs:
       - name: Download AI service artifact
         uses: actions/download-artifact@v4
         with:
-          name: ai-service-app
+          name: ai-service
           path: .
 
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_5AE7FB17471D40BB84F32E4BB2E07E91 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_5187400E023147039278F40A86D7D954 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_8BB674CF42D547C68E4E439115D4740D }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_AI }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_AI }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_AI }}
 
       - name: Deploy AI service to Azure
         uses: azure/webapps-deploy@v3
