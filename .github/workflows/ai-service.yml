@@ -30,24 +30,30 @@ jobs:
           cache: 'pip'
           cache-dependency-path: 'ai-service/requirements.txt'
 
-      - name: Install dependencies into antenv & .python_packages
+      - name: Install dependencies into antenv
         working-directory: ai-service
         run: |
           python -m pip install --upgrade pip setuptools wheel
           
-          # 1. Create standard Azure antenv virtual environment
+          # Create standard Azure antenv virtual environment
           python -m venv antenv
           source antenv/bin/activate
-          pip install -r requirements.txt
           
-          # 2. Also populate .python_packages for Azure App Service PYTHONPATH fallback
-          python -m pip install --target=".python_packages/lib/site-packages" -r requirements.txt
+          # Force CPU-only PyTorch to prevent downloading 3+ GB of unused NVIDIA CUDA libraries
+          pip install --no-cache-dir torch==2.5.1+cpu torchvision==0.20.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          
+          # Install all other application requirements
+          pip install --no-cache-dir -r requirements.txt
+          
+          # Clean up unnecessary cache and compiled test artifacts to keep package lean
+          find antenv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+          find antenv -type f -name "*.pyc" -delete 2>/dev/null || true
 
       - name: Verify FastAPI and dependencies load cleanly
         working-directory: ai-service
         run: |
           source antenv/bin/activate
-          python -c "import uvicorn, gunicorn, fastapi; from main import app; print('✅ FastAPI & Uvicorn worker verified successfully in antenv')"
+          python -c "import torch, uvicorn, gunicorn, fastapi; print(f'Torch: {torch.__version__} (CUDA available: {torch.cuda.is_available()})'); from main import app; print('✅ FastAPI, Uvicorn & CPU PyTorch verified successfully in antenv')"
 
       - name: Upload artifact for deployment
         uses: actions/upload-artifact@v4
@@ -58,6 +64,7 @@ jobs:
             !ai-service/.env
             !ai-service/venv
             !ai-service/__pycache__
+            !ai-service/**/__pycache__
 
   # ============================================================================
   # DEPLOY JOB: Deploys pre-built package without relying on Oryx remote build
