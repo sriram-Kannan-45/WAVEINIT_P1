@@ -9,7 +9,7 @@ let submissionQueue = null;
 
 function createRedisConnection() {
   if (!REDIS_URL) {
-    logger.info('[SubmissionQueue] No REDIS_URL configured, submissions will be processed synchronously');
+    logger.info('[SubmissionQueue] Redis not configured; using synchronous submission processing.');
     return;
   }
   const IORedis = require('ioredis');

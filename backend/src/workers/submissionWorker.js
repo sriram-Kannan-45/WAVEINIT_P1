@@ -38,7 +38,7 @@ if (REDIS_URL) {
     connection = null;
   });
 } else {
-  logger.info('[SubmissionWorker] No REDIS_URL configured; worker will process synchronously');
+  logger.info('[SubmissionWorker] Redis not configured; using synchronous submission processing.');
 }
 
 const judgeEngine = new JudgeEngine();
