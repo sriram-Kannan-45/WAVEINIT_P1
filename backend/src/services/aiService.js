@@ -1,9 +1,36 @@
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+const pdf = require('pdf-parse');
+const mammoth = require('mammoth');
 require('dotenv').config();
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
 const AI_TIMEOUT = 300000;
 const MAX_RETRIES = 2;
+
+async function extractTextFromLocalFile(filePath, mimeType = '') {
+  if (!filePath) return null;
+  const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
+  if (!fs.existsSync(absPath)) return null;
+
+  const ext = path.extname(absPath).toLowerCase();
+  const mime = (mimeType || '').toLowerCase();
+
+  if (ext === '.txt' || mime.includes('text/plain')) {
+    return fs.readFileSync(absPath, 'utf8');
+  }
+  if (ext === '.pdf' || mime.includes('pdf')) {
+    const dataBuffer = fs.readFileSync(absPath);
+    const data = await pdf(dataBuffer);
+    return data.text || '';
+  }
+  if (ext === '.docx' || mime.includes('wordprocessingml')) {
+    const result = await mammoth.extractRawText({ path: absPath });
+    return result.value || '';
+  }
+  return null;
+}
 
 async function checkHealth() {
   try {
@@ -171,6 +198,29 @@ const aiService = {
     questionType = 'MIXED',
   }) {
     if (!filePath) throw new Error('filePath is required for RAG quiz generation.');
+
+    let extractedText = null;
+    try {
+      extractedText = await extractTextFromLocalFile(filePath, fileType);
+      if (extractedText) {
+        console.log(`[aiService] Extracted ${extractedText.length} characters from "${originalName || filePath}"`);
+      }
+    } catch (e) {
+      console.warn('[aiService] Local text extraction failed, falling back to file_path payload:', e.message);
+    }
+
+    if (extractedText && extractedText.trim().length >= 50) {
+      return callRagGeneration({
+        text: extractedText.trim(),
+        source_title: originalName || 'Uploaded learning material',
+        training_id: trainingId || null,
+        course_id: courseId || null,
+        numberOfQuestions: parseInt(numQuestions, 10),
+        difficulty,
+        questionType,
+      });
+    }
+
     return callRagGeneration({
       file_path: filePath,
       mime_type: fileType || null,
@@ -299,13 +349,22 @@ const aiService = {
     const cleanPrompt = (prompt || '').toString().trim();
     if (!cleanPrompt) throw new Error('Prompt cannot be empty.');
 
+    let extractedText = text || '';
+    if (!extractedText && file_path) {
+      try {
+        extractedText = (await extractTextFromLocalFile(file_path, mime_type)) || '';
+      } catch (e) {
+        console.warn('[aiService] Could not extract text from file_path for course structure:', e.message);
+      }
+    }
+
     // 1. Try Python microservice (which uses Gemini Client / gemini-2.5-flash)
     let microserviceError = null;
     try {
       console.log(`[aiService] Calling Python AI microservice at ${AI_SERVICE_URL}/generate-course-structure for prompt: "${cleanPrompt.substring(0, 120)}..."`);
       const response = await axios.post(`${AI_SERVICE_URL}/generate-course-structure`, {
         prompt: cleanPrompt,
-        text: text || '',
+        text: extractedText,
         file_path: file_path || undefined,
         mime_type: mime_type || undefined,
       }, { timeout: AI_TIMEOUT, headers: { 'Content-Type': 'application/json' } });
