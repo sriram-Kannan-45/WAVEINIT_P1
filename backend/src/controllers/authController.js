@@ -105,8 +105,8 @@ const login = async (req, res) => {
       return res.status(403).json({ error: 'Incorrect role selected.' });
     }
 
-    // Force password change on first login
-    const forcePasswordChange = user.passwordVersion < 2;
+    // Force password change on first login (disabled to prevent redirect loops to forgot-password)
+    const forcePasswordChange = false;
 
     // Generate token pair
     const { accessToken, refreshToken, tokenFamily } = await tokenService.generateTokenPair(user, req);

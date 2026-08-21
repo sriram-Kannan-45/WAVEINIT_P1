@@ -102,11 +102,6 @@ export default function Login({ onLogin, defaultRole }) {
       onLogin(data);
       showSuccess('Welcome back!', 'You have signed in successfully.');
 
-      if (data.forcePasswordChange) {
-        navigate('/forgot-password', { replace: true });
-        return;
-      }
-
       if (data.warnings && data.warnings.length > 0) {
         data.warnings.forEach(w => showWarning(w));
       }

@@ -700,10 +700,10 @@ const startServer = async () => {
         logger.info('Default admin created: admin@test.com / admin123 (DEV ONLY)');
       }
     } else {
-      // Ensure existing admin has APPROVED status (may have been created without explicit status)
+      // Ensure existing admin has APPROVED status and passwordVersion 2
       await User.update(
-        { status: 'APPROVED' },
-        { where: { email: 'admin@test.com', status: { [require('sequelize').Op.ne]: 'APPROVED' } } }
+        { status: 'APPROVED', passwordVersion: 2 },
+        { where: { email: 'admin@test.com' } }
       );
       logger.info('Admin already exists');
     }
