@@ -35,10 +35,7 @@ jobs:
       - name: Install AI service dependencies
         working-directory: ai-service
         run: |
-          pip install --no-cache-dir opencv-python-headless>=4.8.0.76
           pip install --no-cache-dir -r requirements.txt
-          pip uninstall -y opencv-python opencv-contrib-python 2>/dev/null || true
-          pip install --no-cache-dir --no-deps opencv-python-headless>=4.8.0.76
 
       - name: Verify dependencies and app entrypoint
         working-directory: ai-service
