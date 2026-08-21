@@ -244,14 +244,14 @@ app.get(['/', '/health', '/api/health'], async (req, res) => {
   try {
     await sequelize.authenticate();
     res.json({
-      status: 'OK',
+      status: 'ok',
       database: 'connected',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
     });
   } catch (error) {
     res.status(503).json({
-      status: 'ERROR',
+      status: 'error',
       database: 'disconnected',
       error: error.message,
       timestamp: new Date().toISOString(),

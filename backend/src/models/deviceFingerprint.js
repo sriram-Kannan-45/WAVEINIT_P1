@@ -9,12 +9,12 @@ const { sequelize } = require('../config/db');
 
 const DeviceFingerprint = sequelize.define('DeviceFingerprint', {
   id: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     autoIncrement: true,
     primaryKey: true,
   },
   userId: {
-    type: DataTypes.BIGINT.UNSIGNED,
+    type: DataTypes.BIGINT,
     allowNull: false,
     field: 'user_id',
   },

@@ -14,12 +14,12 @@ const ParticipantProfile = sequelize.define(
   'ParticipantProfile',
   {
     id: {
-      type: DataTypes.BIGINT.UNSIGNED,
+      type: DataTypes.BIGINT,
       autoIncrement: true,
       primaryKey: true,
     },
     userId: {
-      type: DataTypes.BIGINT.UNSIGNED,
+      type: DataTypes.BIGINT,
       allowNull: false,
       field: 'user_id',
     },
@@ -33,10 +33,7 @@ const ParticipantProfile = sequelize.define(
       allowNull: true,
     },
     avatarUrl: {
-      // MEDIUMTEXT (16 MB) — TEXT (64 KB) cannot hold a base-64-encoded
-      // photo of any reasonable size. Frontend caps the raw upload at 4 MB
-      // (~5.6 MB encoded), so MEDIUMTEXT has plenty of headroom.
-      type: DataTypes.TEXT('medium'),
+      type: DataTypes.TEXT,
       allowNull: true,
       field: 'avatar_url',
     },
