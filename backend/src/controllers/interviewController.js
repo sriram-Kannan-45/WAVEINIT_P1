@@ -219,6 +219,8 @@ class InterviewController {
         order: [['scheduled_at', 'DESC']],
         limit: parseInt(limit, 10),
         offset,
+        distinct: true,
+        subQuery: search ? false : undefined,
       });
 
       res.json({

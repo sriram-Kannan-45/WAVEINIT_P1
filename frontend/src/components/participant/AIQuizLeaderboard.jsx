@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { getTwoLetterInitials } from '../common/UserAvatar'
 
 /* ── Mock data (8 participants) ── */
 const MOCK_PARTICIPANTS = [
@@ -436,15 +437,15 @@ export default function AIQuizLeaderboard() {
                   >
                     <div style={{ fontSize: 28, marginBottom: 4 }}>{medals[idx]}</div>
                     <div style={{
-                      width: 44, height: 44, borderRadius: '50%',
-                      background: `linear-gradient(135deg, ${colors[idx]}, ${isGold ? '#fbbf24' : colors[idx]})`,
+                      width: 52, height: 52, borderRadius: '50%',
+                      background: '#16A34A',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       margin: '0 auto 8px',
                       fontSize: 16, fontWeight: 700, color: '#fff',
-                      boxShadow: `0 0 20px ${colors[idx]}40`,
+                      boxShadow: '0 2px 8px rgba(22,163,74,0.3)',
                       fontFamily: "'Poppins', sans-serif",
                     }}>
-                      {p.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                      {getTwoLetterInitials(p.name)}
                     </div>
                     <div style={{
                       fontSize: 13, fontWeight: 700, color: '#f1f5f9',
@@ -570,15 +571,13 @@ export default function AIQuizLeaderboard() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{
                       width: 28, height: 28, borderRadius: '50%',
-                      background: p.isYou
-                        ? 'linear-gradient(135deg, #0D9488, #2DD4BF)'
-                        : 'rgba(255,255,255,0.06)',
+                      background: '#16A34A',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 10, fontWeight: 700, color: p.isYou ? '#fff' : '#64748b',
+                      fontSize: 10, fontWeight: 700, color: '#fff',
                       flexShrink: 0,
                       fontFamily: "'Poppins', sans-serif",
                     }}>
-                      {p.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                      {getTwoLetterInitials(p.name)}
                     </div>
                     <div>
                       <div style={{

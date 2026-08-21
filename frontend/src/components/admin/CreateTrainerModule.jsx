@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Camera, Users, UserPlus, ShieldCheck, Loader2, RefreshCw, Sparkles } from 'lucide-react'
 import { useToast } from '../Toast'
 import { API_BASE } from '../../api/api'
+import { getTwoLetterInitials } from '../common/UserAvatar'
 
 const DEPARTMENTS = [
   'Technology', 'Engineering', 'Design', 'Data Science', 'Marketing',
@@ -58,7 +59,7 @@ const EMPTY_FORM = {
 
 const labelStyle = { fontSize: 12, fontWeight: 600, color: '#334155', display: 'block', marginBottom: 4 }
 
-const initials = (name) => name ? name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'TR'
+const initials = (name) => getTwoLetterInitials(name)
 
 function StatusBadge({ status }) {
   return status === 'APPROVED'

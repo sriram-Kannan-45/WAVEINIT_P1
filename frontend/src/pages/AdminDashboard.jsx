@@ -10,11 +10,11 @@ import AdminOverviewTab from '../components/admin/tabs/AdminOverviewTab'
 import ParticipantProfileView from '../components/shared/ParticipantProfileView'
 import { useToast } from '../components/Toast'
 import TrainerProfileModal from '../components/admin/TrainerProfileModal'
-
+import UserAvatar, { getTwoLetterInitials } from '../components/common/UserAvatar'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'
-const initials = (name) => name ? name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'AD'
+const initials = (name) => getTwoLetterInitials(name)
 
 const Stars = ({ v }) => (
   <span style={{ display: 'inline-flex', gap: '1px' }}>
@@ -555,8 +555,15 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
           trainings={trainings}
           participants={participants}
           trainers={trainers}
+          pendingParticipants={pendingParticipants}
+          adminReport={adminReport}
           initialLoading={initialLoading}
           loading={loading}
+          onCreateTraining={() => handleTabChange('createTraining')}
+          onAddTrainer={() => handleTabChange('createTrainer')}
+          onAddParticipant={() => handleTabChange('participants')}
+          onViewTrainings={() => handleTabChange('trainings')}
+          onRefresh={fetchAll}
         />
       )}
 
@@ -874,9 +881,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                       <tr key={trainer.id}>
                         <td>
                           <div className="reg-admin-participant">
-                            <div className="reg-admin-avatar" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-                              {trainer.name?.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
-                            </div>
+                            <UserAvatar name={trainer.name} size={32} fontSize={11} />
                             <span className="reg-admin-name">{trainer.name}</span>
                           </div>
                         </td>
@@ -989,16 +994,11 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                     return matchesSearch && matchesStatus
                   }).map(p => {
                     const sc = { PENDING: { bg: '#fef3c7', text: '#92400e', border: '#fcd34d' }, APPROVED: { bg: '#d1fae5', text: '#065f46', border: '#6ee7b7' }, REJECTED: { bg: '#fee2e2', text: '#991b1b', border: '#fca5a5' } }[(p.status || 'PENDING').toUpperCase()] || { bg: '#f1f5f9', text: '#64748b', border: '#e2e8f0' }
-                    const avatarGradients = ['linear-gradient(135deg, #16a34a, #15803d)', 'linear-gradient(135deg, #0d9488, #0f766e)', 'linear-gradient(135deg, #2563eb, #1d4ed8)', 'linear-gradient(135deg, #7c3aed, #6d28d9)', 'linear-gradient(135deg, #ea580c, #c2410c)', 'linear-gradient(135deg, #0ea5e9, #0284c7)']
-                    let hash = 0; for (let i = 0; i < (p.name || '').length; i++) { hash = p.name.charCodeAt(i) + ((hash << 5) - hash) }
-                    const gradient = avatarGradients[Math.abs(hash) % avatarGradients.length]
                     return (
                       <tr key={p.id}>
                         <td>
                           <div className="reg-admin-participant">
-                            <div className="reg-admin-avatar" style={{ background: gradient }}>
-                              {(p.name || '?').trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
-                            </div>
+                            <UserAvatar name={p.name} size={32} fontSize={11} />
                             <div>
                               <span className="reg-admin-name">{p.name || '-'}</span>
                               <span className="reg-admin-email">{p.email}</span>

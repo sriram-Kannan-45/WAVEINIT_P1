@@ -2,9 +2,9 @@ import { motion } from 'framer-motion'
 import { Search, Bell, ChevronDown, Plus, Sun, Moon } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
 import { useAppTheme as useTheme } from '../../contexts/AppThemeContext'
+import { getTwoLetterInitials } from '../common/UserAvatar'
 
-const initials = (name) =>
-  name ? name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'U'
+const initials = (name) => getTwoLetterInitials(name)
 
 export default function TopNavbar({ user, currentPageLabel, onOpenCreate, onProfile }) {
   const [showUserMenu, setShowUserMenu] = useState(false)
@@ -12,7 +12,7 @@ export default function TopNavbar({ user, currentPageLabel, onOpenCreate, onProf
   const { theme, toggleTheme } = useTheme()
   const roleLabel = user.role === 'ADMIN' ? 'Admin' : user.role === 'TRAINER' ? 'Trainer' : 'Learner'
 
-  const avatarBg = 'linear-gradient(135deg, #16A34A, #22C55E)'
+  const avatarBg = '#16A34A'
 
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long',

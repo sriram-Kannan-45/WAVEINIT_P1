@@ -6,12 +6,10 @@ import {
   Shield, Eye, EyeOff, Loader2, Phone, Calendar, AlertCircle, User, Search
 } from 'lucide-react';
 import { useToast } from './Toast';
+import UserAvatar, { getTwoLetterInitials } from './common/UserAvatar';
 
 // Generates initials from name
-const getInitials = (name) => {
-  if (!name) return 'TR';
-  return name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
-};
+const getInitials = (name) => getTwoLetterInitials(name);
 
 // Password strength calculator
 const checkStrength = (pass) => {
@@ -251,17 +249,7 @@ export default function TrainerManagement({
 
                       <div className="flex flex-col h-full">
                         <div className="flex items-center gap-4 mb-5">
-                          {trainer.profile?.imagePath ? (
-                            <img 
-                              src={assetUrl(trainer.profile.imagePath)} 
-                              alt={trainer.name} 
-                              className="w-14 h-14 rounded-full object-cover ring-2 ring-primary-50"
-                            />
-                          ) : (
-                            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-primary-100 to-primary-200 text-primary-700 flex items-center justify-center text-lg font-bold shadow-inner">
-                              {getInitials(trainer.name)}
-                            </div>
-                          )}
+                          <UserAvatar name={trainer.name} size={56} fontSize={20} />
                           <div>
                             <h4 className="font-bold text-gray-900 text-lg leading-tight group-hover:text-primary-600 transition-colors">{trainer.name}</h4>
                             <p className="text-gray-500 text-sm mt-0.5">Trainer</p>

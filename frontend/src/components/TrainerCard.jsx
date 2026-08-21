@@ -1,13 +1,12 @@
 import { useState } from 'react'
 import TrainerDetails from './TrainerDetails'
+import UserAvatar, { getTwoLetterInitials } from './common/UserAvatar'
 
 /**
  * TrainerCard — a single clickable row that expands to reveal TrainerDetails via accordion.
  * Opens/closes based on external state (single open at a time in TrainerList).
  */
 function TrainerCard({ trainer, token, index, onDelete, isOpen, onToggle }) {
-  const initials = (name) => name ? name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'TR'
-
   const hasProfile = trainer.profile && (
     trainer.profile.phone || trainer.profile.dob || trainer.profile.qualification || trainer.profile.experience || trainer.profile.imagePath
   )
@@ -22,7 +21,7 @@ function TrainerCard({ trainer, token, index, onDelete, isOpen, onToggle }) {
         id={`trainer-card-${trainer.id}`}
       >
         <div className="trainer-acc-left">
-          <div className="trainer-acc-avatar">{initials(trainer.name)}</div>
+          <UserAvatar name={trainer.name} size={36} fontSize={13} />
           <div className="trainer-acc-info">
             <span className="trainer-acc-name">{trainer.name}</span>
             <span className="trainer-acc-email">{trainer.email}</span>

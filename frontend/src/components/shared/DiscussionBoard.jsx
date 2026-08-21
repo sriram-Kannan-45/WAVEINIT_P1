@@ -5,6 +5,7 @@ import { useToast } from '../Toast'
 import { useConfirm } from '../ui/AlertModal'
 import { API_BASE } from '../../api/api'
 import '../../styles/course-tabs.css'
+import { getTwoLetterInitials } from '../common/UserAvatar'
 
 
 function DiscussionBoard({ user, trainingId }) {
@@ -145,10 +146,7 @@ function DiscussionBoard({ user, trainingId }) {
     }
   }
 
-  const getInitials = (name) => {
-    if (!name) return 'U'
-    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
-  }
+  const getInitials = (name) => getTwoLetterInitials(name)
 
   const filteredPosts = posts.filter(p => {
     if (activeTab === 'ALL') return true

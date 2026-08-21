@@ -748,8 +748,8 @@
   width: 36px !important;
   height: 36px !important;
   border-radius: 50% !important;
-  background: linear-gradient(135deg, #DCFCE7 0%, #BBF7D0 100%) !important;
-  color: #15803D !important;
+  background: #16A34A !important;
+  color: #FFFFFF !important;
   font-weight: 700 !important;
   font-size: 12.5px !important;
   letter-spacing: 0.02em !important;
@@ -757,7 +757,6 @@
   align-items: center !important;
   justify-content: center !important;
   flex-shrink: 0 !important;
-  border: 1.5px solid #86EFAC !important;
   box-shadow: 0 1px 3px rgba(22, 163, 74, 0.15) !important;
 }
 

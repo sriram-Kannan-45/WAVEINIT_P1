@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Crown, Trophy, Zap, Clock, Target, ChevronDown, ChevronUp, Users } from 'lucide-react'
+import { getTwoLetterInitials } from '../common/UserAvatar'
 
 /* ──────────────────────────────────────────────
    Mock data — 10 participants
@@ -65,21 +66,12 @@ const Medal = ({ rank }) => {
 
 /* ─── Gradient avatar ─── */
 function AvatarCircle({ name, rank, size = 36 }) {
-  const initials = name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
-  const borderGrads = {
-    1: 'from-amber-400 via-yellow-300 to-amber-500',
-    2: 'from-slate-300 via-slate-200 to-slate-400',
-    3: 'from-amber-700 via-amber-600 to-amber-800',
-  }
-  const border = borderGrads[rank] || 'from-[#0D9488] to-[#2DD4BF]'
-  const glow = rank === 1 ? 'shadow-[0_0_16px_rgba(245,158,11,0.4)]' : rank === 2 ? 'shadow-[0_0_12px_rgba(156,163,175,0.3)]' : rank === 3 ? 'shadow-[0_0_12px_rgba(180,83,9,0.3)]' : ''
+  const initials = getTwoLetterInitials(name)
   return (
-    <div className={`shrink-0 rounded-full bg-gradient-to-br ${border} p-[2px] ${glow}`}>
-      <div className={`rounded-full bg-[#0f172a] flex items-center justify-center font-bold text-white`}
-        style={{ width: size - 4, height: size - 4, fontSize: size * 0.32 }}
-      >
-        {initials}
-      </div>
+    <div className="shrink-0 rounded-full bg-[#16A34A] flex items-center justify-center font-bold text-white shadow-sm"
+      style={{ width: size, height: size, fontSize: size * 0.36, fontFamily: "'Poppins', sans-serif" }}
+    >
+      {initials}
     </div>
   )
 }

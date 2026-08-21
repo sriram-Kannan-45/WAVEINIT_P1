@@ -2,16 +2,15 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { User, LogOut, ChevronDown } from 'lucide-react'
+import { getTwoLetterInitials } from '../common/UserAvatar'
 
 export default function ProfileDropdown({ user, onProfile, onLogout }) {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
-  const initials = user?.name
-    ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
-    : 'U'
+  const initials = getTwoLetterInitials(user?.name)
 
   const roleLabel = user?.role === 'ADMIN' ? 'Admin' : user?.role === 'TRAINER' ? 'Trainer' : 'Learner'
-  const avatarBg = 'linear-gradient(135deg, #16A34A, #22C55E)'
+  const avatarBg = '#16A34A'
 
   return (
     <div style={{ position: 'relative' }}>
@@ -38,7 +37,7 @@ export default function ProfileDropdown({ user, onProfile, onLogout }) {
         <div style={{
           width: 38,
           height: 38,
-          borderRadius: 10,
+          borderRadius: '50%',
           background: avatarBg,
           display: 'flex',
           alignItems: 'center',

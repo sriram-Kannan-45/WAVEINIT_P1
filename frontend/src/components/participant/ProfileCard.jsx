@@ -5,24 +5,15 @@ import {
   Award, TrendingUp, Shield
 } from 'lucide-react'
 import { getTier } from './leaderboardData'
+import { getTwoLetterInitials } from '../common/UserAvatar'
 
 function Avatar({ src, initials, size = 72 }) {
   return (
     <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
-      <div
-        className="absolute inset-0 rounded-full"
-        style={{ background: 'linear-gradient(135deg, #0D9488, #0D9488)', padding: 2 }}
-      >
-        <div className="w-full h-full rounded-full bg-white" />
-      </div>
-      <div className="absolute inset-[3px] rounded-full overflow-hidden flex items-center justify-center bg-gradient-to-br from-primary-50 to-primary-50">
-        {src ? (
-          <img src={src} alt="avatar" className="w-full h-full object-cover" />
-        ) : (
-          <span className="font-display font-black text-primary-600 select-none" style={{ fontSize: size * 0.35 }}>
-            {initials}
-          </span>
-        )}
+      <div className="absolute inset-0 rounded-full overflow-hidden flex items-center justify-center" style={{ background: '#16A34A' }}>
+        <span className="font-bold text-white select-none" style={{ fontSize: size * 0.38, fontFamily: "'Poppins', sans-serif" }}>
+          {initials}
+        </span>
       </div>
     </div>
   )
@@ -93,8 +84,7 @@ function SkillChip({ label }) {
 
 export default function ProfileCard({ user, profileData, rank, xp, onEditClick }) {
   const tier = getTier(xp)
-  const initials = (profileData?.name || user?.name || 'U')
-    .trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+  const initials = getTwoLetterInitials(profileData?.name || user?.name || 'U')
 
   return (
     <motion.div

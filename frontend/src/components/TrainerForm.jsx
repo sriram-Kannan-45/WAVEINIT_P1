@@ -3,6 +3,7 @@ import axios from 'axios'
 import { Camera, KeyRound } from 'lucide-react'
 
 import { API_BASE as API, assetUrl } from '../api/api'
+import UserAvatar, { getTwoLetterInitials } from './common/UserAvatar'
 
 /**
  * TrainerForm — full profile form for the TRAINER to fill/update their details.
@@ -260,8 +261,7 @@ function TrainerForm({ user, onLogout }) {
   }
 
   const displayImage = imagePreview || existingImage
-  const initials = (name) =>
-    name ? name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'TR'
+  const initials = (name) => getTwoLetterInitials(name)
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -283,16 +283,12 @@ function TrainerForm({ user, onLogout }) {
             <div style={{ position: 'relative', flexShrink: 0 }}>
               <div style={{
                 width: 88, height: 88, borderRadius: '50%', overflow: 'hidden',
-                border: '3px solid #e2e8f0', background: '#f1f5f9',
+                border: '3px solid #e2e8f0', background: '#16A34A',
                 display: 'flex', alignItems: 'center', justifyContent: 'center'
               }}>
-                {displayImage ? (
-                  <img src={displayImage} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                ) : (
-                  <span style={{ fontSize: 28, fontWeight: 700, color: '#0D9488', fontFamily: "'Poppins', sans-serif" }}>
-                    {initials(user.name)}
-                  </span>
-                )}
+                <span style={{ fontSize: 28, fontWeight: 700, color: '#FFFFFF', fontFamily: "'Poppins', sans-serif" }}>
+                  {initials(user.name)}
+                </span>
               </div>
               <button
                 type="button"

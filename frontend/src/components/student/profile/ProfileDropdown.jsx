@@ -1,14 +1,13 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { User, Settings, LogOut, ChevronDown } from 'lucide-react'
+import { getTwoLetterInitials } from '../../common/UserAvatar'
 
 export default function ProfileDropdown({ user, onTabChange, onLogout }) {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
 
-  const initials = user?.name
-    ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
-    : 'U'
+  const initials = getTwoLetterInitials(user?.name)
 
   return (
     <div style={{ position: 'relative' }}>
@@ -25,8 +24,8 @@ export default function ProfileDropdown({ user, onTabChange, onLogout }) {
         onMouseLeave={e => { if (!open) e.currentTarget.style.background = 'transparent' }}
       >
         <div style={{
-          width: 34, height: 34, borderRadius: 10,
-          background: 'linear-gradient(135deg, var(--accent), var(--accent-hover))',
+          width: 34, height: 34, borderRadius: '50%',
+          background: '#16A34A',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontSize: 13, fontWeight: 700, color: '#fff', flexShrink: 0,
         }}>

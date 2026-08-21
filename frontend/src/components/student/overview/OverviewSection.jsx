@@ -11,6 +11,7 @@ import { useStudentStats } from '../../../hooks/useStudentStats'
 import { useContinueLearning } from '../../../hooks/useContinueLearning'
 import CourseArtwork from '../../common/CourseArtwork'
 import '../../../styles/trainer-my-trainings.css'
+import { getTwoLetterInitials } from '../../common/UserAvatar'
 
 function OverviewAreaChart() {
   return (
@@ -107,10 +108,7 @@ export default function OverviewSection({
   const avgScore = stats?.averageScore ?? 0
 
   const participantFirstName = user?.name?.trim().split(' ')[0] || 'Learner'
-  const participantInitials = useMemo(() => {
-    if (!user?.name) return 'LE'
-    return user.name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
-  }, [user?.name])
+  const participantInitials = useMemo(() => getTwoLetterInitials(user?.name), [user?.name])
 
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Active'
 

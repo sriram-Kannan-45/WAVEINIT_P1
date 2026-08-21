@@ -1,4 +1,5 @@
 import { colors, typography, radius } from '../../theme/tokens'
+import { getTwoLetterInitials } from '../common/UserAvatar'
 
 const sizeMap = {
   xs: { width: 24, height: 24, fontSize: 10 },
@@ -10,7 +11,7 @@ const sizeMap = {
 
 export default function Avatar({ src, alt, name, size = 'md', style = {}, className = '' }) {
   const s = sizeMap[size] || sizeMap.md
-  const initials = name ? name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() : '?'
+  const initials = getTwoLetterInitials(name)
 
   return (
     <div
@@ -23,8 +24,8 @@ export default function Avatar({ src, alt, name, size = 'md', style = {}, classN
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: colors.primary[100],
-        color: colors.primary[700],
+        background: '#16A34A',
+        color: '#FFFFFF',
         fontSize: s.fontSize,
         fontWeight: 700,
         fontFamily: typography.fontFamily,
@@ -32,11 +33,7 @@ export default function Avatar({ src, alt, name, size = 'md', style = {}, classN
         ...style,
       }}
     >
-      {src ? (
-        <img src={src} alt={alt || name || 'Avatar'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-      ) : (
-        initials
-      )}
+      {initials}
     </div>
   )
 }

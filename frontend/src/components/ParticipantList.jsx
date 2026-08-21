@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Search, Trash2, Eye, Edit2, Check, X, ChevronLeft, ChevronRight, ChevronDown, Users, UserPlus } from 'lucide-react'
 import StatusBadge from './StatusBadge'
 import SkeletonCard from './SkeletonCard'
+import { getTwoLetterInitials } from './common/UserAvatar'
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -17,24 +18,8 @@ const cardVariants = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.3, ease: [0.16, 1, 0.3, 1] } }
 }
 
-const avatarGradients = [
-  'linear-gradient(135deg, #16a34a, #15803d)',
-  'linear-gradient(135deg, #0d9488, #0f766e)',
-  'linear-gradient(135deg, #2563eb, #1d4ed8)',
-  'linear-gradient(135deg, #7c3aed, #6d28d9)',
-  'linear-gradient(135deg, #ea580c, #c2410c)',
-  'linear-gradient(135deg, #d946ef, #c026d3)',
-  'linear-gradient(135deg, #0ea5e9, #0284c7)',
-  'linear-gradient(135deg, #f43f5e, #e11d48)',
-]
-
-function getAvatarGradient(name) {
-  if (!name) return avatarGradients[0]
-  let hash = 0
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  return avatarGradients[Math.abs(hash) % avatarGradients.length]
+function getAvatarGradient() {
+  return '#16A34A'
 }
 
 class ErrorBoundary extends React.Component {
@@ -86,8 +71,7 @@ function ParticipantList({
   const itemsPerPage = 10
 
   const getInitials = useCallback((name) => {
-    if (!name) return '?'
-    return name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+    return getTwoLetterInitials(name)
   }, [])
 
   const counts = useMemo(() => {

@@ -1,6 +1,6 @@
 import { useState } from 'react'
-
 import { API_BASE as API } from '../api/api'
+import UserAvatar, { getTwoLetterInitials } from './common/UserAvatar'
 
 /**
  * TrainerDetails — expanded profile panel shown when admin clicks a trainer card.
@@ -33,11 +33,6 @@ function TrainerDetails({ trainer, token }) {
   if (!fetched && !loading) loadProfile()
 
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
-  const imgSrc = profile?.profile?.imagePath
-    ? (profile.profile.imagePath.startsWith('data:') ? profile.profile.imagePath : `${API.replace('/api', '')}${profile.profile.imagePath}`)
-    : null
-
-  const initials = (name) => name ? name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'TR'
 
   return (
     <div className="trainer-details-panel">
@@ -48,22 +43,9 @@ function TrainerDetails({ trainer, token }) {
         </div>
       ) : (
         <div className="trainer-details-inner">
-          {/* Avatar / Image */}
+          {/* Avatar */}
           <div className="trainer-profile-avatar-wrap">
-            {imgSrc ? (
-              <img
-                src={imgSrc}
-                alt={`${profile?.name} profile`}
-                className="trainer-profile-image"
-                onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex' }}
-              />
-            ) : null}
-            <div
-              className="trainer-profile-initials"
-              style={{ display: imgSrc ? 'none' : 'flex' }}
-            >
-              {initials(profile?.name || trainer.name)}
-            </div>
+            <UserAvatar name={profile?.name || trainer.name} size={72} fontSize={24} />
           </div>
 
           {/* Info grid */}

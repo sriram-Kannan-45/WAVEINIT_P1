@@ -18,6 +18,7 @@ import {
   lblStyle, lblTiny, inputStyle, th, td, skeletonStyle, typography, DIFF_BADGE,
 } from '../../theme/tokens'
 import '../../styles/course-tabs.css'
+import { getTwoLetterInitials } from '../common/UserAvatar'
 
 const blankQuestion = () => ({
   question: '',
@@ -528,7 +529,7 @@ function QuizDetailModal({ quizId, user, courseId, onClose }) {
   ]
 
   const trainerName = user?.name || 'Trainer Kannan'
-  const trainerInitials = trainerName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+  const trainerInitials = getTwoLetterInitials(trainerName)
 
   // Disable background scrolling while modal is open
   useEffect(() => {

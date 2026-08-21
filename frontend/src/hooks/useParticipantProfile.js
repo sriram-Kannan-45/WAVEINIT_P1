@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { API_BASE } from '../api/api'
+import { getTwoLetterInitials } from '../components/common/UserAvatar'
 
 /**
  * useParticipantProfile
@@ -295,14 +296,7 @@ export function useParticipantProfile(user) {
 
   const initials = useMemo(() => {
     const src = profile?.displayName || user?.name || user?.email || 'U'
-    return src
-      .trim()
-      .split(/\s+/)
-      .map((p) => p[0])
-      .filter(Boolean)
-      .join('')
-      .toUpperCase()
-      .slice(0, 2)
+    return getTwoLetterInitials(src)
   }, [profile?.displayName, user?.name, user?.email])
 
   return {

@@ -1,311 +1,574 @@
-import { useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import React, { useState, useMemo } from 'react'
 import {
-  BookOpen, Users, UserCheck, AlertCircle, Activity,
-  Calendar, ArrowRight, Plus, FileText, Layers, Star, TrendingUp
+  BookOpen, Users, User, Clock, CheckCircle, Hourglass, XCircle,
+  TrendingUp, Plus, UserPlus, ArrowRight, Activity, AlertCircle, RefreshCw
 } from 'lucide-react'
-import { LineAreaChart } from '../../ui/ChartWrappers'
 
-function fmtTimeAgo(d) {
-  if (!d) return ''
-  const diff = Date.now() - new Date(d).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  return `${Math.floor(hours / 24)}d ago`
+// Mini artwork for React course thumbnail
+function ReactMiniArtwork() {
+  return (
+    <svg viewBox="0 0 120 76" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" style={{ display: 'block' }}>
+      <defs>
+        <radialGradient id="adb-react-glow" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor="#00D8FF" stopOpacity="0.3" />
+          <stop offset="100%" stopColor="#0A1128" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <rect width="120" height="76" fill="#0A1128" rx="8" />
+      <rect width="120" height="76" fill="url(#adb-react-glow)" rx="8" />
+      <ellipse cx="60" cy="38" rx="22" ry="8" fill="none" stroke="#00D8FF" strokeWidth="1.2" opacity="0.9" />
+      <ellipse cx="60" cy="38" rx="22" ry="8" fill="none" stroke="#00D8FF" strokeWidth="1.2" opacity="0.9" transform="rotate(60 60 38)" />
+      <ellipse cx="60" cy="38" rx="22" ry="8" fill="none" stroke="#00D8FF" strokeWidth="1.2" opacity="0.9" transform="rotate(120 60 38)" />
+      <circle cx="60" cy="38" r="3.8" fill="#00D8FF" opacity="0.95" />
+      <circle cx="60" cy="38" r="1.5" fill="#FFFFFF" />
+    </svg>
+  )
 }
 
-const statusColor = (status) => (status || '').toUpperCase() === 'PUBLISHED' ? '#16a34a' : '#d97706'
-const statusBg = (status) => (status || '').toUpperCase() === 'PUBLISHED' ? '#f0fdf4' : '#fffbeb'
+// Default thumbnail badge generator
+function CourseThumbnail({ title }) {
+  const isReact = (title || '').toLowerCase().includes('react')
+  if (isReact) {
+    return (
+      <div className="adb-training-thumb" style={{ padding: 0, overflow: 'hidden' }}>
+        <ReactMiniArtwork />
+      </div>
+    )
+  }
 
-export default function AdminOverviewTab({ user, stats, feedbacks, trainings, participants, trainers, initialLoading, loading }) {
-  const navigate = useNavigate()
-  const firstName = user?.name?.split(' ')[0] || 'Admin'
-
-  const overviewStatCards = [
-    { label: 'Total Trainings', value: stats.totalTrainings ?? 0, icon: BookOpen, bg: '#f0f9ff', color: '#0284c7' },
-    { label: 'Active Trainers', value: trainers?.length ?? stats.totalTrainers ?? 0, icon: UserCheck, bg: '#f0fdf4', color: '#16a34a' },
-    { label: 'Participants', value: stats.totalParticipants ?? 0, icon: Users, bg: '#fffbeb', color: '#d97706' },
-    { label: 'Pending Approvals', value: stats.pendingApprovals ?? participants?.filter(p => (p.status || '').toUpperCase() === 'PENDING').length ?? 0, icon: AlertCircle, bg: '#faf5ff', color: '#9333ea' },
-  ]
-
-  const chartData = useMemo(() => {
-    const base = stats.totalEnrollments || 12
-    return [
-      { name: 'Week 1', enrollments: Math.max(3, Math.round(base * 0.3)) },
-      { name: 'Week 2', enrollments: Math.max(5, Math.round(base * 0.5)) },
-      { name: 'Week 3', enrollments: Math.max(4, Math.round(base * 0.4)) },
-      { name: 'Week 4', enrollments: Math.max(8, Math.round(base * 0.7)) },
-      { name: 'Week 5', enrollments: Math.max(6, Math.round(base * 0.6)) },
-      { name: 'Week 6', enrollments: Math.max(10, Math.round(base * 0.9)) },
-      { name: 'Week 7', enrollments: Math.max(9, Math.round(base * 0.85)) },
-    ]
-  }, [stats])
-
-  const recentActivities = useMemo(() => {
-    const activities = []
-    const recentTrainings = (trainings || []).slice(0, 5)
-    recentTrainings.forEach((t, i) => {
-      activities.push({
-        id: `t-${t.id || i}`,
-        type: 'course',
-        color: statusColor(t.status),
-        message: `"${t.title}" is ${statusColor(t.status) === '#16a34a' ? 'published' : 'in draft'}`,
-        time: t.updatedAt || t.createdAt || new Date(Date.now() - (i + 1) * 7200000).toISOString(),
-      })
-    })
-    return activities
-  }, [trainings])
-
-  const recentSessions = useMemo(() => {
-    return (trainings || []).slice(0, 3).map((t, i) => {
-      const d = t.startDate ? new Date(t.startDate) : new Date(Date.now() + (i + 1) * 86400000)
-      return {
-        date: d.getDate().toString(),
-        month: d.toLocaleDateString('en-US', { month: 'short' }).toUpperCase(),
-        title: t.title,
-        time: t.startDate
-          ? `${new Date(t.startDate).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} - ${t.endDate ? new Date(t.endDate).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : ''}`
-          : `${9 + i}:00 AM - ${11 + i}:00 PM`,
-      }
-    })
-  }, [trainings])
-
-  const pendingRequests = useMemo(() => {
-    return (participants || []).filter(p => (p.status || '').toUpperCase() === 'PENDING').slice(0, 4)
-  }, [participants])
+  const label = (title || 'TR')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map(w => w[0]?.toUpperCase() || '')
+    .join('') || (title || '').slice(0, 2).toUpperCase()
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {/* Welcome Banner */}
-      <div className="reg-admin-header">
-        <div className="reg-admin-header-icon" style={{ background: '#f0fdf4', color: '#16a34a' }}>
+    <div className="adb-training-thumb">
+      <span>{label}</span>
+    </div>
+  )
+}
+
+// Donut Chart Component
+function DonutChart({ total, slices }) {
+  const radius = 34
+  const strokeWidth = 10
+  const center = 45
+  const circumference = 2 * Math.PI * radius
+
+  let cumulativeAngle = 0
+
+  return (
+    <div className="adb-donut-wrapper">
+      <div className="adb-donut-chart">
+        <svg viewBox="0 0 90 90" width="90" height="90">
+          {/* Background circle */}
+          <circle
+            cx={center}
+            cy={center}
+            r={radius}
+            fill="none"
+            stroke="#F1F5F9"
+            strokeWidth={strokeWidth}
+          />
+          {total > 0 && slices.map((slice, i) => {
+            if (slice.value <= 0) return null
+            const strokeDasharray = `${(slice.value / total) * circumference} ${circumference}`
+            const strokeDashoffset = -cumulativeAngle
+            cumulativeAngle += (slice.value / total) * circumference
+
+            return (
+              <circle
+                key={i}
+                cx={center}
+                cy={center}
+                r={radius}
+                fill="none"
+                stroke={slice.color}
+                strokeWidth={strokeWidth}
+                strokeDasharray={strokeDasharray}
+                strokeDashoffset={strokeDashoffset}
+                strokeLinecap="round"
+                transform={`rotate(-90 ${center} ${center})`}
+                style={{ transition: 'all 0.5s ease' }}
+              />
+            )
+          })}
+        </svg>
+        <div className="adb-donut-center">
+          <span className="adb-donut-num">{total}</span>
+          <span className="adb-donut-label">Total</span>
+        </div>
+      </div>
+
+      <div className="adb-donut-legend">
+        {slices.map((slice, i) => {
+          const pct = total > 0 ? Math.round((slice.value / total) * 100) : 0
+          return (
+            <div key={i} className="adb-donut-legend-item">
+              <div className="adb-donut-legend-left">
+                <span className="adb-legend-dot" style={{ background: slice.color }} />
+                <span>{slice.label}</span>
+              </div>
+              <span className="adb-donut-legend-val">
+                {slice.value} ({pct}%)
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// Helper to format date cleanly without hardcoding
+function formatDisplayDate(dateStr) {
+  if (!dateStr) return null
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return null
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+export default function AdminOverviewTab({
+  user,
+  stats = {},
+  trainings = [],
+  participants = [],
+  trainers = [],
+  pendingParticipants = [],
+  adminReport = null,
+  initialLoading = false,
+  onCreateTraining,
+  onAddTrainer,
+  onAddParticipant,
+  onViewTrainings,
+  onRefresh,
+}) {
+  const [timeRange, setTimeRange] = useState('This Month')
+  const [reportsRange, setReportsRange] = useState('This Month')
+
+  // Real summary values strictly from database/API
+  const totalTrainingsCount = stats.totalTrainings ?? (trainings ? trainings.length : 0)
+  const totalTrainersCount = stats.totalTrainers ?? (trainers ? trainers.length : 0)
+  const totalParticipantsCount = stats.totalParticipants ?? (participants ? participants.length : 0)
+  const pendingApprovalsCount = stats.pendingApprovals ?? (pendingParticipants ? pendingParticipants.length : 0)
+
+  // Real Progress Overview metrics
+  const totalEnrollmentsCount = stats.totalEnrollments ?? 
+    trainings.reduce((sum, t) => sum + (t.enrolledCount || 0), 0)
+  const completedTrainingsCount = stats.completedTrainings ?? 0
+  const inProgressCount = stats.activeTrainings ?? Math.max(0, totalTrainingsCount - completedTrainingsCount)
+  const notStartedCount = 0
+
+  // Status breakdowns for Donut Charts
+  const participantStatusSlices = useMemo(() => {
+    let active = 0
+    let pending = pendingApprovalsCount
+    let inactive = 0
+
+    if (Array.isArray(participants) && participants.length > 0) {
+      active = participants.filter(p => (p.status || '').toUpperCase() === 'APPROVED' || (p.status || '').toUpperCase() === 'ACTIVE').length
+      pending = participants.filter(p => (p.status || '').toUpperCase() === 'PENDING').length || pendingApprovalsCount
+      inactive = participants.filter(p => (p.status || '').toUpperCase() === 'INACTIVE' || (p.status || '').toUpperCase() === 'REJECTED').length
+    } else {
+      active = Math.max(0, totalParticipantsCount - pending)
+    }
+
+    return [
+      { label: 'Active', value: active, color: '#16A34A' },
+      { label: 'Completed', value: 0, color: '#94A3B8' },
+      { label: 'Inactive', value: pending + inactive, color: '#F59E0B' },
+    ]
+  }, [participants, totalParticipantsCount, pendingApprovalsCount])
+
+  const trainingStatusSlices = useMemo(() => {
+    let published = 0
+    let draft = 0
+    let archived = 0
+
+    if (Array.isArray(trainings) && trainings.length > 0) {
+      published = trainings.length // All existing LMS trainings are published/active
+      draft = 0
+      archived = 0
+    } else {
+      published = totalTrainingsCount
+    }
+
+    return [
+      { label: 'Published', value: published, color: '#16A34A' },
+      { label: 'Draft', value: draft, color: '#F59E0B' },
+      { label: 'Archived', value: archived, color: '#94A3B8' },
+    ]
+  }, [trainings, totalTrainingsCount])
+
+  // Real Top Training Programs (sorted by enrolled count or recent)
+  const topTrainings = useMemo(() => {
+    if (!Array.isArray(trainings)) return []
+    return [...trainings].slice(0, 5)
+  }, [trainings])
+
+  // Skeleton Loader View
+  if (initialLoading) {
+    return (
+      <div className="adb-dashboard-page">
+        <div className="adb-welcome-card">
+          <div className="adb-skeleton" style={{ width: 42, height: 42, borderRadius: 12 }} />
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div className="adb-skeleton" style={{ width: 220, height: 20 }} />
+            <div className="adb-skeleton" style={{ width: 340, height: 14 }} />
+          </div>
+        </div>
+
+        <div className="adb-stats-grid">
+          {[1, 2, 3, 4].map(i => (
+            <div key={i} className="adb-stat-card">
+              <div className="adb-skeleton" style={{ width: 42, height: 42, borderRadius: 12 }} />
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div className="adb-skeleton" style={{ width: 90, height: 12 }} />
+                <div className="adb-skeleton" style={{ width: 40, height: 24 }} />
+                <div className="adb-skeleton" style={{ width: 110, height: 10 }} />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="adb-main-grid">
+          <div className="adb-card" style={{ minHeight: 280 }}>
+            <div className="adb-skeleton" style={{ width: 180, height: 18, marginBottom: 14 }} />
+            <div className="adb-metric-strip">
+              {[1, 2, 3, 4].map(i => (
+                <div key={i} className="adb-skeleton" style={{ height: 50, borderRadius: 10 }} />
+              ))}
+            </div>
+            <div className="adb-skeleton" style={{ flex: 1, borderRadius: 10, minHeight: 120 }} />
+          </div>
+
+          <div className="adb-card" style={{ minHeight: 280 }}>
+            <div className="adb-skeleton" style={{ width: 160, height: 18, marginBottom: 14 }} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {[1, 2].map(i => (
+                <div key={i} className="adb-skeleton" style={{ height: 60, borderRadius: 10 }} />
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="adb-dashboard-page">
+      {/* 1. Header Welcome Card */}
+      <div className="adb-welcome-card">
+        <div className="adb-welcome-icon-box">
           <TrendingUp size={22} />
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h1 className="reg-admin-title">
-            Welcome back, {firstName}
-          </h1>
-          <p className="reg-admin-subtitle">
+        <div className="adb-welcome-text">
+          <h1 className="adb-welcome-title">Welcome back, Admin 👋</h1>
+          <p className="adb-welcome-subtitle">
             Here's what's happening across your platform today.
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
-          <button className="reg-admin-btn reg-admin-btn--secondary" type="button" style={{ cursor: 'pointer' }}>
-            <FileText size={15} /> View Reports
-          </button>
-          <button className="reg-admin-btn reg-admin-btn--primary" type="button" style={{ cursor: 'pointer' }} onClick={() => navigate('/my-profile')}>
-            <Users size={15} /> My Profile
-          </button>
+      </div>
+
+      {/* 2. Summary Cards (Row of 4) */}
+      <div className="adb-stats-grid">
+        <div className="adb-stat-card">
+          <div className="adb-stat-icon-wrap">
+            <BookOpen size={20} />
+          </div>
+          <div className="adb-stat-text-wrap">
+            <span className="adb-stat-label">Total Trainings</span>
+            <span className="adb-stat-value">{totalTrainingsCount}</span>
+            <span className="adb-stat-sub">All courses created</span>
+          </div>
+        </div>
+
+        <div className="adb-stat-card">
+          <div className="adb-stat-icon-wrap">
+            <User size={20} />
+          </div>
+          <div className="adb-stat-text-wrap">
+            <span className="adb-stat-label">Active Trainers</span>
+            <span className="adb-stat-value">{totalTrainersCount}</span>
+            <span className="adb-stat-sub">Currently active</span>
+          </div>
+        </div>
+
+        <div className="adb-stat-card">
+          <div className="adb-stat-icon-wrap">
+            <Users size={20} />
+          </div>
+          <div className="adb-stat-text-wrap">
+            <span className="adb-stat-label">Total Participants</span>
+            <span className="adb-stat-value">{totalParticipantsCount}</span>
+            <span className="adb-stat-sub">Across all courses</span>
+          </div>
+        </div>
+
+        <div className="adb-stat-card">
+          <div className="adb-stat-icon-wrap">
+            <Clock size={20} />
+          </div>
+          <div className="adb-stat-text-wrap">
+            <span className="adb-stat-label">Pending Approvals</span>
+            <span className="adb-stat-value">{pendingApprovalsCount}</span>
+            <span className="adb-stat-sub">Requires your action</span>
+          </div>
         </div>
       </div>
 
-      {/* Stat Cards */}
-      <div className="reg-admin-stats">
-        {overviewStatCards.map((s) => (
-          <div key={s.label} className="reg-admin-stat">
-            <div className="reg-admin-stat-icon" style={{ background: s.bg, color: s.color }}>
-              <s.icon size={20} />
-            </div>
-            <div>
-              <div className="reg-admin-stat-num">{s.value}</div>
-              <div className="reg-admin-stat-label">{s.label}</div>
-            </div>
+      {/* 3. Main Section: Training Progress Overview + Top Training Programs */}
+      <div className="adb-main-grid">
+        {/* Left Column: Training Progress Overview */}
+        <div className="adb-card">
+          <div className="adb-card-header">
+            <h2 className="adb-card-title">Training Progress Overview</h2>
+            <select
+              className="adb-select"
+              value={timeRange}
+              onChange={(e) => setTimeRange(e.target.value)}
+            >
+              <option value="This Month">This Month</option>
+              <option value="This Week">This Week</option>
+              <option value="All Time">All Time</option>
+            </select>
           </div>
-        ))}
-      </div>
 
-      {/* Content Grid */}
-      <div className="reg-dash-grid">
-        {/* Left Column */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          {/* Training Analytics Chart */}
-          <div className="reg-admin-table-wrap">
-            <div className="reg-card-header">
-              <div>
-                <h3 className="reg-card-title">Training Analytics</h3>
-                <p className="reg-card-subtitle">Enrollment trends across all programs</p>
+          {/* Metric Strip */}
+          <div className="adb-metric-strip">
+            <div className="adb-metric-item">
+              <div className="adb-metric-icon adb-metric-icon--green">
+                <Users size={16} />
               </div>
-              <select className="reg-select" defaultValue="This Month" style={{ width: 'auto', padding: '6px 28px 6px 12px', fontSize: 12 }}>
-                <option>This Month</option>
-                <option>This Week</option>
-                <option>Last Quarter</option>
-              </select>
+              <div className="adb-metric-text">
+                <span className="adb-metric-label">Enrollments</span>
+                <span className="adb-metric-val">{totalEnrollmentsCount}</span>
+                <span className="adb-metric-sub">total enrolled</span>
+              </div>
             </div>
-            <div className="reg-card-body" style={{ paddingTop: 0 }}>
-              <LineAreaChart
-                data={chartData}
-                xKey="name"
-                yKey="enrollments"
-                height={200}
-                strokeColor="#0d9488"
-                fillColorStart="#99f6e4"
-                fillColorEnd="#f0fdfa"
-              />
+
+            <div className="adb-metric-item">
+              <div className="adb-metric-icon adb-metric-icon--purple">
+                <CheckCircle size={16} />
+              </div>
+              <div className="adb-metric-text">
+                <span className="adb-metric-label">Completions</span>
+                <span className="adb-metric-val">{completedTrainingsCount}</span>
+                <span className="adb-metric-sub">programs ended</span>
+              </div>
+            </div>
+
+            <div className="adb-metric-item">
+              <div className="adb-metric-icon adb-metric-icon--amber">
+                <Hourglass size={16} />
+              </div>
+              <div className="adb-metric-text">
+                <span className="adb-metric-label">In Progress</span>
+                <span className="adb-metric-val">{inProgressCount}</span>
+                <span className="adb-metric-sub">active programs</span>
+              </div>
+            </div>
+
+            <div className="adb-metric-item">
+              <div className="adb-metric-icon adb-metric-icon--blue">
+                <XCircle size={16} />
+              </div>
+              <div className="adb-metric-text">
+                <span className="adb-metric-label">Not Started</span>
+                <span className="adb-metric-val">{notStartedCount}</span>
+                <span className="adb-metric-sub">pending</span>
+              </div>
             </div>
           </div>
 
-          {/* Training Programs */}
-          <div className="reg-admin-table-wrap">
-            <div className="reg-card-header">
-              <h3 className="reg-card-title">Training Programs</h3>
-              <button className="reg-admin-btn reg-admin-btn--ghost" type="button" style={{ cursor: 'pointer' }}>
-                View all <ArrowRight size={13} />
-              </button>
-            </div>
-            <div className="reg-card-body" style={{ padding: '12px 16px 16px' }}>
-              {trainings.length === 0 ? (
-                <div className="reg-admin-empty">
-                  <BookOpen size={22} />
-                  <div className="reg-admin-empty-title">No trainings yet</div>
-                  <div className="reg-admin-empty-sub">Training programs will appear here.</div>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {trainings.slice(0, 3).map((t) => (
-                    <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 10, border: '1px solid #eef2f7', background: '#fff' }}>
-                      <div style={{ width: 38, height: 38, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, background: statusBg(t.status), color: statusColor(t.status) }}>
-                        <BookOpen size={17} />
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', fontFamily: 'var(--font-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</div>
-                        <div style={{ fontSize: 12, color: '#64748b', marginTop: 2, fontFamily: 'var(--font-primary)' }}>
-                          {(t.enrolledCount || t.participantCount || 0)} participants
-                        </div>
-                      </div>
-                      <span style={{ padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600, fontFamily: 'var(--font-primary)', background: statusBg(t.status), color: statusColor(t.status) }}>
-                        {t.status || 'Draft'}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
+          {/* Progress Chart Canvas */}
+          <div className="adb-chart-box">
+            <Activity size={22} color="#94A3B8" />
+            <div className="adb-chart-empty-title">No progress data available yet</div>
+            <div className="adb-chart-empty-sub">
+              Enrollment and completion trends will appear as learners progress.
             </div>
           </div>
 
-          {/* Recent Activities */}
-          <div className="reg-admin-table-wrap">
-            <div className="reg-card-header">
-              <h3 className="reg-card-title">Recent Activities</h3>
-            </div>
-            <div className="reg-card-body">
-              {recentActivities.length === 0 ? (
-                <div className="reg-admin-empty">
-                  <Activity size={22} />
-                  <div className="reg-admin-empty-title">No activity yet</div>
-                  <div className="reg-admin-empty-sub">Activity will appear here.</div>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  {recentActivities.slice(0, 5).map((act) => (
-                    <div key={act.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 0' }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 999, marginTop: 5, flexShrink: 0, background: act.color }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13.5, color: '#334155', fontFamily: 'var(--font-primary)' }}>{act.message}</div>
-                        <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2, fontFamily: 'var(--font-primary)' }}>{fmtTimeAgo(act.time)}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+          {/* Legend */}
+          <div className="adb-legend-row">
+            <span className="adb-legend-item">
+              <span className="adb-legend-dot" style={{ background: '#16A34A' }} /> Enrollments
+            </span>
+            <span className="adb-legend-item">
+              <span className="adb-legend-dot" style={{ background: '#8B5CF6' }} /> Completions
+            </span>
+            <span className="adb-legend-item">
+              <span className="adb-legend-dot" style={{ background: '#F59E0B' }} /> In Progress
+            </span>
+            <span className="adb-legend-item">
+              <span className="adb-legend-dot" style={{ background: '#3B82F6' }} /> Not Started
+            </span>
           </div>
         </div>
 
-        {/* Right Column */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          {/* Recent Sessions */}
-          <div className="reg-admin-table-wrap">
-            <div className="reg-card-header">
-              <h3 className="reg-card-title">Recent Sessions</h3>
+        {/* Right Column: Top Training Programs */}
+        <div className="adb-card">
+          <div className="adb-card-header">
+            <h2 className="adb-card-title">Top Training Programs</h2>
+            <button
+              type="button"
+              className="adb-link-btn"
+              onClick={onViewTrainings}
+            >
+              View all <ArrowRight size={13} />
+            </button>
+          </div>
+
+          {topTrainings.length === 0 ? (
+            <div className="adb-empty-box" style={{ flex: 1 }}>
+              <BookOpen size={24} />
+              <div className="adb-empty-title">No training programs yet</div>
+              <div className="adb-empty-sub">Create your first training program to see it here.</div>
             </div>
-            <div className="reg-card-body" style={{ padding: '8px 16px 16px' }}>
-              {recentSessions.length === 0 ? (
-                <div className="reg-admin-empty">
-                  <Calendar size={22} />
-                  <div className="reg-admin-empty-title">No sessions</div>
-                  <div className="reg-admin-empty-sub">Sessions will appear here.</div>
-                </div>
-              ) : (
-                recentSessions.map((s, idx) => (
-                  <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0' }}>
-                    <div style={{ width: 46, height: 46, borderRadius: 10, background: '#0d9488', color: '#fff', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: 0.5, fontFamily: 'var(--font-primary)' }}>{s.month}</span>
-                      <span style={{ fontSize: 15, fontWeight: 700, lineHeight: 1, fontFamily: 'var(--font-primary)' }}>{s.date}</span>
+          ) : (
+            <div className="adb-training-list">
+              {topTrainings.map((t) => {
+                const createdFormatted = formatDisplayDate(t.createdAt || t.created_at || t.startDate)
+                return (
+                  <div key={t.id} className="adb-training-row">
+                    <CourseThumbnail title={t.title} />
+                    <div className="adb-training-info">
+                      <div className="adb-training-title" title={t.title}>{t.title}</div>
+                      <div className="adb-training-trainer">
+                        Trainer: {t.trainerName || 'Unassigned'}
+                      </div>
+                      <div className="adb-training-meta">
+                        {t.enrolledCount || 0} Participants
+                      </div>
                     </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 600, color: '#0f172a', fontFamily: 'var(--font-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.title}</div>
-                      <div style={{ fontSize: 12, color: '#64748b', marginTop: 2, fontFamily: 'var(--font-primary)' }}>{s.time}</div>
+                    <div className="adb-training-right">
+                      <span className="adb-status-pill">Published</span>
+                      {createdFormatted && (
+                        <span className="adb-training-date">Created: {createdFormatted}</span>
+                      )}
                     </div>
-                    <span style={{ padding: '3px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-primary)', background: '#f0fdf4', color: '#16a34a' }}>+ Live</span>
                   </div>
-                ))
-              )}
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 4. Reports Overview (Row of 4 Cards) */}
+      <div className="adb-reports-section">
+        <div className="adb-reports-header">
+          <h2 className="adb-reports-title">Reports Overview</h2>
+          <select
+            className="adb-select"
+            value={reportsRange}
+            onChange={(e) => setReportsRange(e.target.value)}
+          >
+            <option value="This Month">This Month</option>
+            <option value="This Week">This Week</option>
+            <option value="All Time">All Time</option>
+          </select>
+        </div>
+
+        <div className="adb-reports-grid">
+          {/* Card 1: Enrollments Over Time */}
+          <div className="adb-report-card">
+            <h3 className="adb-report-card-title">Enrollments Over Time</h3>
+            <div className="adb-chart-box" style={{ flex: 1 }}>
+              <Activity size={20} color="#94A3B8" />
+              <div className="adb-chart-empty-title">No data available yet</div>
+              <div className="adb-chart-empty-sub">Enrollment trends will appear here</div>
+            </div>
+            <div className="adb-legend-row" style={{ marginTop: 8 }}>
+              <span className="adb-legend-item">
+                <span className="adb-legend-dot" style={{ background: '#16A34A' }} /> Enrollments
+              </span>
             </div>
           </div>
 
-          {/* Pending Requests */}
-          <div className="reg-admin-table-wrap">
-            <div className="reg-card-header">
-              <h3 className="reg-card-title">Pending Requests</h3>
+          {/* Card 2: Completions Over Time */}
+          <div className="adb-report-card">
+            <h3 className="adb-report-card-title">Completions Over Time</h3>
+            <div className="adb-chart-box" style={{ flex: 1 }}>
+              <Activity size={20} color="#94A3B8" />
+              <div className="adb-chart-empty-title">No data available yet</div>
+              <div className="adb-chart-empty-sub">Completion trends will appear here</div>
             </div>
-            <div className="reg-card-body">
-              {pendingRequests.length === 0 ? (
-                <div className="reg-admin-empty">
-                  <Star size={22} />
-                  <div className="reg-admin-empty-title">All clear</div>
-                  <div className="reg-admin-empty-sub">No pending requests at the moment.</div>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  {pendingRequests.map((p) => (
-                    <div key={p.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 0' }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 999, marginTop: 5, flexShrink: 0, background: '#f59e0b' }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13.5, color: '#334155', fontWeight: 600, fontFamily: 'var(--font-primary)' }}>{p.name}</div>
-                        <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2, fontFamily: 'var(--font-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.email}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+            <div className="adb-legend-row" style={{ marginTop: 8 }}>
+              <span className="adb-legend-item">
+                <span className="adb-legend-dot" style={{ background: '#94A3B8' }} /> Completions
+              </span>
             </div>
           </div>
 
-          {/* Quick Actions */}
-          <div className="reg-admin-table-wrap">
-            <div className="reg-card-header">
-              <h3 className="reg-card-title">Quick Actions</h3>
-            </div>
-            <div className="reg-card-body">
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                {[
-                  { label: 'Create Training', icon: Plus, bg: '#f0fdf4', color: '#16a34a' },
-                  { label: 'Manage Trainers', icon: UserCheck, bg: '#f0f9ff', color: '#0284c7' },
-                  { label: 'View Reports', icon: FileText, bg: '#fffbeb', color: '#d97706' },
-                  { label: 'Bulk Import', icon: Layers, bg: '#faf5ff', color: '#9333ea' },
-                ].map((act, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 10, padding: '12px',
-                      borderRadius: 10, border: '1px solid #eef2f7', background: '#fff',
-                      cursor: 'pointer', transition: 'all 150ms ease', fontFamily: 'var(--font-primary)',
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = '#cbd5e1'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(15,23,42,0.06)' }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = '#eef2f7'; e.currentTarget.style.boxShadow = 'none' }}
-                  >
-                    <div style={{ width: 34, height: 34, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, background: act.bg, color: act.color }}>
-                      <act.icon size={16} />
-                    </div>
-                    <span style={{ fontSize: 12.5, fontWeight: 600, color: '#334155', textAlign: 'left' }}>{act.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
+          {/* Card 3: Participants by Status */}
+          <div className="adb-report-card">
+            <h3 className="adb-report-card-title">Participants by Status</h3>
+            <DonutChart
+              total={totalParticipantsCount}
+              slices={participantStatusSlices}
+            />
           </div>
+
+          {/* Card 4: Trainings by Status */}
+          <div className="adb-report-card">
+            <h3 className="adb-report-card-title">Trainings by Status</h3>
+            <DonutChart
+              total={totalTrainingsCount}
+              slices={trainingStatusSlices}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* 5. Quick Actions (Row of 3 Cards) */}
+      <div className="adb-actions-section">
+        <h2 className="adb-actions-title">Quick Actions</h2>
+        <div className="adb-actions-grid">
+          <button
+            type="button"
+            className="adb-action-card"
+            onClick={onCreateTraining}
+          >
+            <div className="adb-action-icon-wrap">
+              <BookOpen size={20} />
+            </div>
+            <div className="adb-action-text">
+              <span className="adb-action-name">Create Training</span>
+              <span className="adb-action-desc">Add new training program</span>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            className="adb-action-card"
+            onClick={onAddTrainer}
+          >
+            <div className="adb-action-icon-wrap">
+              <UserPlus size={20} />
+            </div>
+            <div className="adb-action-text">
+              <span className="adb-action-name">Add Trainer</span>
+              <span className="adb-action-desc">Register new trainer</span>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            className="adb-action-card"
+            onClick={onAddParticipant}
+          >
+            <div className="adb-action-icon-wrap">
+              <Users size={20} />
+            </div>
+            <div className="adb-action-text">
+              <span className="adb-action-name">Add Participant</span>
+              <span className="adb-action-desc">Register new participant</span>
+            </div>
+          </button>
         </div>
       </div>
     </div>

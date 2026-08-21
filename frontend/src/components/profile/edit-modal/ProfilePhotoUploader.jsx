@@ -4,6 +4,7 @@ import { Camera, Upload, Trash2, Loader2 } from 'lucide-react';
 import { assetUrl } from '../../../api/api';
 import profileService from '../../../services/profileService';
 import toast from 'react-hot-toast';
+import { getTwoLetterInitials } from '../../common/UserAvatar';
 
 export default function ProfilePhotoUploader({ profile, onAvatarUpdate }) {
   const fileInputRef = useRef(null);
@@ -11,9 +12,7 @@ export default function ProfilePhotoUploader({ profile, onAvatarUpdate }) {
   const [isDragOver, setIsDragOver] = useState(false);
 
   const user = profile?.user;
-  const initials = user?.name
-    ? user.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
-    : '??';
+  const initials = getTwoLetterInitials(user?.name);
 
   const handleFileSelect = async (file) => {
     if (!file) return;
@@ -78,7 +77,7 @@ export default function ProfilePhotoUploader({ profile, onAvatarUpdate }) {
         <div
           className="w-24 h-24 rounded-full flex items-center justify-center overflow-hidden"
           style={{
-            background: 'linear-gradient(135deg, #10B981, #0D9488)',
+            background: '#16A34A',
             border: '4px solid #fff',
             boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
           }}

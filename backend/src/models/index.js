@@ -459,6 +459,13 @@ InterviewNotes.belongsTo(User, { foreignKey: 'author_id', as: 'author' });
 Interview.hasMany(InterviewNotes, { foreignKey: 'interview_id', as: 'notes' });
 User.hasMany(InterviewNotes, { foreignKey: 'author_id', as: 'interviewNotes' });
 
+Interview.hasOne(InterviewResult, { foreignKey: 'interview_id', as: 'result' });
+InterviewResult.belongsTo(Interview, { foreignKey: 'interview_id', as: 'interview' });
+InterviewSession.hasOne(InterviewResult, { foreignKey: 'session_id', as: 'result' });
+InterviewResult.belongsTo(InterviewSession, { foreignKey: 'session_id', as: 'session' });
+InterviewResult.belongsTo(User, { foreignKey: 'decided_by', as: 'decidedBy' });
+User.hasMany(InterviewResult, { foreignKey: 'decided_by', as: 'interviewResults' });
+
 // Unified Monitoring Engine Associations
 User.hasMany(MonitoringSession, { foreignKey: 'participantId', as: 'monitoringSessions' });
 MonitoringSession.belongsTo(User, { foreignKey: 'participantId', as: 'participant' });

@@ -9,6 +9,7 @@ import {
 import profileService from '../../services/profileService'
 import { API_BASE, assetUrl } from '../../api/api'
 import './TrainerProfileModal.css'
+import { getTwoLetterInitials } from '../common/UserAvatar'
 
 const fmtDate = (d) => {
   if (!d) return '—'
@@ -20,8 +21,7 @@ const fmtDate = (d) => {
   }
 }
 
-const initials = (name) =>
-  name ? name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'TR'
+const initials = (name) => getTwoLetterInitials(name)
 
 export default function TrainerProfileModal({
   open,

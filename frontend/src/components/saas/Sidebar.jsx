@@ -19,6 +19,8 @@ import {
 import { useLocation, useNavigate } from 'react-router-dom'
 import { API } from '../../api/api'
 import ProfileDropdown from './ProfileDropdown'
+import { WaveInitLogoIcon } from '../common/WaveInitLogo'
+import { getTwoLetterInitials } from '../common/UserAvatar'
 
 const ROLE_HOME = {
   ADMIN: '/admin',
@@ -26,19 +28,18 @@ const ROLE_HOME = {
   PARTICIPANT: '/participant',
 }
 
-const initials = (name) =>
-  name ? name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'U'
+const initials = (name) => getTwoLetterInitials(name)
 
 const navGroups = {
   ADMIN: [
     {
-      title: 'Overview',
+      title: 'OVERVIEW',
       items: [
         { key: 'overview', label: 'Dashboard', icon: LayoutDashboard },
       ],
     },
     {
-      title: 'Management',
+      title: 'MANAGEMENT',
       items: [
         { key: 'trainings', label: 'Training Programs', icon: BookOpen },
         { key: 'trainers', label: 'Trainers', icon: UserCheck },
@@ -46,7 +47,7 @@ const navGroups = {
       ],
     },
     {
-      title: 'Interviews',
+      title: 'INTERVIEWS',
       items: [
         { key: 'interviews', label: 'Interviews', icon: Video },
       ],
@@ -203,13 +204,10 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
           {/* Logo Header */}
           <div className="wl-sidebar-logo">
             <div className="wl-sidebar-logo-mark">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
-                <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
-              </svg>
+              <WaveInitLogoIcon size={24} color="#16A34A" />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="wl-sidebar-brand">Wave Init LMS</div>
+              <div className="wl-sidebar-brand">WAVE INIT LMS</div>
               <div className="wl-sidebar-tagline">{roleLabel} Portal</div>
             </div>
             <button onClick={onCloseSidebar} className="wl-sidebar-close">

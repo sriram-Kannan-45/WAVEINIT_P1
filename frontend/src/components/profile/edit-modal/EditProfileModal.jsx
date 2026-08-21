@@ -10,6 +10,7 @@ import toast from 'react-hot-toast';
 import { assetUrl } from '../../../api/api';
 import profileService from '../../../services/profileService';
 import './EditProfilePage.css';
+import { getTwoLetterInitials } from '../../common/UserAvatar';
 
 const NAV_ITEMS = [
   { id: 'basic', label: 'Basic Information', icon: User },
@@ -197,9 +198,7 @@ export default function EditProfileModal({ open, onClose, profile, onSave }) {
 
   if (!open) return null;
 
-  const initials = form.name
-    ? form.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
-    : (isTrainer ? 'TR' : 'S');
+  const initials = getTwoLetterInitials(form.name || (isTrainer ? 'TR' : 'ST'));
   const userEmail = profile?.user?.email || profile?.email || 'wavene2@gmail.com';
 
   const modalJSX = (

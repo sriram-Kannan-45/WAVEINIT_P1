@@ -16,6 +16,7 @@ import Pagination from '../components/Pagination'
 import { Button, Badge, EmptyState, StatCard, ProgressBar } from '../components/ui'
 import CourseArtwork from '../components/common/CourseArtwork'
 import { API_BASE } from '../api/api'
+import UserAvatar, { getTwoLetterInitials } from '../components/common/UserAvatar'
 
 
 const API = API_BASE
@@ -234,7 +235,7 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
   }, [tab])
 
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'
-  const initials = (name) => name ? name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'TR'
+  const initials = (name) => getTwoLetterInitials(name)
   const Stars = ({ v }) => (
     <span style={{ display: 'inline-flex', gap: '2px' }}>
       {[1, 2, 3, 4, 5].map(s => (
@@ -253,10 +254,7 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
   const totalFeedbackPages = Math.ceil((feedbacks.length || 0) / feedbackItemsPerPage) || 1
 
   const trainerFirstName = user?.name?.trim().split(' ')[0] || 'Sriram'
-  const trainerInitials = useMemo(() => {
-    if (!user?.name) return 'SK'
-    return user.name.trim().split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
-  }, [user?.name])
+  const trainerInitials = useMemo(() => getTwoLetterInitials(user?.name), [user?.name])
 
   return (
     <>

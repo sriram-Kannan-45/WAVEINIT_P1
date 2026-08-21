@@ -7,6 +7,7 @@ import {
 import { assetUrl } from '../../api/api';
 import profileService from '../../services/profileService';
 import toast from 'react-hot-toast';
+import { getTwoLetterInitials } from '../common/UserAvatar';
 
 const DEFAULT_BANNER = 'data:image/svg+xml,' + encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="280"><defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#059669"/><stop offset="50%" style="stop-color:#10B981"/><stop offset="100%" style="stop-color:#0D9488"/></linearGradient></defs><rect fill="url(#g)" width="1200" height="280"/><text x="600" y="140" text-anchor="middle" fill="rgba(255,255,255,0.08)" font-size="72" font-weight="bold" font-family="system-ui">WAVE INIT</text><circle cx="100" cy="60" r="80" fill="rgba(255,255,255,0.04)"/><circle cx="1100" cy="220" r="100" fill="rgba(255,255,255,0.04)"/><circle cx="400" cy="250" r="50" fill="rgba(255,255,255,0.03)"/></svg>'
@@ -28,9 +29,7 @@ export default function ProfileHero({ profile, completion, onEditProfile, onBann
   const user = profile?.user;
   const role = user?.role || 'PARTICIPANT';
   const roleStyle = ROLE_STYLES[role] || ROLE_STYLES.PARTICIPANT;
-  const initials = user?.name
-    ? user.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
-    : '??';
+  const initials = getTwoLetterInitials(user?.name);
 
   const handleBannerChange = async (e) => {
     const file = e.target.files?.[0];
@@ -200,7 +199,7 @@ export default function ProfileHero({ profile, completion, onEditProfile, onBann
               border: '4px solid #fff',
               boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
               overflow: 'hidden',
-              background: 'linear-gradient(135deg, #10B981, #0D9488)',
+              background: '#16A34A',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
               {(profile?.profileImage || user?.profilePic) ? (

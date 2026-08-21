@@ -1,10 +1,9 @@
 import { Bell, LogOut } from 'lucide-react'
+import { getTwoLetterInitials } from '../../common/UserAvatar'
 
 /** Standalone route only — embedded pages use the app Layout header */
 export default function QuizzesTopNav({ user, onLogout }) {
-  const initials = user?.name
-    ? user.name.trim().split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
-    : 'U'
+  const initials = getTwoLetterInitials(user?.name)
 
   return (
     <header className="ai-quiz-standalone-nav">

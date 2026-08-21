@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { API, assetUrl } from '../api/api'
 import { useToast } from '../components/Toast'
+import { getTwoLetterInitials } from '../components/common/UserAvatar'
 
 export default function AdminTrainerProfile({ user }) {
   const { userId } = useParams()
@@ -29,7 +30,7 @@ export default function AdminTrainerProfile({ user }) {
     finally { setLoading(false) }
   }
 
-  const initials = (name) => name ? name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : '?'
+  const initials = (name) => getTwoLetterInitials(name)
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined, { year: 'numeric', month: 'short' }) : 'Present'
 
   if (loading) return (
@@ -90,12 +91,8 @@ export default function AdminTrainerProfile({ user }) {
         </div>
         <div style={{ padding: '0 24px 20px', marginTop: -52, position: 'relative' }}>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
-            <div style={{ width: 104, height: 104, borderRadius: 18, background: '#fff', border: '4px solid #fff', boxShadow: '0 6px 18px rgba(15,23,42,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
-              {profile.imagePath ? (
-                <img src={assetUrl(profile.imagePath)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              ) : (
-                <span style={{ fontSize: 30, fontWeight: 700, color: '#0d9488', fontFamily: 'var(--font-primary)' }}>{initials(profile.user?.name)}</span>
-              )}
+            <div style={{ width: 104, height: 104, borderRadius: '50%', background: '#16A34A', border: '4px solid #fff', boxShadow: '0 6px 18px rgba(15,23,42,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
+              <span style={{ fontSize: 34, fontWeight: 700, color: '#FFFFFF', fontFamily: "'Poppins', sans-serif" }}>{initials(profile.user?.name)}</span>
             </div>
             <div style={{ flex: 1, minWidth: 0, paddingTop: 6 }}>
               <h1 style={{ fontSize: 22, fontWeight: 700, color: '#0f172a', fontFamily: 'var(--font-primary)', margin: 0 }}>{profile.user?.name || 'Trainer'}</h1>

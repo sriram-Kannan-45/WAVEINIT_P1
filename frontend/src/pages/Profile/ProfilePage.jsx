@@ -14,6 +14,7 @@ import {
   AddCertificateDialog, AddProjectDialog, EditContactDialog, ResumeUploadDialog,
 } from '../../components/profile/ProfileDialogs';
 import { EditProfileModal } from '../../components/profile/edit-modal';
+import { getTwoLetterInitials } from '../../components/common/UserAvatar';
 
 const ROLE_HOME = {
   ADMIN: '/admin',
@@ -21,7 +22,7 @@ const ROLE_HOME = {
   PARTICIPANT: '/participant',
 };
 
-const initials = (name) => name ? name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'ST';
+const initials = (name) => getTwoLetterInitials(name);
 const fmtMonthYear = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'Aug 2026';
 
 const LinkedinIcon = (props) => (

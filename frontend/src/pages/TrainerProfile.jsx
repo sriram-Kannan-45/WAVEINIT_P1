@@ -9,8 +9,9 @@ import {
 import { useToast } from '../components/Toast'
 import { API, API_BASE, assetUrl } from '../api/api'
 import EditProfileModal from '../components/profile/edit-modal/EditProfileModal'
+import { getTwoLetterInitials } from '../components/common/UserAvatar'
 
-const initials = (name) => name ? name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'TR'
+const initials = (name) => getTwoLetterInitials(name)
 const fmtMonthYear = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'Aug 2026'
 
 const LinkedinIcon = (props) => (

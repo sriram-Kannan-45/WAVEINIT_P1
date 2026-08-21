@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { User, Mail, Phone, Calendar, Award, TrendingUp, BookOpen, Loader2, ExternalLink } from 'lucide-react'
 import { API_BASE } from '../../../api/api'
 import EditProfileModal from '../../participant/EditProfileModal'
+import { getTwoLetterInitials } from '../../common/UserAvatar'
 
 function getAuthHeaders() {
   try {
@@ -19,24 +20,25 @@ export default function ProfileSection({ user, enrollments = [], quizzes = [], o
   const [showEdit, setShowEdit] = useState(false)
 
   useEffect(() => {
-    let cancelled = false
-    const fetchProfile = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/participant-profile/me`, {
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        })
-        if (!res.ok) throw new Error('Failed')
-        const data = await res.json()
-        if (!cancelled) setProfile(data.profile || data)
-      } catch {
-        // silent
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
     fetchProfile()
-    return () => { cancelled = true }
   }, [])
+
+  const fetchProfile = async () => {
+    try {
+      setLoading(true)
+      const res = await fetch(`${API_BASE}/profile/me`, {
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() }
+      })
+      const data = await res.json()
+      if (data.success && data.profile) {
+        setProfile(data.profile)
+      }
+    } catch {
+      // fallback to user prop
+    } finally {
+      setLoading(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -46,7 +48,7 @@ export default function ProfileSection({ user, enrollments = [], quizzes = [], o
     )
   }
 
-  const initials = user?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || 'U'
+  const initials = getTwoLetterInitials(user?.name)
   const avatarUrl = profile?.avatarUrl || user?.profileImage
 
   return (
@@ -56,7 +58,7 @@ export default function ProfileSection({ user, enrollments = [], quizzes = [], o
           {avatarUrl ? (
             <img src={avatarUrl} alt="" style={{ width: 80, height: 80, borderRadius: '50%', objectFit: 'cover', border: '3px solid var(--accent-medium)' }} />
           ) : (
-            <div style={{ width: 80, height: 80, borderRadius: '50%', background: 'var(--accent)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 700 }}>
+            <div style={{ width: 80, height: 80, borderRadius: '50%', background: '#16A34A', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 700 }}>
               {initials}
             </div>
           )}

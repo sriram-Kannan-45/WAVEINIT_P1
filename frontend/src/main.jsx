@@ -12,6 +12,7 @@ import './styles/academic-theme.css'
 import './styles/profile.css'
 import './styles/resources.css'
 import './styles/trainer-my-trainings.css'
+import './styles/admin-dashboard.css'
 
 const RootElement = import.meta.env.DEV ? (
   <React.StrictMode>

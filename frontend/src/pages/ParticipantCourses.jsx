@@ -16,6 +16,7 @@ import { Button, Badge, Table, PageHeader, EmptyState, StatCard, ProgressBar } f
 import { getCourseThumbnail, getThumbnailSVG } from '../config/courseThumbnailMap'
 import CourseArtwork from '../components/common/CourseArtwork'
 import '../styles/trainer-my-trainings.css'
+import { getTwoLetterInitials } from '../components/common/UserAvatar'
 
 function timeAgo(dateString) {
   if (!dateString) return 'Recently'
@@ -819,16 +820,16 @@ function OverviewView({ course, stats, enrollment, onStart }) {
               <div style={{
                 width: 44,
                 height: 44,
-                borderRadius: 10,
+                borderRadius: '50%',
                 background: '#16A34A',
                 color: '#FFFFFF',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontWeight: 600,
+                fontWeight: 700,
                 fontSize: 15,
               }}>
-                {course.trainer.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                {getTwoLetterInitials(course.trainer.name)}
               </div>
               <div>
                 <div style={{ fontSize: 14.5, fontWeight: 600, color: '#0F172A' }}>{course.trainer.name}</div>

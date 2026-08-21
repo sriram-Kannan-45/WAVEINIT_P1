@@ -1,0 +1,678 @@
+/* ═══════════════════════════════════════════════════════════════════
+   ADMIN DASHBOARD — CLEAN MODERN SAAS / LMS STYLES (WHITE/GREEN/BLACK)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.adb-dashboard-page {
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 16px 20px 28px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: #0F172A;
+}
+
+/* Welcome Header Card */
+.adb-welcome-card {
+  background: #FFFFFF;
+  border-radius: 14px;
+  border: 1px solid #F1F5F9;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.adb-welcome-icon-box {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: #EAF8F0;
+  color: #16A34A;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid rgba(22, 163, 74, 0.15);
+}
+
+.adb-welcome-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.adb-welcome-title {
+  font-size: 17px;
+  font-weight: 750;
+  color: #0F172A;
+  margin: 0;
+  line-height: 1.25;
+}
+
+.adb-welcome-subtitle {
+  font-size: 12.5px;
+  font-weight: 450;
+  color: #64748B;
+  margin: 3px 0 0;
+}
+
+/* Stats Row */
+.adb-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+.adb-stat-card {
+  background: #FFFFFF;
+  border: 1px solid #F1F5F9;
+  border-radius: 14px;
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+
+.adb-stat-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+}
+
+.adb-stat-icon-wrap {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: #EAF8F0;
+  color: #16A34A;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid rgba(22, 163, 74, 0.12);
+}
+
+.adb-stat-text-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.adb-stat-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748B;
+  margin: 0;
+  display: block;
+}
+
+.adb-stat-value {
+  font-size: 22px;
+  font-weight: 800;
+  color: #0F172A;
+  line-height: 1.15;
+  margin: 2px 0;
+}
+
+.adb-stat-sub {
+  font-size: 11px;
+  color: #94A3B8;
+  font-weight: 450;
+  display: block;
+}
+
+/* Main Two-Column Grid */
+.adb-main-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 14px;
+}
+
+/* General Card Styles */
+.adb-card {
+  background: #FFFFFF;
+  border: 1px solid #F1F5F9;
+  border-radius: 14px;
+  padding: 16px 18px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+.adb-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.adb-card-title {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: #0F172A;
+  margin: 0;
+}
+
+.adb-select {
+  padding: 5px 24px 5px 10px;
+  border: 1px solid #E2E8F0;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #475569;
+  background: #FFFFFF url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") no-repeat right 8px center;
+  appearance: none;
+  cursor: pointer;
+  outline: none;
+  font-family: inherit;
+}
+
+.adb-select:focus {
+  border-color: #16A34A;
+}
+
+.adb-link-btn {
+  background: transparent;
+  border: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #0F172A;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  transition: all 150ms ease;
+  font-family: inherit;
+}
+
+.adb-link-btn:hover {
+  color: #16A34A;
+  background: #EAF8F0;
+}
+
+/* Metric Strip (Progress Overview) */
+.adb-metric-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.adb-metric-item {
+  background: #F8FAFC;
+  border: 1px solid #F1F5F9;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.adb-metric-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.adb-metric-icon--green {
+  background: #EAF8F0;
+  color: #16A34A;
+}
+
+.adb-metric-icon--purple {
+  background: #FAF5FF;
+  color: #8B5CF6;
+}
+
+.adb-metric-icon--amber {
+  background: #FFFBEB;
+  color: #F59E0B;
+}
+
+.adb-metric-icon--blue {
+  background: #EFF6FF;
+  color: #3B82F6;
+}
+
+.adb-metric-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.adb-metric-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #64748B;
+  line-height: 1.2;
+}
+
+.adb-metric-val {
+  font-size: 16px;
+  font-weight: 750;
+  color: #0F172A;
+  line-height: 1.2;
+  margin: 1px 0;
+}
+
+.adb-metric-sub {
+  font-size: 9.5px;
+  color: #94A3B8;
+  font-weight: 500;
+}
+
+/* Chart Canvas / Empty Box */
+.adb-chart-box {
+  width: 100%;
+  min-height: 140px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background: #FAFAFA;
+  border: 1px dashed #E2E8F0;
+  border-radius: 10px;
+  padding: 20px 16px;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.adb-chart-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  margin: 6px 0 2px;
+}
+
+.adb-chart-empty-sub {
+  font-size: 11px;
+  color: #94A3B8;
+  max-width: 280px;
+}
+
+/* Legend Row */
+.adb-legend-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.adb-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #64748B;
+}
+
+.adb-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Top Training Programs List */
+.adb-training-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+
+.adb-training-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #F1F5F9;
+  background: #FAFAFA;
+  transition: all 150ms ease;
+}
+
+.adb-training-row:hover {
+  background: #FFFFFF;
+  border-color: #E2E8F0;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+}
+
+.adb-training-thumb {
+  width: 52px;
+  height: 48px;
+  border-radius: 10px;
+  background: #0F172A;
+  color: #FFFFFF;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.15);
+}
+
+.adb-training-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.adb-training-title {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: #0F172A;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.adb-training-trainer {
+  font-size: 11.5px;
+  color: #64748B;
+  margin-top: 1px;
+}
+
+.adb-training-meta {
+  font-size: 11px;
+  color: #94A3B8;
+  margin-top: 2px;
+}
+
+.adb-training-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.adb-status-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 650;
+  background: #EAF8F0;
+  color: #16A34A;
+  border: 1px solid rgba(22, 163, 74, 0.15);
+}
+
+.adb-training-date {
+  font-size: 10.5px;
+  color: #94A3B8;
+}
+
+/* Reports Overview Row */
+.adb-reports-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.adb-reports-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.adb-reports-title {
+  font-size: 15px;
+  font-weight: 750;
+  color: #0F172A;
+  margin: 0;
+}
+
+.adb-reports-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+.adb-report-card {
+  background: #FFFFFF;
+  border: 1px solid #F1F5F9;
+  border-radius: 14px;
+  padding: 14px 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  display: flex;
+  flex-direction: column;
+  min-height: 180px;
+}
+
+.adb-report-card-title {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: #0F172A;
+  margin: 0 0 10px;
+}
+
+.adb-donut-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.adb-donut-chart {
+  position: relative;
+  width: 90px;
+  height: 90px;
+  flex-shrink: 0;
+}
+
+.adb-donut-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.adb-donut-num {
+  font-size: 16px;
+  font-weight: 800;
+  color: #0F172A;
+  line-height: 1;
+}
+
+.adb-donut-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: #94A3B8;
+  margin-top: 1px;
+}
+
+.adb-donut-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.adb-donut-legend-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #475569;
+}
+
+.adb-donut-legend-left {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.adb-donut-legend-val {
+  font-weight: 600;
+  color: #0F172A;
+}
+
+/* Quick Actions Row */
+.adb-actions-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.adb-actions-title {
+  font-size: 15px;
+  font-weight: 750;
+  color: #0F172A;
+  margin: 0;
+}
+
+.adb-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+.adb-action-card {
+  background: #FFFFFF;
+  border: 1px solid #F1F5F9;
+  border-radius: 14px;
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  cursor: pointer;
+  transition: all 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  text-align: left;
+  border: 1px solid #F1F5F9;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.adb-action-card:hover {
+  background: #FAFAFA;
+  border-color: #16A34A;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(22, 163, 74, 0.08);
+}
+
+.adb-action-icon-wrap {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: #EAF8F0;
+  color: #16A34A;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid rgba(22, 163, 74, 0.15);
+}
+
+.adb-action-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.adb-action-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #0F172A;
+}
+
+.adb-action-desc {
+  font-size: 11.5px;
+  color: #64748B;
+  margin-top: 1px;
+}
+
+/* Empty State Box */
+.adb-empty-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 32px 16px;
+  background: #FAFAFA;
+  border-radius: 10px;
+  border: 1px dashed #E2E8F0;
+  color: #94A3B8;
+  gap: 6px;
+}
+
+.adb-empty-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.adb-empty-sub {
+  font-size: 11.5px;
+  color: #94A3B8;
+  max-width: 320px;
+}
+
+/* Skeleton Loading Helpers */
+.adb-skeleton {
+  background: linear-gradient(90deg, #F1F5F9 25%, #E2E8F0 50%, #F1F5F9 75%);
+  background-size: 200% 100%;
+  animation: adb-shimmer 1.5s infinite;
+  border-radius: 8px;
+}
+
+@keyframes adb-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Responsive Breakpoints */
+@media (max-width: 1200px) {
+  .adb-reports-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 992px) {
+  .adb-stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .adb-main-grid {
+    grid-template-columns: 1fr;
+  }
+  .adb-actions-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .adb-dashboard-page {
+    padding: 12px;
+    gap: 12px;
+  }
+  .adb-stats-grid {
+    grid-template-columns: 1fr;
+  }
+  .adb-metric-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .adb-reports-grid {
+    grid-template-columns: 1fr;
+  }
+}

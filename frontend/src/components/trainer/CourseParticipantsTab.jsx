@@ -8,7 +8,7 @@ import { useToast } from '../Toast'
 import { downloadCSV } from '../../utils/export'
 import { LineAreaChart } from '../ui/ChartWrappers'
 import '../../styles/course-tabs.css'
-
+import { getTwoLetterInitials } from '../common/UserAvatar'
 
 const PAGE_SIZE = 10
 
@@ -258,7 +258,7 @@ function ProgressBar({ value, color = '#16A34A' }) {
 }
 
 function initials(name = '') {
-  return name.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase() || '?'
+  return getTwoLetterInitials(name)
 }
 
 function StatusBadge({ status }) {
