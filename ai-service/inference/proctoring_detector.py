@@ -663,3 +663,79 @@ class MediaPipeProctorEngine:
 
 # Global singleton instance
 proctor_engine = MediaPipeProctorEngine()
+
+
+def inspect_b64_with_gemini(b64_data: str) -> Dict[str, Any]:
+    """
+    Inspect a webcam frame using Google Gemini Multimodal Vision API to detect
+    unauthorized devices (cell phones, secondary screens, earbuds), multiple persons, or notes.
+    """
+    try:
+        from services.gemini_client import GeminiClient
+        api_key = os.getenv("GEMINI_API_KEY", "")
+        if not api_key or api_key == "your-gemini-api-key-here":
+            return {
+                "success": True,
+                "phone_detected": False,
+                "multiple_persons": False,
+                "earbuds_detected": False,
+                "suspicious_objects": [],
+                "confidence": 0.0,
+                "notes": "Gemini API key not configured"
+            }
+
+        client = GeminiClient(api_key=api_key)
+        prompt = (
+            "You are an AI exam proctoring vision auditor. Analyze this webcam frame carefully for exam integrity.\n"
+            "Detect if there are:\n"
+            "1. Cell phones, smartphones, tablets, or secondary screens.\n"
+            "2. Multiple people in the background or near the candidate.\n"
+            "3. Earbuds, headphones, or concealed headsets.\n"
+            "4. Books, written notes, or suspicious physical materials.\n\n"
+            "Return ONLY valid JSON matching this schema:\n"
+            "{\n"
+            '  "phone_detected": boolean,\n'
+            '  "multiple_persons": boolean,\n'
+            '  "earbuds_detected": boolean,\n'
+            '  "suspicious_objects": string[],\n'
+            '  "confidence": number,\n'
+            '  "notes": string\n'
+            "}"
+        )
+
+        import json
+        import re
+
+        raw_json = client.generate_vision_content(
+            prompt=prompt,
+            image_b64=b64_data,
+            mime_type="image/jpeg"
+        )
+
+        try:
+            parsed = json.loads(raw_json)
+        except Exception:
+            json_match = re.search(r"\{.*\}", raw_json, re.DOTALL)
+            parsed = json.loads(json_match.group()) if json_match else {}
+
+        return {
+            "success": True,
+            "phone_detected": bool(parsed.get("phone_detected", False)),
+            "multiple_persons": bool(parsed.get("multiple_persons", False)),
+            "earbuds_detected": bool(parsed.get("earbuds_detected", False)),
+            "suspicious_objects": parsed.get("suspicious_objects", []),
+            "confidence": float(parsed.get("confidence", 0.9)),
+            "notes": parsed.get("notes", "Frame inspected successfully")
+        }
+    except Exception as e:
+        logger.error(f"Gemini vision proctoring inspection error: {e}")
+        return {
+            "success": True,
+            "phone_detected": False,
+            "multiple_persons": False,
+            "earbuds_detected": False,
+            "suspicious_objects": [],
+            "confidence": 0.0,
+            "notes": f"Inspection fallback: {str(e)}"
+        }
+

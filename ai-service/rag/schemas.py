@@ -88,7 +88,10 @@ class QuizQuestion(BaseModel):
         if "difficulty" in normalized:
             normalized["difficulty"] = normalize_difficulty(normalized["difficulty"])
         if "questionType" in normalized:
-            normalized["questionType"] = normalize_question_type(normalized["questionType"])
+            qtype = normalize_question_type(normalized["questionType"])
+            if qtype == "MIXED":
+                qtype = "MCQ"
+            normalized["questionType"] = qtype
         return normalized
 
     @field_validator("question", "correctAnswer", "explanation", "topic", mode="before")

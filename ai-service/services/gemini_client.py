@@ -259,3 +259,48 @@ class GeminiClient:
                 raise RuntimeError(f"Gemini API request failed: {err_msg}")
         raise RuntimeError("Failed to generate content from Gemini API after retries.")
 
+    def generate_vision_content(
+        self,
+        prompt: str,
+        image_b64: str,
+        mime_type: str = "image/jpeg",
+        temperature: float = 0.2
+    ) -> str:
+        """Call Gemini multimodal vision API with inline base64 image data."""
+        if not self.api_key or not self.api_key.strip():
+            raise ValueError("GEMINI_API_KEY is missing.")
+
+        clean_b64 = image_b64.strip()
+        if "," in clean_b64:
+            clean_b64 = clean_b64.split(",", 1)[1]
+
+        url = f"{self.base_url}/{self.model}:generateContent?key={self.api_key}"
+        headers = {'Content-Type': 'application/json'}
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": prompt},
+                        {
+                            "inlineData": {
+                                "mimeType": mime_type,
+                                "data": clean_b64
+                            }
+                        }
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "temperature": temperature,
+                "responseMimeType": "application/json"
+            }
+        }
+        res = requests.post(url, headers=headers, json=payload, timeout=60)
+        res.raise_for_status()
+        data = res.json()
+        candidates = data.get("candidates", [])
+        if not candidates:
+            return "{}"
+        parts = candidates[0].get("content", {}).get("parts", [])
+        return parts[0].get("text", "{}") if parts else "{}"
+
