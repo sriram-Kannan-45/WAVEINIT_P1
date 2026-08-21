@@ -37,10 +37,11 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Verify dependencies
+      - name: Verify dependencies and app entrypoint
         working-directory: ai-service
         run: |
-          python -c "import fastapi; import uvicorn; import gunicorn; import cv2; import mediapipe; print('AI dependencies OK')"
+          python -c "import fastapi, uvicorn, gunicorn, cv2, mediapipe; from main import app; print('AI application & dependencies verified successfully')"
+          chmod +x startup.sh
 
       - name: Upload AI service artifact
         uses: actions/upload-artifact@v4

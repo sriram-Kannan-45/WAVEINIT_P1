@@ -41,6 +41,10 @@ backup-*
 __pycache__/
 *.py[cod]
 *$py.class
+antenv/
+.antenv/
+antenv.tar.gz
+.python_packages/
 
 # Misc
 *.class
