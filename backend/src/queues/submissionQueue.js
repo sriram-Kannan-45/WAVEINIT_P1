@@ -2,12 +2,17 @@ const { Queue } = require('bullmq');
 const IORedis = require('ioredis');
 const logger = require('../utils/logger');
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const REDIS_URL = process.env.REDIS_URL;
 
 let connection = null;
 let submissionQueue = null;
 
 function createRedisConnection() {
+  if (!REDIS_URL) {
+    logger.info('[SubmissionQueue] No REDIS_URL configured, submissions will be processed synchronously');
+    return;
+  }
+  const IORedis = require('ioredis');
   const conn = new IORedis(REDIS_URL, {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,

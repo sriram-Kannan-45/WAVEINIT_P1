@@ -21,7 +21,6 @@ const UserSession = sequelize.define('UserSession', {
   sessionId: {
     type: DataTypes.STRING(36),
     allowNull: false,
-    unique: true,
     field: 'session_id',
     comment: 'UUID for this session',
   },
@@ -121,7 +120,7 @@ const UserSession = sequelize.define('UserSession', {
   updatedAt: 'updated_at',
   indexes: [
     { fields: ['user_id'] },
-    { fields: ['session_id'] },
+    { fields: ['session_id'], unique: true, name: 'user_sessions_session_id_uq' },
     { fields: ['user_id', 'is_active'] },
     { fields: ['expires_at'] },
     { fields: ['family'] },

@@ -5,37 +5,41 @@ const { sequelize } = require('../config/db');
 const { CodingSubmission, CodingProblem, CodingTestCase } = require('../models');
 const logger = require('../utils/logger');
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const REDIS_URL = process.env.REDIS_URL;
 let connection = null;
 
-const IORedis = require('ioredis');
-const redisConn = new IORedis(REDIS_URL, {
-  maxRetriesPerRequest: null,
-  enableReadyCheck: false,
-  retryStrategy: (times) => {
-    if (times > 3) return null;
-    return Math.min(times * 50, 2000);
-  },
-  lazyConnect: true,
-});
+if (REDIS_URL) {
+  const IORedis = require('ioredis');
+  const redisConn = new IORedis(REDIS_URL, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    retryStrategy: (times) => {
+      if (times > 3) return null;
+      return Math.min(times * 50, 2000);
+    },
+    lazyConnect: true,
+  });
 
-redisConn.on('error', (err) => {
-  logger.warn('[SubmissionWorker] Redis connection error', { error: err.message });
-});
+  redisConn.on('error', (err) => {
+    logger.warn('[SubmissionWorker] Redis connection error', { error: err.message });
+  });
 
-redisConn.on('ready', () => {
-  logger.info('[SubmissionWorker] Redis connected');
-  connection = redisConn;
-});
+  redisConn.on('ready', () => {
+    logger.info('[SubmissionWorker] Redis connected');
+    connection = redisConn;
+  });
 
-redisConn.on('close', () => {
-  connection = null;
-});
+  redisConn.on('close', () => {
+    connection = null;
+  });
 
-redisConn.connect().catch((err) => {
-  logger.warn('[SubmissionWorker] Redis unavailable, worker will process synchronously', { error: err.message });
-  connection = null;
-});
+  redisConn.connect().catch((err) => {
+    logger.warn('[SubmissionWorker] Redis unavailable, worker will process synchronously', { error: err.message });
+    connection = null;
+  });
+} else {
+  logger.info('[SubmissionWorker] No REDIS_URL configured; worker will process synchronously');
+}
 
 const judgeEngine = new JudgeEngine();
 

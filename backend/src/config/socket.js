@@ -217,9 +217,12 @@ const initializeSocket = (server) => {
  * @returns {Promise<void>}
  */
 const setupRedisAdapter = async (io) => {
+  const redisUrl = process.env.REDIS_URL;
+  if (!redisUrl) {
+    logger.info('No REDIS_URL configured; Socket.IO running in single-instance in-memory mode');
+    return;
+  }
   try {
-    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-
     const pubClient = redis.createClient({ url: redisUrl });
     const subClient = pubClient.duplicate();
 
@@ -229,7 +232,7 @@ const setupRedisAdapter = async (io) => {
     io.redisClients = { pubClient, subClient };
     logger.info('Socket.IO Redis adapter connected');
   } catch (error) {
-    logger.error('Failed to setup Redis adapter for Socket.IO', { error: error.message });
+    logger.warn('Failed to setup Redis adapter for Socket.IO, falling back to in-memory adapter', { error: error.message });
   }
 };
 

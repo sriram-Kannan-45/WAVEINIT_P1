@@ -150,15 +150,17 @@ const connectDB = async () => {
     // The model now uses participant_id + status; old table has training_id instead.
     // If we don't drop it here, Sequelize will try ALTER TABLE to add the index
     // (quiz_id, participant_id) and fail because participant_id doesn't exist yet.
-    try {
-      const [oldCols] = await sequelize.query("SHOW COLUMNS FROM `quiz_assignments`");
-      const oldColNames = oldCols.map(c => c.Field);
-      if (oldColNames.includes('training_id') && !oldColNames.includes('participant_id')) {
-        logger.info('♻️ Dropping old-format quiz_assignments (has training_id, needs participant_id)...');
-        await sequelize.query("DROP TABLE IF EXISTS quiz_assignments");
+    if (!isPostgres) {
+      try {
+        const [oldCols] = await sequelize.query("SHOW COLUMNS FROM `quiz_assignments`");
+        const oldColNames = oldCols.map(c => c.Field);
+        if (oldColNames.includes('training_id') && !oldColNames.includes('participant_id')) {
+          logger.info('♻️ Dropping old-format quiz_assignments (has training_id, needs participant_id)...');
+          await sequelize.query("DROP TABLE IF EXISTS quiz_assignments");
+        }
+      } catch (_) {
+        // Table doesn't exist yet — nothing to clean up
       }
-    } catch (_) {
-      // Table doesn't exist yet — nothing to clean up
     }
 
     logger.info('📊 Syncing database schema...');
