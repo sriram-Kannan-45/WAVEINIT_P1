@@ -80,10 +80,10 @@ export default function Register() {
     <div className="auth-page">
       <AuthLayout />
 
-      <AuthCard>
+      <AuthCard className="auth-card--register">
         <div className="auth-card-header">
           <div className="auth-card-avatar">
-            <User size={22} />
+            <User size={18} />
           </div>
           <h2 className="auth-card-title">Create Account</h2>
           <p className="auth-card-subtitle">Join as a participant to start learning</p>
@@ -97,7 +97,7 @@ export default function Register() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -4 }}
               >
-                <AlertCircle className="auth-error-icon" size={18} />
+                <AlertCircle className="auth-error-icon" size={16} />
                 <span className="auth-error-text">{error}</span>
               </motion.div>
             )}
@@ -107,7 +107,7 @@ export default function Register() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -4 }}
               >
-                <CheckCircle2 size={18} style={{ color: '#16a34a', flexShrink: 0 }} />
+                <CheckCircle2 size={16} style={{ color: '#16a34a', flexShrink: 0 }} />
                 <span style={{ fontSize: 13, color: '#15803d' }}>{success}</span>
               </motion.div>
             )}
@@ -120,7 +120,7 @@ export default function Register() {
             <div className="auth-form-group">
               <label className="auth-form-label" htmlFor="reg-name">Full Name</label>
               <div className="auth-input-wrapper">
-                <User size={16} className="auth-input-icon-left" />
+                <User size={15} className="auth-input-icon-left" />
                 <input
                   id="reg-name"
                   className="auth-form-input auth-form-input--has-icon-left"
@@ -139,7 +139,7 @@ export default function Register() {
             <div className="auth-form-group">
               <label className="auth-form-label" htmlFor="reg-email">Email Address</label>
               <div className="auth-input-wrapper">
-                <Mail size={16} className="auth-input-icon-left" />
+                <Mail size={15} className="auth-input-icon-left" />
                 <input
                   id="reg-email"
                   className="auth-form-input auth-form-input--has-icon-left"
@@ -158,7 +158,7 @@ export default function Register() {
             <div className="auth-form-group">
               <label className="auth-form-label" htmlFor="reg-phone">Phone Number</label>
               <div className="auth-input-wrapper">
-                <Phone size={16} className="auth-input-icon-left" />
+                <Phone size={15} className="auth-input-icon-left" />
                 <input
                   id="reg-phone"
                   className="auth-form-input auth-form-input--has-icon-left"
@@ -177,7 +177,7 @@ export default function Register() {
             <div className="auth-form-group">
               <label className="auth-form-label" htmlFor="reg-pw">Password</label>
               <div className="auth-input-wrapper">
-                <Lock size={16} className="auth-input-icon-left" />
+                <Lock size={15} className="auth-input-icon-left" />
                 <input
                   id="reg-pw"
                   className="auth-form-input auth-form-input--has-icon-left auth-form-input--has-icon-right"
@@ -196,7 +196,7 @@ export default function Register() {
                   onClick={() => setShowPassword(v => !v)}
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
-                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
                 </button>
               </div>
               <AnimatePresence>
@@ -222,7 +222,7 @@ export default function Register() {
             <div className="auth-form-group">
               <label className="auth-form-label" htmlFor="reg-confirm">Confirm Password</label>
               <div className="auth-input-wrapper">
-                <Lock size={16} className="auth-input-icon-left" />
+                <Lock size={15} className="auth-input-icon-left" />
                 <input
                   id="reg-confirm"
                   className="auth-form-input auth-form-input--has-icon-left auth-form-input--has-icon-right"
@@ -240,7 +240,7 @@ export default function Register() {
                   onClick={() => setShowConfirm(v => !v)}
                   aria-label={showConfirm ? 'Hide password' : 'Show password'}
                 >
-                  {showConfirm ? <EyeOff size={16} /> : <Eye size={16} />}
+                  {showConfirm ? <EyeOff size={15} /> : <Eye size={15} />}
                 </button>
               </div>
               {form.confirmPassword && form.password !== form.confirmPassword && (

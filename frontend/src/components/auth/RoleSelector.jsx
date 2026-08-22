@@ -12,7 +12,7 @@ export default function RoleSelector({ roles, activeRole, onRoleChange }) {
           iconNode = Icon;
         } else if (typeof Icon === 'function' || (typeof Icon === 'object' && Icon !== null && Icon.$$typeof)) {
           const Comp = Icon;
-          iconNode = <Comp size={15} strokeWidth={isActive ? 2.2 : 1.8} />;
+          iconNode = <Comp size={16} strokeWidth={isActive ? 2.2 : 2.0} className="auth-role-icon" />;
         } else if (Icon) {
           iconNode = <span>{Icon}</span>;
         }

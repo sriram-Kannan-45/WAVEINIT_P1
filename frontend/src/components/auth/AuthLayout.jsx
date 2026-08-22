@@ -1,9 +1,9 @@
 import { motion } from 'framer-motion';
-import { Moon, HelpCircle, BookOpen } from 'lucide-react';
-import loginIMG from '../../assets/loginIMG.png';
+import { BookOpen } from 'lucide-react';
+import classroomImg from '../../assets/lms-classroom-empower.png';
 
 const fadeUp = (delay = 0) => ({
-  initial: { opacity: 0, y: 14 },
+  initial: { opacity: 0, y: 12 },
   animate: { opacity: 1, y: 0 },
   transition: { delay, duration: 0.5, ease: [0.4, 0, 0.2, 1] },
 });
@@ -11,73 +11,64 @@ const fadeUp = (delay = 0) => ({
 export default function AuthLayout() {
   return (
     <div className="auth-layout--left">
+      {/* Background gradients and subtle decorative curves */}
       <div className="auth-bg-gradient" />
-
-      <div className="auth-topbar">
-        <button type="button" className="auth-topbar-btn" aria-label="Toggle dark mode">
-          <Moon size={14} />
-          Dark Mode
-        </button>
-        <button type="button" className="auth-topbar-btn" aria-label="Need help">
-          <HelpCircle size={14} />
-          Need Help
-        </button>
+      
+      {/* Decorative Dot Grid (Top-Right of Left Section) */}
+      <div className="auth-dot-grid auth-dot-grid--left" aria-hidden="true">
+        {Array.from({ length: 24 }).map((_, i) => (
+          <span key={i} className="auth-dot" />
+        ))}
       </div>
 
-      <div className="auth-hero-content">
-        <motion.div className="auth-hero-top" {...fadeUp(0)}>
-          <div className="auth-logo-bar">
-            <div className="auth-logo-icon">
-              <BookOpen size={20} color="#ffffff" />
-            </div>
-            <span className="auth-logo-text">WAVE INIT LMS</span>
-          </div>
-          <span className="auth-badge auth-badge--enterprise">
-            <span className="auth-badge--dot" />
-            Enterprise SaaS
-          </span>
-        </motion.div>
+      {/* Sweeping Contour Wave Lines */}
+      <svg className="auth-contour-curves" viewBox="0 0 800 800" fill="none" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M-100,240 C200,120 400,500 900,320" stroke="rgba(18, 124, 52, 0.08)" strokeWidth="1.5" />
+        <path d="M-80,280 C220,160 420,540 920,360" stroke="rgba(18, 124, 52, 0.07)" strokeWidth="1.5" />
+        <path d="M-60,320 C240,200 440,580 940,400" stroke="rgba(18, 124, 52, 0.06)" strokeWidth="1.5" />
+        <path d="M-40,360 C260,240 460,620 960,440" stroke="rgba(18, 124, 52, 0.05)" strokeWidth="1.5" />
+      </svg>
 
-        <motion.h1 className="auth-hero-title" {...fadeUp(0.1)}>
-          Learn. Assess.<br />
-          Grow with<br />
-          <span className="auth-hero-highlight">Wave Init LMS</span>
+      {/* Top Header Bar with Logo */}
+      <div className="auth-top-header">
+        <div className="auth-logo-bar">
+          <div className="auth-logo-icon">
+            <BookOpen size={24} color="#127c34" strokeWidth={2.4} />
+          </div>
+          <span className="auth-logo-text">
+            <span className="auth-logo-text-dark">WAVE INIT </span>
+            <span className="auth-logo-text-green">LMS</span>
+          </span>
+        </div>
+      </div>
+
+      {/* Hero Content */}
+      <div className="auth-hero-content">
+        <motion.h1 className="auth-hero-title" {...fadeUp(0)}>
+          Empower Learning.<br />
+          Enable Growth.<br />
+          <span className="auth-hero-highlight">Welcome to Wave Init LMS</span>
         </motion.h1>
 
-        <motion.p className="auth-hero-subtitle" {...fadeUp(0.18)}>
-          A unified platform to manage learning, assessments, certifications
-          and analytics with one modern enterprise solution.
+        <motion.p className="auth-hero-subtitle" {...fadeUp(0.08)}>
+          A smart learning platform to create, deliver, assess
+          and track learning outcomes in one place.
         </motion.p>
 
+        {/* Classroom Interactive Hero Visual */}
         <motion.div
-          className="auth-illustration"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.26, duration: 0.6, ease: [0.4, 0, 0.2, 1] }}
+          className="auth-classroom-empower-wrap"
+          initial={{ opacity: 0, scale: 0.98, y: 8 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ delay: 0.16, duration: 0.55, ease: [0.4, 0, 0.2, 1] }}
         >
           <img
-            src={loginIMG}
-            alt="Wave Init LMS Dashboard"
-            className="auth-illustration-img"
+            src={classroomImg}
+            alt="Wave Init LMS Interactive Classroom"
+            className="auth-classroom-empower-img"
           />
         </motion.div>
-      </div>
-
-      <div className="auth-footer">
-        <span className="auth-footer-copy">&copy; 2026 Wave Init LMS. All rights reserved.</span>
-        <div className="auth-footer-links">
-          <a href="https://linkedin.com" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect width="4" height="12" x="2" y="9"/><circle cx="4" cy="4" r="2"/></svg>
-          </a>
-          <a href="https://youtube.com" target="_blank" rel="noopener noreferrer" aria-label="YouTube">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 17a24.12 24.12 0 0 1 0-10 2 2 0 0 1 1.4-1.4 49.56 49.56 0 0 1 16.2 0A2 2 0 0 1 21.5 7a24.12 24.12 0 0 1 0 10 2 2 0 0 1-1.4 1.4 49.55 49.55 0 0 1-16.2 0A2 2 0 0 1 2.5 17"/><path d="m10 15 5-3-5-3z"/></svg>
-          </a>
-          <a href="https://github.com" target="_blank" rel="noopener noreferrer" aria-label="GitHub">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
-          </a>
-        </div>
       </div>
     </div>
   );
 }
-

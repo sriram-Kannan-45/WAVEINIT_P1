@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Eye, EyeOff, Mail, Shield, BookOpen, GraduationCap, ArrowRight } from 'lucide-react';
+import { Eye, EyeOff, User, Lock, ShieldCheck, BookOpen, GraduationCap, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { API } from '../api/api';
 import { useToast } from '../components/Toast';
 import AuthLayout from '../components/auth/AuthLayout';
@@ -9,9 +9,9 @@ import RoleSelector from '../components/auth/RoleSelector';
 import AuthButton from '../components/auth/AuthButton';
 
 const ROLES = [
-  { id: 'ADMIN', label: 'Admin', icon: Shield, placeholder: 'admin@test.com' },
-  { id: 'TRAINER', label: 'Trainer', icon: BookOpen, placeholder: 'trainer@test.com' },
-  { id: 'PARTICIPANT', label: 'Learner', icon: GraduationCap, placeholder: 'learner@test.com' },
+  { id: 'ADMIN', label: 'Admin', icon: ShieldCheck, placeholder: 'Enter your email' },
+  { id: 'TRAINER', label: 'Trainer', icon: BookOpen, placeholder: 'Enter your email' },
+  { id: 'PARTICIPANT', label: 'Learner', icon: GraduationCap, placeholder: 'Enter your email' },
 ];
 
 export default function Login({ onLogin, defaultRole }) {
@@ -21,7 +21,7 @@ export default function Login({ onLogin, defaultRole }) {
   const displayedMessageRef = useRef(null);
 
   const [form, setForm] = useState(() => {
-    const lastRole = localStorage.getItem('lastRole') || 'ADMIN';
+    const lastRole = localStorage.getItem('lastRole') || 'PARTICIPANT';
     const stateRole = location.state?.fromRole;
     return { email: '', password: '', role: defaultRole || stateRole || lastRole };
   });
@@ -30,17 +30,12 @@ export default function Login({ onLogin, defaultRole }) {
   const [rememberMe, setRememberMe] = useState(false);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
-  const activeRole = ROLES.find(r => r.id === form.role) || ROLES[0];
+  const activeRole = ROLES.find(r => r.id === form.role) || ROLES[2];
 
   useEffect(() => {
     const prev = { html: document.documentElement.style.overflow, body: document.body.style.overflow };
     document.documentElement.style.overflow = 'hidden';
     document.body.style.overflow = 'hidden';
-    const email = localStorage.getItem('rememberedEmail');
-    if (localStorage.getItem('rememberMe') === 'true' && email) {
-      setForm(p => ({ ...p, email }));
-      setRememberMe(true);
-    }
     return () => { 
       document.documentElement.style.overflow = prev.html; 
       document.body.style.overflow = prev.body; 
@@ -56,10 +51,11 @@ export default function Login({ onLogin, defaultRole }) {
     if (location.state?.message && displayedMessageRef.current !== location.state.message) {
       displayedMessageRef.current = location.state.message;
       showSuccess(location.state.message);
-      // Clean up history state so re-renders/hot-reloads don't re-toast
       navigate(location.pathname, { replace: true, state: { ...location.state, message: undefined } });
     }
   }, [location.state, showSuccess, navigate, location.pathname]);
+
+  const isEmailValid = form.email.trim().length > 3 && (form.email.includes('@') || form.email.length >= 4);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -121,11 +117,20 @@ export default function Login({ onLogin, defaultRole }) {
     }
   };
 
+  const handleGoogleSignIn = () => {
+    showWarning('Enterprise SSO', 'Google SSO authentication is configured for enterprise domains.');
+  };
+
   return (
     <div className="auth-page">
       <AuthLayout />
 
-      <AuthCard>
+      <AuthCard className="auth-card--login">
+        {/* Floating circular book badge at the top of the card */}
+        <div className="auth-card-floating-badge">
+          <BookOpen size={24} color="#127c34" strokeWidth={2.4} />
+        </div>
+
         <div className="auth-card-inner">
           <div className="auth-card-header">
             <h2 className="auth-card-title">Welcome Back</h2>
@@ -142,35 +147,41 @@ export default function Login({ onLogin, defaultRole }) {
           />
 
           <form onSubmit={handleSubmit} autoComplete="on" className="auth-form-body">
+            {/* Username or Email */}
             <div className="auth-form-group">
               <label className="auth-form-label" htmlFor="login-email">Username or Email</label>
               <div className="auth-input-wrapper">
+                <User size={16} className="auth-input-icon-left" />
                 <input
                   id="login-email"
-                  className="auth-form-input auth-form-input--has-icon-right"
+                  className="auth-form-input auth-form-input--has-icon-left auth-form-input--has-icon-right"
                   type="text"
                   value={form.email}
                   onChange={e => set('email', e.target.value)}
-                  placeholder={activeRole.placeholder}
+                  placeholder="Enter your email"
                   autoComplete="username"
                   required
                 />
-                <span className="auth-input-icon" style={{ pointerEvents: 'none' }}>
-                  <Mail size={18} />
-                </span>
+                {isEmailValid && (
+                  <span className="auth-input-icon-valid" title="Valid input">
+                    <CheckCircle2 size={16} color="#127c34" />
+                  </span>
+                )}
               </div>
             </div>
 
+            {/* Password */}
             <div className="auth-form-group">
               <label className="auth-form-label" htmlFor="login-password">Password</label>
               <div className="auth-input-wrapper">
+                <Lock size={16} className="auth-input-icon-left" />
                 <input
                   id="login-password"
-                  className="auth-form-input auth-form-input--has-icon-right"
+                  className="auth-form-input auth-form-input--has-icon-left auth-form-input--has-icon-right"
                   type={showPassword ? 'text' : 'password'}
                   value={form.password}
                   onChange={e => set('password', e.target.value)}
-                  placeholder="••••••••"
+                  placeholder="Enter your password"
                   autoComplete="current-password"
                   required
                 />
@@ -180,11 +191,12 @@ export default function Login({ onLogin, defaultRole }) {
                   onClick={() => setShowPassword(v => !v)}
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
-                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
             </div>
 
+            {/* Remember Me & Forgot Password */}
             <div className="auth-form-options">
               <label className="auth-checkbox-group">
                 <input
@@ -200,6 +212,7 @@ export default function Login({ onLogin, defaultRole }) {
               </button>
             </div>
 
+            {/* Primary Sign In Button */}
             <AuthButton type="submit" disabled={loading}>
               {loading ? (
                 <>
@@ -209,24 +222,17 @@ export default function Login({ onLogin, defaultRole }) {
               ) : (
                 <>
                   <span>Sign in as {activeRole.label}</span>
-                  <ArrowRight size={18} />
+                  <ArrowRight size={17} />
                 </>
               )}
             </AuthButton>
           </form>
 
-          {form.role === 'PARTICIPANT' && (
-            <div className="auth-card-footer">
-              <span>Don&apos;t have an account?</span>
-              <button
-                type="button"
-                className="auth-register-link"
-                onClick={() => navigate('/register')}
-              >
-                Create one
-              </button>
-            </div>
-          )}
+          {/* Enterprise Data Protection Note */}
+          <div className="auth-card-security-note">
+            <ShieldCheck size={14} color="#127c34" />
+            <span>Your data is protected with enterprise-grade security</span>
+          </div>
         </div>
       </AuthCard>
     </div>
