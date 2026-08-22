@@ -45,6 +45,7 @@ const {
 } = require('../models');
 const ActivityService = require('../services/activityService');
 const logger = require('../utils/logger');
+const bcrypt = require('bcryptjs');
 
 const updateTraining = async (req, res) => {
   try {
@@ -1205,4 +1206,124 @@ const getPendingTrainers = async (req, res) => {
   }
 };
 
-module.exports = { updateTraining, deleteTraining, updateTrainer, deleteTrainer, getStats, getParticipants, sendReminders, deleteParticipant, exportFeedbacksCSV, getTrainingStats, getPendingParticipants, approveParticipant, rejectParticipant, approveTrainer, rejectTrainer, getPendingTrainers };
+const createParticipant = async (req, res) => {
+  try {
+    const { name, email, password, phone, status } = req.body || {};
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Participant name is required' });
+    }
+    if (!email || !email.trim()) {
+      return res.status(400).json({ error: 'Participant email is required' });
+    }
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    const trimmedEmail = email.trim().toLowerCase();
+
+    // Check duplicate email
+    const existing = await User.findOne({
+      where: { email: trimmedEmail, isDeleted: false }
+    });
+    if (existing) {
+      return res.status(409).json({ error: 'An account with this email already exists.' });
+    }
+
+    // Auto-generate clean username
+    const baseName = name.replace(/[^a-zA-Z]/g, '').toLowerCase().slice(0, 4) || 'user';
+    let username = baseName + Math.floor(1000 + Math.random() * 9000);
+    let userExists = await User.findOne({ where: { username } });
+    while (userExists) {
+      username = baseName + Math.floor(1000 + Math.random() * 9000);
+      userExists = await User.findOne({ where: { username } });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 12);
+    const participantStatus = (status && ['PENDING', 'APPROVED', 'REJECTED'].includes(String(status).toUpperCase()))
+      ? String(status).toUpperCase()
+      : 'APPROVED';
+
+    const newParticipant = await User.create({
+      name: name.trim(),
+      email: trimmedEmail,
+      username,
+      password: hashedPassword,
+      phone: phone ? phone.trim() : null,
+      role: 'PARTICIPANT',
+      status: participantStatus,
+      passwordVersion: 2,
+      isDeleted: false,
+      deletedAt: null
+    });
+
+    // Create linked registration application
+    try {
+      const nameParts = (name || '').trim().split(/\s+/);
+      const firstName = nameParts[0] || name || 'Participant';
+      const lastName = nameParts.slice(1).join(' ') || '-';
+      const appCount = await RegistrationApplication.count();
+      await RegistrationApplication.create({
+        applicationNumber: `APP${new Date().getFullYear()}${String(appCount + 1).padStart(4, '0')}`,
+        firstName,
+        lastName,
+        email: trimmedEmail,
+        phone: phone ? phone.trim() : null,
+        status: participantStatus,
+        userId: newParticipant.id,
+        reviewerId: req.user?.id || null,
+        reviewedAt: new Date()
+      });
+    } catch (appErr) {
+      logger.warn('Could not create RegistrationApplication for admin-added participant:', { error: appErr.message });
+    }
+
+    const io = req.app.get('io');
+    await ActivityService.logActivity({
+      userId: req.user.id,
+      userName: req.user.name || 'Admin',
+      action: 'USER_CREATED',
+      entityType: 'User',
+      entityId: newParticipant.id,
+      details: { targetUserName: newParticipant.name, targetRole: 'PARTICIPANT', status: participantStatus }
+    }, io);
+
+    res.status(201).json({
+      success: true,
+      message: 'Participant created successfully',
+      participant: {
+        id: newParticipant.id,
+        name: newParticipant.name,
+        email: newParticipant.email,
+        username: newParticipant.username,
+        phone: newParticipant.phone,
+        role: newParticipant.role,
+        status: newParticipant.status,
+        created_at: newParticipant.created_at || newParticipant.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Create participant error:', error.message);
+    res.status(500).json({ error: 'Server error creating participant' });
+  }
+};
+
+module.exports = {
+  updateTraining,
+  deleteTraining,
+  updateTrainer,
+  deleteTrainer,
+  getStats,
+  getParticipants,
+  createParticipant,
+  sendReminders,
+  deleteParticipant,
+  exportFeedbacksCSV,
+  getTrainingStats,
+  getPendingParticipants,
+  approveParticipant,
+  rejectParticipant,
+  approveTrainer,
+  rejectTrainer,
+  getPendingTrainers
+};

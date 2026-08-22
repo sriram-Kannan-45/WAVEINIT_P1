@@ -8,6 +8,7 @@ import AssessmentSessionsPanel from '../components/admin/AssessmentSessionsPanel
 import BulkImportParticipants from '../components/admin/BulkImportParticipants'
 import CreateTrainerModule from '../components/admin/CreateTrainerModule'
 import CreateTrainingModule from '../components/admin/CreateTrainingModule'
+import CreateParticipantModal from '../components/admin/CreateParticipantModal'
 import AdminOverviewTab from '../components/admin/tabs/AdminOverviewTab'
 import ParticipantProfileView from '../components/shared/ParticipantProfileView'
 import { useToast } from '../components/Toast'
@@ -63,6 +64,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
   const [stats, setStats] = useState({})
   const [loading, setLoading] = useState(false)
   const [viewingParticipant, setViewingParticipant] = useState(null)
+  const [addParticipantModalOpen, setAddParticipantModalOpen] = useState(false)
   const [editModal, setEditModal] = useState(null)
   const [editForm, setEditForm] = useState({})
   const [adminReport, setAdminReport] = useState(null)
@@ -564,7 +566,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
           loading={loading}
           onCreateTraining={() => handleTabChange('createTraining')}
           onAddTrainer={() => handleTabChange('createTrainer')}
-          onAddParticipant={() => handleTabChange('participants')}
+          onAddParticipant={() => setAddParticipantModalOpen(true)}
           onViewPending={() => {
             setParticipantStatusFilter('PENDING');
             handleTabChange('participants');
@@ -897,7 +899,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
               <p className="reg-admin-subtitle">View and manage participant accounts, status, and enrollments</p>
             </div>
             <div style={{ flex: 1 }} />
-            <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => handleTabChange('bulk-import')}>
+            <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => setAddParticipantModalOpen(true)}>
               <Plus size={16} /> Add Participant
             </button>
           </div>
@@ -1780,6 +1782,14 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
           setViewingParticipant(null);
         }}
         onDelete={(id, name) => handleDeleteParticipant(id, name)}
+      />
+
+      {/* ── CREATE PARTICIPANT MODAL ── */}
+      <CreateParticipantModal
+        open={addParticipantModalOpen}
+        onClose={() => setAddParticipantModalOpen(false)}
+        onParticipantCreated={() => fetchAll()}
+        token={user?.token}
       />
     </motion.div>
   )

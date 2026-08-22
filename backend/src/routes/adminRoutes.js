@@ -158,6 +158,14 @@ router.get(
   (req, res) => adminController.getParticipants(req, res)
 );
 
+// POST /api/admin/participants
+router.post(
+  '/participants',
+  authenticateToken,
+  roleMiddleware('ADMIN'),
+  (req, res) => adminController.createParticipant(req, res)
+);
+
 // POST /api/admin/send-reminders/:trainingId
 router.post(
   '/send-reminders/:trainingId',
