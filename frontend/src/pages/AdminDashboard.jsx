@@ -565,103 +565,14 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
           onCreateTraining={() => handleTabChange('createTraining')}
           onAddTrainer={() => handleTabChange('createTrainer')}
           onAddParticipant={() => handleTabChange('participants')}
-          onViewTrainings={() => handleTabChange('trainings')}
-          onViewPending={() => handleTabChange('pending')}
+          onViewPending={() => {
+            setParticipantStatusFilter('PENDING');
+            handleTabChange('participants');
+          }}
           onApproveParticipant={handleApproveParticipant}
           onRejectParticipant={handleRejectParticipant}
           onRefresh={fetchAll}
         />
-      )}
-
-      {/* ── PENDING APPROVAL ── */}
-      {tab === 'pending' && (
-        <motion.div variants={itemVariants} className="reg-admin">
-          <div className="reg-admin-header">
-            <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A' }}>
-              <User size={22} color="#16A34A" />
-            </div>
-            <div>
-              <h2 className="reg-admin-title">Pending Participant Approvals</h2>
-              <p className="reg-admin-subtitle">Review pending participant registration requests and approve or reject participant accounts.</p>
-            </div>
-            <div style={{ flex: 1 }} />
-            {pendingParticipants.length > 0 && (
-              <span className="reg-admin-badge" style={{ fontSize: 13, padding: '4px 10px', background: '#FEF3C7', color: '#B45309', border: '1px solid #FDE68A' }}>
-                {pendingParticipants.length} Pending
-              </span>
-            )}
-          </div>
-          {initialLoading ? (
-            <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading pending registrations...</p></div>
-          ) : pendingParticipants.length === 0 ? (
-            <div className="reg-admin-empty">
-              <CheckCircle2 size={44} color="#16A34A" />
-              <h3>All Caught Up!</h3>
-              <p>No participants are currently waiting for registration approval.</p>
-            </div>
-          ) : (
-            <div className="reg-admin-table-wrap">
-              <table className="reg-admin-table">
-                <thead>
-                  <tr>
-                    <th>Participant</th>
-                    <th>Email</th>
-                    <th>Phone</th>
-                    <th>Registered</th>
-                    <th style={{ minWidth: 160, textAlign: 'left' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pendingParticipants.map(p => (
-                    <tr key={p.id}>
-                      <td>
-                        <div className="reg-admin-participant">
-                          <UserAvatar name={p.name} size={32} fontSize={11} />
-                          <span className="reg-admin-name">{p.name || 'Participant'}</span>
-                        </div>
-                      </td>
-                      <td className="reg-admin-email">{p.email}</td>
-                      <td className="reg-admin-date">{p.phone || '—'}</td>
-                      <td className="reg-admin-date">{fmtDate(p.appliedAt || p.created_at || p.createdAt)}</td>
-                      <td>
-                        <div className="reg-admin-actions" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <button
-                            type="button"
-                            className="reg-admin-action reg-admin-action--view"
-                            title="View Profile"
-                            aria-label="View Profile"
-                            onClick={() => setViewingParticipant(p)}
-                          >
-                            <Eye size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            className="reg-admin-action reg-admin-action--approve-direct"
-                            title="Approve Participant"
-                            aria-label="Approve Participant"
-                            onClick={() => handleApproveParticipant(p.id)}
-                            style={{ background: '#dcfce7', color: '#15803d', borderColor: '#86efac' }}
-                          >
-                            <Check size={16} strokeWidth={2.4} />
-                          </button>
-                          <button
-                            type="button"
-                            className="reg-admin-action reg-admin-action--reject"
-                            title="Reject Participant"
-                            aria-label="Reject Participant"
-                            onClick={() => handleRejectParticipant(p.id)}
-                          >
-                            <X size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </motion.div>
       )}
 
       {/* ── TRAININGS (list) ── */}
@@ -1083,26 +994,15 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                         <td style={{ fontSize: 12, fontWeight: 600, color: '#334155' }}>{p.quizScore || p.quiz_score || 0}%</td>
                         <td style={{ minWidth: 190 }}>
                           <div className="reg-admin-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap' }}>
-                            {/* 1. View Participant */}
+                            {/* 1. View Participant Profile */}
                             <button
                               type="button"
                               className="reg-admin-action reg-admin-action--view"
-                              title="View participant"
-                              aria-label="View participant"
+                              title="View participant profile"
+                              aria-label="View participant profile"
                               onClick={() => setViewingParticipant(p)}
                             >
                               <Eye size={16} />
-                            </button>
-
-                            {/* 2. Review Application */}
-                            <button
-                              type="button"
-                              className="reg-admin-action reg-admin-action--review"
-                              title="Review application"
-                              aria-label="Review application"
-                              onClick={() => handleTabChange('pending')}
-                            >
-                              <FileText size={16} />
                             </button>
 
                             {/* 3. Direct Approve & Reject Actions (Only for PENDING status) */}
