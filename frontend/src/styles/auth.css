@@ -647,6 +647,93 @@ body:has(.auth-page) {
   to { transform: rotate(360deg); }
 }
 
+/* ── Auth Card Footer (Login & Register Link) ──────────────────── */
+.auth-card-footer {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #F1F5F9;
+  text-align: center;
+  font-size: 12.5px;
+  color: #64748B;
+  font-family: 'Poppins', sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.auth-card-footer a,
+.auth-footer-link {
+  color: var(--color-primary, #127C34);
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+.auth-card-footer a:hover,
+.auth-footer-link:hover {
+  color: var(--color-primary-hover, #0E652A);
+  text-decoration: underline;
+}
+
+/* ── Register Specific Styling ─────────────────────────────────── */
+.auth-card--register {
+  width: min(460px, calc(100vw - 32px));
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+}
+
+.auth-card-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--color-primary-light, #EAF6EE);
+  color: var(--color-primary, #127C34);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 6px auto;
+}
+
+.auth-terms-link {
+  color: var(--color-primary, #127C34);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-terms-link:hover {
+  text-decoration: underline;
+}
+
+.auth-error-space {
+  min-height: 24px;
+  margin-bottom: 6px;
+}
+
+.auth-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #FEF2F2;
+  border: 1px solid #FEE2E2;
+  color: #DC2626;
+  font-size: 12px;
+}
+
+.auth-success {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #F0FDF4;
+  border: 1px solid #DCFCE7;
+  color: #16A34A;
+  font-size: 12px;
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    RESPONSIVE — Tablet & Mobile (≤1024px)
    ═══════════════════════════════════════════════════════════════════ */

@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   X, Mail, Phone, Calendar, MapPin, User, Briefcase, Star,
   GraduationCap, Award, Share2, FileText, Trash2, Eye, Download,
-  ExternalLink, Camera, Loader2
+  ExternalLink, Camera, Loader2, Check
 } from 'lucide-react'
 import profileService from '../../services/profileService'
 import { API_BASE, assetUrl } from '../../api/api'
@@ -30,6 +30,8 @@ export default function ParticipantProfileView({
   participant,
   fallback,
   onClose,
+  onApprove,
+  onReject,
   onDelete,
 }) {
   const [profileData, setProfileData] = useState(null)
@@ -515,21 +517,54 @@ export default function ParticipantProfileView({
             </div>
 
             {/* Footer */}
-            <div className="tpm-footer">
-              <button className="tpm-btn tpm-btn--secondary" onClick={onClose}>
-                Close
-              </button>
-              {onDelete && (
-                <button
-                  className="tpm-btn tpm-btn--danger"
-                  onClick={() => {
-                    onClose?.()
-                    onDelete?.(userObj.id || targetId, fullName)
-                  }}
-                >
-                  <Trash2 size={14} /> Remove Participant
+            <div className="tpm-footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                {String(userObj.status || participant?.status || '').toUpperCase() === 'PENDING' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {onApprove && (
+                      <button
+                        type="button"
+                        className="tpm-btn"
+                        style={{ background: '#16A34A', color: '#FFFFFF', border: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                        onClick={() => {
+                          onApprove(userObj.id || targetId)
+                        }}
+                      >
+                        <Check size={15} strokeWidth={2.5} /> Approve Account
+                      </button>
+                    )}
+                    {onReject && (
+                      <button
+                        type="button"
+                        className="tpm-btn"
+                        style={{ background: '#FFFFFF', color: '#DC2626', border: '1px solid #FECACA', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                        onClick={() => {
+                          onReject(userObj.id || targetId)
+                        }}
+                      >
+                        <X size={15} /> Reject
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button className="tpm-btn tpm-btn--secondary" onClick={onClose}>
+                  Close
                 </button>
-              )}
+                {onDelete && (
+                  <button
+                    className="tpm-btn tpm-btn--danger"
+                    onClick={() => {
+                      onClose?.()
+                      onDelete?.(userObj.id || targetId, fullName)
+                    }}
+                  >
+                    <Trash2 size={14} /> Remove Participant
+                  </button>
+                )}
+              </div>
             </div>
           </motion.div>
         </div>

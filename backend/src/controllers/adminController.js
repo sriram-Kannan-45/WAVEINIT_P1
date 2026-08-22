@@ -992,7 +992,7 @@ const getPendingParticipants = async (req, res) => {
 const approveParticipant = async (req, res) => {
   try {
     const { id } = req.params;
-    const participant = await User.findOne({ where: { id, role: 'PARTICIPANT' } });
+    const participant = await User.findOne({ where: { id, role: 'PARTICIPANT', isDeleted: false } });
 
     if (!participant) {
       return res.status(404).json({ error: 'Participant not found' });
@@ -1028,7 +1028,7 @@ const approveParticipant = async (req, res) => {
     // Notify user
     await Notification.create({
       userId: participant.id,
-      message: 'Your participant application has been approved.',
+      message: 'Your participant registration has been approved! You can now log in to your account.',
       type: 'APPROVAL',
       isRead: false
     });
@@ -1052,9 +1052,9 @@ const approveParticipant = async (req, res) => {
 const rejectParticipant = async (req, res) => {
   try {
     const { id } = req.params;
-    const { reason } = req.body;
+    const { reason } = req.body || {};
 
-    const participant = await User.findOne({ where: { id, role: 'PARTICIPANT' } });
+    const participant = await User.findOne({ where: { id, role: 'PARTICIPANT', isDeleted: false } });
 
     if (!participant) {
       return res.status(404).json({ error: 'Participant not found' });
@@ -1088,7 +1088,7 @@ const rejectParticipant = async (req, res) => {
 
     await Notification.create({
       userId: participant.id,
-      message: 'Your participant application has been rejected.',
+      message: 'Your participant registration application has been rejected.',
       type: 'APPROVAL',
       isRead: false
     });

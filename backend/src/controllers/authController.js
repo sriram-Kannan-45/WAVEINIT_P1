@@ -90,11 +90,11 @@ const login = async (req, res) => {
     }
 
     if (user.role === 'PARTICIPANT' && user.status === 'PENDING') {
-      return res.status(403).json({ error: 'Your account is pending approval.' });
+      return res.status(403).json({ error: 'Your account is pending admin approval. You will be able to log in once an administrator approves your account.' });
     }
 
     if (user.status === 'REJECTED') {
-      return res.status(403).json({ error: 'Your registration was rejected. Please contact support.' });
+      return res.status(403).json({ error: 'Your registration was rejected. Please contact support if you believe this is an error.' });
     }
 
     if (user.status === 'INACTIVE') {
@@ -323,7 +323,7 @@ const register = async (req, res) => {
     }
 
     if (!name || !email || !password || !phone) {
-      return res.status(422).json({ error: 'Name, email, password, and phone are required' });
+      return res.status(422).json({ error: 'Name, email, password, and phone number are required' });
     }
 
     if (password.length < 6) {
@@ -334,8 +334,10 @@ const register = async (req, res) => {
 
     const existingUser = await User.findOne({ where: { email: trimmedEmail, isDeleted: false } });
     if (existingUser) {
-      // Don't reveal if email already exists
-      return res.status(422).json({ error: 'Registration could not be completed' });
+      if (existingUser.status === 'PENDING') {
+        return res.status(409).json({ error: 'An account with this email is already registered and pending admin approval.' });
+      }
+      return res.status(409).json({ error: 'An account with this email already exists. Please sign in.' });
     }
 
     const legacyDeleted = await User.findOne({ where: { email: trimmedEmail, isDeleted: true } });
@@ -348,10 +350,12 @@ const register = async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, BCRYPT_COST);
+    const username = await generateUsername(name);
 
     const user = await User.create({
       name: name.trim(),
       email: trimmedEmail,
+      username,
       password: hashedPassword,
       phone: phone.trim(),
       role: 'PARTICIPANT',
@@ -368,12 +372,13 @@ const register = async (req, res) => {
       const nameParts = (name || '').trim().split(/\s+/);
       const firstName = nameParts[0] || name || 'Participant';
       const lastName = nameParts.slice(1).join(' ') || '-';
+      const appCount = await RegistrationApplication.count();
       await RegistrationApplication.create({
-        applicationNumber: `APP${new Date().getFullYear()}${String(user.id).padStart(4, '0')}`,
+        applicationNumber: `APP${new Date().getFullYear()}${String(appCount + 1).padStart(4, '0')}`,
         firstName,
         lastName,
-        email,
-        phone: phone || null,
+        email: trimmedEmail,
+        phone: phone.trim() || null,
         trainingId: null,
         status: 'PENDING',
         userId: user.id,
@@ -381,6 +386,22 @@ const register = async (req, res) => {
       });
     } catch (appErr) {
       logger.warn('Could not create registration application for self-registration:', { error: appErr.message });
+    }
+
+    // Notify all admins of the new pending participant registration
+    try {
+      const { Notification } = require('../models');
+      const admins = await User.findAll({ where: { role: 'ADMIN', isDeleted: false }, attributes: ['id'] });
+      if (admins.length > 0) {
+        await Notification.bulkCreate(admins.map(a => ({
+          userId: a.id,
+          message: `New participant registration pending approval: ${user.name} (${user.email}).`,
+          type: 'OTHER',
+          isRead: false,
+        })));
+      }
+    } catch (notifErr) {
+      logger.warn('Could not notify admins of new registration:', { error: notifErr.message });
     }
 
     await logAudit({
@@ -398,10 +419,11 @@ const register = async (req, res) => {
       username: user.username,
       role: user.role,
       status: user.status,
-      message: 'Registration submitted successfully. Your account is pending admin approval.'
+      message: 'Registration submitted successfully! Your account is pending admin approval. You will be able to log in once an administrator approves your account.'
     });
   } catch (error) {
-    res.status(500).json({ error: 'Server error during registration' });
+    logger.error('Registration error:', { error: error.message });
+    res.status(500).json({ error: 'Server error during registration. Please try again.' });
   }
 };
 

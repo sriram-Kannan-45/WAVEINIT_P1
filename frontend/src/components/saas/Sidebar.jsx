@@ -4,6 +4,7 @@ import {
     Award,
     BookOpen,
     ChevronDown,
+    Clock,
     FileText,
     GraduationCap,
     LayoutDashboard,
@@ -44,6 +45,7 @@ const navGroups = {
         { key: 'trainings', label: 'Training Programs', icon: BookOpen },
         { key: 'trainers', label: 'Trainers', icon: UserCheck },
         { key: 'participants', label: 'Participants', icon: Users },
+        { key: 'pending', label: 'Pending Approvals', icon: Clock },
       ],
     },
     {
@@ -120,6 +122,7 @@ const pageDescriptions = {
   trainings: 'Manage all training programs',
   trainers: 'Manage trainer accounts and assignments',
   participants: 'View and manage learner accounts',
+  pending: 'Review and approve pending participant registrations',
   courses: 'Manage your training courses',
   profile: 'Manage your account settings',
   myEnrollments: 'Your enrolled training programs',

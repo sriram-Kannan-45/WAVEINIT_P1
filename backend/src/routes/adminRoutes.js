@@ -174,18 +174,9 @@ router.get('/export-feedbacks', authenticateToken, roleMiddleware('ADMIN'), (req
 router.get('/training-stats', authenticateToken, roleMiddleware('ADMIN'), (req, res) => adminController.getTrainingStats(req, res));
 
 // GET /api/admin/pending-participants
-router.get('/pending-participants', authenticateToken, roleMiddleware('ADMIN'), async (req, res) => {
-  try {
-    const participants = await User.findAll({
-      where: { role: 'PARTICIPANT', status: 'PENDING', isDeleted: false },
-      attributes: ['id', 'name', 'email', 'phone', 'created_at']
-    });
-    res.json({ participants });
-  } catch (error) {
-    logger.error('Get pending participants error:', { error: error.message });
-    res.status(500).json({ error: 'Server error fetching pending participants' });
-  }
-});
+router.get('/pending-participants', authenticateToken, roleMiddleware('ADMIN'), (req, res) =>
+  adminController.getPendingParticipants(req, res)
+);
 
 router.post('/participants/:id/approve', authenticateToken, roleMiddleware('ADMIN'), (req, res) =>
   adminController.approveParticipant(req, res)

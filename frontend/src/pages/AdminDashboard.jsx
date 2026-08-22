@@ -566,6 +566,9 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
           onAddTrainer={() => handleTabChange('createTrainer')}
           onAddParticipant={() => handleTabChange('participants')}
           onViewTrainings={() => handleTabChange('trainings')}
+          onViewPending={() => handleTabChange('pending')}
+          onApproveParticipant={handleApproveParticipant}
+          onRejectParticipant={handleRejectParticipant}
           onRefresh={fetchAll}
         />
       )}
@@ -578,33 +581,76 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
               <User size={22} color="#16A34A" />
             </div>
             <div>
-              <h2 className="reg-admin-title">Pending Approval</h2>
-              <p className="reg-admin-subtitle">Review pending participant registrations and approve or reject participant accounts.</p>
+              <h2 className="reg-admin-title">Pending Participant Approvals</h2>
+              <p className="reg-admin-subtitle">Review pending participant registration requests and approve or reject participant accounts.</p>
             </div>
+            <div style={{ flex: 1 }} />
+            {pendingParticipants.length > 0 && (
+              <span className="reg-admin-badge" style={{ fontSize: 13, padding: '4px 10px', background: '#FEF3C7', color: '#B45309', border: '1px solid #FDE68A' }}>
+                {pendingParticipants.length} Pending
+              </span>
+            )}
           </div>
           {initialLoading ? (
             <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading pending registrations...</p></div>
           ) : pendingParticipants.length === 0 ? (
-            <div className="reg-admin-empty"><User size={40} /><h3>All Approved</h3><p>No participants are currently waiting for registration approval.</p></div>
+            <div className="reg-admin-empty">
+              <CheckCircle2 size={44} color="#16A34A" />
+              <h3>All Caught Up!</h3>
+              <p>No participants are currently waiting for registration approval.</p>
+            </div>
           ) : (
             <div className="reg-admin-table-wrap">
               <table className="reg-admin-table">
                 <thead>
-                  <tr><th>Name</th><th>Email</th><th>Phone</th><th>Registered</th><th>Actions</th></tr>
+                  <tr>
+                    <th>Participant</th>
+                    <th>Email</th>
+                    <th>Phone</th>
+                    <th>Registered</th>
+                    <th style={{ minWidth: 160, textAlign: 'left' }}>Actions</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {pendingParticipants.map(p => (
                     <tr key={p.id}>
-                      <td><span className="reg-admin-name">{p.name}</span></td>
+                      <td>
+                        <div className="reg-admin-participant">
+                          <UserAvatar name={p.name} size={32} fontSize={11} />
+                          <span className="reg-admin-name">{p.name || 'Participant'}</span>
+                        </div>
+                      </td>
                       <td className="reg-admin-email">{p.email}</td>
-                      <td className="reg-admin-date">{p.phone || '-'}</td>
+                      <td className="reg-admin-date">{p.phone || '—'}</td>
                       <td className="reg-admin-date">{fmtDate(p.appliedAt || p.created_at || p.createdAt)}</td>
                       <td>
-                        <div className="reg-admin-actions">
-                          <button type="button" className="reg-admin-action" title="Approve" onClick={() => handleApproveParticipant(p.id)}>
-                            <CheckCircle2 size={14} />
+                        <div className="reg-admin-actions" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <button
+                            type="button"
+                            className="reg-admin-action reg-admin-action--view"
+                            title="View Profile"
+                            aria-label="View Profile"
+                            onClick={() => setViewingParticipant(p)}
+                          >
+                            <Eye size={14} />
                           </button>
-                          <button type="button" className="reg-admin-action reg-admin-action--reject" title="Reject" onClick={() => handleRejectParticipant(p.id)}>
+                          <button
+                            type="button"
+                            className="reg-admin-action reg-admin-action--approve-direct"
+                            title="Approve Participant"
+                            aria-label="Approve Participant"
+                            onClick={() => handleApproveParticipant(p.id)}
+                            style={{ background: '#dcfce7', color: '#15803d', borderColor: '#86efac' }}
+                          >
+                            <Check size={16} strokeWidth={2.4} />
+                          </button>
+                          <button
+                            type="button"
+                            className="reg-admin-action reg-admin-action--reject"
+                            title="Reject Participant"
+                            aria-label="Reject Participant"
+                            onClick={() => handleRejectParticipant(p.id)}
+                          >
                             <X size={14} />
                           </button>
                         </div>
@@ -1059,17 +1105,28 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                               <FileText size={16} />
                             </button>
 
-                            {/* 3. Direct Approve Action (Only for PENDING status) */}
+                            {/* 3. Direct Approve & Reject Actions (Only for PENDING status) */}
                             {String(p.status || 'PENDING').toUpperCase() === 'PENDING' && (
-                              <button
-                                type="button"
-                                className="reg-admin-action reg-admin-action--approve-direct"
-                                title="Approve participant"
-                                aria-label="Approve participant"
-                                onClick={() => handleApproveParticipant(p.id)}
-                              >
-                                <Check size={18} strokeWidth={2.6} />
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  className="reg-admin-action reg-admin-action--approve-direct"
+                                  title="Approve participant"
+                                  aria-label="Approve participant"
+                                  onClick={() => handleApproveParticipant(p.id)}
+                                >
+                                  <Check size={18} strokeWidth={2.6} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="reg-admin-action reg-admin-action--reject"
+                                  title="Reject participant"
+                                  aria-label="Reject participant"
+                                  onClick={() => handleRejectParticipant(p.id)}
+                                >
+                                  <X size={16} />
+                                </button>
+                              </>
                             )}
 
                             {/* 4. Delete Participant */}
@@ -1810,9 +1867,18 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
         fallback={viewingParticipant ? {
           name: viewingParticipant.name,
           email: viewingParticipant.email,
+          status: viewingParticipant.status,
           createdAt: viewingParticipant.created_at || viewingParticipant.joinedAt,
         } : null}
         onClose={() => setViewingParticipant(null)}
+        onApprove={(id) => {
+          handleApproveParticipant(id);
+          setViewingParticipant(null);
+        }}
+        onReject={(id) => {
+          handleRejectParticipant(id);
+          setViewingParticipant(null);
+        }}
         onDelete={(id, name) => handleDeleteParticipant(id, name)}
       />
     </motion.div>

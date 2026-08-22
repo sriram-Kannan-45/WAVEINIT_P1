@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react'
 import {
-  BookOpen, Users, User, Clock, CheckCircle, Hourglass, XCircle,
+  BookOpen, Users, User, Clock, Check, CheckCircle, CheckCircle2, Hourglass, XCircle, X,
   TrendingUp, Plus, UserPlus, ArrowRight, Activity, AlertCircle, RefreshCw
 } from 'lucide-react'
+import UserAvatar from '../../common/UserAvatar'
 
 // Mini artwork for React course thumbnail
 function ReactMiniArtwork() {
@@ -143,6 +144,9 @@ export default function AdminOverviewTab({
   onAddTrainer,
   onAddParticipant,
   onViewTrainings,
+  onViewPending,
+  onApproveParticipant,
+  onRejectParticipant,
   onRefresh,
 }) {
   const [timeRange, setTimeRange] = useState('This Month')
@@ -307,14 +311,28 @@ export default function AdminOverviewTab({
           </div>
         </div>
 
-        <div className="adb-stat-card">
-          <div className="adb-stat-icon-wrap">
+        <div
+          className="adb-stat-card"
+          onClick={onViewPending}
+          style={{ cursor: onViewPending ? 'pointer' : 'default', transition: 'transform 0.15s ease, box-shadow 0.15s ease' }}
+          role={onViewPending ? 'button' : undefined}
+          tabIndex={onViewPending ? 0 : undefined}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onViewPending?.(); } }}
+        >
+          <div className="adb-stat-icon-wrap" style={pendingApprovalsCount > 0 ? { background: '#FEF3C7', color: '#D97706' } : {}}>
             <Clock size={20} />
           </div>
-          <div className="adb-stat-text-wrap">
-            <span className="adb-stat-label">Pending Approvals</span>
+          <div className="adb-stat-text-wrap" style={{ flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span className="adb-stat-label">Pending Approvals</span>
+              {pendingApprovalsCount > 0 && (
+                <span style={{ fontSize: 10, fontWeight: 700, background: '#FEF3C7', color: '#B45309', padding: '2px 6px', borderRadius: 10, border: '1px solid #FDE68A' }}>
+                  Action Required
+                </span>
+              )}
+            </div>
             <span className="adb-stat-value">{pendingApprovalsCount}</span>
-            <span className="adb-stat-sub">Requires your action</span>
+            <span className="adb-stat-sub">{pendingApprovalsCount > 0 ? 'Click to review & approve' : 'All caught up'}</span>
           </div>
         </div>
       </div>
@@ -457,6 +475,112 @@ export default function AdminOverviewTab({
           )}
         </div>
       </div>
+
+      {/* 3.5. Pending Registrations Quick Review (when pending registrations exist) */}
+      {pendingParticipants && pendingParticipants.length > 0 && (
+        <div className="adb-card" style={{ marginTop: 24, border: '1.5px solid #FDE68A', background: 'linear-gradient(180deg, #FFFDF5 0%, #FFFFFF 100%)' }}>
+          <div className="adb-card-header" style={{ borderBottom: '1px solid #FEF3C7', paddingBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 8, background: '#FEF3C7', color: '#D97706', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Clock size={18} />
+              </div>
+              <div>
+                <h2 className="adb-card-title" style={{ color: '#92400E', fontSize: 16 }}>
+                  Pending Participant Registrations ({pendingParticipants.length})
+                </h2>
+                <p style={{ margin: 0, fontSize: 12, color: '#B45309' }}>
+                  New learners awaiting your approval to access the LMS.
+                </p>
+              </div>
+            </div>
+            {onViewPending && (
+              <button
+                type="button"
+                className="adb-link-btn"
+                onClick={onViewPending}
+                style={{ color: '#D97706', fontWeight: 600 }}
+              >
+                View all pending ({pendingParticipants.length}) <ArrowRight size={13} />
+              </button>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+            {pendingParticipants.slice(0, 5).map(p => (
+              <div
+                key={p.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '10px 14px',
+                  borderRadius: 8,
+                  background: '#FFFFFF',
+                  border: '1px solid #F1F5F9',
+                  gap: 12
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                  <UserAvatar name={p.name} size={34} fontSize={12} />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {p.name || 'Participant'}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#64748B', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                      <span>{p.email}</span>
+                      {p.phone && <span>• {p.phone}</span>}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    title="Approve registration"
+                    onClick={() => onApproveParticipant?.(p.id)}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '6px 12px',
+                      borderRadius: 6,
+                      background: '#16A34A',
+                      color: '#FFFFFF',
+                      border: 'none',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'background 0.15s ease'
+                    }}
+                  >
+                    <Check size={14} strokeWidth={2.5} /> Approve
+                  </button>
+                  <button
+                    type="button"
+                    title="Reject registration"
+                    onClick={() => onRejectParticipant?.(p.id)}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '6px 10px',
+                      borderRadius: 6,
+                      background: '#FFFFFF',
+                      color: '#DC2626',
+                      border: '1px solid #FECACA',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <X size={14} /> Reject
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 4. Reports Overview (Row of 4 Cards) */}
       <div className="adb-reports-section">

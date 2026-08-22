@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { Eye, EyeOff, User, Lock, ShieldCheck, BookOpen, GraduationCap, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { API } from '../api/api';
 import { useToast } from '../components/Toast';
@@ -234,6 +234,16 @@ export default function Login({ onLogin, defaultRole }) {
             <span>Your data is protected with enterprise-grade security</span>
           </div>
         </div>
+
+        {/* Footer only for Participant / Learner role */}
+        {form.role === 'PARTICIPANT' && (
+          <div className="auth-card-footer">
+            <span>Don't have an account?</span>{' '}
+            <Link to="/register" className="auth-footer-link">
+              Sign up as Participant
+            </Link>
+          </div>
+        )}
       </AuthCard>
     </div>
   );

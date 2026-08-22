@@ -67,8 +67,14 @@ export default function Register() {
       setForm({ name: '', email: '', password: '', confirmPassword: '', phone: '' });
       setAgreed(false);
       setTimeout(() => {
-        navigate('/login', { replace: true });
-      }, 3000);
+        navigate('/login', {
+          replace: true,
+          state: {
+            fromRole: 'PARTICIPANT',
+            message: 'Registration submitted successfully! Please wait for admin approval before logging in.'
+          }
+        });
+      }, 2500);
     } catch (err) {
       setError(err.message === 'Failed to fetch' ? 'Cannot connect to server.' : err.message);
     } finally {
@@ -289,8 +295,8 @@ export default function Register() {
         )}
 
         <div className="auth-card-footer">
-          Already have an account?{' '}
-          <Link to="/login">Sign in</Link>
+          <span>Already have an account?</span>{' '}
+          <Link to="/login" className="auth-footer-link">Sign in</Link>
         </div>
       </AuthCard>
     </div>
