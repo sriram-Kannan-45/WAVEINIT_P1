@@ -680,28 +680,37 @@ function CourseDetail({ user, courseId, onBack }) {
       setError(null)
       const r = await fetchWithTimeout(API.TRAINER_COURSES.DETAIL(courseId), { headers: auth(), signal }, 12000)
       const d = await r.json().catch(() => ({}))
+      if (signal?.aborted) return
       if (d.success && d.course) {
         setCourse(d.course)
+        setError(null)
       } else {
         throw new Error(d.error || 'Failed to load course details')
       }
     } catch (e) {
-      if (e.name === 'AbortError') return
+      if (e.name === 'AbortError' || signal?.aborted) return
       console.error('CourseDetail fetch error:', e.message)
       setError(e.message || 'Failed to load course details')
       showError(e.message)
     } finally {
-      setLoading(false)
+      if (!signal?.aborted) {
+        setLoading(false)
+      }
     }
   }
 
   useEffect(() => {
+    setLoading(true)
+    setCourse(null)
+    setError(null)
     const controller = new AbortController()
     fetchCourse(controller.signal)
-    return () => controller.abort()
+    return () => {
+      controller.abort()
+    }
   }, [courseId])
 
-  if (loading) {
+  if (loading || (!course && !error)) {
     return (
       <div className="wl-detail-page">
         <div className="wl-detail-loading-row">
@@ -715,7 +724,7 @@ function CourseDetail({ user, courseId, onBack }) {
     )
   }
 
-  if (!course) {
+  if (error || !course) {
     return (
       <div className="wl-detail-page" style={{ padding: '48px 0' }}>
         <div style={{

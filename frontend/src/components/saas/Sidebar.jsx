@@ -167,7 +167,7 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
     }
     fetchAssignedCourses()
     return () => { aborted = true }
-  }, [user?.token, user?.role, location.key])
+  }, [user?.token, user?.role])
 
   const filteredCourses = useMemo(() => {
     if (!courseFilter) return courses

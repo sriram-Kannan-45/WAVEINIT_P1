@@ -779,12 +779,12 @@
   height: auto;
   max-height: none;
   overflow: visible;
-  padding: 16px 24px 24px;
+  padding: 12px 20px 16px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
-  gap: 14px;
+  gap: 12px;
   font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: #F8FAFC;
 }
@@ -937,7 +937,7 @@
 /* Main Grid */
 .tdb-main-grid {
   display: grid;
-  grid-template-columns: 1.45fr 1fr;
+  grid-template-columns: 1.4fr 1fr;
   gap: 12px;
   flex: 1;
   min-height: 0;
@@ -951,7 +951,8 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 8px;
   box-sizing: border-box;
 }
 

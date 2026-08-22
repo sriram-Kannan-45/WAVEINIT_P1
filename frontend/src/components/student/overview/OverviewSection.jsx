@@ -1,22 +1,19 @@
 import { useState, useEffect, useMemo } from 'react'
-import { motion } from 'framer-motion'
 import {
-  BookOpen, TrendingUp, Award, Clock, ArrowRight, Sparkles, BarChart3,
-  ChevronRight, Trophy, Target, Video, Users, CheckCircle, FileText,
-  Star, Plus, Calendar
+  BookOpen, TrendingUp, Award, Clock,
+  Video, Users, CheckCircle, FileText, Star, Plus, Calendar
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import interviewService from '../../../services/interviewService'
 import { useStudentStats } from '../../../hooks/useStudentStats'
-import { useContinueLearning } from '../../../hooks/useContinueLearning'
 import CourseArtwork from '../../common/CourseArtwork'
 import '../../../styles/trainer-my-trainings.css'
 import { getTwoLetterInitials } from '../../common/UserAvatar'
 
 function OverviewAreaChart() {
   return (
-    <div className="tdb-chart-box">
-      <svg viewBox="0 0 460 120" width="100%" height="120" xmlns="http://www.w3.org/2000/svg">
+    <div className="tdb-chart-box" style={{ flex: 1, minHeight: 180, width: '100%', display: 'flex', alignItems: 'center' }}>
+      <svg viewBox="0 0 460 140" width="100%" height="100%" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" style={{ maxHeight: 240, minHeight: 160 }}>
         <defs>
           <linearGradient id="tdb-green-grad-p" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#16A34A" stopOpacity="0.28" />
@@ -27,10 +24,10 @@ function OverviewAreaChart() {
         {/* Y Axis Grid lines & labels */}
         {[
           { label: '100', y: 16 },
-          { label: '75', y: 38 },
-          { label: '50', y: 60 },
-          { label: '25', y: 82 },
-          { label: '0', y: 104 },
+          { label: '75', y: 42 },
+          { label: '50', y: 68 },
+          { label: '25', y: 94 },
+          { label: '0', y: 120 },
         ].map((g, i) => (
           <g key={i}>
             <text x="24" y={g.y + 3.5} fill="#94A3B8" fontSize="9.5" textAnchor="end" fontFamily="inherit" fontWeight="500">
@@ -42,23 +39,23 @@ function OverviewAreaChart() {
 
         {/* Area fill */}
         <path
-          d="M 45 104 L 115 104 C 145 104 165 92 185 82 C 205 82 225 82 250 82 C 290 82 335 48 375 28 C 405 18 425 16 440 16 L 440 104 Z"
+          d="M 45 120 L 115 120 C 145 120 165 105 185 94 C 205 94 225 94 250 94 C 290 94 335 52 375 28 C 405 18 425 16 440 16 L 440 120 Z"
           fill="url(#tdb-green-grad-p)"
         />
 
         {/* Smooth curve line */}
         <path
-          d="M 45 104 L 115 104 C 145 104 165 92 185 82 C 205 82 225 82 250 82 C 290 82 335 48 375 28 C 405 18 425 16 440 16"
+          d="M 45 120 L 115 120 C 145 120 165 105 185 94 C 205 94 225 94 250 94 C 290 94 335 52 375 28 C 405 18 425 16 440 16"
           fill="none"
           stroke="#16A34A"
-          strokeWidth="2.2"
+          strokeWidth="2.4"
           strokeLinecap="round"
         />
 
         {/* Data point dots */}
-        <circle cx="185" cy="82" r="3.2" fill="#16A34A" stroke="#FFFFFF" strokeWidth="2" />
-        <circle cx="250" cy="82" r="3.2" fill="#16A34A" stroke="#FFFFFF" strokeWidth="2" />
-        <circle cx="440" cy="16" r="3.8" fill="#16A34A" stroke="#FFFFFF" strokeWidth="2" />
+        <circle cx="185" cy="94" r="3.4" fill="#16A34A" stroke="#FFFFFF" strokeWidth="2" />
+        <circle cx="250" cy="94" r="3.4" fill="#16A34A" stroke="#FFFFFF" strokeWidth="2" />
+        <circle cx="440" cy="16" r="4" fill="#16A34A" stroke="#FFFFFF" strokeWidth="2" />
 
         {/* X Axis labels */}
         {[
@@ -69,7 +66,7 @@ function OverviewAreaChart() {
           { label: 'Jul', x: 360 },
           { label: 'Aug', x: 440 },
         ].map((m, i) => (
-          <text key={i} x={m.x} y="118" fill="#94A3B8" fontSize="9.5" textAnchor="middle" fontFamily="inherit" fontWeight="500">
+          <text key={i} x={m.x} y="136" fill="#94A3B8" fontSize="9.5" textAnchor="middle" fontFamily="inherit" fontWeight="500">
             {m.label}
           </text>
         ))}
@@ -87,9 +84,10 @@ export default function OverviewSection({
   onResume,
   onClickCourse,
   onClickQuiz,
+  onGoToCertificates,
 }) {
   const navigate = useNavigate()
-  const { stats, loading } = useStudentStats()
+  const { stats } = useStudentStats()
   const [upcomingInterviews, setUpcomingInterviews] = useState([])
 
   useEffect(() => {
@@ -110,12 +108,21 @@ export default function OverviewSection({
   const participantFirstName = user?.name?.trim().split(' ')[0] || 'Learner'
   const participantInitials = useMemo(() => getTwoLetterInitials(user?.name), [user?.name])
 
-  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Active'
-
   return (
-    <div className="tdb-dashboard-page" style={{ padding: 0, height: 'auto', background: 'transparent' }}>
+    <div
+      className="tdb-dashboard-page"
+      style={{
+        padding: 0,
+        minHeight: 'calc(100vh - 44px)',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'space-between',
+        gap: 14,
+        background: 'transparent'
+      }}
+    >
       {/* ── 1. Page Header Card ── */}
-      <div className="tdb-page-header">
+      <div className="tdb-page-header" style={{ padding: '10px 18px', flexShrink: 0 }}>
         <div className="tdb-header-left">
           <div className="tdb-header-icon-box">
             <TrendingUp size={20} strokeWidth={2.4} />
@@ -135,9 +142,9 @@ export default function OverviewSection({
       </div>
 
       {/* ── 2. Statistics Cards Row (4 Cards) ── */}
-      <div className="tdb-stats-grid">
+      <div className="tdb-stats-grid" style={{ flexShrink: 0, gap: 12 }}>
         {/* Card 1: Total Trainings */}
-        <div className="tdb-stat-card">
+        <div className="tdb-stat-card" style={{ padding: '12px 16px' }}>
           <div className="tdb-stat-icon-wrap tdb-stat-icon-wrap--green">
             <BookOpen size={18} strokeWidth={2} />
           </div>
@@ -148,32 +155,32 @@ export default function OverviewSection({
           </div>
         </div>
 
-        {/* Card 2: Published / Active */}
-        <div className="tdb-stat-card">
+        {/* Card 2: In Progress */}
+        <div className="tdb-stat-card" style={{ padding: '12px 16px' }}>
           <div className="tdb-stat-icon-wrap tdb-stat-icon-wrap--blue">
             <CheckCircle size={18} strokeWidth={2} />
           </div>
           <div className="tdb-stat-text-wrap">
-            <span className="tdb-stat-label">Published</span>
-            <div className="tdb-stat-value">{inProgressCount > 0 ? inProgressCount : enrolledCount}</div>
-            <span className="tdb-stat-sub">Courses live</span>
+            <span className="tdb-stat-label">In Progress</span>
+            <div className="tdb-stat-value">{inProgressCount > 0 ? inProgressCount : (enrolledCount > 0 ? 1 : 0)}</div>
+            <span className="tdb-stat-sub">Course in progress</span>
           </div>
         </div>
 
-        {/* Card 3: Drafts / In progress */}
-        <div className="tdb-stat-card">
+        {/* Card 3: Completed */}
+        <div className="tdb-stat-card" style={{ padding: '12px 16px' }}>
           <div className="tdb-stat-icon-wrap tdb-stat-icon-wrap--amber">
-            <Clock size={18} strokeWidth={2} />
+            <Award size={18} strokeWidth={2} />
           </div>
           <div className="tdb-stat-text-wrap">
-            <span className="tdb-stat-label">In Progress</span>
-            <div className="tdb-stat-value">{inProgressCount}</div>
-            <span className="tdb-stat-sub">In progress</span>
+            <span className="tdb-stat-label">Completed</span>
+            <div className="tdb-stat-value">{completedCount}</div>
+            <span className="tdb-stat-sub">Courses completed</span>
           </div>
         </div>
 
-        {/* Card 4: Total Students / Score */}
-        <div className="tdb-stat-card">
+        {/* Card 4: Average Score */}
+        <div className="tdb-stat-card" style={{ padding: '12px 16px' }}>
           <div className="tdb-stat-icon-wrap tdb-stat-icon-wrap--purple">
             <Users size={18} strokeWidth={2} />
           </div>
@@ -186,11 +193,11 @@ export default function OverviewSection({
       </div>
 
       {/* ── 3. Main Two-Column Grid ── */}
-      <div className="tdb-main-grid">
-        {/* LEFT COLUMN: Training Overview Card + Metric Strip */}
-        <div className="tdb-card">
+      <div className="tdb-main-grid" style={{ flex: 1, minHeight: 320, gap: 12 }}>
+        {/* LEFT COLUMN: Training Progress Card + Metric Strip */}
+        <div className="tdb-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '14px 18px', flex: 1 }}>
           <div className="tdb-card-header">
-            <h2 className="tdb-card-title">Training Overview</h2>
+            <h2 className="tdb-card-title">Training Progress</h2>
             <select className="tdb-select" defaultValue="This Month">
               <option value="This Month">This Month</option>
               <option value="Last Month">Last Month</option>
@@ -202,55 +209,55 @@ export default function OverviewSection({
           <OverviewAreaChart />
 
           {/* Mini Metric Strip */}
-          <div className="tdb-metric-strip">
-            <div className="tdb-metric-item">
+          <div className="tdb-metric-strip" style={{ marginTop: 6, paddingTop: 10, gap: 8 }}>
+            <div className="tdb-metric-item" style={{ padding: '6px 10px' }}>
               <div className="tdb-metric-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16A34A' }}>
                 <Users size={14} strokeWidth={2.2} />
               </div>
               <div>
                 <div className="tdb-metric-val">{enrolledCount}</div>
-                <div className="tdb-metric-sub">Active Students</div>
+                <div className="tdb-metric-sub">Active Courses</div>
               </div>
             </div>
 
-            <div className="tdb-metric-item">
+            <div className="tdb-metric-item" style={{ padding: '6px 10px' }}>
               <div className="tdb-metric-icon" style={{ background: '#FFFBEB', color: '#F59E0B' }}>
-                <BookOpen size={14} strokeWidth={2.2} />
+                <Clock size={14} strokeWidth={2.2} />
               </div>
               <div>
-                <div className="tdb-metric-val">{enrolledCount}</div>
-                <div className="tdb-metric-sub">Assigned Courses</div>
+                <div className="tdb-metric-val">{inProgressCount > 0 ? inProgressCount : (enrolledCount > 0 ? 1 : 0)}</div>
+                <div className="tdb-metric-sub">In Progress</div>
               </div>
             </div>
 
-            <div className="tdb-metric-item">
+            <div className="tdb-metric-item" style={{ padding: '6px 10px' }}>
               <div className="tdb-metric-icon" style={{ background: '#EFF6FF', color: '#2563EB' }}>
-                <FileText size={14} strokeWidth={2.2} />
+                <CheckCircle size={14} strokeWidth={2.2} />
               </div>
               <div>
-                <div className="tdb-metric-val">{quizzes.length}</div>
-                <div className="tdb-metric-sub">Feedback Reviews</div>
+                <div className="tdb-metric-val">{completedCount}</div>
+                <div className="tdb-metric-sub">Completed</div>
               </div>
             </div>
 
-            <div className="tdb-metric-item">
+            <div className="tdb-metric-item" style={{ padding: '6px 10px' }}>
               <div className="tdb-metric-icon" style={{ background: '#FAF5FF', color: '#8B5CF6' }}>
-                <Star size={14} strokeWidth={2.2} />
+                <Award size={14} strokeWidth={2.2} />
               </div>
               <div>
-                <div className="tdb-metric-val">{upcomingInterviews.length}</div>
-                <div className="tdb-metric-sub">Interviews</div>
+                <div className="tdb-metric-val">{stats?.certificatesEarned || 0}</div>
+                <div className="tdb-metric-sub">Certificates</div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* RIGHT COLUMN: Stacked Cards (Recent Trainings + Upcoming Sessions) */}
-        <div className="tdb-right-col">
-          {/* Card 1: Recent Trainings */}
-          <div className="tdb-card" style={{ flex: 1.1 }}>
+        {/* RIGHT COLUMN: Stacked Cards (Continue Learning + Upcoming Sessions) */}
+        <div className="tdb-right-col" style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
+          {/* Card 1: Continue Learning */}
+          <div className="tdb-card" style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '14px 18px', minHeight: 0 }}>
             <div className="tdb-card-header">
-              <h2 className="tdb-card-title">Recent Trainings</h2>
+              <h2 className="tdb-card-title">Continue Learning</h2>
               <button
                 className="tdb-link-btn"
                 onClick={onClickCourse}
@@ -260,52 +267,55 @@ export default function OverviewSection({
             </div>
 
             {enrollments.length === 0 && trainings.length === 0 ? (
-              <div style={{ padding: '32px 16px', textAlign: 'center', color: '#94A3B8' }}>
-                <BookOpen size={30} style={{ margin: '0 auto 8px', color: '#CBD5E1' }} />
+              <div style={{ padding: '16px 12px', textAlign: 'center', color: '#94A3B8', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
+                <BookOpen size={26} style={{ margin: '0 auto 6px', color: '#CBD5E1' }} />
                 <p style={{ margin: '0 0 2px', fontWeight: 600, fontSize: 13, color: '#475569' }}>No enrolled trainings yet</p>
                 <span style={{ fontSize: 11.5, color: '#94A3B8' }}>Trainings you enroll in will appear here.</span>
               </div>
             ) : (
-              (enrollments.length > 0 ? enrollments : trainings).slice(0, 2).map((tr) => (
-                <div
-                  key={tr.id || tr.courseId || tr.trainingId}
-                  className="tdb-course-row"
-                  onClick={onClickCourse}
-                  style={{ cursor: 'pointer' }}
-                >
-                  <div className="tdb-course-thumb">
-                    <div className="tdb-course-badge-status">{tr.status || 'PUBLISHED'}</div>
-                    <div className="tdb-course-badge-students">
-                      <Users size={9} /> {tr.enrolledCount || 1}
-                    </div>
-                    <CourseArtwork title={tr.title || tr.trainingTitle} category={tr.category} />
-                  </div>
+              (enrollments.length > 0 ? enrollments : trainings).slice(0, 1).map((tr) => {
+                const totalLessons = tr.totalLessons || tr.lessonsCount || 5
+                const completedLessons = tr.completedLessons || (tr.status === 'COMPLETED' ? totalLessons : 1)
+                const progressPercent = tr.progressPercent != null
+                  ? tr.progressPercent
+                  : (tr.status === 'COMPLETED' ? 100 : Math.round((completedLessons / totalLessons) * 100))
 
-                  <div className="tdb-course-info">
-                    <span className="tdb-category-pill">{tr.category || tr.programTitle || 'TRAINING'}</span>
-                    <h3 className="tdb-course-name">{tr.title || tr.trainingTitle}</h3>
-                    <p className="tdb-course-desc">
-                      {tr.description || `Training curriculum for ${tr.title || tr.trainingTitle}.`}
-                    </p>
-                    <div className="tdb-course-meta">
-                      <span>{tr.capacity ? `${tr.capacity} Max Seats` : '3 Max Seats'}</span>
-                      <span>|</span>
-                      <span>{tr.enrolledCount || 1} Students</span>
+                return (
+                  <div
+                    key={tr.id || tr.courseId || tr.trainingId}
+                    className="tdb-course-row"
+                    onClick={onClickCourse}
+                    style={{ cursor: 'pointer', padding: '8px 10px', marginTop: 'auto', marginBottom: 'auto' }}
+                  >
+                    <div className="tdb-course-thumb" style={{ width: 110, height: 72 }}>
+                      <div className="tdb-course-badge-status">{tr.status === 'COMPLETED' ? 'COMPLETED' : 'IN PROGRESS'}</div>
+                      <div className="tdb-course-badge-students">
+                        <Users size={9} /> {tr.enrolledCount || 1}
+                      </div>
+                      <CourseArtwork title={tr.title || tr.trainingTitle} category={tr.category} />
                     </div>
-                    <div className="tdb-course-footer-row">
-                      <div className="tdb-author-avatar">{participantInitials}</div>
-                      <span>{tr.startDate || tr.createdAt ? fmtDate(tr.startDate || tr.createdAt) : 'Aug 14, 2026'}</span>
-                      <span>•</span>
-                      <span>Assigned by Admin</span>
+
+                    <div className="tdb-course-info">
+                      <span className="tdb-category-pill">{tr.category || 'COURSE'}</span>
+                      <h3 className="tdb-course-name">{tr.title || tr.trainingTitle}</h3>
+                      <p className="tdb-course-desc">
+                        {tr.description || `Training curriculum for ${tr.title || tr.trainingTitle}.`}
+                      </p>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10, color: '#64748B', fontWeight: 600, margin: '4px 0 2px' }}>
+                        <span>{completedLessons} of {totalLessons} lessons • {progressPercent}% Complete</span>
+                      </div>
+                      <div style={{ width: '100%', height: 4, background: '#E2E8F0', borderRadius: 2, overflow: 'hidden' }}>
+                        <div style={{ width: `${progressPercent}%`, height: '100%', background: '#16A34A', borderRadius: 2, transition: 'width 300ms ease' }} />
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                )
+              })
             )}
           </div>
 
           {/* Card 2: Upcoming Sessions */}
-          <div className="tdb-card" style={{ flex: 0.9 }}>
+          <div className="tdb-card" style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '14px 18px', minHeight: 0 }}>
             <div className="tdb-card-header">
               <h2 className="tdb-card-title">Upcoming Sessions</h2>
               <button
@@ -317,30 +327,30 @@ export default function OverviewSection({
             </div>
 
             {upcomingInterviews.length === 0 ? (
-              <div style={{ padding: '32px 16px', textAlign: 'center', color: '#94A3B8' }}>
-                <Calendar size={30} style={{ margin: '0 auto 8px', color: '#CBD5E1' }} />
+              <div style={{ padding: '16px 12px', textAlign: 'center', color: '#94A3B8', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
+                <Calendar size={28} style={{ margin: '0 auto 6px', color: '#CBD5E1' }} />
                 <p style={{ margin: '0 0 2px', fontWeight: 600, fontSize: 13, color: '#475569' }}>No upcoming sessions</p>
                 <span style={{ fontSize: 11.5, color: '#94A3B8' }}>Scheduled interviews and sessions will appear here.</span>
               </div>
             ) : (
-              upcomingInterviews.slice(0, 2).map((iv) => {
+              upcomingInterviews.slice(0, 1).map((iv) => {
                 const d = iv.scheduledAt ? new Date(iv.scheduledAt) : new Date()
                 const month = d.toLocaleString('en-US', { month: 'short' }).toUpperCase()
                 const day = d.getDate()
                 const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
                 return (
-                  <div key={iv.id} className="tdb-session-row" onClick={() => navigate('/interviews')} style={{ cursor: 'pointer' }}>
+                  <div key={iv.id} className="tdb-session-row" onClick={() => navigate('/interviews')} style={{ cursor: 'pointer', padding: '8px 12px', marginTop: 'auto', marginBottom: 'auto' }}>
                     <div className="tdb-session-left">
                       <div className="tdb-date-badge">
                         <span className="tdb-date-month">{month}</span>
                         <span className="tdb-date-day">{day}</span>
                       </div>
                       <div>
-                        <h4 className="tdb-session-title">{iv.title || iv.trainerName || 'Interview Session'}</h4>
-                        <p className="tdb-session-time">{time} • {iv.role || 'Evaluation'}</p>
+                        <h4 className="tdb-session-title">{iv.title || 'HR / Interview'}</h4>
+                        <p className="tdb-session-time">{time} • {iv.type || 'Evaluation'}</p>
                       </div>
                     </div>
-                    <span className="tdb-badge-upcoming">{iv.status || 'Upcoming'}</span>
+                    <span className="tdb-badge-upcoming">{iv.status || 'Scheduled'}</span>
                   </div>
                 )
               })
@@ -350,61 +360,65 @@ export default function OverviewSection({
       </div>
 
       {/* ── 4. Bottom Card: Quick Actions ── */}
-      <div className="tdb-quick-card">
-        <div className="tdb-card-header" style={{ marginBottom: 6 }}>
+      <div className="tdb-quick-card" style={{ padding: '12px 18px', flexShrink: 0 }}>
+        <div className="tdb-card-header" style={{ marginBottom: 8 }}>
           <h2 className="tdb-card-title">Quick Actions</h2>
         </div>
 
-        <div className="tdb-quick-actions-grid">
+        <div className="tdb-quick-actions-grid" style={{ gap: 12 }}>
           <div
             className="tdb-action-card"
+            style={{ padding: '8px 12px' }}
             onClick={onGoToCourses}
           >
             <div className="tdb-action-icon tdb-action-icon--green">
-              <Plus size={16} strokeWidth={2.4} />
+              <BookOpen size={16} strokeWidth={2.4} />
             </div>
             <div>
-              <h4 className="tdb-action-title">Create Course</h4>
-              <div className="tdb-action-sub">Start a new training</div>
+              <h4 className="tdb-action-title">Browse Courses</h4>
+              <div className="tdb-action-sub">Explore new courses</div>
             </div>
           </div>
 
           <div
             className="tdb-action-card"
+            style={{ padding: '8px 12px' }}
             onClick={onClickCourse}
           >
             <div className="tdb-action-icon tdb-action-icon--blue">
               <BookOpen size={16} strokeWidth={2.4} />
             </div>
             <div>
-              <h4 className="tdb-action-title">My Trainings</h4>
-              <div className="tdb-action-sub">View assigned courses</div>
+              <h4 className="tdb-action-title">My Courses</h4>
+              <div className="tdb-action-sub">Continue learning</div>
             </div>
           </div>
 
           <div
             className="tdb-action-card"
-            onClick={onClickCourse}
+            style={{ padding: '8px 12px' }}
+            onClick={onGoToCertificates || onClickCourse}
           >
             <div className="tdb-action-icon tdb-action-icon--amber">
-              <TrendingUp size={16} strokeWidth={2.4} />
+              <Award size={16} strokeWidth={2.4} />
             </div>
             <div>
-              <h4 className="tdb-action-title">View Reports</h4>
-              <div className="tdb-action-sub">Track performance</div>
+              <h4 className="tdb-action-title">View Certificates</h4>
+              <div className="tdb-action-sub">View earned certificates</div>
             </div>
           </div>
 
           <div
             className="tdb-action-card"
-            onClick={onClickQuiz}
+            style={{ padding: '8px 12px' }}
+            onClick={() => navigate('/interviews')}
           >
             <div className="tdb-action-icon tdb-action-icon--purple">
-              <FileText size={16} strokeWidth={2.4} />
+              <Video size={16} strokeWidth={2.4} />
             </div>
             <div>
-              <h4 className="tdb-action-title">Bulk Import</h4>
-              <div className="tdb-action-sub">Import multiple courses</div>
+              <h4 className="tdb-action-title">My Interviews</h4>
+              <div className="tdb-action-sub">View interview schedule</div>
             </div>
           </div>
         </div>
@@ -412,3 +426,5 @@ export default function OverviewSection({
     </div>
   )
 }
+
+

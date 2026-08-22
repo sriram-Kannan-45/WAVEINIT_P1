@@ -217,7 +217,7 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
   }
 
   return (
-    <div className="reg-admin" style={{ padding: '0 0 20px', maxWidth: '100%', margin: '0', minHeight: 'auto', fontFamily: "'Poppins', sans-serif" }}>
+    <div className="reg-admin" style={{ padding: '0 0 10px', maxWidth: '100%', margin: '0', minHeight: 'auto', fontFamily: "'Poppins', sans-serif" }}>
       {tab === 'overview' && (
         <motion.div key="overview" {...fadeVariant} transition={{ duration: 0.25 }}>
           <OverviewSection
@@ -229,6 +229,7 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
             onResume={handleResume}
             onClickCourse={() => handleTabChange('myEnrollments')}
             onClickQuiz={() => handleTabChange('ai-quizzes')}
+            onGoToCertificates={() => handleTabChange('certificates')}
           />
         </motion.div>
       )}
