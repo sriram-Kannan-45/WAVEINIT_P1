@@ -35,7 +35,7 @@ export default function CourseCard({ course, artwork, onManage, onPreview, onMor
         cursor: 'default',
         overflow: 'hidden',
         transition: 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
-        fontFamily: "'Inter', sans-serif",
+        fontFamily: "'Poppins', sans-serif",
       }}
     >
       {/* Banner Cover (Gradient) */}

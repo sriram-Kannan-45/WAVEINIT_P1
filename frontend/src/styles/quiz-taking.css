@@ -147,7 +147,7 @@ body.qt-fullscreen-active {
 }
 
 .qt-header__title {
-  font-family: 'Poppins', 'Poppins', sans-serif;
+  font-family: 'Poppins', sans-serif;
   font-size: 18px;
   font-weight: 700;
   letter-spacing: -0.015em;
@@ -293,7 +293,7 @@ body.qt-fullscreen-active {
 }
 
 .qt-qcard__text {
-  font-family: 'Poppins', 'Poppins', sans-serif;
+  font-family: 'Poppins', sans-serif;
   font-size: 22px;
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -375,7 +375,7 @@ body.qt-fullscreen-active {
 .qt-option__letter {
   flex-shrink: 0;
   width: 28px;
-  font-family: 'Poppins', 'Poppins', sans-serif;
+  font-family: 'Poppins', sans-serif;
   font-weight: 700;
   font-size: 15px;
   letter-spacing: 0.02em;
@@ -528,7 +528,7 @@ body.qt-fullscreen-active {
 }
 
 .qt-side__heading {
-  font-family: 'Poppins', 'Poppins', sans-serif;
+  font-family: 'Poppins', sans-serif;
   font-size: 13px;
   font-weight: 700;
   color: var(--qt-text);
@@ -555,7 +555,7 @@ body.qt-fullscreen-active {
   text-align: center;
 }
 .qt-ring__value {
-  font-family: 'Poppins', 'Poppins', sans-serif;
+  font-family: 'Poppins', sans-serif;
   font-size: 28px;
   font-weight: 800;
   letter-spacing: -0.02em;
@@ -588,7 +588,7 @@ body.qt-fullscreen-active {
   gap: 4px;
 }
 .qt-stat__value {
-  font-family: 'Poppins', 'Poppins', sans-serif;
+  font-family: 'Poppins', sans-serif;
   font-size: 22px;
   font-weight: 800;
   letter-spacing: -0.02em;
@@ -611,7 +611,7 @@ body.qt-fullscreen-active {
   gap: 8px;
 }
 .qt-nav-cell {
-  font-family: 'Poppins', 'Poppins', sans-serif;
+  font-family: 'Poppins', sans-serif;
   font-size: 13px;
   font-weight: 700;
   height: 38px;
@@ -731,7 +731,7 @@ body.qt-fullscreen-active {
 .qt-modal__icon-wrap--danger { background: var(--qt-danger-bg); color: var(--qt-danger); border: 1px solid #fecaca; }
 
 .qt-modal__title {
-  font-family: 'Poppins', 'Poppins', sans-serif;
+  font-family: 'Poppins', sans-serif;
   font-size: 22px;
   font-weight: 800;
   letter-spacing: -0.02em;
@@ -761,7 +761,7 @@ body.qt-fullscreen-active {
   color: var(--qt-text-2);
 }
 .qt-modal__rows > div strong {
-  font-family: 'Poppins', 'Poppins', sans-serif;
+  font-family: 'Poppins', sans-serif;
   font-weight: 700;
   color: var(--qt-text);
   font-variant-numeric: tabular-nums;
@@ -818,7 +818,7 @@ body.qt-fullscreen-active {
 }
 .qt-loading-card p {
   margin: 0;
-  font-family: 'Poppins', 'Poppins', sans-serif;
+  font-family: 'Poppins', sans-serif;
   font-size: 16px;
   font-weight: 700;
   color: var(--qt-text);

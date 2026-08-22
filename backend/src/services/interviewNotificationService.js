@@ -1,7 +1,7 @@
 /**
  * Interview Notification Service
  * Sends in-app notifications for interview lifecycle events.
- * Socket emission is best-effort — notifications are always persisted to DB.
+ * Notifications and socket emissions are best-effort and non-blocking.
  */
 
 const { Notification } = require('../models');
@@ -21,125 +21,163 @@ class InterviewNotificationService {
    * Notify both candidate and interviewer when an interview is created.
    */
   async notifyCreated(interview) {
-    const candidateMsg = `You have a new interview scheduled on ${new Date(interview.scheduled_at).toLocaleString()} (${interview.type})`;
-    const interviewerMsg = `You have been assigned an interview on ${new Date(interview.scheduled_at).toLocaleString()} (${interview.type})`;
+    try {
+      const scheduledDateStr = interview.scheduled_at ? new Date(interview.scheduled_at).toLocaleString() : '';
+      const candidateMsg = `Interview Scheduled: You have a new interview scheduled on ${scheduledDateStr} (${interview.type || 'Technical'})`;
+      const interviewerMsg = `Interview Assigned: You have been assigned an interview on ${scheduledDateStr} (${interview.type || 'Technical'})`;
 
-    await Promise.all([
-      this._createNotification(interview.candidate_id, 'INTERVIEW_CREATED', 'Interview Scheduled', candidateMsg, { interviewId: interview.id }),
-      this._createNotification(interview.interviewer_id, 'INTERVIEW_CREATED', 'Interview Assigned', interviewerMsg, { interviewId: interview.id }),
-    ]);
+      await Promise.allSettled([
+        this._createNotification(interview.candidate_id, candidateMsg, { interviewId: interview.id }),
+        this._createNotification(interview.interviewer_id, interviewerMsg, { interviewId: interview.id }),
+      ]);
 
-    logger.info('Interview creation notifications sent', { interviewId: interview.id });
+      logger.info('Interview creation notifications sent', { interviewId: interview.id });
+    } catch (err) {
+      logger.warn('Failed to send interview created notification', { error: err.message, interviewId: interview?.id });
+    }
   }
 
   /**
    * Send reminder notifications T-30 min before interview.
    */
   async notifyReminder(interview) {
-    const msg = `Your interview starts in 30 minutes. Please prepare to join.`;
+    try {
+      const msg = `Interview Reminder: Your interview starts in 30 minutes. Please prepare to join.`;
 
-    await Promise.all([
-      this._createNotification(interview.candidate_id, 'INTERVIEW_REMINDER', 'Interview Reminder', msg, { interviewId: interview.id }),
-      this._createNotification(interview.interviewer_id, 'INTERVIEW_REMINDER', 'Interview Reminder', msg, { interviewId: interview.id }),
-    ]);
+      await Promise.allSettled([
+        this._createNotification(interview.candidate_id, msg, { interviewId: interview.id }),
+        this._createNotification(interview.interviewer_id, msg, { interviewId: interview.id }),
+      ]);
 
-    logger.info('Interview reminder notifications sent', { interviewId: interview.id });
+      logger.info('Interview reminder notifications sent', { interviewId: interview.id });
+    } catch (err) {
+      logger.warn('Failed to send interview reminder notification', { error: err.message, interviewId: interview?.id });
+    }
   }
 
   /**
    * Notify both parties when an interview is rescheduled.
    */
   async notifyRescheduled(interview, oldDate) {
-    const newDate = new Date(interview.scheduled_at).toLocaleString();
-    const msg = `Interview rescheduled from ${new Date(oldDate).toLocaleString()} to ${newDate}`;
+    try {
+      const newDate = interview.scheduled_at ? new Date(interview.scheduled_at).toLocaleString() : '';
+      const oldDateStr = oldDate ? new Date(oldDate).toLocaleString() : '';
+      const msg = `Interview Rescheduled: Interview changed from ${oldDateStr} to ${newDate}`;
 
-    await Promise.all([
-      this._createNotification(interview.candidate_id, 'INTERVIEW_RESCHEDULED', 'Interview Rescheduled', msg, { interviewId: interview.id }),
-      this._createNotification(interview.interviewer_id, 'INTERVIEW_RESCHEDULED', 'Interview Rescheduled', msg, { interviewId: interview.id }),
-    ]);
+      await Promise.allSettled([
+        this._createNotification(interview.candidate_id, msg, { interviewId: interview.id }),
+        this._createNotification(interview.interviewer_id, msg, { interviewId: interview.id }),
+      ]);
 
-    logger.info('Interview reschedule notifications sent', { interviewId: interview.id });
+      logger.info('Interview reschedule notifications sent', { interviewId: interview.id });
+    } catch (err) {
+      logger.warn('Failed to send interview reschedule notification', { error: err.message, interviewId: interview?.id });
+    }
   }
 
   /**
    * Notify both parties when an interview is cancelled.
    */
   async notifyCancelled(interview) {
-    const msg = `Interview scheduled on ${new Date(interview.scheduled_at).toLocaleString()} has been cancelled.`;
+    try {
+      const scheduledDateStr = interview.scheduled_at ? new Date(interview.scheduled_at).toLocaleString() : '';
+      const msg = `Interview Cancelled: Interview scheduled on ${scheduledDateStr} has been cancelled.`;
 
-    await Promise.all([
-      this._createNotification(interview.candidate_id, 'INTERVIEW_CANCELLED', 'Interview Cancelled', msg, { interviewId: interview.id }),
-      this._createNotification(interview.interviewer_id, 'INTERVIEW_CANCELLED', 'Interview Cancelled', msg, { interviewId: interview.id }),
-    ]);
+      await Promise.allSettled([
+        this._createNotification(interview.candidate_id, msg, { interviewId: interview.id }),
+        this._createNotification(interview.interviewer_id, msg, { interviewId: interview.id }),
+      ]);
 
-    logger.info('Interview cancellation notifications sent', { interviewId: interview.id });
+      logger.info('Interview cancellation notifications sent', { interviewId: interview.id });
+    } catch (err) {
+      logger.warn('Failed to send interview cancellation notification', { error: err.message, interviewId: interview?.id });
+    }
   }
 
   /**
    * Notify candidate when their interview result is published.
    */
   async notifyResultPublished(interview, decision) {
-    const msg = `Your interview result for ${interview.type || 'Interview'} has been published: ${decision}.`;
+    try {
+      const msg = `Interview Result Published: Your interview result for ${interview.type || 'Interview'} has been published: ${decision}.`;
 
-    await this._createNotification(
-      interview.candidate_id,
-      'INTERVIEW_RESULT_PUBLISHED',
-      'Interview Result Published',
-      msg,
-      { interviewId: interview.id, decision }
-    );
+      await this._createNotification(
+        interview.candidate_id,
+        msg,
+        { interviewId: interview.id, decision }
+      );
 
-    logger.info('Interview result published notification sent', { interviewId: interview.id, candidateId: interview.candidate_id });
+      logger.info('Interview result published notification sent', { interviewId: interview.id, candidateId: interview.candidate_id });
+    } catch (err) {
+      logger.warn('Failed to send interview result notification', { error: err.message, interviewId: interview?.id });
+    }
   }
 
   /**
    * Schedule a reminder for T-30 min before the interview.
    */
   scheduleReminder(interview) {
-    const interviewTime = new Date(interview.scheduled_at).getTime();
-    const reminderTime = interviewTime - 30 * 60 * 1000;
-    const delay = reminderTime - Date.now();
+    try {
+      const interviewTime = new Date(interview.scheduled_at).getTime();
+      const reminderTime = interviewTime - 30 * 60 * 1000;
+      const delay = reminderTime - Date.now();
 
-    if (delay > 0) {
-      setTimeout(() => {
-        this.notifyReminder(interview).catch(err => {
-          logger.error('Failed to send interview reminder', { error: err.message });
-        });
-      }, delay);
-      logger.info('Interview reminder scheduled', { interviewId: interview.id, delayMs: delay });
+      if (delay > 0) {
+        setTimeout(() => {
+          this.notifyReminder(interview).catch(err => {
+            logger.warn('Failed to send interview reminder', { error: err.message });
+          });
+        }, delay);
+        logger.info('Interview reminder scheduled', { interviewId: interview.id, delayMs: delay });
+      }
+    } catch (err) {
+      logger.warn('Failed to schedule interview reminder', { error: err.message, interviewId: interview?.id });
     }
   }
 
   /**
    * Create a notification record and emit via socket if available.
+   * Matches the Notification model schema:
+   * { userId, message, type: 'OTHER', isRead: false, actionUrl, relatedEntityId, relatedEntityType }
    */
-  async _createNotification(userId, type, title, message, data = {}) {
-    const notification = await Notification.create({
-      userId,
-      type,
-      title,
-      message,
-      data: JSON.stringify(data),
-      read: false,
-    });
+  async _createNotification(userId, message, data = {}) {
+    if (!userId) return null;
 
-    // Best-effort socket emission — no circular deps
-    if (_io) {
-      try {
-        _io.to(`user_${userId}`).emit('notification:new', {
-          id: notification.id,
-          type,
-          title,
-          message,
-          data,
-          createdAt: notification.created_at,
-        });
-      } catch (_) {
-        // Socket emission failed — notification is still in DB
+    try {
+      const actionUrl = data?.interviewId ? `/interview/${data.interviewId}/room` : '/interviews';
+      const notification = await Notification.create({
+        userId,
+        message,
+        type: 'OTHER',
+        isRead: false,
+        actionUrl,
+        relatedEntityId: data?.interviewId || null,
+        relatedEntityType: 'INTERVIEW',
+      });
+
+      // Best-effort socket emission
+      if (_io) {
+        try {
+          _io.to(`user_${userId}`).emit('notification:new', {
+            id: notification.id,
+            userId,
+            message: notification.message,
+            type: notification.type,
+            isRead: notification.isRead,
+            createdAt: notification.created_at || new Date(),
+            actionUrl: notification.actionUrl,
+            data,
+          });
+        } catch (_) {
+          // Socket emission failed — notification is already in DB
+        }
       }
-    }
 
-    return notification;
+      return notification;
+    } catch (err) {
+      logger.warn('Notification creation error (ignored)', { error: err.message, userId });
+      return null;
+    }
   }
 }
 

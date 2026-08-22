@@ -37,7 +37,7 @@ export default function SearchBar({
           borderRadius: radius,
           paddingLeft: '44px',
           paddingRight: '16px',
-          fontFamily: "'Inter', sans-serif",
+          fontFamily: "'Poppins', sans-serif",
           boxSizing: 'border-box'
         }}
         className="w-full bg-white border border-slate-200 text-sm shadow-sm outline-none transition-all focus:border-[#2563eb] focus:ring-2 focus:ring-[#2563eb]/20"

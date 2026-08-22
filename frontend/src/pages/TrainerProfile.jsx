@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { useToast } from '../components/Toast'
 import { API, API_BASE, assetUrl } from '../api/api'
+import { fetchWithTimeout } from '../api/request'
 import EditProfileModal from '../components/profile/edit-modal/EditProfileModal'
 import { getTwoLetterInitials } from '../components/common/UserAvatar'
 
@@ -54,40 +55,38 @@ export default function TrainerProfile({ user, onLogout }) {
     totalCourses: 0, totalLearners: 0, avgRating: 0, totalFeedback: 0,
   })
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [editing, setEditing] = useState(false)
   const [editForm, setEditForm] = useState({})
 
   const [showAddEdu, setShowAddEdu] = useState(false)
   const [eduForm, setEduForm] = useState({ school: '', degree: '', fieldOfStudy: '', startYear: '', endYear: '' })
 
-  const auth = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${user.token}` })
+  const auth = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${user?.token || ''}` })
 
-  useEffect(() => {
-    fetchAll()
-  }, [])
-
-  const fetchAll = async () => {
+  const fetchAll = async (signal) => {
     try {
       setLoading(true)
+      setError(null)
       const [profileRes, trainRes, feedRes] = await Promise.all([
-        fetch(API.PROFILE.GET, { headers: auth() }),
-        fetch(`${API_BASE}/trainer/trainings`, { headers: auth() }),
-        fetch(`${API_BASE}/trainer/feedbacks`, { headers: auth() }),
+        fetchWithTimeout(API.PROFILE.GET, { headers: auth(), signal }, 12000),
+        fetchWithTimeout(`${API_BASE}/trainer/trainings`, { headers: auth(), signal }, 12000),
+        fetchWithTimeout(`${API_BASE}/trainer/feedbacks`, { headers: auth(), signal }, 12000),
       ])
-      const profileData = await profileRes.json()
+      const profileData = await profileRes.json().catch(() => ({}))
       if (profileData.success && profileData.profile) {
         setProfile({ ...profileData.profile.user, ...profileData.profile, id: profileData.profile.userId })
         setExperiences(profileData.experiences || [])
         setEducations(profileData.educations || [])
       } else {
-        const meRes = await fetch(`${API_BASE}/auth/me`, { headers: auth() })
-        const meData = await meRes.json()
+        const meRes = await fetchWithTimeout(`${API_BASE}/auth/me`, { headers: auth(), signal }, 10000)
+        const meData = await meRes.json().catch(() => ({}))
         if (meData.user) setProfile(meData.user)
       }
-      const trainData = await trainRes.json()
+      const trainData = await trainRes.json().catch(() => ({}))
       const list = trainData.trainings || []
       setTrainings(list)
-      const feedData = await feedRes.json()
+      const feedData = await feedRes.json().catch(() => ({}))
       const fList = feedData.feedbacks || []
       setFeedbacks(fList)
       setStats({
@@ -96,9 +95,21 @@ export default function TrainerProfile({ user, onLogout }) {
         avgRating: feedData.averageTrainerRating || 0,
         totalFeedback: fList.length,
       })
-    } catch (e) { showError(e.message) }
-    finally { setLoading(false) }
+    } catch (e) {
+      if (e.name === 'AbortError') return
+      console.error('TrainerProfile fetchAll error:', e.message)
+      setError(e.message || 'Failed to load trainer profile')
+      showError(e.message)
+    } finally {
+      setLoading(false)
+    }
   }
+
+  useEffect(() => {
+    const controller = new AbortController()
+    fetchAll(controller.signal)
+    return () => controller.abort()
+  }, [])
 
   const startEdit = () => {
     setEditForm({
@@ -205,12 +216,50 @@ export default function TrainerProfile({ user, onLogout }) {
     )
   }
 
+  if (error && !profile) {
+    return (
+      <div className="reg-admin" style={{ padding: '48px 0', maxWidth: 1280, margin: '0 auto' }}>
+        <div style={{
+          background: '#FFFFFF',
+          border: '1px solid #E2E8F0',
+          borderRadius: 20,
+          padding: '60px 24px',
+          textAlign: 'center',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 16,
+        }}>
+          <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#FEF2F2', display: 'grid', placeItems: 'center', color: '#EF4444' }}>
+            <X size={28} />
+          </div>
+          <div>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', margin: 0 }}>Unable to Load Trainer Profile</h3>
+            <p style={{ fontSize: 13, color: '#64748B', maxWidth: 440, margin: '6px auto 0', lineHeight: 1.5 }}>
+              {error || 'We could not connect to the server to fetch your trainer details.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="reg-admin-btn reg-admin-btn--primary"
+            onClick={() => fetchAll()}
+            style={{ height: 40, padding: '0 20px', borderRadius: 10, fontSize: 13, fontWeight: 600, background: '#16A34A' }}
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="reg-admin" style={{ paddingBottom: 0, maxWidth: 1280, margin: '0 auto' }}>
       {/* ── Page Header ────────────────────────────────────────── */}
       <div className="reg-admin-header" style={{ marginBottom: 12 }}>
-        <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-          <User size={26} color="#fff" />
+        <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A' }}>
+          <User size={26} color="#16A34A" />
         </div>
         <div>
           <h2 className="reg-admin-title">My Profile</h2>
@@ -232,9 +281,9 @@ export default function TrainerProfile({ user, onLogout }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <div style={{ position: 'relative' }}>
             <div style={{
-              width: 72, height: 72, borderRadius: '50%', background: 'linear-gradient(135deg, #16A34A, #15803D)',
-              color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 24, fontWeight: 700, overflow: 'hidden', border: '3px solid #fff', boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+              width: 72, height: 72, borderRadius: '50%', background: '#FFFFFF',
+              border: '2.5px solid #16A34A', color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 24, fontWeight: 700, overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
             }}>
               {profile?.imagePath
                 ? <img src={assetUrl(profile.imagePath)} alt={trainerName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />

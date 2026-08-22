@@ -1,7 +1,9 @@
 import { motion } from 'framer-motion'
-import { AlertCircle, BookOpen, Check, CheckCircle2, ClipboardList, Clock, Eye, FileText, Layers, Loader2, MessageSquare, Plus, RefreshCw, Search, Star, Trash2, TrendingUp, User, UserCheck, UserPlus, Users, X, XCircle } from 'lucide-react'
+import { AlertCircle, BookOpen, Check, CheckCircle2, ClipboardList, Clock, Eye, FileText, Layers, Loader2, MessageSquare, Plus, RefreshCw, Search, Star, Trash2, TrendingUp, Trophy, User, UserCheck, UserPlus, Users, X, XCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { API, API_BASE } from '../api/api'
+import { fetchWithTimeout } from '../api/request'
 import AssessmentSessionsPanel from '../components/admin/AssessmentSessionsPanel'
 import BulkImportParticipants from '../components/admin/BulkImportParticipants'
 import CreateTrainerModule from '../components/admin/CreateTrainerModule'
@@ -36,6 +38,7 @@ const itemVariants = {
 }
 
 function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
+  const navigate = useNavigate()
   const { success, error: showError, info, warning } = useToast()
   const normalizeTab = (tabKey) => tabKey === 'applications' ? 'pending' : tabKey || 'overview'
   const [tab, setTab] = useState(normalizeTab(activeTab))
@@ -88,8 +91,8 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const fetchAdminReport = async () => {
     try {
-      const r = await fetch(`${API_BASE}/reports/admin`, { headers: auth() })
-      const d = await r.json()
+      const r = await fetchWithTimeout(`${API_BASE}/reports/admin`, { headers: auth() }, 12000)
+      const d = await r.json().catch(() => ({}))
       if (r.ok && d.success) {
         setAdminReport(d.data)
       }
@@ -134,15 +137,15 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const fetchStats = async () => {
     try {
-      const r = await fetch(`${API_BASE}/admin/stats`, { headers: auth() })
+      const r = await fetchWithTimeout(`${API_BASE}/admin/stats`, { headers: auth() }, 10000)
       if (r.ok) setStats(await r.json())
     } catch {}
   }
 
   const fetchPendingParticipants = async () => {
     try {
-      const r = await fetch(API.ADMIN.PENDING_PARTICIPANTS, { headers: auth() })
-      const d = await r.json()
+      const r = await fetchWithTimeout(API.ADMIN.PENDING_PARTICIPANTS, { headers: auth() }, 10000)
+      const d = await r.json().catch(() => ({}))
       setPendingParticipants(d.participants || [])
     } catch {}
   }
@@ -203,8 +206,8 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const fetchTrainers = async () => {
     try {
-      const r = await fetch(`${API_BASE}/admin/trainers`, { headers: auth() })
-      const d = await r.json()
+      const r = await fetchWithTimeout(`${API_BASE}/admin/trainers`, { headers: auth() }, 10000)
+      const d = await r.json().catch(() => ({}))
       const trainers = d.trainers || (d.data && d.data.trainers) || []
       setTrainers(trainers)
     } catch (e) { console.error('fetchTrainers error:', e.message) }
@@ -212,24 +215,24 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const fetchTrainings = async () => {
     try {
-      const r = await fetch(`${API_BASE}/trainings`, { headers: auth() })
-      const d = await r.json()
+      const r = await fetchWithTimeout(`${API_BASE}/trainings`, { headers: auth() }, 10000)
+      const d = await r.json().catch(() => ({}))
       setTrainings(Array.isArray(d) ? d : (d.trainings || []))
     } catch {}
   }
 
   const fetchFeedbacks = async () => {
     try {
-      const r = await fetch(`${API_BASE}/feedback/admin-feedbacks`, { headers: auth() })
-      const d = await r.json()
+      const r = await fetchWithTimeout(`${API_BASE}/feedback/admin-feedbacks`, { headers: auth() }, 10000)
+      const d = await r.json().catch(() => ({}))
       setFeedbacks(d.feedbacks || [])
     } catch {}
   }
 
   const fetchParticipants = async () => {
     try {
-      const r = await fetch(API.ADMIN.PARTICIPANTS, { headers: auth() })
-      const d = await r.json()
+      const r = await fetchWithTimeout(API.ADMIN.PARTICIPANTS, { headers: auth() }, 10000)
+      const d = await r.json().catch(() => ({}))
       const participants = d.participants || (d.data && d.data.participants) || []
       setParticipants(participants)
     } catch (e) { console.error('fetchParticipants error:', e.message) }
@@ -237,8 +240,8 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const fetchQuestions = async () => {
     try {
-      const r = await fetch(`${API_BASE}/survey`, { headers: auth() })
-      const d = await r.json()
+      const r = await fetchWithTimeout(`${API_BASE}/survey`, { headers: auth() }, 10000)
+      const d = await r.json().catch(() => ({}))
       setQuestions(d.questions || [])
     } catch {}
   }
@@ -248,24 +251,24 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       const url = status 
         ? `${API_BASE}/notes/admin/notes?status=${status}`
         : `${API_BASE}/notes/admin/notes`
-      const r = await fetch(url, { headers: auth() })
-      const d = await r.json()
+      const r = await fetchWithTimeout(url, { headers: auth() }, 10000)
+      const d = await r.json().catch(() => ({}))
       setNotes(d.notes || [])
     } catch {}
   }
 
   const fetchPrograms = async () => {
     try {
-      const r = await fetch(`${API_BASE}/admin/training-programs`, { headers: auth() })
-      const d = await r.json()
+      const r = await fetchWithTimeout(`${API_BASE}/admin/training-programs`, { headers: auth() }, 10000)
+      const d = await r.json().catch(() => ({}))
       setPrograms(d.programs || (d.data && d.data.programs) || [])
     } catch {}
   }
 
   const fetchCourses = async () => {
     try {
-      const r = await fetch(`${API_BASE}/admin/courses`, { headers: auth() })
-      const d = await r.json()
+      const r = await fetchWithTimeout(`${API_BASE}/admin/courses`, { headers: auth() }, 10000)
+      const d = await r.json().catch(() => ({}))
       setCourses(d.courses || (d.data && d.data.courses) || [])
     } catch {}
   }
@@ -571,8 +574,8 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       {tab === 'pending' && (
         <motion.div variants={itemVariants} className="reg-admin">
           <div className="reg-admin-header">
-            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-              <User size={22} color="#fff" />
+            <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A' }}>
+              <User size={22} color="#16A34A" />
             </div>
             <div>
               <h2 className="reg-admin-title">Pending Approval</h2>
@@ -635,8 +638,8 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
           <motion.div variants={itemVariants} className="reg-admin">
             {/* Header */}
             <div className="reg-admin-header">
-              <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-                <BookOpen size={26} color="#fff" />
+              <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A' }}>
+                <BookOpen size={26} color="#16A34A" />
               </div>
               <div>
                 <h2 className="reg-admin-title">Training Sessions</h2>
@@ -736,6 +739,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                             <div className="reg-admin-actions">
                               <button className="reg-admin-action" title="View Details" onClick={() => setTrainingDetailModal(t)}><Eye size={14} /></button>
                               <button className="reg-admin-action" title="Edit Training" onClick={() => openEdit(t)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button>
+                              <button className="reg-admin-action" title="Leaderboard" style={{ color: '#16A34A' }} onClick={() => navigate(`/admin/trainings/${t.id}/leaderboard`)}><Trophy size={14} color="#16A34A" /></button>
                               <button className="reg-admin-action reg-admin-action--reject" title="Delete Training" onClick={() => handleDeleteTraining(t.id, t.title)}><Trash2 size={14} /></button>
                             </div>
                           </td>
@@ -785,6 +789,17 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                     </div>
                     <div className="reg-modal-footer">
                       <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => setTrainingDetailModal(null)}>Close</button>
+                      <button
+                        className="reg-admin-btn reg-admin-btn--secondary"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#16A34A', border: '1.5px solid #16A34A', background: '#FFFFFF', cursor: 'pointer' }}
+                        onClick={() => {
+                          const targetId = trainingDetailModal.id
+                          setTrainingDetailModal(null)
+                          navigate(`/admin/trainings/${targetId}/leaderboard`)
+                        }}
+                      >
+                        <Trophy size={15} color="#16A34A" /> Leaderboard
+                      </button>
                       <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => { setTrainingDetailModal(null); openEdit(trainingDetailModal) }}>Edit Training</button>
                     </div>
                   </div>
@@ -800,8 +815,8 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
         <motion.div variants={itemVariants} className="reg-admin">
           {/* Header */}
           <div className="reg-admin-header">
-            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-              <Users size={26} color="#fff" />
+            <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A' }}>
+              <Users size={26} color="#16A34A" />
             </div>
             <div>
               <h2 className="reg-admin-title">Trainers</h2>
@@ -917,8 +932,8 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
         <motion.div variants={itemVariants} className="reg-admin">
           {/* Header */}
           <div className="reg-admin-header">
-            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-              <Users size={26} color="#fff" />
+            <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A' }}>
+              <Users size={26} color="#16A34A" />
             </div>
             <div>
               <h2 className="reg-admin-title">Participants</h2>
@@ -1292,8 +1307,8 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       {tab === 'feedback' && (
         <motion.div variants={itemVariants} className="reg-admin">
           <div className="reg-admin-header">
-            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-              <MessageSquare size={22} color="#fff" />
+            <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A' }}>
+              <MessageSquare size={22} color="#16A34A" />
             </div>
             <div>
               <h2 className="reg-admin-title">Feedback Reports</h2>

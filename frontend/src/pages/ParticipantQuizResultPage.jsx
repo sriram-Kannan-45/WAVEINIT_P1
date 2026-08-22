@@ -106,7 +106,7 @@ export default function ParticipantQuizResultPage({ user }) {
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        fontFamily: "'Manrope', 'Poppins', sans-serif"
+        fontFamily: "'Poppins', sans-serif"
       }}>
         <Loader2 style={{ animation: 'spin 1s linear infinite', color: '#2563eb' }} size={32} />
         <span style={{ marginTop: '12px', fontSize: '14px', color: '#64748b', fontWeight: 600 }}>
@@ -124,7 +124,7 @@ export default function ParticipantQuizResultPage({ user }) {
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        fontFamily: "'Manrope', 'Poppins', sans-serif"
+        fontFamily: "'Poppins', sans-serif"
       }}>
         <AlertCircle size={44} color="#dc2626" style={{ marginBottom: 12 }} />
         <h3 style={{ fontSize: 16, fontWeight: 700, color: '#0f172a', margin: '0 0 6px' }}>
@@ -153,7 +153,7 @@ export default function ParticipantQuizResultPage({ user }) {
   const submissionTime = result?.submittedAt ? new Date(result.submittedAt).toLocaleString() : '—';
 
   return (
-    <div style={{ padding: '24px 0', maxWidth: 760, margin: '0 auto', fontFamily: "'Manrope', 'Poppins', sans-serif" }}>
+    <div style={{ padding: '24px 0', maxWidth: 760, margin: '0 auto', fontFamily: "'Poppins', sans-serif" }}>
       {/* Back Header */}
       <button
         onClick={() => navigate('/participant')}

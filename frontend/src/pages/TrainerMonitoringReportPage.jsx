@@ -7,7 +7,7 @@ export default function TrainerMonitoringReportPage() {
   const navigate = useNavigate();
 
   return (
-    <div style={{ minHeight: '100vh', background: 'linear-gradient(180deg, #f8fafc 0%, #ffffff 50%, #f0f9ff 100%)', padding: '24px 16px' }}>
+    <div style={{ minHeight: 'auto', background: 'transparent', padding: '0 0 24px' }}>
       <div className="reg-admin">
         <button
           onClick={() => navigate(-1)}

@@ -198,8 +198,8 @@ export default function CreateTrainerModule({
       <div style={{ maxWidth: 920, margin: '0 auto', width: '100%' }}>
         {/* Header */}
         <div className="reg-admin-header">
-          <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-            <ShieldCheck size={26} color="#fff" />
+          <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A' }}>
+            <ShieldCheck size={26} color="#16A34A" />
           </div>
           <div>
             <h2 className="reg-admin-title">Create Trainer</h2>
@@ -230,8 +230,8 @@ export default function CreateTrainerModule({
                   <div style={{ position: 'relative', flexShrink: 0 }}>
                     <div style={{
                       width: 52, height: 52, borderRadius: '50%',
-                      background: 'linear-gradient(135deg, #16A34A, #15803D)',
-                      color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      background: '#FFFFFF', border: '2px solid #16A34A',
+                      color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center',
                       fontSize: 18, fontWeight: 700, overflow: 'hidden',
                     }}>
                       {imagePreview

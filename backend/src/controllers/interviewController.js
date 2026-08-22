@@ -148,14 +148,26 @@ class InterviewController {
         await interview.update({ meeting_link: `${protocol}://${host}/interview/${interview.id}/room` });
       }
 
-      await notificationService.notifyCreated(interview);
-      notificationService.scheduleReminder(interview);
+      // Best-effort notification delivery — secondary operation must never fail the interview creation
+      try {
+        await notificationService.notifyCreated(interview);
+        notificationService.scheduleReminder(interview);
+      } catch (notifErr) {
+        logger.warn('Failed to send interview creation notifications (ignored)', {
+          interviewId: interview.id,
+          error: notifErr.message,
+        });
+      }
 
       logger.info('Interview created', { interviewId: interview.id, createdBy: req.user.id });
-      res.status(201).json({ interview });
+      res.status(201).json({
+        success: true,
+        message: 'Interview scheduled successfully',
+        interview,
+      });
     } catch (error) {
       logger.error('Error creating interview', { error: error.message });
-      res.status(500).json({ error: 'Failed to create interview' });
+      res.status(500).json({ error: error.message || 'Failed to create interview' });
     }
   }
 
@@ -964,11 +976,18 @@ class InterviewController {
       }
 
       if (result.is_published) {
-        await notificationService.notifyResultPublished(interview, result.decision);
+        try {
+          await notificationService.notifyResultPublished(interview, result.decision);
+        } catch (notifErr) {
+          logger.warn('Failed to send result published notification (ignored)', {
+            interviewId: interview.id,
+            error: notifErr.message,
+          });
+        }
       }
 
       logger.info('Interview result submitted', { interviewId: interview.id, decision, isPublished: result.is_published });
-      res.json({ result });
+      res.json({ success: true, result });
     } catch (error) {
       logger.error('Error submitting result', { error: error.message });
       res.status(500).json({ error: 'Failed to submit result' });
@@ -994,7 +1013,14 @@ class InterviewController {
       }
 
       await result.update({ is_published: true });
-      await notificationService.notifyResultPublished(interview, result.decision);
+      try {
+        await notificationService.notifyResultPublished(interview, result.decision);
+      } catch (notifErr) {
+        logger.warn('Failed to send result published notification (ignored)', {
+          interviewId: interview.id,
+          error: notifErr.message,
+        });
+      }
 
       logger.info('Interview result published', { interviewId: interview.id, candidateId: interview.candidate_id });
       res.json({ success: true, result });
@@ -1339,7 +1365,14 @@ class InterviewController {
       }
 
       if (scheduledAt && new Date(scheduledAt).getTime() !== new Date(oldDate).getTime()) {
-        await notificationService.notifyRescheduled(interview, oldDate);
+        try {
+          await notificationService.notifyRescheduled(interview, oldDate);
+        } catch (notifErr) {
+          logger.warn('Failed to send reschedule notification (ignored)', {
+            interviewId: interview.id,
+            error: notifErr.message,
+          });
+        }
       }
 
       const fresh = await Interview.findByPk(interview.id, {
@@ -1350,10 +1383,10 @@ class InterviewController {
       });
 
       logger.info('Interview updated', { interviewId: interview.id, updatedBy: req.user.id });
-      res.json({ interview: fresh });
+      res.json({ success: true, message: 'Interview updated successfully', interview: fresh });
     } catch (error) {
       logger.error('Error updating interview', { error: error.message });
-      res.status(500).json({ error: 'Failed to update interview' });
+      res.status(500).json({ error: error.message || 'Failed to update interview' });
     }
   }
 
@@ -1391,7 +1424,14 @@ class InterviewController {
       await interview.update({ status: nextStatus });
 
       if (nextStatus === 'CANCELLED') {
-        await notificationService.notifyCancelled(interview);
+        try {
+          await notificationService.notifyCancelled(interview);
+        } catch (notifErr) {
+          logger.warn('Failed to send status cancellation notification (ignored)', {
+            interviewId: interview.id,
+            error: notifErr.message,
+          });
+        }
       }
 
       const fresh = await Interview.findByPk(interview.id, {
@@ -1406,10 +1446,10 @@ class InterviewController {
       });
 
       logger.info('Interview status changed', { interviewId: interview.id, from: interview.status, to: nextStatus, by: req.user.id });
-      res.json({ interview: fresh });
+      res.json({ success: true, message: 'Interview status changed successfully', interview: fresh });
     } catch (error) {
       logger.error('Error changing interview status', { error: error.message });
-      res.status(500).json({ error: 'Failed to change interview status' });
+      res.status(500).json({ error: error.message || 'Failed to change interview status' });
     }
   }
 

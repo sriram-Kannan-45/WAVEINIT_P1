@@ -13,7 +13,7 @@ export default function TrainerProctoringPage() {
   const navigate = useNavigate();
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
+    <div style={{ minHeight: 'auto', background: '#f8fafc', paddingBottom: 24 }}>
       <button
         onClick={() => navigate(-1)}
         className="reg-admin-btn reg-admin-btn--secondary"

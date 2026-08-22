@@ -1,35 +1,23 @@
 import { useState, useEffect } from 'react'
 import { User, Mail, Phone, Calendar, Award, TrendingUp, BookOpen, Loader2, ExternalLink } from 'lucide-react'
 import { API_BASE } from '../../../api/api'
+import { getAuthHeaders, fetchWithTimeout } from '../../../api/request'
 import EditProfileModal from '../../participant/EditProfileModal'
 import { getTwoLetterInitials } from '../../common/UserAvatar'
-
-function getAuthHeaders() {
-  try {
-    const user = JSON.parse(localStorage.getItem('user') || '{}')
-    const token = user?.token || user?.accessToken || ''
-    return token ? { Authorization: `Bearer ${token}` } : {}
-  } catch {
-    return {}
-  }
-}
 
 export default function ProfileSection({ user, enrollments = [], quizzes = [], onResume, onTabChange }) {
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showEdit, setShowEdit] = useState(false)
 
-  useEffect(() => {
-    fetchProfile()
-  }, [])
-
-  const fetchProfile = async () => {
+  const fetchProfile = async (signal) => {
     try {
       setLoading(true)
-      const res = await fetch(`${API_BASE}/profile/me`, {
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() }
-      })
-      const data = await res.json()
+      const res = await fetchWithTimeout(`${API_BASE}/profile/me`, {
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders(user) },
+        signal,
+      }, 10000)
+      const data = await res.json().catch(() => ({}))
       if (data.success && data.profile) {
         setProfile(data.profile)
       }
@@ -39,6 +27,12 @@ export default function ProfileSection({ user, enrollments = [], quizzes = [], o
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    const controller = new AbortController()
+    fetchProfile(controller.signal)
+    return () => controller.abort()
+  }, [])
 
   if (loading) {
     return (

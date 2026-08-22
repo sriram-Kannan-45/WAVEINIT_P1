@@ -221,7 +221,7 @@ export default function TrainerRecordingDetail({ user }) {
             <ArrowLeft size={18} />
           </button>
           <div className="reg-admin-header-icon" style={{ flexShrink: 0 }}>
-            <Video size={22} color="#fff" />
+            <Video size={22} color="#16A34A" />
           </div>
           <div style={{ minWidth: 0 }}>
             <p className="reg-admin-subtitle" style={{ marginBottom: 2 }}>Trainer Portal › Recordings › Detail</p>

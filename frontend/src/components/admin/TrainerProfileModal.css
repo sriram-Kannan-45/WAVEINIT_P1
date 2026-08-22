@@ -113,15 +113,16 @@
   min-width: 68px;
   min-height: 68px;
   border-radius: 50%;
-  background: #16A34A;
-  color: #FFFFFF;
+  background: #FFFFFF;
+  border: 2px solid #16A34A;
+  color: #16A34A;
   font-size: 26px;
   font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.15);
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.08);
 }
 
 .tpm-avatar-wrap img {

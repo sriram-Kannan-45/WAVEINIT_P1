@@ -244,8 +244,8 @@ export default function CreateTrainingModule({
       <div style={{ maxWidth: 920, margin: '0 auto', width: '100%' }}>
         {/* Header */}
         <div className="reg-admin-header">
-          <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-            <CalendarDays size={26} color="#fff" />
+          <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A' }}>
+            <CalendarDays size={26} color="#16A34A" />
           </div>
           <div>
             <h2 className="reg-admin-title">Create Training</h2>

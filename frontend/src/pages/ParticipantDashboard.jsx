@@ -5,6 +5,7 @@ import AIQuizList from '../components/AIQuizList'
 import QuizTaking from '../components/QuizTaking'
 import { useToast } from '../components/Toast'
 import { API_BASE as API } from '../api/api'
+import { fetchWithTimeout } from '../api/request'
 
 import OverviewSection from '../components/student/overview/OverviewSection'
 import AvailableCourses from '../components/student/dashboard/AvailableCourses'
@@ -56,7 +57,7 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const fetchParticipantReport = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/reports/participant`, { headers: auth() })
+      const r = await fetchWithTimeout(`${API}/reports/participant`, { headers: auth() }, 12000)
       const d = await handleResponse(r)
       if (d.success) {
         setParticipantReport(d.data)
@@ -69,7 +70,7 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const fetchTrainings = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/trainings`, { headers: auth() })
+      const r = await fetchWithTimeout(`${API}/trainings`, { headers: auth() }, 10000)
       const d = await handleResponse(r)
       setTrainings(Array.isArray(d) ? d : (d.trainings || []))
     } catch (e) {
@@ -79,7 +80,7 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const fetchEnrollments = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/participant/enrollments`, { headers: auth() })
+      const r = await fetchWithTimeout(`${API}/participant/enrollments`, { headers: auth() }, 10000)
       const d = await handleResponse(r)
       setEnrollments(d.enrollments || [])
     } catch (e) {
@@ -89,7 +90,7 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const fetchFeedbacks = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/participant/feedbacks`, { headers: auth() })
+      const r = await fetchWithTimeout(`${API}/participant/feedbacks`, { headers: auth() }, 10000)
       const d = await handleResponse(r)
       setFeedbacks(d.feedbacks || [])
     } catch (e) {
@@ -99,7 +100,7 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const fetchQuizzes = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/ai-quiz/participant/quizzes`, { headers: auth() })
+      const r = await fetchWithTimeout(`${API}/ai-quiz/participant/quizzes`, { headers: auth() }, 10000)
       const d = await handleResponse(r)
       setQuizzes(d.quizzes || [])
     } catch (e) {
@@ -123,7 +124,7 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
     if (user && user.token) {
       fetchAll()
     }
-  }, [fetchAll, user])
+  }, [fetchAll, user?.token])
 
   useEffect(() => {
     if (tab === 'reports' || tab === 'certificates') {
@@ -134,12 +135,12 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
   if (!user || !user.token) {
     return (
       <div style={{
-        minHeight: '100vh',
+        minHeight: '50vh',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'var(--neutral-50)',
+        background: 'transparent',
         fontFamily: 'var(--font-primary)'
       }}>
         <Loader2 style={{ animation: 'spin 1s linear infinite', color: 'var(--brand-primary)' }} size={36} />
@@ -216,7 +217,7 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
   }
 
   return (
-    <div className="reg-admin" style={{ padding: '24px 28px', maxWidth: '100%', margin: '0', minHeight: '100vh', fontFamily: "'Poppins', sans-serif" }}>
+    <div className="reg-admin" style={{ padding: '0 0 20px', maxWidth: '100%', margin: '0', minHeight: 'auto', fontFamily: "'Poppins', sans-serif" }}>
       {tab === 'overview' && (
         <motion.div key="overview" {...fadeVariant} transition={{ duration: 0.25 }}>
           <OverviewSection
@@ -436,8 +437,8 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
       {tab === 'certificates' && (
         <motion.div key="certificates" {...fadeVariant} transition={{ duration: 0.25 }}>
           <div className="reg-admin-header">
-            <div className="reg-admin-header-icon" style={{ background: '#f0fdf4', color: '#16a34a' }}>
-              <Award size={22} />
+            <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16a34a' }}>
+              <Award size={22} color="#16A34A" />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <h2 className="reg-admin-title">My Certificates</h2>

@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ArrowLeft, Search, Plus, Pencil, Trash2,
   BookOpen, FileText, Users, BarChart3, Layers, Sparkles,
   CheckCircle2, Folder, MessageSquare, Code,
   ChevronRight, MoreHorizontal, MoreVertical, GripVertical,
-  GraduationCap, ChevronDown
+  GraduationCap, ChevronDown, Trophy
 } from 'lucide-react'
 import { API } from '../api/api'
+import { fetchWithTimeout } from '../api/request'
 import { StatCard } from '../components/ui'
 import { getCourseThumbnail, getThumbnailSVG } from '../config/courseThumbnailMap'
 import emptyCourseImg from '../assets/illustrations/empty-course.png'
@@ -56,25 +57,35 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
   const [bulkImportOpen, setBulkImportOpen] = useState(false)
   const [quickJumpOpen, setQuickJumpOpen] = useState(false)
   const [quickJumpSearch, setQuickJumpSearch] = useState('')
+  const [error, setError] = useState(null)
   const [currentPage, setCurrentPage] = useState(1)
   const PAGE_SIZE = 4
 
-  const auth = () => ({ Authorization: `Bearer ${user?.token}` })
+  const auth = () => ({ Authorization: `Bearer ${user?.token || ''}` })
 
-  const fetchCourses = async () => {
+  const fetchCourses = async (signal) => {
     try {
       setLoading(true)
-      const r = await fetch(API.TRAINER_COURSES.LIST, { headers: auth() })
-      const d = await r.json()
+      setError(null)
+      const r = await fetchWithTimeout(API.TRAINER_COURSES.LIST, { headers: auth(), signal }, 12000)
+      const d = await r.json().catch(() => ({}))
       if (d.success) setCourses(d.courses || [])
+      else throw new Error(d.error || 'Failed to load courses')
     } catch (e) {
+      if (e.name === 'AbortError') return
       console.error('Failed to load courses:', e.message)
+      setError(e.message || 'Failed to load courses')
+      showError(e.message)
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => { fetchCourses() }, [])
+  useEffect(() => {
+    const controller = new AbortController()
+    fetchCourses(controller.signal)
+    return () => controller.abort()
+  }, [])
 
   // Assigned courses for current trainer
   const activeCourses = useMemo(() => {
@@ -454,6 +465,16 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
                                     className="tmt-action-dropdown-item"
                                     onClick={() => {
                                       setActionMenuOpen(null)
+                                      const programId = course.trainingProgramId || course.id
+                                      navigate(`/trainer/trainings/${programId}/leaderboard`)
+                                    }}
+                                  >
+                                    <Trophy size={13} color="#16A34A" /> View Leaderboard
+                                  </button>
+                                  <button
+                                    className="tmt-action-dropdown-item"
+                                    onClick={() => {
+                                      setActionMenuOpen(null)
                                       onOpenCourse(course.id)
                                     }}
                                   >
@@ -618,7 +639,7 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
                   className="wl-btn-primary"
                   style={{ height: 42 }}
                 >
-                  Import Files
+                                Import Files
                 </button>
               </div>
             </motion.div>
@@ -631,22 +652,54 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
 
 function CourseDetail({ user, courseId, onBack }) {
   const { error: showError, success } = useToast()
-  const [tab, setTab] = useState('structure')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const currentSection = searchParams.get('section') || 'structure'
+  const [tab, setTab] = useState(currentSection)
   const [course, setCourse] = useState(null)
   const [loading, setLoading] = useState(true)
-  const auth = () => ({ Authorization: `Bearer ${user.token}` })
+  const [error, setError] = useState(null)
+  const auth = () => ({ Authorization: `Bearer ${user?.token || ''}` })
 
-  const fetchCourse = async () => {
-    try {
-      const r = await fetch(API.TRAINER_COURSES.DETAIL(courseId), { headers: auth() })
-      const d = await r.json()
-      if (d.success) setCourse(d.course)
-      else showError(d.error || 'Failed to load course')
-    } catch (e) {
-      showError(e.message)
-    } finally { setLoading(false) }
+  useEffect(() => {
+    const sec = searchParams.get('section')
+    if (sec && sec !== tab) {
+      setTab(sec)
+    }
+  }, [searchParams.get('section')])
+
+  const handleTabSelect = (tabKey) => {
+    setTab(tabKey)
+    const next = new URLSearchParams(searchParams)
+    next.set('section', tabKey)
+    setSearchParams(next, { replace: true })
   }
-  useEffect(() => { fetchCourse() }, [courseId])
+
+  const fetchCourse = async (signal) => {
+    try {
+      setLoading(true)
+      setError(null)
+      const r = await fetchWithTimeout(API.TRAINER_COURSES.DETAIL(courseId), { headers: auth(), signal }, 12000)
+      const d = await r.json().catch(() => ({}))
+      if (d.success && d.course) {
+        setCourse(d.course)
+      } else {
+        throw new Error(d.error || 'Failed to load course details')
+      }
+    } catch (e) {
+      if (e.name === 'AbortError') return
+      console.error('CourseDetail fetch error:', e.message)
+      setError(e.message || 'Failed to load course details')
+      showError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    const controller = new AbortController()
+    fetchCourse(controller.signal)
+    return () => controller.abort()
+  }, [courseId])
 
   if (loading) {
     return (
@@ -661,7 +714,54 @@ function CourseDetail({ user, courseId, onBack }) {
       </div>
     )
   }
-  if (!course) return null
+
+  if (!course) {
+    return (
+      <div className="wl-detail-page" style={{ padding: '48px 0' }}>
+        <div style={{
+          background: '#FFFFFF',
+          border: '1px solid #E2E8F0',
+          borderRadius: 16,
+          padding: '48px 24px',
+          textAlign: 'center',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 14,
+        }}>
+          <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#FEF2F2', display: 'grid', placeItems: 'center', color: '#EF4444' }}>
+            <BookOpen size={24} />
+          </div>
+          <div>
+            <h3 style={{ fontSize: 17, fontWeight: 700, color: '#0F172A', margin: 0 }}>
+              {error ? 'Unable to Load Course' : 'Course Not Found'}
+            </h3>
+            <p style={{ fontSize: 13, color: '#64748B', maxWidth: 400, margin: '6px auto 0' }}>
+              {error || 'The requested course could not be found or you do not have permission to view it.'}
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+            <button
+              type="button"
+              className="reg-admin-btn reg-admin-btn--secondary"
+              onClick={onBack}
+              style={{ height: 38, padding: '0 16px', borderRadius: 8, fontSize: 13 }}
+            >
+              <ArrowLeft size={14} /> Back to Courses
+            </button>
+            <button
+              type="button"
+              className="reg-admin-btn reg-admin-btn--primary"
+              onClick={() => fetchCourse()}
+              style={{ height: 38, padding: '0 18px', borderRadius: 8, fontSize: 13, background: '#16A34A' }}
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   const TABS = [
     { key: 'structure',    label: 'Structure',    icon: <Layers size={17} /> },
@@ -764,7 +864,7 @@ function CourseDetail({ user, courseId, onBack }) {
           {TABS.map((t) => (
             <button
               key={t.key}
-              onClick={() => setTab(t.key)}
+              onClick={() => handleTabSelect(t.key)}
               className={`wl-detail-tab ${tab === t.key ? 'wl-detail-tab--active' : ''}`}
               aria-selected={tab === t.key}
               role="tab"
@@ -1161,26 +1261,55 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
 
 export default function TrainerCourses({ user, onLogout, onTabChange, initialCourseId }) {
   const location = useLocation()
-  const [openCourseId, setOpenCourseId] = useState(initialCourseId || location.state?.courseId || null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
 
+  // URL search params are the single source of truth for courseId.
+  // Read from ?courseId= first, then fall back to location.state for backward compat.
+  const urlCourseId = searchParams.get('courseId')
+  const stateCourseId = location.state?.courseId
+
+  const openCourseId = urlCourseId
+    ? Number(urlCourseId)
+    : (initialCourseId ? Number(initialCourseId) : null)
+
+  // One-time migration: if location.state has a courseId but URL doesn't, sync it to URL
   useEffect(() => {
-    if (location.state?.courseId) {
-      setOpenCourseId(location.state.courseId)
-    } else if (location.state?.courseId === null) {
-      setOpenCourseId(null)
+    if (stateCourseId && !urlCourseId) {
+      const next = new URLSearchParams(searchParams)
+      next.set('courseId', String(stateCourseId))
+      setSearchParams(next, { replace: true })
     }
-  }, [location.state?.courseId])
+  }, [stateCourseId])
+
+  const handleOpenCourse = (courseId) => {
+    if (!courseId) return
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', 'courses')
+    next.set('courseId', String(courseId))
+    next.delete('lessonId')
+    next.delete('subtab')
+    setSearchParams(next, { replace: false })
+  }
+
+  const handleBack = () => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('courseId')
+    next.delete('lessonId')
+    next.delete('subtab')
+    setSearchParams(next, { replace: false })
+  }
 
   if (openCourseId) {
     return (
       <CourseDetail
         user={user}
         courseId={openCourseId}
-        onBack={() => setOpenCourseId(null)}
+        onBack={handleBack}
       />
     )
   }
-  return <CoursesList user={user} onOpenCourse={setOpenCourseId} onLogout={onLogout} onTabChange={onTabChange} />
+  return <CoursesList user={user} onOpenCourse={handleOpenCourse} onLogout={onLogout} onTabChange={onTabChange} />
 }
 
 export { CoursesList, CourseDetail, LessonsTab, PlaceholderTab }

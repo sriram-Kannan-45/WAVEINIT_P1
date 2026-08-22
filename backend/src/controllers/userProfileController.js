@@ -26,51 +26,57 @@ const getStats = async (userId, role) => {
   const stats = {};
   try {
     if (role === 'TRAINER') {
-      stats.coursesCreated = await Course.count({ where: { trainerId: userId } }).catch(() => 0);
-      const assignedCourseIds = (await CourseTrainerAssignment.findAll({
-        where: { trainerId: userId }, attributes: ['courseId'], raw: true,
-      })).map(r => r.courseId);
-      const allCourseIds = [...new Set([stats.coursesCreated, ...assignedCourseIds])];
-      stats.coursesCreated = allCourseIds.length || stats.coursesCreated;
+      const [createdCourses, assignedRows, assessmentsCount, avgResult, certCount] = await Promise.all([
+        Course.findAll({ where: { trainerId: userId }, attributes: ['id'], raw: true }).catch(() => []),
+        CourseTrainerAssignment.findAll({ where: { trainerId: userId }, attributes: ['courseId'], raw: true }).catch(() => []),
+        AIQuiz.count({ where: { trainerId: userId } }).catch(() => 0),
+        QuizAttempt.findOne({
+          attributes: [[sequelize.fn('AVG', sequelize.col('score')), 'avg']],
+          include: [{ model: AIQuiz, as: 'quiz', where: { trainerId: userId }, attributes: [] }],
+          raw: true,
+        }).catch(() => ({ avg: null })),
+        Certificate.count({ where: { issuedFor: userId } }).catch(() => 0),
+      ]);
 
-      stats.studentsTrained = await Enrollment.count({
-        where: { trainerId: userId },
-      }).catch(async () => {
-        if (allCourseIds.length) {
-          return Enrollment.count({ where: { courseId: allCourseIds } });
-        }
-        return 0;
-      });
+      const createdIds = createdCourses.map(c => c.id).filter(Boolean);
+      const assignedIds = assignedRows.map(r => r.courseId).filter(Boolean);
+      const allCourseIds = [...new Set([...createdIds, ...assignedIds])];
 
-      stats.assessments = await AIQuiz.count({ where: { trainerId: userId } }).catch(() => 0);
-
-      const avgResult = await QuizAttempt.findOne({
-        attributes: [[sequelize.fn('AVG', sequelize.col('score')), 'avg']],
-        include: [{ model: AIQuiz, as: 'quiz', where: { trainerId: userId }, attributes: [] }],
-        raw: true,
-      }).catch(() => ({ avg: null }));
+      stats.coursesCreated = allCourseIds.length || createdIds.length;
+      stats.assessments = assessmentsCount || 0;
       stats.averageRating = avgResult?.avg ? parseFloat(parseFloat(avgResult.avg).toFixed(1)) : 0;
+      stats.certificatesIssued = certCount || 0;
 
-      stats.certificatesIssued = await Certificate.count({ where: { issuedFor: userId } }).catch(() => 0);
+      // Parallelize student enrollment count
+      const [studentsTrained, completedEnrolled] = await Promise.all([
+        Enrollment.count({
+          where: allCourseIds.length ? { courseId: allCourseIds } : { trainerId: userId },
+        }).catch(() => 0),
+        Enrollment.count({
+          where: allCourseIds.length ? { courseId: allCourseIds, status: 'COMPLETED' } : { trainerId: userId, status: 'COMPLETED' },
+        }).catch(() => 0),
+      ]);
 
-      const totalEnrolled = stats.studentsTrained || 1;
-      const completedEnrolled = await Enrollment.count({
-        where: { trainerId: userId, status: 'COMPLETED' },
-      }).catch(() => 0);
-      stats.completionRate = totalEnrolled > 0 ? Math.round((completedEnrolled / totalEnrolled) * 100) : 0;
+      stats.studentsTrained = studentsTrained || 0;
+      stats.completionRate = studentsTrained > 0 ? Math.round((completedEnrolled / studentsTrained) * 100) : 0;
     } else {
-      stats.coursesEnrolled = await Enrollment.count({ where: { participantId: userId } }).catch(() => 0);
-      stats.completedCourses = await Enrollment.count({ where: { participantId: userId, status: 'COMPLETED' } }).catch(() => 0);
-      stats.assignmentsSubmitted = await QuizAttempt.count({ where: { participantId: userId } }).catch(() => 0);
+      const [coursesEnrolled, completedCourses, assignmentsSubmitted, avgResult, certsEarned] = await Promise.all([
+        Enrollment.count({ where: { participantId: userId } }).catch(() => 0),
+        Enrollment.count({ where: { participantId: userId, status: 'COMPLETED' } }).catch(() => 0),
+        QuizAttempt.count({ where: { participantId: userId } }).catch(() => 0),
+        QuizAttempt.findOne({
+          attributes: [[sequelize.fn('AVG', sequelize.col('score')), 'avg']],
+          where: { participantId: userId },
+          raw: true,
+        }).catch(() => ({ avg: null })),
+        Certificate.count({ where: { participantId: userId } }).catch(() => 0),
+      ]);
 
-      const avgResult = await QuizAttempt.findOne({
-        attributes: [[sequelize.fn('AVG', sequelize.col('score')), 'avg']],
-        where: { participantId: userId },
-        raw: true,
-      }).catch(() => ({ avg: null }));
+      stats.coursesEnrolled = coursesEnrolled || 0;
+      stats.completedCourses = completedCourses || 0;
+      stats.assignmentsSubmitted = assignmentsSubmitted || 0;
       stats.quizAverage = avgResult?.avg ? parseFloat(parseFloat(avgResult.avg).toFixed(1)) : 0;
-
-      stats.certificatesEarned = await Certificate.count({ where: { participantId: userId } }).catch(() => 0);
+      stats.certificatesEarned = certsEarned || 0;
 
       const quizCount = stats.assignmentsSubmitted || 1;
       const avgScore = stats.quizAverage || 0;

@@ -10,6 +10,7 @@ import {
   ChevronDown
 } from 'lucide-react'
 import { API, assetUrl, API_BASE } from '../api/api'
+import { fetchWithTimeout } from '../api/request'
 import { useToast } from '../components/Toast'
 import DiscussionBoard from '../components/shared/DiscussionBoard'
 import { Button, Badge, Table, PageHeader, EmptyState, StatCard, ProgressBar } from '../components/ui'
@@ -73,20 +74,30 @@ function MyCoursesList({ user, onOpen }) {
   const PAGE_SIZE = 4
 
   useEffect(() => {
+    const controller = new AbortController()
     let aborted = false
     ;(async () => {
       try {
         setLoading(true)
-        const r = await fetch(API.PARTICIPANT_COURSES.LIST, { headers: auth(user.token) })
-        const d = await r.json()
+        const r = await fetchWithTimeout(API.PARTICIPANT_COURSES.LIST, {
+          headers: auth(user?.token || ''),
+          signal: controller.signal,
+        }, 12000)
+        const d = await r.json().catch(() => ({}))
         if (!aborted) {
           if (d.success) setCourses(d.courses || [])
           else showError(d.error || 'Failed to load courses')
         }
-      } catch (e) { if (!aborted) showError(e.message) }
-      finally { if (!aborted) setLoading(false) }
+      } catch (e) {
+        if (!aborted && e.name !== 'AbortError') showError(e.message)
+      } finally {
+        if (!aborted) setLoading(false)
+      }
     })()
-    return () => { aborted = true }
+    return () => {
+      aborted = true
+      controller.abort()
+    }
   }, [])
 
   const activeCourses = useMemo(() => courses || [], [courses])

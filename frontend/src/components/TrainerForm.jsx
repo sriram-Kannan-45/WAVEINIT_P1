@@ -283,10 +283,10 @@ function TrainerForm({ user, onLogout }) {
             <div style={{ position: 'relative', flexShrink: 0 }}>
               <div style={{
                 width: 88, height: 88, borderRadius: '50%', overflow: 'hidden',
-                border: '3px solid #e2e8f0', background: '#16A34A',
+                border: '2.5px solid #16A34A', background: '#FFFFFF',
                 display: 'flex', alignItems: 'center', justifyContent: 'center'
               }}>
-                <span style={{ fontSize: 28, fontWeight: 700, color: '#FFFFFF', fontFamily: "'Poppins', sans-serif" }}>
+                <span style={{ fontSize: 28, fontWeight: 700, color: '#16A34A', fontFamily: "'Poppins', sans-serif" }}>
                   {initials(user.name)}
                 </span>
               </div>

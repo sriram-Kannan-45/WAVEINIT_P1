@@ -92,26 +92,53 @@ export default function ScheduleInterview({ user }) {
     load()
   }, [editingId])
 
-  const handleChange = (field, value) => setForm(f => ({ ...f, [field]: value }))
+  const handleChange = (field, value) => {
+    if (field === 'meetingType' && value !== 'IN_PLATFORM') {
+      // Reset in-platform-only settings when switching to External Online
+      setForm(f => ({ ...f, [field]: value, requireMobilePairing: false, recordInterview: false }))
+    } else {
+      setForm(f => ({ ...f, [field]: value }))
+    }
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!form.candidateId || !form.interviewerId || !form.date || !form.time) return
+    if (!form.candidateId) {
+      showError('Please select a candidate')
+      return
+    }
+    if (!form.interviewerId) {
+      showError('Please select an interviewer')
+      return
+    }
+    if (!form.date) {
+      showError('Please select an interview date')
+      return
+    }
+    if (!form.time) {
+      showError('Please select an interview time')
+      return
+    }
+    if (form.meetingType === 'ONLINE' && !form.meetingLink?.trim()) {
+      showError('Please provide a meeting link for External Online interviews')
+      return
+    }
+
     try {
       setLoading(true)
       const scheduledAt = new Date(`${form.date}T${form.time}`).toISOString()
       const payload = {
-        candidateId: parseInt(form.candidateId),
-        interviewerId: parseInt(form.interviewerId),
+        candidateId: parseInt(form.candidateId, 10),
+        interviewerId: parseInt(form.interviewerId, 10),
         scheduledAt,
-        durationMinutes: parseInt(form.durationMinutes),
+        durationMinutes: parseInt(form.durationMinutes, 10),
         type: form.type,
-        title: form.title || undefined,
-        description: form.description || undefined,
-        requireMobilePairing: form.requireMobilePairing,
+        title: form.title?.trim() || undefined,
+        description: form.description?.trim() || undefined,
+        requireMobilePairing: form.meetingType === 'IN_PLATFORM' ? !!form.requireMobilePairing : false,
         meetingType: form.meetingType,
-        meetingLink: form.meetingLink || undefined,
-        recordInterview: form.recordInterview,
+        meetingLink: form.meetingType === 'ONLINE' ? form.meetingLink?.trim() : undefined,
+        recordInterview: form.meetingType === 'IN_PLATFORM' ? !!form.recordInterview : false,
       }
       if (editingId) {
         await interviewService.update(editingId, payload)
@@ -121,7 +148,8 @@ export default function ScheduleInterview({ user }) {
       navigate('/interviews', { state: { toast: editingId ? 'Interview updated successfully' : 'Interview scheduled successfully' } })
     } catch (err) {
       console.error('Failed to save interview:', err)
-      showError(err?.response?.data?.error || err?.message || 'Failed to save interview')
+      const msg = err?.response?.data?.error || err?.data?.error || err?.message || (editingId ? 'Failed to update interview' : 'Failed to create interview')
+      showError(msg)
     } finally {
       setLoading(false)
     }
@@ -137,8 +165,8 @@ export default function ScheduleInterview({ user }) {
     <motion.div variants={itemVariants} initial="hidden" animate="visible" className="reg-admin">
       {/* Header */}
       <div className="reg-admin-header">
-        <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-          <Calendar size={22} color="#fff" />
+        <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A' }}>
+          <Calendar size={22} color="#16A34A" />
         </div>
         <div>
           <h2 className="reg-admin-title">{editingId ? 'Edit Interview' : 'Schedule Interview'}</h2>
@@ -164,7 +192,7 @@ export default function ScheduleInterview({ user }) {
           </div>
         </div>
       ) : (
-        <div className="reg-admin-table-wrap" style={{ maxWidth: 900 }}>
+        <div className="reg-admin-table-wrap" style={{ maxWidth: 1000, margin: '0 auto' }}>
           <div style={{ padding: 24 }}>
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
@@ -279,8 +307,6 @@ export default function ScheduleInterview({ user }) {
                     <select value={form.meetingType} onChange={e => handleChange('meetingType', e.target.value)} style={selectStyle}>
                       <option value="IN_PLATFORM">In-Platform (Interview in this app)</option>
                       <option value="ONLINE">External Online (Google Meet, Zoom, etc.)</option>
-                      <option value="IN_PERSON">In-Person</option>
-                      <option value="HYBRID">Hybrid</option>
                     </select>
                   </div>
 
@@ -293,7 +319,7 @@ export default function ScheduleInterview({ user }) {
                     </div>
                   )}
 
-                  {(form.meetingType === 'ONLINE' || form.meetingType === 'HYBRID') && (
+                  {form.meetingType === 'ONLINE' && (
                     <div>
                       <label style={labelStyle}>Meeting Link</label>
                       <input
@@ -319,29 +345,31 @@ export default function ScheduleInterview({ user }) {
                 </div>
               </div>
 
-              {/* Toggles */}
-              <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <button
-                    type="button"
-                    className={`interview-toggle ${form.requireMobilePairing ? 'interview-toggle--active' : ''}`}
-                    onClick={() => handleChange('requireMobilePairing', !form.requireMobilePairing)}
-                  >
-                    <div className="interview-toggle-knob" />
-                  </button>
-                  <span style={{ fontSize: 13, color: '#475569' }}>Mobile Camera Monitoring</span>
+              {/* Toggles — only shown for In-Platform meetings */}
+              {form.meetingType === 'IN_PLATFORM' && (
+                <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <button
+                      type="button"
+                      className={`interview-toggle ${form.requireMobilePairing ? 'interview-toggle--active' : ''}`}
+                      onClick={() => handleChange('requireMobilePairing', !form.requireMobilePairing)}
+                    >
+                      <div className="interview-toggle-knob" />
+                    </button>
+                    <span style={{ fontSize: 13, color: '#475569' }}>Mobile Camera Monitoring</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <button
+                      type="button"
+                      className={`interview-toggle ${form.recordInterview ? 'interview-toggle--active' : ''}`}
+                      onClick={() => handleChange('recordInterview', !form.recordInterview)}
+                    >
+                      <div className="interview-toggle-knob" />
+                    </button>
+                    <span style={{ fontSize: 13, color: '#475569' }}>Record Interview</span>
+                  </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <button
-                    type="button"
-                    className={`interview-toggle ${form.recordInterview ? 'interview-toggle--active' : ''}`}
-                    onClick={() => handleChange('recordInterview', !form.recordInterview)}
-                  >
-                    <div className="interview-toggle-knob" />
-                  </button>
-                  <span style={{ fontSize: 13, color: '#475569' }}>Record Interview</span>
-                </div>
-              </div>
+              )}
 
               {/* Action buttons */}
               <div style={{ display: 'flex', gap: 10, paddingTop: 8, borderTop: '1px solid #e2e8f0' }}>
@@ -367,7 +395,7 @@ export default function ScheduleInterview({ user }) {
                   className="reg-admin-btn reg-admin-btn--primary"
                   disabled={loading || !form.candidateId || !form.interviewerId || !form.date || !form.time}
                 >
-                  {loading ? 'Saving...' : editingId ? 'Save Changes' : 'Schedule Interview'}
+                  {loading ? (editingId ? 'Saving...' : 'Scheduling...') : editingId ? 'Save Changes' : 'Schedule Interview'}
                 </button>
               </div>
             </form>

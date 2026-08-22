@@ -24,12 +24,14 @@ export default function Avatar({ src, alt, name, size = 'md', style = {}, classN
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: '#16A34A',
-        color: '#FFFFFF',
+        background: '#FFFFFF',
+        border: '1.5px solid #16A34A',
+        color: '#16A34A',
         fontSize: s.fontSize,
         fontWeight: 700,
         fontFamily: typography.fontFamily,
         flexShrink: 0,
+        boxSizing: 'border-box',
         ...style,
       }}
     >

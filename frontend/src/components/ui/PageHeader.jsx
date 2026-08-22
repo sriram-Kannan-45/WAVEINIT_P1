@@ -1,14 +1,14 @@
 import { ArrowLeft } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
-const DEFAULT_ICON_BG = 'linear-gradient(135deg, #16A34A, #15803D)'
+const DEFAULT_ICON_BG = '#FFFFFF'
 
 export default function PageHeader({
   title,
   subtitle,
   icon: Icon,
   iconBg = DEFAULT_ICON_BG,
-  iconColor = '#fff',
+  iconColor = '#16A34A',
   iconSize = 26,
   action,
   actions,
@@ -23,7 +23,7 @@ export default function PageHeader({
   return (
     <div className={`reg-admin-header ${className}`} style={style}>
       {Icon && (
-        <div className="reg-admin-header-icon" style={{ background: iconBg }}>
+        <div className="reg-admin-header-icon" style={{ background: iconBg, border: '1.5px solid #16A34A', color: iconColor }}>
           <Icon size={iconSize} color={iconColor} />
         </div>
       )}

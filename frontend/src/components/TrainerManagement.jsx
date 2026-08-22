@@ -86,7 +86,7 @@ export default function TrainerManagement({
             className="bg-white rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-gray-100 p-8"
           >
             <div className="flex items-center gap-3 mb-8">
-              <div className="w-10 h-10 rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-xl bg-white border-1.5 border-primary-600 text-primary-600 flex items-center justify-center shadow-xs">
                 <UserPlus size={20} />
               </div>
               <h2 className="text-xl font-bold text-gray-800">Add New Trainer</h2>

@@ -19,7 +19,7 @@ const cardVariants = {
 }
 
 function getAvatarGradient() {
-  return '#16A34A'
+  return '#FFFFFF'
 }
 
 class ErrorBoundary extends React.Component {
@@ -360,7 +360,7 @@ function ParticipantList({
                 }}>
                   <div style={{
                     width: 42, height: 42, borderRadius: 12,
-                    background: getAvatarGradient(editingParticipant.name), color: '#fff',
+                    background: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16A34A',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     fontWeight: 700, fontSize: 14, fontFamily: 'var(--font-display)'
                   }}>

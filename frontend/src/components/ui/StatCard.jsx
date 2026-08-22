@@ -1,12 +1,12 @@
 import { motion } from 'framer-motion'
 
 const colorMap = {
-  primary: { bg: 'rgba(22, 163, 74, 0.06)', color: '#16a34a' },
-  emerald: { bg: 'rgba(16, 185, 129, 0.06)', color: '#10B981' },
-  amber: { bg: 'rgba(245, 158, 11, 0.06)', color: '#F59E0B' },
-  blue: { bg: 'rgba(13, 148, 136, 0.06)', color: '#0D9488' },
-  violet: { bg: 'rgba(147, 51, 234, 0.06)', color: '#9333ea' },
-  rose: { bg: 'rgba(244, 63, 94, 0.06)', color: '#F43F5E' },
+  primary: { bg: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16a34a' },
+  emerald: { bg: '#FFFFFF', border: '1.5px solid #10B981', color: '#10B981' },
+  amber: { bg: '#FFFFFF', border: '1.5px solid #F59E0B', color: '#F59E0B' },
+  blue: { bg: '#FFFFFF', border: '1.5px solid #0D9488', color: '#0D9488' },
+  violet: { bg: '#FFFFFF', border: '1.5px solid #9333ea', color: '#9333ea' },
+  rose: { bg: '#FFFFFF', border: '1.5px solid #F43F5E', color: '#F43F5E' },
 }
 
 export default function StatCard({
@@ -26,7 +26,7 @@ export default function StatCard({
       whileHover={{ y: -2 }}
       transition={{ duration: 0.2 }}
     >
-      <div className="reg-admin-stat-icon" style={{ background: colors.bg, color: colors.color }}>
+      <div className="reg-admin-stat-icon" style={{ background: colors.bg, border: colors.border, color: colors.color }}>
         {Icon && <Icon size={20} />}
       </div>
       <div>

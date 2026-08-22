@@ -98,7 +98,8 @@ export const API = {
   },
 
   TRAININGS: {
-    LIST: `${API_BASE}/trainer/trainings`
+    LIST: `${API_BASE}/trainer/trainings`,
+    LEADERBOARD: (trainingId) => `${API_BASE}/trainings/${trainingId}/leaderboard`,
   },
 
   TRAINER_CREDENTIALS: {

@@ -25,8 +25,8 @@ export default function AchievementsSection({ user, enrollmentsCount = 0 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', fontFamily: "'Poppins', sans-serif" }}>
       <div className="reg-admin-header" style={{ marginBottom: 0 }}>
-        <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-          <Award size={22} color="#fff" />
+        <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A' }}>
+          <Award size={22} color="#16A34A" />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h2 className="reg-admin-title">Achievements</h2>

@@ -282,9 +282,20 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
               <div style={{ fontSize: 13.5, fontWeight: 500 }}>Loading assessment details…</div>
             </div>
           ) : !assessment ? (
-            <div style={{ padding: '60px 20px', textAlign: 'center', color: '#DC2626' }}>
-              <AlertCircle size={32} style={{ margin: '0 auto 12px' }} />
+            <div style={{ padding: '60px 20px', textAlign: 'center', color: '#DC2626', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+              <AlertCircle size={32} style={{ margin: '0 auto' }} />
               <div style={{ fontSize: 15, fontWeight: 600 }}>Assessment details not found</div>
+              <p style={{ fontSize: 13, color: '#64748B', maxWidth: 360, margin: '4px 0 12px' }}>
+                We could not retrieve the details for this coding assessment.
+              </p>
+              <button
+                type="button"
+                className="reg-admin-btn reg-admin-btn--primary"
+                onClick={() => fetchAssessment()}
+                style={{ height: 36, padding: '0 18px', borderRadius: 8, fontSize: 13, background: '#16A34A' }}
+              >
+                Retry
+              </button>
             </div>
           ) : (
             <>

@@ -30,7 +30,7 @@ export default function ProfileDropdown({ user, onProfile, onLogout }) {
           border: '1px solid #F3F4F6',
           background: open ? '#F9FAFB' : '#FFFFFF',
           cursor: 'pointer',
-          fontFamily: "'Poppins', 'Inter', sans-serif",
+          fontFamily: "'Poppins', sans-serif",
           transition: 'all 200ms cubic-bezier(0.16, 1, 0.3, 1)',
         }}
       >
@@ -46,7 +46,7 @@ export default function ProfileDropdown({ user, onProfile, onLogout }) {
           fontWeight: 700,
           color: '#fff',
           flexShrink: 0,
-          fontFamily: "'Poppins', 'Inter', sans-serif",
+          fontFamily: "'Poppins', sans-serif",
         }}>
           {initials}
         </div>
@@ -91,7 +91,7 @@ export default function ProfileDropdown({ user, onProfile, onLogout }) {
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10, width: '100%',
                   padding: '10px 14px', border: 'none', background: 'transparent',
-                  color: '#374151', cursor: 'pointer', fontSize: 13, fontFamily: "'Poppins', 'Inter', sans-serif",
+                  color: '#374151', cursor: 'pointer', fontSize: 13, fontFamily: "'Poppins', sans-serif",
                   borderRadius: 10, fontWeight: 500,
                   transition: 'background 150ms',
                 }}
@@ -110,7 +110,7 @@ export default function ProfileDropdown({ user, onProfile, onLogout }) {
                   display: 'flex', alignItems: 'center', gap: 10, width: '100%',
                   padding: '10px 14px', border: 'none', borderTop: '1px solid #F3F4F6',
                   background: 'transparent', color: '#EF4444', cursor: 'pointer',
-                  fontSize: 13, fontFamily: "'Poppins', 'Inter', sans-serif", borderRadius: 10,
+                  fontSize: 13, fontFamily: "'Poppins', sans-serif", borderRadius: 10,
                   fontWeight: 500, transition: 'background 150ms',
                 }}
                 onMouseEnter={e => (e.currentTarget.style.background = '#FEF2F2')}

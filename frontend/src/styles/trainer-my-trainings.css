@@ -35,11 +35,11 @@
   max-width: 100% !important;
 }
 
-/* ── Container (Responsive Scrollable Viewport Layout) ── */
+/* ── Container (Natural Responsive Layout) ── */
 .tmt-container {
-  min-height: 100vh;
+  min-height: auto;
   height: auto;
-  overflow-y: auto;
+  overflow-y: visible;
   padding: 16px 24px 24px;
   box-sizing: border-box;
   display: flex;
@@ -74,13 +74,14 @@
   width: 38px;
   height: 38px;
   border-radius: 10px;
-  background: #16A34A;
-  color: #FFFFFF;
+  background: #FFFFFF;
+  border: 1.5px solid #16A34A;
+  color: #16A34A;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  box-shadow: 0 2px 6px rgba(22, 163, 74, 0.25);
+  box-shadow: 0 1px 3px rgba(22, 163, 74, 0.08);
 }
 
 .tmt-header-title {
@@ -147,7 +148,8 @@
 }
 
 .tmt-stat-icon-wrap--green {
-  background: #EAF8F0;
+  background: #FFFFFF;
+  border: 1.5px solid #16A34A;
   color: #16A34A;
 }
 
@@ -773,10 +775,11 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 .tdb-dashboard-page {
-  height: 100vh;
-  max-height: 100vh;
-  overflow: hidden;
-  padding: 16px 24px 20px;
+  min-height: auto;
+  height: auto;
+  max-height: none;
+  overflow: visible;
+  padding: 16px 24px 24px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -809,13 +812,14 @@
   width: 38px;
   height: 38px;
   border-radius: 10px;
-  background: #16A34A;
-  color: #FFFFFF;
+  background: #FFFFFF;
+  border: 1.5px solid #16A34A;
+  color: #16A34A;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  box-shadow: 0 2px 6px rgba(22, 163, 74, 0.25);
+  box-shadow: 0 1px 3px rgba(22, 163, 74, 0.08);
 }
 
 .tdb-header-title {
@@ -882,7 +886,8 @@
 }
 
 .tdb-stat-icon-wrap--green {
-  background: #EAF8F0;
+  background: #FFFFFF;
+  border: 1.5px solid #16A34A;
   color: #16A34A;
 }
 
@@ -1172,13 +1177,15 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #16A34A;
-  color: #FFFFFF;
+  background: #FFFFFF;
+  border: 1px solid #16A34A;
+  color: #16A34A;
   font-size: 7px;
   font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
 }
 
 /* Upcoming Session Row */
@@ -1294,7 +1301,8 @@
 }
 
 .tdb-action-icon--green {
-  background: #EAF8F0;
+  background: #FFFFFF;
+  border: 1.5px solid #16A34A;
   color: #16A34A;
 }
 
@@ -1337,7 +1345,7 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 .wl-detail-page {
-  padding: 16px 28px 48px !important;
+  padding: 16px 24px 24px !important;
   box-sizing: border-box !important;
   display: flex !important;
   flex-direction: column !important;
@@ -1345,7 +1353,8 @@
   gap: 18px !important;
   font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
   background: #F8FAFC !important;
-  min-height: 100vh !important;
+  min-height: auto !important;
+  height: auto !important;
   width: 100% !important;
 }
 

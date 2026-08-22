@@ -222,7 +222,13 @@ export default function InterviewDashboard({ user }) {
     }
   }
 
-  const handleEditChange = (field, value) => setEditForm(f => ({ ...f, [field]: value }))
+  const handleEditChange = (field, value) => {
+    if (field === 'meetingType' && value !== 'IN_PLATFORM') {
+      setEditForm(f => ({ ...f, [field]: value, requireMobilePairing: false, recordInterview: false }))
+    } else {
+      setEditForm(f => ({ ...f, [field]: value }))
+    }
+  }
 
   const handleEditSave = async () => {
     if (!editInterview) return
@@ -234,17 +240,17 @@ export default function InterviewDashboard({ user }) {
       setEditSaving(true)
       const scheduledAt = new Date(`${editForm.date}T${editForm.time}`).toISOString()
       const payload = {
-        candidateId: parseInt(editForm.candidateId),
-        interviewerId: parseInt(editForm.interviewerId),
+        candidateId: parseInt(editForm.candidateId, 10),
+        interviewerId: parseInt(editForm.interviewerId, 10),
         scheduledAt,
-        durationMinutes: parseInt(editForm.durationMinutes),
+        durationMinutes: parseInt(editForm.durationMinutes, 10),
         type: editForm.type,
-        title: editForm.title || undefined,
-        description: editForm.description || undefined,
-        requireMobilePairing: editForm.requireMobilePairing,
+        title: editForm.title?.trim() || undefined,
+        description: editForm.description?.trim() || undefined,
+        requireMobilePairing: editForm.meetingType === 'IN_PLATFORM' ? !!editForm.requireMobilePairing : false,
         meetingType: editForm.meetingType,
-        meetingLink: editForm.meetingLink || undefined,
-        recordInterview: editForm.recordInterview,
+        meetingLink: editForm.meetingType === 'ONLINE' ? editForm.meetingLink?.trim() : undefined,
+        recordInterview: editForm.meetingType === 'IN_PLATFORM' ? !!editForm.recordInterview : false,
       }
       const res = await interviewService.update(editInterview.id, payload)
       setEditInterview(null)
@@ -352,8 +358,8 @@ export default function InterviewDashboard({ user }) {
     <motion.div variants={itemVariants} initial="hidden" animate="visible" className="reg-admin">
       {/* Header */}
       <div className="reg-admin-header">
-        <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-          <Video size={26} color="#fff" />
+        <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A' }}>
+          <Video size={26} color="#16A34A" />
         </div>
         <div>
           <h2 className="reg-admin-title">Interviews</h2>
@@ -903,11 +909,9 @@ export default function InterviewDashboard({ user }) {
                           <select value={editForm.meetingType} onChange={e => handleEditChange('meetingType', e.target.value)} style={selectStyle}>
                             <option value="IN_PLATFORM">In-Platform (Interview in this app)</option>
                             <option value="ONLINE">External Online (Google Meet, Zoom, etc.)</option>
-                            <option value="IN_PERSON">In-Person</option>
-                            <option value="HYBRID">Hybrid</option>
                           </select>
                         </div>
-                        {(editForm.meetingType === 'ONLINE' || editForm.meetingType === 'HYBRID') && (
+                        {editForm.meetingType === 'ONLINE' && (
                           <div>
                             <label style={labelStyle}>Meeting Link</label>
                             <input
@@ -932,29 +936,31 @@ export default function InterviewDashboard({ user }) {
                       </div>
                     </div>
 
-                    {/* Toggles */}
-                    <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <button
-                          type="button"
-                          className={`interview-toggle ${editForm.requireMobilePairing ? 'interview-toggle--active' : ''}`}
-                          onClick={() => handleEditChange('requireMobilePairing', !editForm.requireMobilePairing)}
-                        >
-                          <div className="interview-toggle-knob" />
-                        </button>
-                        <span style={{ fontSize: 13, color: '#475569' }}>Mobile Camera Monitoring</span>
+                    {/* Toggles — only shown for In-Platform meetings */}
+                    {editForm.meetingType === 'IN_PLATFORM' && (
+                      <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <button
+                            type="button"
+                            className={`interview-toggle ${editForm.requireMobilePairing ? 'interview-toggle--active' : ''}`}
+                            onClick={() => handleEditChange('requireMobilePairing', !editForm.requireMobilePairing)}
+                          >
+                            <div className="interview-toggle-knob" />
+                          </button>
+                          <span style={{ fontSize: 13, color: '#475569' }}>Mobile Camera Monitoring</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <button
+                            type="button"
+                            className={`interview-toggle ${editForm.recordInterview ? 'interview-toggle--active' : ''}`}
+                            onClick={() => handleEditChange('recordInterview', !editForm.recordInterview)}
+                          >
+                            <div className="interview-toggle-knob" />
+                          </button>
+                          <span style={{ fontSize: 13, color: '#475569' }}>Record Interview</span>
+                        </div>
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <button
-                          type="button"
-                          className={`interview-toggle ${editForm.recordInterview ? 'interview-toggle--active' : ''}`}
-                          onClick={() => handleEditChange('recordInterview', !editForm.recordInterview)}
-                        >
-                          <div className="interview-toggle-knob" />
-                        </button>
-                        <span style={{ fontSize: 13, color: '#475569' }}>Record Interview</span>
-                      </div>
-                    </div>
+                    )}
                   </div>
                 )}
               </div>

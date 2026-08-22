@@ -197,9 +197,10 @@ export default function ProfileHero({ profile, completion, onEditProfile, onBann
             <div style={{
               width: 120, height: 120, borderRadius: '50%',
               border: '4px solid #fff',
-              boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
               overflow: 'hidden',
-              background: '#16A34A',
+              background: '#FFFFFF',
+              border: '3px solid #16A34A',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
               {(profile?.profileImage || user?.profilePic) ? (
@@ -210,7 +211,7 @@ export default function ProfileHero({ profile, completion, onEditProfile, onBann
                 />
               ) : (
                 <span style={{
-                  fontSize: 36, fontWeight: 700, color: '#fff',
+                  fontSize: 36, fontWeight: 700, color: '#16A34A',
                   fontFamily: "'Poppins', sans-serif",
                 }}>
                   {initials}

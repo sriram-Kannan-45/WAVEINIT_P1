@@ -60,6 +60,7 @@ const ParticipantCodingAttemptPage = lazyRetry(() => import('./pages/Participant
 const CodingAssessmentResultPage = lazyRetry(() => import('./pages/CodingAssessmentResultPage'))
 const TrainerCourses = lazyRetry(() => import('./pages/TrainerCourses'))
 const ProfilePage = lazyRetry(() => import('./pages/Profile/ProfilePage'))
+const TrainingLeaderboard = lazyRetry(() => import('./pages/TrainingLeaderboard'))
 
 // Interview Module (Read-only reference)
 const InterviewDashboard = lazyRetry(() => import('./pages/interview/InterviewDashboard'))
@@ -322,10 +323,11 @@ function DashboardWrapper({ component: Component, user, onLogout }) {
     const newParams = new URLSearchParams(location.search)
     newParams.set('tab', nextTab)
     if (nextCourseId) {
-      newParams.set('courseId', nextCourseId)
+      newParams.set('courseId', String(nextCourseId))
       newParams.delete('lessonId')
       newParams.delete('subtab')
-    } else if (nextTab !== activeTab) {
+    } else {
+      // No courseId provided — always clean up course-specific params
       newParams.delete('courseId')
       newParams.delete('lessonId')
       newParams.delete('subtab')
@@ -392,6 +394,39 @@ function AppRoutes({ user, onLogin, onLogout }) {
             <DashboardWrapper component={AdminTrainerProfile} user={user} onLogout={onLogout} />
           ) : (
             <Navigate to="/login" state={{ fromRole: 'ADMIN' }} replace />
+          )
+        }
+      />
+
+      <Route
+        path="/admin/trainings/:trainingId/leaderboard"
+        element={
+          user?.role === 'ADMIN' ? (
+            <DashboardWrapper component={TrainingLeaderboard} user={user} onLogout={onLogout} />
+          ) : (
+            <Navigate to="/login" state={{ fromRole: 'ADMIN' }} replace />
+          )
+        }
+      />
+
+      <Route
+        path="/trainer/trainings/:trainingId/leaderboard"
+        element={
+          (user?.role === 'TRAINER' || user?.role === 'ADMIN') ? (
+            <DashboardWrapper component={TrainingLeaderboard} user={user} onLogout={onLogout} />
+          ) : (
+            <Navigate to="/login" state={{ fromRole: 'TRAINER' }} replace />
+          )
+        }
+      />
+
+      <Route
+        path="/trainings/:trainingId/leaderboard"
+        element={
+          user ? (
+            <DashboardWrapper component={TrainingLeaderboard} user={user} onLogout={onLogout} />
+          ) : (
+            <Navigate to="/login" replace />
           )
         }
       />

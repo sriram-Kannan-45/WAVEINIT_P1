@@ -60,8 +60,8 @@ export default function InvitationScreen({
           gap: 14,
           background: '#f8fafc',
         }}>
-          <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-            <Video size={20} color="#fff" />
+          <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A' }}>
+            <Video size={20} color="#16A34A" />
           </div>
           <div>
             <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: '#0f172a' }}>

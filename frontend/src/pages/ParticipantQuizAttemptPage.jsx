@@ -160,7 +160,7 @@ function ParticipantQuizAttemptPageInner({ user }) {
         alignItems: 'center',
         justifyContent: 'center',
         background: '#f8fafc',
-        fontFamily: "'Manrope', 'Poppins', sans-serif"
+        fontFamily: "'Poppins', sans-serif"
       }}>
         <Loader2 style={{ animation: 'spin 1s linear infinite', color: '#2563eb' }} size={36} />
         <span style={{ marginTop: '12px', fontSize: '14px', color: '#64748b', fontWeight: 600 }}>
@@ -180,7 +180,7 @@ function ParticipantQuizAttemptPageInner({ user }) {
         justifyContent: 'center',
         background: '#f8fafc',
         padding: 20,
-        fontFamily: "'Manrope', 'Poppins', sans-serif"
+        fontFamily: "'Poppins', sans-serif"
       }}>
         <AlertCircle size={36} color="#dc2626" style={{ marginBottom: 12 }} />
         <div style={{ fontSize: 16, fontWeight: 600, color: '#dc2626', marginBottom: 12 }}>

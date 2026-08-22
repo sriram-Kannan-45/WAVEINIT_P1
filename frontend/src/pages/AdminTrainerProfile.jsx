@@ -5,6 +5,7 @@ import {
   ArrowLeft, Mail, Phone, Link2, Globe, Briefcase, GraduationCap
 } from 'lucide-react'
 import { API, assetUrl } from '../api/api'
+import { fetchWithTimeout } from '../api/request'
 import { useToast } from '../components/Toast'
 import { getTwoLetterInitials } from '../components/common/UserAvatar'
 
@@ -14,21 +15,34 @@ export default function AdminTrainerProfile({ user }) {
   const { error: showError } = useToast()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
-  useEffect(() => { fetchProfile() }, [userId])
-
-  const fetchProfile = async () => {
+  const fetchProfile = async (signal) => {
     try {
       setLoading(true)
-      const r = await fetch(API.PROFILE.PUBLIC(userId), {
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.token}` },
-      })
-      const d = await r.json()
+      setError(null)
+      const r = await fetchWithTimeout(API.PROFILE.PUBLIC(userId), {
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user?.token || ''}` },
+        signal,
+      }, 12000)
+      const d = await r.json().catch(() => ({}))
       if (d.success) setData(d)
-      else showError(d.error || 'Failed to load profile')
-    } catch (e) { showError(e.message) }
-    finally { setLoading(false) }
+      else throw new Error(d.error || 'Failed to load trainer profile')
+    } catch (e) {
+      if (e.name === 'AbortError') return
+      console.error('AdminTrainerProfile fetch error:', e.message)
+      setError(e.message || 'Unable to load trainer profile')
+      showError(e.message)
+    } finally {
+      setLoading(false)
+    }
   }
+
+  useEffect(() => {
+    const controller = new AbortController()
+    fetchProfile(controller.signal)
+    return () => controller.abort()
+  }, [userId])
 
   const initials = (name) => getTwoLetterInitials(name)
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined, { year: 'numeric', month: 'short' }) : 'Present'
@@ -51,11 +65,16 @@ export default function AdminTrainerProfile({ user }) {
     <div className="reg-admin">
       <div className="reg-admin-empty" style={{ padding: '64px 0' }}>
         <Users size={28} />
-        <div className="reg-admin-empty-title">Trainer profile not found.</div>
-        <div className="reg-admin-empty-sub">This trainer may not have a public profile yet.</div>
-        <button className="reg-admin-btn reg-admin-btn--secondary" type="button" style={{ cursor: 'pointer', marginTop: 8 }} onClick={() => navigate(-1)}>
-          <ArrowLeft size={15} /> Go back
-        </button>
+        <div className="reg-admin-empty-title">{error ? 'Unable to load profile' : 'Trainer profile not found.'}</div>
+        <div className="reg-admin-empty-sub">{error || 'This trainer may not have a public profile yet.'}</div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+          <button className="reg-admin-btn reg-admin-btn--secondary" type="button" style={{ cursor: 'pointer' }} onClick={() => navigate(-1)}>
+            <ArrowLeft size={15} /> Go back
+          </button>
+          <button className="reg-admin-btn reg-admin-btn--primary" type="button" style={{ cursor: 'pointer', background: '#16A34A' }} onClick={() => fetchProfile()}>
+            Retry
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -91,8 +110,8 @@ export default function AdminTrainerProfile({ user }) {
         </div>
         <div style={{ padding: '0 24px 20px', marginTop: -52, position: 'relative' }}>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
-            <div style={{ width: 104, height: 104, borderRadius: '50%', background: '#16A34A', border: '4px solid #fff', boxShadow: '0 6px 18px rgba(15,23,42,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
-              <span style={{ fontSize: 34, fontWeight: 700, color: '#FFFFFF', fontFamily: "'Poppins', sans-serif" }}>{initials(profile.user?.name)}</span>
+            <div style={{ width: 104, height: 104, borderRadius: '50%', background: '#FFFFFF', border: '3px solid #16A34A', boxShadow: '0 6px 18px rgba(15,23,42,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
+              <span style={{ fontSize: 34, fontWeight: 700, color: '#16A34A', fontFamily: "'Poppins', sans-serif" }}>{initials(profile.user?.name)}</span>
             </div>
             <div style={{ flex: 1, minWidth: 0, paddingTop: 6 }}>
               <h1 style={{ fontSize: 22, fontWeight: 700, color: '#0f172a', fontFamily: 'var(--font-primary)', margin: 0 }}>{profile.user?.name || 'Trainer'}</h1>
@@ -110,12 +129,12 @@ export default function AdminTrainerProfile({ user }) {
       {/* Stats */}
       <div className="reg-admin-stats" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
         {[
-          { icon: BookOpen, value: stats.courseCount, label: 'Courses', bg: '#f0fdf4', color: '#16a34a' },
+          { icon: BookOpen, value: stats.courseCount, label: 'Courses', bg: '#FFFFFF', border: '1.5px solid #16a34a', color: '#16a34a' },
           { icon: Users, value: stats.enrolledCount, label: 'Total Learners', bg: '#f0f9ff', color: '#0284c7' },
           { icon: Award, value: certs.length, label: 'Certifications', bg: '#fffbeb', color: '#d97706' },
         ].map(s => (
           <div key={s.label} className="reg-admin-stat">
-            <div className="reg-admin-stat-icon" style={{ background: s.bg, color: s.color }}>
+            <div className="reg-admin-stat-icon" style={{ background: s.bg, border: s.border, color: s.color }}>
               <s.icon size={19} />
             </div>
             <div>

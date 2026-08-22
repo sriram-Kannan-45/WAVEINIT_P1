@@ -58,7 +58,7 @@ export default function KpiCard({ icon: Icon, label, value, trendColor, bgIcon, 
         overflow: 'hidden',
         cursor: 'pointer',
         transition: 'box-shadow 250ms cubic-bezier(0.16, 1, 0.3, 1), border-color 250ms ease',
-        fontFamily: "'Inter', sans-serif",
+        fontFamily: "'Poppins', sans-serif",
       }}
       className="hover:border-slate-300 dark:hover:border-slate-700"
     >

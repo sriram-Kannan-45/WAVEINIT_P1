@@ -2,8 +2,8 @@ import { Skeleton } from '../ui';
 
 export default function ProfileSkeleton() {
   return (
-    <div style={{ background: '#F8FAFC', minHeight: '100vh' }}>
-      <div style={{ maxWidth: 1280, margin: '0 auto', padding: '24px 24px 48px' }}>
+    <div style={{ background: '#F8FAFC', minHeight: 'auto', paddingBottom: 24 }}>
+      <div style={{ maxWidth: 1280, margin: '0 auto', padding: '16px 20px 24px' }}>
         {/* Hero skeleton */}
         <div style={{
           background: '#fff', border: '1px solid #E5E7EB', borderRadius: 20,

@@ -87,9 +87,10 @@
   width: 40px;
   height: 40px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #0D9488, #14B8A6);
-  color: #fff;
-  box-shadow: 0 8px 18px rgba(13,148,136,0.35);
+  background: #FFFFFF;
+  border: 1.5px solid #16A34A;
+  color: #16A34A;
+  box-shadow: 0 1px 3px rgba(22, 163, 74, 0.08);
 }
 .tr-notes__subtitle {
   font-size: 13.5px;

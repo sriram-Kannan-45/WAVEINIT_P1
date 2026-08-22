@@ -24,11 +24,11 @@ export default function HeroBanner({ name, subtitle, onViewReports, onViewProfil
       className="flex-row gap-4"
     >
       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: '-0.02em', lineHeight: 1.2, fontFamily: "'Inter', sans-serif" }}>
+        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: '-0.02em', lineHeight: 1.2, fontFamily: "'Poppins', sans-serif" }}>
           Welcome back, {name} 👋
         </h1>
         {subtitle && (
-          <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.85)', margin: '4px 0 0', fontFamily: "'Inter', sans-serif" }}>
+          <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.85)', margin: '4px 0 0', fontFamily: "'Poppins', sans-serif" }}>
             {subtitle}
           </p>
         )}
@@ -54,7 +54,7 @@ export default function HeroBanner({ name, subtitle, onViewReports, onViewProfil
                 gap: 6,
                 transition: 'all 200ms ease',
                 backdropFilter: 'blur(4px)',
-                fontFamily: "'Inter', sans-serif",
+                fontFamily: "'Poppins', sans-serif",
               }}
               className="hover:bg-white hover:text-[#1e3a8a] hover:scale-102"
             >
@@ -78,7 +78,7 @@ export default function HeroBanner({ name, subtitle, onViewReports, onViewProfil
                 alignItems: 'center',
                 gap: 6,
                 transition: 'all 200ms ease',
-                fontFamily: "'Inter', sans-serif",
+                fontFamily: "'Poppins', sans-serif",
               }}
               className="hover:bg-slate-50 hover:shadow-md hover:scale-102"
             >

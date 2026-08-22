@@ -37,8 +37,9 @@ export default function UserAvatar({
         width: size,
         height: size,
         borderRadius: '50%',
-        background: '#16A34A',
-        color: '#FFFFFF',
+        background: '#FFFFFF',
+        border: '1.5px solid #16A34A',
+        color: '#16A34A',
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -48,6 +49,7 @@ export default function UserAvatar({
         lineHeight: 1,
         fontFamily: "'Poppins', -apple-system, BlinkMacSystemFont, sans-serif",
         userSelect: 'none',
+        boxSizing: 'border-box',
         ...style,
       }}
       title={name || ''}

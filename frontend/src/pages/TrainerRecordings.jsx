@@ -136,7 +136,7 @@ export default function TrainerRecordings({ user }) {
     <div className="dashboard">
       <div className="reg-admin-header" style={{ marginBottom: 24 }}>
         <div className="reg-admin-header-icon">
-          <Monitor size={26} color="#fff" />
+          <Monitor size={26} color="#16A34A" />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h1 className="reg-admin-title">Session Recordings</h1>
@@ -155,7 +155,7 @@ export default function TrainerRecordings({ user }) {
           </div>
         </div>
         <div className="reg-admin-stat">
-          <div className="reg-admin-stat-icon" style={{ background: '#f0fdf4', color: '#16a34a' }}>
+          <div className="reg-admin-stat-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16a34a', color: '#16a34a' }}>
             <Video size={20} />
           </div>
           <div>

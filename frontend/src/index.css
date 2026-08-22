@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Poppins:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 @config "../tailwind.config.js";
 
@@ -36,7 +36,7 @@ html {
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background-color: var(--bg-base);
   color: var(--text-primary);
   min-height: 100vh;
@@ -49,10 +49,14 @@ body {
 }
 
 h1, h2, h3, h4, h5, h6 {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-weight: 600;
-  letter-spacing: -0.025em;
+  letter-spacing: -0.02em;
   line-height: 1.3;
+}
+
+input, textarea, select, button, label, table, th, td {
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
 #root { min-height: 100vh; display: flex; flex-direction: column; }
@@ -135,14 +139,14 @@ h1, h2, h3, h4, h5, h6 {
   background: linear-gradient(135deg, #059669, #10B981); 
   border-radius: 12px;
   display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700;
-  color: #ffffff; flex-shrink: 0; font-family: 'Inter', sans-serif;
+  color: #ffffff; flex-shrink: 0; font-family: 'Poppins', sans-serif;
   box-shadow: 0 4px 16px rgba(79,70,229,0.4);
   position: relative;
   z-index: 1;
 }
 
 .sidebar-brand { display: flex; flex-direction: column; gap: 2px; position: relative; z-index: 1; }
-.sidebar-brand-name { font-size: 17px; font-weight: 700; color: #F8FAFC; font-family: 'Inter', sans-serif; letter-spacing: -0.02em; line-height: 1.2; }
+.sidebar-brand-name { font-size: 17px; font-weight: 700; color: #F8FAFC; font-family: 'Poppins', sans-serif; letter-spacing: -0.02em; line-height: 1.2; }
 .sidebar-brand-tagline { font-size: 11px; color: rgba(148,163,184,0.8); letter-spacing: 0.02em; font-weight: 500; }
 
 .sidebar-nav { flex: 1; padding: 12px 12px; overflow-y: auto; position: relative; z-index: 1; display: flex; flex-direction: column; gap: 2px; }
@@ -155,7 +159,7 @@ h1, h2, h3, h4, h5, h6 {
   display: flex; align-items: center; gap: 12px; padding: 0 12px; height: 52px; border-radius: 14px;
   color: rgba(148,163,184,0.9); font-size: 14px; font-weight: 500; cursor: pointer;
   transition: all 250ms cubic-bezier(0.16,1,0.3,1); border: none; background: transparent;
-  width: 100%; text-align: left; font-family: 'Inter', sans-serif; position: relative;
+  width: 100%; text-align: left; font-family: 'Poppins', sans-serif; position: relative;
 }
 .sidebar-nav-item:hover {
   background: rgba(5, 150, 105, 0.12);
@@ -276,7 +280,7 @@ h1, h2, h3, h4, h5, h6 {
   backdrop-filter: blur(4px);
 }
 
-.page-content { flex: 1; padding: 32px 40px 48px; background: #F8FAFC; overflow: visible; }
+.page-content { flex: 1; padding: 20px 24px 28px; background: #F8FAFC; overflow: visible; min-height: auto; }
 
 /* TOP HEADER BAR */
 .top-header {

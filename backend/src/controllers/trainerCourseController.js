@@ -62,7 +62,8 @@ async function loadOwnedCourse(req, res, courseId) {
   if (!id) { res.status(422).json({ error: 'Invalid courseId' }); return null; }
   const course = await Course.findByPk(id);
   if (!course) { res.status(404).json({ error: 'Course not found' }); return null; }
-  if (!isAdmin(req.user) && course.trainerId !== req.user.id) {
+  const isOwner = Number(course.trainerId) === Number(req.user.id) || String(course.trainerId) === String(req.user.id);
+  if (!isAdmin(req.user) && !isOwner) {
     // Check many-to-many assignment
     const assigned = await CourseTrainerAssignment.findOne({
       where: { courseId: course.id, trainerId: req.user.id }
@@ -87,7 +88,8 @@ async function loadOwnedLesson(req, res, lessonId) {
       res.status(403).json({ error: 'You do not own the parent course' });
       return null;
     }
-    if (!isAdmin(req.user) && course.trainerId !== req.user.id) {
+    const isCourseOwner = Number(course.trainerId) === Number(req.user.id) || String(course.trainerId) === String(req.user.id);
+    if (!isAdmin(req.user) && !isCourseOwner) {
       const assigned = await CourseTrainerAssignment.findOne({
         where: { courseId: course.id, trainerId: req.user.id }
       });
@@ -96,9 +98,12 @@ async function loadOwnedLesson(req, res, lessonId) {
         return null;
       }
     }
-  } else if (!isAdmin(req.user) && lesson.trainerId !== req.user.id) {
-    res.status(403).json({ error: 'You do not own this lesson' });
-    return null;
+  } else if (!isAdmin(req.user)) {
+    const isLessonOwner = Number(lesson.trainerId) === Number(req.user.id) || String(lesson.trainerId) === String(req.user.id);
+    if (!isLessonOwner) {
+      res.status(403).json({ error: 'You do not own this lesson' });
+      return null;
+    }
   }
   return lesson;
 }

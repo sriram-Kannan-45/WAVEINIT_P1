@@ -16,7 +16,7 @@ import {
     Video,
     X
 } from 'lucide-react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { API } from '../../api/api'
 import ProfileDropdown from './ProfileDropdown'
 import { WaveInitLogoIcon } from '../common/WaveInitLogo'
@@ -134,6 +134,7 @@ export { navGroups, pageDescriptions }
 export default function Sidebar({ user, activeTab, onTabChange, onLogout, onCloseSidebar, sidebarOpen, onOpenSidebar }) {
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams] = useSearchParams()
   const groups = navGroups[user.role] || []
   const isAdmin = user.role === 'ADMIN'
   const isTrainer = user.role === 'TRAINER'
@@ -242,11 +243,9 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
                             navigate('/interviews')
                           } else {
                             const home = ROLE_HOME[user?.role] || '/admin'
-                            if (location.pathname !== home) {
-                              navigate(home, { state: { tab: item.key, courseId: null } })
-                            } else {
-                              onTabChange(item.key)
-                            }
+                            const params = new URLSearchParams()
+                            params.set('tab', item.key)
+                            navigate({ pathname: home, search: params.toString() })
                           }
                           onCloseSidebar && onCloseSidebar()
                         }}
@@ -301,7 +300,8 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
                             )}
                             <div className="wl-sidebar-submenu-scroll">
                               {filteredCourses.map((c) => {
-                                const isSelected = location.state?.courseId === c.id
+                                const activeCourseId = searchParams.get('courseId')
+                                const isSelected = activeCourseId && Number(activeCourseId) === c.id
                                 return (
                                   <button
                                     key={c.id}
@@ -310,8 +310,10 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
                                     title={c.title}
                                     onClick={() => {
                                       const home = ROLE_HOME[user?.role] || '/admin'
-                                      navigate(home, { state: { tab: item.key, courseId: c.id } })
-                                      onTabChange && onTabChange(item.key, c.id)
+                                      const params = new URLSearchParams()
+                                      params.set('tab', item.key)
+                                      params.set('courseId', String(c.id))
+                                      navigate({ pathname: home, search: params.toString() })
                                       onCloseSidebar && onCloseSidebar()
                                     }}
                                   >
@@ -329,8 +331,9 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
                               className="wl-sidebar-view-all"
                               onClick={() => {
                                 const home = ROLE_HOME[user?.role] || '/admin'
-                                navigate(home, { state: { tab: item.key, courseId: null } })
-                                onTabChange && onTabChange(item.key, null)
+                                const params = new URLSearchParams()
+                                params.set('tab', item.key)
+                                navigate({ pathname: home, search: params.toString() })
                                 onCloseSidebar && onCloseSidebar()
                               }}
                             >

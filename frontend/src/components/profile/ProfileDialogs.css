@@ -1,0 +1,541 @@
+/* ══════════════════════════════════════════════════════════════════════════════
+   WAVE INIT LMS — SECTION-SPECIFIC PROFILE MODALS DESIGN SYSTEM
+   ──────────────────────────────────────────────────────────────────────────────
+   Standardized SaaS modal styles for Participant / Learner My Profile.
+   Colors: WAVE INIT Green (#16A34A), Neutral Slate (#0F172A, #334155, #64748B),
+   Borders (#E2E8F0, #CBD5E1), Backgrounds (#FFFFFF, #F8FAFC).
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. MODAL BACKDROP OVERLAY ── */
+.pfd-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  overflow-y: auto;
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ── 2. MODAL CONTAINER ── */
+.pfd-modal {
+  background: #FFFFFF;
+  border-radius: 18px;
+  border: 1px solid #E2E8F0;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
+  width: 100%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.pfd-modal--sm {
+  max-width: 480px;
+}
+
+.pfd-modal--md {
+  max-width: 560px;
+}
+
+.pfd-modal--lg {
+  max-width: 640px;
+}
+
+/* ── 3. MODAL HEADER ── */
+.pfd-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22px 26px 16px;
+  border-bottom: 1px solid #F1F5F9;
+  background: #FFFFFF;
+  flex-shrink: 0;
+}
+
+.pfd-header-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.pfd-icon-box {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: #FFFFFF;
+  border: 1.5px solid #16A34A;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #16A34A;
+}
+
+.pfd-title-wrap {
+  min-width: 0;
+}
+
+.pfd-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: #0F172A;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+.pfd-subtitle {
+  margin: 3px 0 0 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: #64748B;
+  line-height: 1.4;
+}
+
+.pfd-close-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: #94A3B8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.pfd-close-btn:hover {
+  background: #F1F5F9;
+  color: #0F172A;
+}
+
+/* ── 4. MODAL BODY ── */
+.pfd-body {
+  padding: 22px 26px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* Custom slim scrollbar */
+.pfd-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.pfd-body::-webkit-scrollbar-track {
+  background: #F8FAFC;
+}
+
+.pfd-body::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 9999px;
+}
+
+.pfd-body::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* ── 5. FORM GROUPS & LABELS ── */
+.pfd-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.pfd-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  letter-spacing: 0.01em;
+}
+
+.pfd-required {
+  color: #16A34A;
+  margin-left: 2px;
+  font-weight: 700;
+}
+
+.pfd-readonly-tag {
+  font-size: 11px;
+  font-weight: 500;
+  color: #94A3B8;
+}
+
+/* ── 6. INPUTS & CONTROLS ── */
+.pfd-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  font-size: 13.5px;
+  font-family: inherit;
+  color: #0F172A;
+  background: #FFFFFF;
+  border: 1.5px solid #E2E8F0;
+  border-radius: 10px;
+  outline: none;
+  transition: all 0.15s ease;
+  box-sizing: border-box;
+}
+
+.pfd-input::placeholder {
+  color: #94A3B8;
+  font-weight: 400;
+}
+
+.pfd-input:hover {
+  border-color: #CBD5E1;
+}
+
+.pfd-input:focus {
+  border-color: #16A34A;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.14);
+}
+
+.pfd-input--readonly {
+  background: #F8FAFC;
+  color: #64748B;
+  border-color: #E2E8F0;
+  cursor: not-allowed;
+}
+
+/* Select Control */
+.pfd-select-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.pfd-select {
+  width: 100%;
+  height: 44px;
+  padding: 0 36px 0 14px;
+  font-size: 13.5px;
+  font-family: inherit;
+  color: #0F172A;
+  background: #FFFFFF;
+  border: 1.5px solid #E2E8F0;
+  border-radius: 10px;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: all 0.15s ease;
+  box-sizing: border-box;
+}
+
+.pfd-select:hover {
+  border-color: #CBD5E1;
+}
+
+.pfd-select:focus {
+  border-color: #16A34A;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.14);
+}
+
+.pfd-select-arrow {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: #64748B;
+}
+
+/* Textarea */
+.pfd-textarea {
+  width: 100%;
+  min-height: 96px;
+  padding: 10px 14px;
+  font-size: 13.5px;
+  font-family: inherit;
+  color: #0F172A;
+  background: #FFFFFF;
+  border: 1.5px solid #E2E8F0;
+  border-radius: 10px;
+  outline: none;
+  resize: vertical;
+  transition: all 0.15s ease;
+  box-sizing: border-box;
+  line-height: 1.5;
+}
+
+.pfd-textarea::placeholder {
+  color: #94A3B8;
+}
+
+.pfd-textarea:hover {
+  border-color: #CBD5E1;
+}
+
+.pfd-textarea:focus {
+  border-color: #16A34A;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.14);
+}
+
+/* Two-Column Responsive Grid */
+.pfd-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 600px) {
+  .pfd-grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Checkbox Style */
+.pfd-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #334155;
+  cursor: pointer;
+  user-select: none;
+  margin-top: -2px;
+}
+
+.pfd-checkbox {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1.5px solid #CBD5E1;
+  accent-color: #16A34A;
+  cursor: pointer;
+}
+
+/* ── 7. FILE UPLOAD DROPZONE ── */
+.pfd-dropzone {
+  border: 1.5px dashed #CBD5E1;
+  background: #F8FAFC;
+  border-radius: 14px;
+  padding: 22px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.pfd-dropzone:hover {
+  border-color: #16A34A;
+  background: #F0FDF4;
+}
+
+.pfd-dropzone-icon-wrap {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  border: 1.5px solid #16A34A;
+  color: #16A34A;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 5px rgba(22, 163, 74, 0.1);
+}
+
+.pfd-dropzone-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1E293B;
+}
+
+.pfd-dropzone-hint {
+  font-size: 11.5px;
+  color: #94A3B8;
+}
+
+/* Selected File Pill */
+.pfd-file-selected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #F0FDF4;
+  border: 1px solid #BBF7D0;
+  padding: 10px 14px;
+  border-radius: 10px;
+}
+
+.pfd-file-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.pfd-file-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #0F172A;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pfd-file-ready {
+  font-size: 11px;
+  color: #15803D;
+  font-weight: 500;
+}
+
+/* ── 8. SUGGESTION CHIPS ── */
+.pfd-chips-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.pfd-chip {
+  background: #F1F5F9;
+  border: 1px solid #E2E8F0;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.pfd-chip:hover {
+  background: #F0FDF4;
+  color: #15803D;
+  border-color: #BBF7D0;
+}
+
+/* ── 9. MODAL FOOTER ── */
+.pfd-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 26px;
+  border-top: 1px solid #F1F5F9;
+  background: #F8FAFC;
+  flex-shrink: 0;
+}
+
+.pfd-btn-cancel {
+  height: 40px;
+  padding: 0 18px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  color: #475569;
+  background: #FFFFFF;
+  border: 1.5px solid #E2E8F0;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.pfd-btn-cancel:hover {
+  background: #F1F5F9;
+  border-color: #CBD5E1;
+  color: #0F172A;
+}
+
+.pfd-btn-primary {
+  height: 40px;
+  padding: 0 20px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  color: #FFFFFF;
+  background: #16A34A;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 0 1px 3px rgba(22, 163, 74, 0.25);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.pfd-btn-primary:hover:not(:disabled) {
+  background: #15803D;
+}
+
+.pfd-btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.pfd-btn-danger {
+  height: 40px;
+  padding: 0 20px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  color: #FFFFFF;
+  background: #DC2626;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 0 1px 3px rgba(220, 38, 38, 0.25);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.pfd-btn-danger:hover:not(:disabled) {
+  background: #B91C1C;
+}
+
+.pfd-btn-danger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Spinner */
+.pfd-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #FFFFFF;
+  border-radius: 50%;
+  animation: pfd-spin 0.65s linear infinite;
+}
+
+@keyframes pfd-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Field Inline Error */
+.pfd-error-msg {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #DC2626;
+  margin-top: 3px;
+}

@@ -138,10 +138,19 @@ export default function TrainerQuizDetails({ user, onLogout }) {
 
   if (!quiz) {
     return (
-      <div className="reg-admin">
+      <div className="reg-admin" style={{ padding: '48px 0' }}>
         <div className="reg-admin-empty">
-          <AlertCircle size={28} />
-          <h3>Quiz not found</h3>
+          <AlertCircle size={32} color="#EF4444" />
+          <h3 style={{ margin: '8px 0 4px' }}>Quiz not found</h3>
+          <p style={{ color: '#64748B', fontSize: 13, margin: '0 0 16px' }}>The requested quiz could not be loaded or was removed.</p>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => navigate(-1)}>
+              Go back
+            </button>
+            <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => fetchQuiz()} style={{ background: '#16A34A' }}>
+              Retry
+            </button>
+          </div>
         </div>
       </div>
     )
@@ -164,8 +173,8 @@ export default function TrainerQuizDetails({ user, onLogout }) {
         <button className="reg-admin-btn reg-admin-btn--secondary" style={{ cursor: 'pointer' }} onClick={() => navigate('/trainer')}>
           <ArrowLeft size={14} /> Back to Courses
         </button>
-        <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-          <FileText size={20} />
+        <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16A34A' }}>
+          <FileText size={20} color="#16A34A" />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h1 className="reg-admin-title">{quiz.title}</h1>

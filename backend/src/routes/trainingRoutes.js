@@ -1,5 +1,6 @@
 const express = require('express');
 const trainingController = require('../controllers/trainingController');
+const trainingLeaderboardController = require('../controllers/trainingLeaderboardController');
 const authenticateToken = require('../middleware/auth');
 const optionalAuth = require('../middleware/optionalAuth');
 
@@ -7,6 +8,9 @@ const router = express.Router();
 
 // GET /api/trainings - Public, but auth optional (shows isEnrolled if logged in)
 router.get('/', optionalAuth, (req, res) => trainingController.getAllTrainings(req, res));
+
+// GET /api/trainings/:id/leaderboard - Authenticated (strictly training-scoped)
+router.get('/:id/leaderboard', authenticateToken, (req, res) => trainingLeaderboardController.getTrainingLeaderboard(req, res));
 
 // GET /api/trainings/:id - Public
 router.get('/:id', (req, res) => trainingController.getTrainingById(req, res));

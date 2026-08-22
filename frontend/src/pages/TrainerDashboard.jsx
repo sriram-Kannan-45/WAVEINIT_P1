@@ -16,6 +16,7 @@ import Pagination from '../components/Pagination'
 import { Button, Badge, EmptyState, StatCard, ProgressBar } from '../components/ui'
 import CourseArtwork from '../components/common/CourseArtwork'
 import { API_BASE } from '../api/api'
+import { fetchWithTimeout } from '../api/request'
 import UserAvatar, { getTwoLetterInitials } from '../components/common/UserAvatar'
 
 
@@ -152,17 +153,17 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const fetchTrainerReport = async () => {
     try {
-      const r = await fetch(`${API}/reports/trainer`, { headers: auth() })
-      const d = await r.json()
+      const r = await fetchWithTimeout(`${API}/reports/trainer`, { headers: auth() }, 12000)
+      const d = await r.json().catch(() => ({}))
       if (r.ok && d.success) setTrainerReport(d.data)
     } catch (e) { console.error('fetchTrainerReport error:', e.message) }
   }
 
   const handleRegenerateCertificate = async () => {
     try {
-      const r = await fetch(`${API}/trainer/certificates/regenerate`, { method: 'POST', headers: auth() })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d.error)
+      const r = await fetchWithTimeout(`${API}/trainer/certificates/regenerate`, { method: 'POST', headers: auth() }, 15000)
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || 'Failed to regenerate certificates')
       success('Certificate check/regeneration triggered!')
       fetchTrainerReport()
     } catch (e) { showError(e.message) }
@@ -171,9 +172,9 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
   const handleReply = async (e) => {
     e.preventDefault()
     try {
-      const r = await fetch(`${API}/feedback/${replyModal.id}/reply`, {
+      const r = await fetchWithTimeout(`${API}/feedback/${replyModal.id}/reply`, {
         method: 'POST', headers: auth(), body: JSON.stringify({ trainerResponse: replyText })
-      })
+      }, 10000)
       const d = await r.json().catch(() => ({}))
       if (!r.ok || d.success === false) { showError(d.error || 'Failed to save reply'); return }
       success('Reply submitted!')
@@ -184,8 +185,8 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
   const fetchTrainings = async () => {
     try {
       const [rTrainings, rCourses] = await Promise.all([
-        fetch(`${API}/trainer/trainings`, { headers: auth() }).then(r => r.json()).catch(() => ({ trainings: [] })),
-        fetch(`${API}/trainer/courses`, { headers: auth() }).then(r => r.json()).catch(() => ({ courses: [] }))
+        fetchWithTimeout(`${API}/trainer/trainings`, { headers: auth() }, 10000).then(r => r.json()).catch(() => ({ trainings: [] })),
+        fetchWithTimeout(`${API}/trainer/courses`, { headers: auth() }, 10000).then(r => r.json()).catch(() => ({ courses: [] }))
       ])
       const list = rTrainings.trainings || []
       const cList = rCourses.courses || []
@@ -206,8 +207,8 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const fetchFeedbacks = async () => {
     try {
-      const r = await fetch(`${API}/trainer/feedbacks`, { headers: auth() })
-      const d = await r.json()
+      const r = await fetchWithTimeout(`${API}/trainer/feedbacks`, { headers: auth() }, 10000)
+      const d = await r.json().catch(() => ({}))
       if (d.success) setFeedbacks(d.feedbacks || [])
     } catch (e) {
       console.error('fetchFeedbacks error:', e.message)
@@ -351,7 +352,7 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
               {/* Mini Metric Strip */}
               <div className="tdb-metric-strip">
                 <div className="tdb-metric-item">
-                  <div className="tdb-metric-icon" style={{ background: '#EAF8F0', color: '#16A34A' }}>
+                  <div className="tdb-metric-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16A34A' }}>
                     <Users size={14} strokeWidth={2.2} />
                   </div>
                   <div>

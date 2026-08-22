@@ -189,12 +189,12 @@ export default function TrainerMonitoringDashboard({ user }) {
   };
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f8fafc', padding: '28px 20px' }}>
+    <div style={{ minHeight: 'auto', background: 'transparent', padding: '0 0 24px' }}>
       <div className="reg-admin">
         {/* Header */}
         <div className="reg-admin-header">
-          <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-            <MonitorPlay size={20} />
+          <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16A34A' }}>
+            <MonitorPlay size={20} color="#16A34A" />
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <h1 className="reg-admin-title">Live Monitoring</h1>

@@ -77,9 +77,9 @@ export default function ProfilePhotoUploader({ profile, onAvatarUpdate }) {
         <div
           className="w-24 h-24 rounded-full flex items-center justify-center overflow-hidden"
           style={{
-            background: '#16A34A',
-            border: '4px solid #fff',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+            background: '#FFFFFF',
+            border: '3px solid #16A34A',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
           }}
         >
           {profile?.profileImage || user?.profilePic ? (
@@ -89,7 +89,7 @@ export default function ProfilePhotoUploader({ profile, onAvatarUpdate }) {
               className="w-full h-full object-cover"
             />
           ) : (
-            <span className="text-2xl font-bold text-white" style={{ fontFamily: "'Poppins', sans-serif" }}>
+            <span className="text-2xl font-bold" style={{ fontFamily: "'Poppins', sans-serif", color: '#16A34A' }}>
               {initials}
             </span>
           )}

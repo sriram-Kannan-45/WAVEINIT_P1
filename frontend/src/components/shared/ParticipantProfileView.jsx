@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import profileService from '../../services/profileService'
 import { API_BASE, assetUrl } from '../../api/api'
-import { getAuthHeaders } from '../../api/request'
+import { getAuthHeaders, fetchWithTimeout } from '../../api/request'
 import '../admin/TrainerProfileModal.css'
 import { getTwoLetterInitials } from '../common/UserAvatar'
 
@@ -43,40 +43,42 @@ export default function ParticipantProfileView({
       return
     }
 
+    const controller = new AbortController()
     let isMounted = true
-    setLoading(true)
 
-    // Try full profile endpoint first, fallback to participant-profile if needed
-    profileService.getProfileById(targetId)
-      .then(res => {
+    const loadProfile = async () => {
+      setLoading(true)
+      try {
+        const res = await profileService.getProfileById(targetId, controller.signal).catch(() => null)
         if (!isMounted) return
         if (res && res.profile) {
           setProfileData(res.profile)
-        } else {
-          return fetch(`${API_BASE}/participant-profile/${targetId}`, { headers: getAuthHeaders() })
-            .then(r => r.json())
-            .then(d => {
-              if (isMounted) setProfileData(d.profile || participant || fallback)
-            })
+          return
         }
-      })
-      .catch(() => {
+        // Fallback to participant-profile endpoint
+        const fbRes = await fetchWithTimeout(`${API_BASE}/participant-profile/${targetId}`, {
+          headers: getAuthHeaders(),
+          signal: controller.signal,
+        }, 10000).catch(() => null)
         if (!isMounted) return
-        fetch(`${API_BASE}/participant-profile/${targetId}`, { headers: getAuthHeaders() })
-          .then(r => r.json())
-          .then(d => {
-            if (isMounted) setProfileData(d.profile || participant || fallback)
-          })
-          .catch(() => {
-            if (isMounted) setProfileData(participant || fallback)
-          })
-      })
-      .finally(() => {
+        if (fbRes && fbRes.ok) {
+          const d = await fbRes.json().catch(() => ({}))
+          if (isMounted) setProfileData(d.profile || participant || fallback)
+        } else if (isMounted) {
+          setProfileData(participant || fallback)
+        }
+      } catch {
+        if (isMounted) setProfileData(participant || fallback)
+      } finally {
         if (isMounted) setLoading(false)
-      })
+      }
+    }
+
+    loadProfile()
 
     return () => {
       isMounted = false
+      controller.abort()
     }
   }, [open, targetId])
 

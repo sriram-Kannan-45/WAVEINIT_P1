@@ -39,8 +39,8 @@ export default function AvailableCourses({
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', fontFamily: "'Poppins', sans-serif" }}>
       {/* Header */}
       <div className="reg-admin-header" style={{ marginBottom: 0 }}>
-        <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)' }}>
-          <BookOpen size={22} color="#fff" />
+        <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A' }}>
+          <BookOpen size={22} color="#16A34A" />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h2 className="reg-admin-title">Explore Trainings</h2>

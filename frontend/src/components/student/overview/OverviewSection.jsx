@@ -204,7 +204,7 @@ export default function OverviewSection({
           {/* Mini Metric Strip */}
           <div className="tdb-metric-strip">
             <div className="tdb-metric-item">
-              <div className="tdb-metric-icon" style={{ background: '#EAF8F0', color: '#16A34A' }}>
+              <div className="tdb-metric-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16A34A' }}>
                 <Users size={14} strokeWidth={2.2} />
               </div>
               <div>

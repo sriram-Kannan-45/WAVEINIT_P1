@@ -147,7 +147,7 @@ export default function AIQuizLeaderboard() {
       border: '1px solid rgba(255,255,255,0.08)',
       overflow: 'hidden',
       padding: 24,
-      fontFamily: "'Inter', system-ui, sans-serif",
+      fontFamily: "'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     }}>
       <style>{`
         @keyframes shimmer {
@@ -285,7 +285,7 @@ export default function AIQuizLeaderboard() {
               </span>
             </div>
             <div style={{
-              fontFamily: "'Inter', monospace",
+              fontFamily: "'JetBrains Mono', ui-monospace, monospace",
               fontSize: 26,
               fontWeight: 700,
               color: '#2DD4BF',
@@ -614,7 +614,7 @@ export default function AIQuizLeaderboard() {
                   </div>
 
                   {/* Time */}
-                  <div style={{ fontSize: 13, fontWeight: 500, color: '#64748b', fontFamily: "'Inter', monospace" }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: '#64748b', fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>
                     {p.time}
                   </div>
 

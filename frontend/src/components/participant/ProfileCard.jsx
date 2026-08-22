@@ -10,8 +10,8 @@ import { getTwoLetterInitials } from '../common/UserAvatar'
 function Avatar({ src, initials, size = 72 }) {
   return (
     <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
-      <div className="absolute inset-0 rounded-full overflow-hidden flex items-center justify-center" style={{ background: '#16A34A' }}>
-        <span className="font-bold text-white select-none" style={{ fontSize: size * 0.38, fontFamily: "'Poppins', sans-serif" }}>
+      <div className="absolute inset-0 rounded-full overflow-hidden flex items-center justify-center" style={{ background: '#FFFFFF', border: '2px solid #16A34A', boxSizing: 'border-box' }}>
+        <span className="font-bold select-none" style={{ fontSize: size * 0.38, fontFamily: "'Poppins', sans-serif", color: '#16A34A' }}>
           {initials}
         </span>
       </div>

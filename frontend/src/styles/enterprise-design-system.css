@@ -2945,7 +2945,7 @@ body.iv-room-fullscreen .wl-sidebar-mobile-toggle {
   flex-direction: column;
   height: auto;
   overflow: visible;
-  min-height: 480px;
+  min-height: auto;
 }
 
 .wl-detail-structure-header {
@@ -3008,10 +3008,10 @@ body.iv-room-fullscreen .wl-sidebar-mobile-toggle {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 60px 40px;
+  padding: 36px 24px;
   position: relative;
   text-align: center;
-  min-height: 420px;
+  min-height: auto;
   background: #f9fafb;
   margin: 16px 16px 16px;
   border-radius: 20px;
@@ -3192,7 +3192,7 @@ body.iv-room-fullscreen .wl-sidebar-mobile-toggle {
   display: flex;
   flex-direction: column;
   gap: 24px;
-  min-height: 480px;
+  min-height: auto;
 }
 
 @media (max-width: 768px) {
@@ -3254,9 +3254,9 @@ body.iv-room-fullscreen .wl-sidebar-mobile-toggle {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 60px 40px;
+  padding: 36px 24px;
   text-align: center;
-  min-height: 360px;
+  min-height: auto;
   background: #f9fafb;
   border-radius: 20px;
 }
@@ -3683,10 +3683,14 @@ body.iv-room-fullscreen .wl-sidebar-mobile-toggle {
   width: 56px;
   height: 56px;
   border-radius: 16px;
+  background: #FFFFFF;
+  border: 1.5px solid #16A34A;
+  color: #16A34A;
   display: grid;
   place-items: center;
   flex-shrink: 0;
   font-size: 26px;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.08);
 }
 
 .wl-participants-kpi-data {
@@ -3907,13 +3911,15 @@ body.iv-room-fullscreen .wl-sidebar-mobile-toggle {
   width: 48px;
   height: 48px;
   border-radius: 14px;
+  background: #FFFFFF;
+  border: 1.5px solid #16A34A;
+  color: #16A34A;
   display: grid;
   place-items: center;
   font-family: var(--font-display);
   font-size: 16px;
   font-weight: 700;
   flex-shrink: 0;
-  color: #ffffff;
 }
 
 .wl-participant-info {
@@ -4705,8 +4711,9 @@ body.iv-room-fullscreen .wl-sidebar-mobile-toggle {
   width: 44px;
   height: 44px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #16A34A, #15803D);
-  color: #fff;
+  background: #FFFFFF;
+  border: 1.5px solid #16A34A;
+  color: #16A34A;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -5859,12 +5866,12 @@ body.iv-room-fullscreen .wl-sidebar-mobile-toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 28px;
-  min-height: 90px;
+  padding: 14px 20px;
+  min-height: auto;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 14px;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
@@ -5872,18 +5879,20 @@ body.iv-room-fullscreen .wl-sidebar-mobile-toggle {
   width: 56px;
   height: 56px;
   border-radius: 14px;
-  background: linear-gradient(135deg, #16A34A, #15803D);
-  color: #fff;
+  background: #FFFFFF;
+  border: 1.5px solid #16A34A;
+  color: #16A34A;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.2);
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.08);
 }
 
 .reg-admin-header-icon svg {
   width: 26px;
   height: 26px;
+  color: #16A34A;
 }
 
 .reg-admin-title {
@@ -5892,7 +5901,7 @@ body.iv-room-fullscreen .wl-sidebar-mobile-toggle {
   color: #0F172A;
   margin: 0;
   line-height: 1.2;
-  font-family: Inter, system-ui, -apple-system, sans-serif;
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
 .reg-admin-subtitle {
@@ -6302,23 +6311,26 @@ body.iv-room-fullscreen .wl-sidebar-mobile-toggle {
    ═══════════════════════════════════════════════════════════════════ */
 
 .reg-admin {
-  max-width: 1200px;
+  width: 100%;
+  max-width: 1400px;
   margin: 0 auto;
+  min-height: auto;
 }
 
 .reg-admin-header {
   display: flex;
   align-items: center;
   gap: 14px;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 
 .reg-admin-header-icon {
   width: 44px;
   height: 44px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #16A34A, #15803D);
-  color: #fff;
+  background: #FFFFFF;
+  border: 1.5px solid #16A34A;
+  color: #16A34A;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -6570,14 +6582,16 @@ body.iv-room-fullscreen .wl-sidebar-mobile-toggle {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #16A34A, #15803D);
-  color: #fff;
+  background: #FFFFFF;
+  border: 1.5px solid #16A34A;
+  color: #16A34A;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 11px;
   font-weight: 700;
   flex-shrink: 0;
+  box-sizing: border-box;
 }
 
 .reg-admin-name {
@@ -7181,7 +7195,7 @@ body.iv-room-fullscreen .wl-sidebar-mobile-toggle {
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   font-size: 13px;
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: #111827;
   outline: none;
   box-sizing: border-box;
@@ -7203,7 +7217,7 @@ body.iv-room-fullscreen .wl-sidebar-mobile-toggle {
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   font-size: 13px;
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: #111827;
   outline: none;
   box-sizing: border-box;
@@ -7225,7 +7239,7 @@ body.iv-room-fullscreen .wl-sidebar-mobile-toggle {
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   font-size: 13px;
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: #111827;
   outline: none;
   box-sizing: border-box;

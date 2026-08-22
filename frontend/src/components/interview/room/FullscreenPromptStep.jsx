@@ -50,8 +50,8 @@ export default function FullscreenPromptStep({
           gap: 12,
           background: '#f8fafc',
         }}>
-          <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #16A34A, #15803D)', width: 36, height: 36 }}>
-            <Maximize2 size={18} color="#fff" />
+          <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A', width: 36, height: 36 }}>
+            <Maximize2 size={18} color="#16A34A" />
           </div>
           <div>
             <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: '#0f172a' }}>
