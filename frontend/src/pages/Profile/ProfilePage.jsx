@@ -10,6 +10,8 @@ import {
 import profileService from '../../services/profileService';
 import { assetUrl } from '../../api/api';
 import ProfileSkeleton from '../../components/profile/ProfileSkeleton';
+import LearningActivityHeatmap from '../../components/profile/LearningActivityHeatmap';
+import ActivitySummaryCard from '../../components/profile/ActivitySummaryCard';
 import {
   AddSkillDialog, AddExperienceDialog, AddEducationDialog,
   AddCertificateDialog, AddProjectDialog, EditContactDialog, ResumeUploadDialog,
@@ -80,7 +82,8 @@ export default function ProfilePage({ user }) {
   const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
   const [stats, setStats] = useState({});
-  const [completion, setCompletion] = useState({ pct: 100, count: 8, total: 8 });
+  const [completion, setCompletion] = useState({ pct: 25, count: 2, total: 8 });
+  const [heatmapDays, setHeatmapDays] = useState(90);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -302,9 +305,9 @@ export default function ProfilePage({ user }) {
     );
   }
 
-  const participantName = profile?.user?.name || user?.name || 'Sriram Kannan';
-  const participantEmail = profile?.user?.email || user?.email || 'wavene20@gmail.com';
-  const joinedDate = fmtMonthYear(profile?.createdAt || user?.createdAt);
+  const participantName = profile?.user?.name || user?.name || 'sriram';
+  const participantEmail = profile?.user?.email || user?.email || 'titooram123@gmail.com';
+  const joinedDate = fmtMonthYear(profile?.createdAt || user?.createdAt || profile?.user?.created_at);
   const userRole = (user?.role || 'PARTICIPANT').toUpperCase();
   const profilePhotoUrl = profile?.profileImage || profile?.user?.profilePic || user?.profilePic;
 
@@ -429,29 +432,118 @@ export default function ProfilePage({ user }) {
             </span>
           </div>
         </div>
+      </div>
 
-        {/* Far Right Profile Completion Ring */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#ffffff', padding: '10px 16px', borderRadius: 12, border: '1px solid #e2e8f0' }}>
+      {/* ── Learning Activity Heatmap & Activity Summary Row (Participant Profile) ── */}
+      <div
+        className="profile-activity-container"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(200px, 240px) 1fr minmax(260px, 290px)',
+          gap: 16,
+          marginBottom: 16,
+          alignItems: 'stretch',
+        }}
+      >
+        {/* 1. Profile Completion Card */}
+        <div style={{
+          background: '#FFFFFF',
+          borderRadius: 16,
+          border: '1px solid #E2E8F0',
+          padding: '20px 18px',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          textAlign: 'center',
+          gap: 12,
+        }}>
+          {/* Circular Progress Ring */}
           <div style={{
-            width: 48, height: 48, borderRadius: '50%', border: '3.5px solid #16A34A',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 12.5, fontWeight: 800, color: '#15803D', background: '#f0fdf4', flexShrink: 0,
+            position: 'relative',
+            width: 72,
+            height: 72,
+            borderRadius: '50%',
+            background: `conic-gradient(#16A34A ${completion?.pct ?? 25}%, #E2E8F0 ${completion?.pct ?? 25}% 100%)`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+            boxShadow: '0 2px 8px rgba(22, 163, 74, 0.08)',
           }}>
-            {completion?.pct ?? 100}%
+            <div style={{
+              width: 58,
+              height: 58,
+              borderRadius: '50%',
+              background: '#FFFFFF',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 16,
+              fontWeight: 800,
+              color: '#15803D',
+            }}>
+              {completion?.pct ?? 25}%
+            </div>
           </div>
           <div>
-            <div style={{ fontSize: 12.5, fontWeight: 700, color: '#0F172A' }}>Profile Completion</div>
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: '#16A34A', marginTop: 1 }}>
-              {completion?.count ?? 8}/{completion?.total ?? 8} Sections Complete
+            <h4 style={{ fontSize: 13.5, fontWeight: 700, color: '#0F172A', margin: 0 }}>Profile Completion</h4>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#16A34A', marginTop: 3 }}>
+              {completion?.count ?? 2}/{completion?.total ?? 8} Sections Complete
             </div>
-            <div style={{ fontSize: 10.5, color: '#64748b', marginTop: 1 }}>
-              {(completion?.pct ?? 100) === 100
+            <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 3, lineHeight: 1.4 }}>
+              {(completion?.pct ?? 25) === 100
                 ? 'Your profile is completely up-to-date!'
                 : 'Add more details to reach 100%'}
             </div>
           </div>
         </div>
+
+        {/* 2. Learning Activity Heatmap */}
+        <LearningActivityHeatmap
+          dailyActivities={stats?.dailyActivities || {}}
+          selectedDays={heatmapDays}
+          onDaysChange={setHeatmapDays}
+          userId={user?.id || profile?.id || 'participant'}
+        />
+
+        {/* 3. Activity Summary Card */}
+        <ActivitySummaryCard
+          stats={stats}
+          selectedDays={heatmapDays}
+          onViewAnalytics={() => {
+            const home = ROLE_HOME[user?.role] || '/participant';
+            navigate(home, { state: { tab: 'overview' } });
+          }}
+        />
       </div>
+
+      <style>{`
+        @media (max-width: 1200px) {
+          .profile-activity-container {
+            grid-template-columns: 1fr 1fr !important;
+          }
+          .profile-activity-container > div:nth-child(2) {
+            grid-column: 1 / -1;
+            order: 1;
+          }
+          .profile-activity-container > div:nth-child(1) {
+            order: 2;
+          }
+          .profile-activity-container > div:nth-child(3) {
+            order: 3;
+          }
+        }
+        @media (max-width: 768px) {
+          .profile-activity-container {
+            grid-template-columns: 1fr !important;
+          }
+          .profile-activity-container > div:nth-child(2) {
+            grid-column: auto;
+          }
+        }
+      `}</style>
 
       {/* ── Main Content Grid (3-Column SaaS Layout) ─────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>

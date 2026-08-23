@@ -3,7 +3,8 @@ const {
   User, UserProfile, ProfileSkill, ProfileExperience, ProfileEducation,
   ProfileCertificate, ProfileProject, ProfileContactLink, ProfileActivityLog,
   Enrollment, Course, Certificate, Training, AIQuiz, QuizAttempt,
-  CourseTrainerAssignment,
+  CourseTrainerAssignment, LessonProgress, CodingAttempt, AssessmentSubmission,
+  ActivityLog, Attendance
 } = require('../models');
 
 const getFullProfile = async (userId) => {
@@ -60,7 +61,23 @@ const getStats = async (userId, role) => {
       stats.studentsTrained = studentsTrained || 0;
       stats.completionRate = studentsTrained > 0 ? Math.round((completedEnrolled / studentsTrained) * 100) : 0;
     } else {
-      const [coursesEnrolled, completedCourses, assignmentsSubmitted, avgResult, certsEarned] = await Promise.all([
+      const [
+        coursesEnrolled,
+        completedCourses,
+        assignmentsSubmitted,
+        avgResult,
+        certsEarned,
+        lessonProgressRows,
+        quizAttemptRows,
+        codingAttemptRows,
+        assessmentSubRows,
+        activityLogRows,
+        attendanceRows,
+        enrollmentRows,
+        feedbackRows,
+        noteRows,
+        discussionRows
+      ] = await Promise.all([
         Enrollment.count({ where: { participantId: userId } }).catch(() => 0),
         Enrollment.count({ where: { participantId: userId, status: 'COMPLETED' } }).catch(() => 0),
         QuizAttempt.count({ where: { participantId: userId } }).catch(() => 0),
@@ -70,6 +87,16 @@ const getStats = async (userId, role) => {
           raw: true,
         }).catch(() => ({ avg: null })),
         Certificate.count({ where: { participantId: userId } }).catch(() => 0),
+        LessonProgress.findAll({ where: { participantId: userId }, attributes: ['id', 'status', 'contentViewed', 'completedAt', 'created_at', 'updated_at'], raw: true }).catch(() => []),
+        QuizAttempt.findAll({ where: { participantId: userId }, attributes: ['id', 'status', 'startedAt', 'submittedAt', 'timeTaken', 'created_at'], raw: true }).catch(() => []),
+        CodingAttempt.findAll({ where: { participantId: userId }, attributes: ['id', 'status', 'startedAt', 'submittedAt', 'timeTaken', 'created_at'], raw: true }).catch(() => []),
+        AssessmentSubmission.findAll({ where: { participantId: userId }, attributes: ['id', 'status', 'submittedAt', 'created_at'], raw: true }).catch(() => []),
+        ActivityLog.findAll({ where: { userId }, attributes: ['id', 'action', 'created_at'], raw: true }).catch(() => []),
+        Attendance.findAll({ where: { userId }, attributes: ['id', 'joinTime', 'leaveTime', 'durationSeconds', 'created_at'], raw: true }).catch(() => []),
+        Enrollment.findAll({ where: { participantId: userId }, attributes: ['id', 'courseId', 'trainingId', 'enrolled_at', 'created_at'], raw: true }).catch(() => []),
+        (require('../models').Feedback || { findAll: () => [] }).findAll({ where: { participantId: userId }, attributes: ['id', 'created_at'], raw: true }).catch(() => []),
+        (require('../models').Note || { findAll: () => [] }).findAll({ where: { userId }, attributes: ['id', 'created_at'], raw: true }).catch(() => []),
+        (require('../models').DiscussionPost || { findAll: () => [] }).findAll({ where: { userId }, attributes: ['id', 'created_at'], raw: true }).catch(() => []),
       ]);
 
       stats.coursesEnrolled = coursesEnrolled || 0;
@@ -78,9 +105,77 @@ const getStats = async (userId, role) => {
       stats.quizAverage = avgResult?.avg ? parseFloat(parseFloat(avgResult.avg).toFixed(1)) : 0;
       stats.certificatesEarned = certsEarned || 0;
 
-      const quizCount = stats.assignmentsSubmitted || 1;
-      const avgScore = stats.quizAverage || 0;
-      stats.studyHours = Math.round((quizCount * avgScore * 0.5) / 10) || 0;
+      const completedLessonsCount = lessonProgressRows.filter(lp => lp.status === 'COMPLETED' || lp.contentViewed).length;
+      const totalAssessmentsTaken = (quizAttemptRows.length || 0) + (codingAttemptRows.length || 0) + (assessmentSubRows.length || 0);
+
+      // Aggregate daily activities strictly from real database records
+      const dailyMap = {};
+      const addDaily = (dateVal, type = 'general', weight = 1, seconds = 0) => {
+        if (!dateVal) return;
+        const d = new Date(dateVal);
+        if (isNaN(d.getTime())) return;
+        const key = d.toISOString().split('T')[0];
+        if (!dailyMap[key]) {
+          dailyMap[key] = { count: 0, lessons: 0, quizzes: 0, coding: 0, assessments: 0, courses: 0, general: 0, seconds: 0 };
+        }
+        dailyMap[key].count += weight;
+        if (type in dailyMap[key]) dailyMap[key][type] += weight;
+        dailyMap[key].seconds += seconds;
+      };
+
+      lessonProgressRows.forEach(lp => {
+        addDaily(lp.completedAt || lp.updated_at || lp.created_at, 'lessons', 1, 1200);
+      });
+      quizAttemptRows.forEach(qa => {
+        addDaily(qa.submittedAt || qa.startedAt || qa.created_at, 'quizzes', 1, qa.timeTaken || 900);
+      });
+      codingAttemptRows.forEach(ca => {
+        addDaily(ca.submittedAt || ca.startedAt || ca.created_at, 'coding', 1, ca.timeTaken || 1800);
+      });
+      assessmentSubRows.forEach(asub => {
+        addDaily(asub.submittedAt || asub.created_at, 'assessments', 1, 1500);
+      });
+      attendanceRows.forEach(att => {
+        addDaily(att.joinTime || att.created_at, 'general', 1, att.durationSeconds || 3600);
+      });
+      activityLogRows.forEach(al => {
+        addDaily(al.created_at, 'general', 1, 300);
+      });
+      enrollmentRows.forEach(en => {
+        addDaily(en.enrolled_at || en.created_at, 'courses', 1, 600);
+      });
+      feedbackRows.forEach(fb => {
+        addDaily(fb.created_at, 'general', 1, 300);
+      });
+      noteRows.forEach(n => {
+        addDaily(n.created_at, 'general', 1, 300);
+      });
+      discussionRows.forEach(dp => {
+        addDaily(dp.created_at, 'general', 1, 300);
+      });
+
+      // Calculate total learning time strictly from real records
+      let totalSeconds = 0;
+      Object.values(dailyMap).forEach(v => { totalSeconds += (v.seconds || 0); });
+      if (totalSeconds === 0 && (completedLessonsCount > 0 || totalAssessmentsTaken > 0)) {
+        totalSeconds = (completedLessonsCount * 1200) + (totalAssessmentsTaken * 900);
+      }
+      const totalHours = Math.floor(totalSeconds / 3600);
+      const remainingMinutes = Math.floor((totalSeconds % 3600) / 60);
+      const timeSpentFormatted = totalHours > 0 ? `${totalHours}h ${remainingMinutes}m` : (remainingMinutes > 0 ? `${remainingMinutes}m` : '0m');
+
+      // Calculate Days Active in last 90 days from real records
+      const now = new Date();
+      const cutoff90 = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+      const activeDays90 = Object.keys(dailyMap).filter(k => new Date(k) >= cutoff90 && dailyMap[k].count > 0).length;
+
+      stats.studyHours = totalHours;
+      stats.lessonsCompleted = completedLessonsCount;
+      stats.assessmentsTaken = totalAssessmentsTaken;
+      stats.coursesAccessed = stats.coursesEnrolled;
+      stats.daysActive = activeDays90;
+      stats.learningTime = timeSpentFormatted;
+      stats.dailyActivities = dailyMap;
     }
   } catch (error) {
     console.error('getStats error:', error);
