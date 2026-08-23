@@ -165,6 +165,38 @@ router.get('/activity/heatmap', participant, async (req, res) => {
   }
 });
 
+// ── AI Guide Chatbot ───────────────────────────────────────────────────────
+router.post('/chatbot/ask', participant, async (req, res) => {
+  try {
+    const { askParticipantChatbot } = require('../services/participantChatbotService');
+    const { message, history, context } = req.body;
+
+    if (!message || typeof message !== 'string') {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+
+    const result = await askParticipantChatbot({
+      userId: req.user.id,
+      message,
+      history: Array.isArray(history) ? history : [],
+      clientContext: context || {},
+    });
+
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error handling participant chatbot request:', error);
+    return res.status(500).json({
+      success: false,
+      reply: 'I am temporarily having trouble retrieving information. Please use the quick navigation buttons below.',
+      actionButtons: [
+        { label: 'Open My Courses', action: 'navigate', route: '/participant', tab: 'myCourses' },
+        { label: 'Open My Profile', action: 'navigate', route: '/my-profile' },
+      ],
+      suggestions: ['How do I start a course?', 'How do I complete my profile?'],
+    });
+  }
+});
+
 // ── Tracking ────────────────────────────────────────────────────────────────
 router.post(  '/track-activity',                  participant, c.trackActivity);
 

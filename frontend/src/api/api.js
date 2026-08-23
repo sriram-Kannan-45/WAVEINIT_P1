@@ -303,6 +303,11 @@ export const API = {
     CONTACT_LINKS:        `${API_BASE}/user-profile/contact-links`,
   },
 
+  PARTICIPANT: {
+    CHATBOT_ASK:          `${API_BASE}/participant/chatbot/ask`,
+    ACTIVITY_HEATMAP:     `${API_BASE}/participant/activity/heatmap`,
+  },
+
 };
 
 export { API_BASE, BACKEND_ORIGIN };

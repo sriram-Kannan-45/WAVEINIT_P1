@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import Sidebar, { navGroups, pageDescriptions } from './saas/Sidebar'
+import ParticipantAIChatbot from './chatbot/ParticipantAIChatbot'
 
 function Layout({ user, children, activeTab, onTabChange, onLogout, headerSlot }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const groups = navGroups[user.role] || []
+  const groups = navGroups[user?.role] || []
 
   const closeSidebar = () => setSidebarOpen(false)
   const openSidebar = () => setSidebarOpen(true)
@@ -20,7 +21,7 @@ function Layout({ user, children, activeTab, onTabChange, onLogout, headerSlot }
   const currentPageDescription = pageDescriptions[activeTab] || ''
 
   return (
-    <div className={`app-layout ${user.role === 'TRAINER' ? 'theme-trainer' : 'theme-academic'}`}>
+    <div className={`app-layout ${user?.role === 'TRAINER' ? 'theme-trainer' : 'theme-academic'}`}>
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-[9999] focus:bg-primary-600 focus:text-white focus:px-4 focus:py-2 focus:rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-300"
@@ -60,6 +61,11 @@ function Layout({ user, children, activeTab, onTabChange, onLogout, headerSlot }
           {children}
         </motion.main>
       </div>
+
+      {/* Participant-Scoped AI Guide Assistant & QR Scanner */}
+      {user?.role === 'PARTICIPANT' && (
+        <ParticipantAIChatbot user={user} activeTab={activeTab} />
+      )}
     </div>
   )
 }
