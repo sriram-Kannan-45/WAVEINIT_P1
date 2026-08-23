@@ -784,7 +784,6 @@ class MonitoringEngineService {
     if (now - lastTriggered < cooldownMs && normalizedSeverity !== 'CRITICAL') {
       return { skipped: true, reason: 'DEBOUNCED', session };
     }
-    this.inMemoryCooldowns.set(cooldownKey, now);
 
     // 2. Idempotency Key Generation / Verification
     const timeBucket = Math.floor(now / cooldownMs);
@@ -804,6 +803,40 @@ class MonitoringEngineService {
 
     const scoreDelta = Math.round(baseWeight * conf * durationMultiplier * 10) / 10;
 
+    // 4. Grace Warnings Check (First 3 Alerts are Live Warnings Only & Unscored)
+    const existingEventsCount = await MonitoringEvent.count({
+      where: {
+        [Op.or]: [
+          { monitoringSessionId: session.sessionId },
+          ...(session.attemptId ? [{ attemptId: session.attemptId }] : []),
+        ],
+      },
+    });
+
+    const isGraceWarning = existingEventsCount < 3;
+    const warningNumber = existingEventsCount + 1;
+    const effectiveScoreDelta = isGraceWarning ? 0.0 : scoreDelta;
+
+    const warningMessages = {
+      FACE_ABSENT: 'Participant face absent — please look directly at your screen',
+      FACE_NOT_DETECTED: 'Face not detected — please stay centered in front of the camera',
+      FACE_NOT_VISIBLE: 'Face not clearly visible in frame',
+      PARTICIPANT_ABSENT: 'Candidate absent from camera view',
+      GAZE_OFF_SCREEN: 'Eyes looking away — please keep your focus on your assessment',
+      GAZE_DEVIATION: 'Gaze directed away from exam window',
+      HEAD_POSE_DEVIATION: 'Head turned away from camera',
+      MULTIPLE_FACES: 'Multiple people detected in camera frame',
+      MULTIPLE_PERSONS_DETECTED: 'Unauthorized person detected in testing area',
+      PHONE_DETECTED: 'Mobile device detected in testing space',
+      SECONDARY_DEVICE: 'Secondary screen or unauthorized device detected',
+      BOOK_NOTES_DETECTED: 'Unauthorized books or notes detected',
+      FULLSCREEN_EXIT: 'Exited fullscreen mode — please return to fullscreen immediately',
+      TAB_SWITCH: 'Switched browser tab — please stay on the assessment tab',
+      WINDOW_BLUR: 'Exam window lost focus — please click back into your assessment',
+      WINDOW_FOCUS_LOST: 'Browser window lost focus',
+    };
+    const warningMessage = warningMessages[eventType] || `${(eventType || '').replace(/_/g, ' ')} detected — please follow exam guidelines`;
+
     let event = null;
     let created = false;
 
@@ -818,12 +851,17 @@ class MonitoringEngineService {
           source: normalizedSource,
           eventType,
           severity: normalizedSeverity,
-          scoreDelta,
+          scoreDelta: effectiveScoreDelta,
           durationMs: Number(durationMs) || 0,
           occurredAt: new Date(),
           confidence: conf,
           evidenceRef,
-          metadata,
+          metadata: {
+            ...metadata,
+            isGraceWarning,
+            warningNumber,
+            warningMessage,
+          },
         },
       });
       event = ev;
@@ -840,8 +878,8 @@ class MonitoringEngineService {
     try {
       this.inMemoryCooldowns.set(cooldownKey, now);
 
-      // 4. Update Session Cumulative Score & Risk Level
-      const newScore = Math.min(100, Math.round((session.score + scoreDelta) * 10) / 10);
+      // 4. Update Session Cumulative Score & Risk Level (Grace warnings do NOT add penalty score)
+      const newScore = Math.min(100, Math.round((session.score + effectiveScoreDelta) * 10) / 10);
       const boundaries = config.risk_boundaries || { LOW: 0, MEDIUM: 15, HIGH: 35, CRITICAL: 70 };
 
       let newRiskLevel = 'LOW';
@@ -855,12 +893,14 @@ class MonitoringEngineService {
         totalEvents: session.totalEvents + 1,
       };
 
-      if (normalizedSeverity === 'WARNING' || normalizedSeverity === 'LOW') {
-        updateData.warningEvents = session.warningEvents + 1;
-      } else if (normalizedSeverity === 'HIGH') {
-        updateData.highEvents = session.highEvents + 1;
-      } else if (normalizedSeverity === 'CRITICAL') {
-        updateData.criticalEvents = session.criticalEvents + 1;
+      if (!isGraceWarning) {
+        if (normalizedSeverity === 'WARNING' || normalizedSeverity === 'LOW') {
+          updateData.warningEvents = session.warningEvents + 1;
+        } else if (normalizedSeverity === 'HIGH') {
+          updateData.highEvents = session.highEvents + 1;
+        } else if (normalizedSeverity === 'CRITICAL') {
+          updateData.criticalEvents = session.criticalEvents + 1;
+        }
       }
 
       await session.update(updateData);
@@ -881,7 +921,12 @@ class MonitoringEngineService {
               confidence: conf,
               duration: Math.round(Number(durationMs) / 100) / 10,
               timestamp: new Date(),
-              metadata,
+              metadata: {
+                ...metadata,
+                isGraceWarning,
+                warningNumber,
+                warningMessage,
+              },
               idempotencyKey: finalIdempotencyKey,
             },
           });
@@ -889,13 +934,17 @@ class MonitoringEngineService {
       } catch (_) {}
 
       logger.info(
-        `[MonitoringEngine] Recorded event: ${eventType} [${normalizedSeverity}] (scoreDelta: +${scoreDelta}) for session: ${session.sessionId}, attemptId: ${resolvedAttemptId || session.attemptId}`
+        `[MonitoringEngine] Recorded event: ${eventType} [${normalizedSeverity}] (grace: ${isGraceWarning}, scoreDelta: +${effectiveScoreDelta}) for session: ${session.sessionId}, attemptId: ${resolvedAttemptId || session.attemptId}`
       );
 
       return {
         success: true,
         event,
-        scoreDelta,
+        isGraceWarning,
+        warningNumber,
+        maxWarnings: 3,
+        warningMessage,
+        scoreDelta: effectiveScoreDelta,
         currentScore: newScore,
         riskLevel: newRiskLevel,
         session,
@@ -918,6 +967,9 @@ class MonitoringEngineService {
       }
     } else {
       session.lastLaptopHeartbeatAt = now;
+      if (session.laptopStatus === 'FAILED') {
+        session.laptopStatus = 'ACTIVE';
+      }
     }
 
     await session.save();
@@ -932,9 +984,9 @@ class MonitoringEngineService {
 
     const flags = Array.isArray(session.integrityFlags) ? [...session.integrityFlags] : [];
 
-    // Integrity Check 1: Was calibration completed?
+    // Integrity Check 1: Was candidate calibrated?
     if (!session.calibrationPassed) {
-      flags.push('SESSION_COMPLETED_WITHOUT_CALIBRATION');
+      flags.push('SUBMITTED_WITHOUT_CALIBRATION');
     }
 
     // Integrity Check 2: Was mobile enabled but dropped?
@@ -1069,21 +1121,65 @@ class MonitoringEngineService {
 
     mergedEvents.sort((a, b) => new Date(a.occurredAt || a.timestamp) - new Date(b.occurredAt || b.timestamp));
 
-    const laptopEvents = mergedEvents.filter((e) => e.source === 'LAPTOP');
-    const mobileEvents = mergedEvents.filter((e) => e.source === 'MOBILE');
+    // Separate into Live Pre-Warnings (Grace 1-3) and Scored Incident Timeline (4+)
+    const warningMessages = {
+      FACE_ABSENT: 'Participant face absent — please look directly at your screen',
+      FACE_NOT_DETECTED: 'Face not detected — please stay centered in front of the camera',
+      FACE_NOT_VISIBLE: 'Face not clearly visible in frame',
+      PARTICIPANT_ABSENT: 'Candidate absent from camera view',
+      GAZE_OFF_SCREEN: 'Eyes looking away — please keep your focus on your assessment',
+      GAZE_DEVIATION: 'Gaze directed away from exam window',
+      HEAD_POSE_DEVIATION: 'Head turned away from camera',
+      MULTIPLE_FACES: 'Multiple people detected in camera frame',
+      MULTIPLE_PERSONS_DETECTED: 'Unauthorized person detected in testing area',
+      PHONE_DETECTED: 'Mobile device detected in testing space',
+      SECONDARY_DEVICE: 'Secondary screen or unauthorized device detected',
+      BOOK_NOTES_DETECTED: 'Unauthorized books or notes detected',
+      FULLSCREEN_EXIT: 'Exited fullscreen mode — please return to fullscreen immediately',
+      TAB_SWITCH: 'Switched browser tab — please stay on the assessment tab',
+      WINDOW_BLUR: 'Exam window lost focus — please click back into your assessment',
+      WINDOW_FOCUS_LOST: 'Browser window lost focus',
+    };
+
+    const graceWarnings = [];
+    const scoredEvents = [];
+
+    let eventCounter = 0;
+    for (const ev of mergedEvents) {
+      eventCounter++;
+      const isGrace = ev.metadata?.isGraceWarning === true || (eventCounter <= 3 && ev.scoreDelta === 0);
+      if (isGrace) {
+        graceWarnings.push({
+          ...ev,
+          warningNumber: ev.metadata?.warningNumber || eventCounter,
+          isGraceWarning: true,
+          scoreDelta: 0,
+          warningMessage: ev.metadata?.warningMessage || warningMessages[ev.eventType] || `${(ev.eventType || '').replace(/_/g, ' ')} detected`,
+        });
+      } else {
+        scoredEvents.push({
+          ...ev,
+          warningNumber: ev.metadata?.warningNumber || eventCounter,
+          isGraceWarning: false,
+        });
+      }
+    }
+
+    const laptopEvents = scoredEvents.filter((e) => e.source === 'LAPTOP');
+    const mobileEvents = scoredEvents.filter((e) => e.source === 'MOBILE');
 
     const categoryBreakdown = {
-      face: mergedEvents.filter((e) => ['FACE_ABSENT', 'FACE_NOT_DETECTED', 'FACE_NOT_VISIBLE', 'PARTICIPANT_ABSENT'].includes(e.eventType)).length,
-      gaze: mergedEvents.filter((e) => e.eventType.includes('GAZE') || e.eventType.includes('EYES_LOOKING')).length,
-      headPose: mergedEvents.filter((e) => e.eventType.includes('HEAD')).length,
-      facePresence: mergedEvents.filter((e) => e.eventType.includes('FACE')).length,
-      persons: mergedEvents.filter((e) => ['MULTIPLE_PERSONS_DETECTED', 'MULTIPLE_FACES'].includes(e.eventType)).length,
-      devices: mergedEvents.filter((e) => e.eventType.includes('PHONE') || e.eventType.includes('DEVICE') || e.eventType.includes('CELL_PHONE')).length,
-      objects: mergedEvents.filter((e) => e.eventType.includes('PHONE') || e.eventType.includes('DEVICE') || e.eventType.includes('CELL_PHONE') || e.eventType.includes('BOOK') || e.eventType.includes('LAPTOP_DETECTED')).length,
-      browserSecurity: mergedEvents.filter((e) =>
+      face: scoredEvents.filter((e) => ['FACE_ABSENT', 'FACE_NOT_DETECTED', 'FACE_NOT_VISIBLE', 'PARTICIPANT_ABSENT'].includes(e.eventType)).length,
+      gaze: scoredEvents.filter((e) => e.eventType.includes('GAZE') || e.eventType.includes('EYES_LOOKING')).length,
+      headPose: scoredEvents.filter((e) => e.eventType.includes('HEAD')).length,
+      facePresence: scoredEvents.filter((e) => e.eventType.includes('FACE')).length,
+      persons: scoredEvents.filter((e) => ['MULTIPLE_PERSONS_DETECTED', 'MULTIPLE_FACES'].includes(e.eventType)).length,
+      devices: scoredEvents.filter((e) => e.eventType.includes('PHONE') || e.eventType.includes('DEVICE') || e.eventType.includes('CELL_PHONE')).length,
+      objects: scoredEvents.filter((e) => e.eventType.includes('PHONE') || e.eventType.includes('DEVICE') || e.eventType.includes('CELL_PHONE') || e.eventType.includes('BOOK') || e.eventType.includes('LAPTOP_DETECTED')).length,
+      browserSecurity: scoredEvents.filter((e) =>
         ['TAB_SWITCH', 'FULLSCREEN_EXIT', 'WINDOW_BLUR', 'DEVTOOLS_OPENED', 'WINDOW_FOCUS_LOST'].includes(e.eventType)
       ).length,
-      composition: mergedEvents.filter((e) => e.eventType.includes('COMPOSITION')).length,
+      composition: scoredEvents.filter((e) => e.eventType.includes('COMPOSITION')).length,
     };
 
     const totalDurationSec = session.endedAt && session.startedAt
@@ -1091,11 +1187,11 @@ class MonitoringEngineService {
       : Math.max(1, Math.round((Date.now() - new Date(session.startedAt || session.createdAt).getTime()) / 1000));
 
     // Dynamic Real Tracking Coverage Calculations (derived from actual test detection data)
-    const faceAbsentSec = mergedEvents
+    const faceAbsentSec = scoredEvents
       .filter((e) => ['FACE_ABSENT', 'FACE_NOT_DETECTED', 'FACE_NOT_VISIBLE', 'PARTICIPANT_ABSENT'].includes(e.eventType))
       .reduce((acc, c) => acc + (c.durationMs ? c.durationMs / 1000 : Number(c.duration) || 2), 0);
 
-    const gazeDeviationSec = mergedEvents
+    const gazeDeviationSec = scoredEvents
       .filter((e) => e.eventType.includes('GAZE') || e.eventType.includes('EYES_LOOKING'))
       .reduce((acc, c) => acc + (c.durationMs ? c.durationMs / 1000 : Number(c.duration) || 2), 0);
 
@@ -1140,7 +1236,7 @@ class MonitoringEngineService {
     const criticalCount = mergedEvents.filter((e) => e.severity === 'CRITICAL').length;
     const totalEventsCount = mergedEvents.length;
 
-    const friendlyTimeline = mergedEvents.map((e) => {
+    const friendlyTimeline = scoredEvents.map((e) => {
       const evDate = new Date(e.occurredAt || e.timestamp || Date.now());
       const timeStr = evDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       const friendlyName = e.eventType
@@ -1164,13 +1260,41 @@ class MonitoringEngineService {
       };
     });
 
+    const friendlyGraceWarnings = graceWarnings.map((gw) => {
+      const evDate = new Date(gw.occurredAt || gw.timestamp || Date.now());
+      const timeStr = evDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const friendlyName = gw.eventType
+        ? gw.eventType.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+        : 'Pre-Warning';
+      return {
+        id: gw.id,
+        warningNumber: gw.warningNumber || 1,
+        source: gw.source,
+        eventType: gw.eventType,
+        event: friendlyName,
+        time: timeStr,
+        severity: gw.severity,
+        scoreDelta: 0,
+        isGraceWarning: true,
+        message: gw.warningMessage || `${friendlyName} (Live Warning Only)`,
+        durationMs: gw.durationMs,
+        duration: gw.duration || (gw.durationMs ? Math.round(gw.durationMs / 100) / 10 : 0),
+        occurredAt: gw.occurredAt,
+        timestamp: gw.timestamp,
+        confidence: gw.confidence != null ? Math.round(Number(gw.confidence) <= 1 ? Number(gw.confidence) * 100 : Number(gw.confidence)) : 100,
+      };
+    });
+
     const summary = {
-      totalEvents: totalEventsCount,
+      totalEvents: scoredEvents.length,
+      graceWarningsCount: graceWarnings.length,
+      maxGraceWarnings: 3,
+      graceWarnings: friendlyGraceWarnings,
       counts: {
-        info: mergedEvents.filter((e) => e.severity === 'INFO').length,
-        warning: warningCount,
-        high: highCount,
-        critical: criticalCount,
+        info: scoredEvents.filter((e) => e.severity === 'INFO').length,
+        warning: scoredEvents.filter((e) => ['WARNING', 'LOW', 'MEDIUM'].includes(e.severity)).length,
+        high: scoredEvents.filter((e) => e.severity === 'HIGH').length,
+        critical: scoredEvents.filter((e) => e.severity === 'CRITICAL').length,
       },
       categories: {
         face: categoryBreakdown.face,
@@ -1187,8 +1311,8 @@ class MonitoringEngineService {
         phoneEvents: phoneViolations.length,
         mobileDetected: phoneViolations.length > 0,
         mobileDetectionCount: phoneViolations.length,
-        laptopEvents: mergedEvents.filter((e) => e.eventType.includes('LAPTOP')).length,
-        bookEvents: mergedEvents.filter((e) => e.eventType.includes('BOOK')).length,
+        laptopEvents: scoredEvents.filter((e) => e.eventType.includes('LAPTOP')).length,
+        bookEvents: scoredEvents.filter((e) => e.eventType.includes('BOOK')).length,
         status: phoneViolations.length > 0 ? 'VIOLATION_FLAGGED' : 'CLEAR',
       },
       mobilePhoneViolation: {
@@ -1220,10 +1344,13 @@ class MonitoringEngineService {
       score: session.score,
       riskScore: session.score,
       riskLevel: session.riskLevel,
-      totalEvents: totalEventsCount,
-      warningEvents: warningCount,
-      highEvents: highCount,
-      criticalEvents: criticalCount,
+      totalEvents: scoredEvents.length,
+      warningEvents: summary.counts.warning,
+      highEvents: summary.counts.high,
+      criticalEvents: summary.counts.critical,
+      graceWarningsCount: graceWarnings.length,
+      maxGraceWarnings: 3,
+      graceWarnings: friendlyGraceWarnings,
       hasPhoneViolation: phoneViolations.length > 0 || flags.includes('UNAUTHORIZED_PHONE_DETECTED'),
       phoneViolationCount: phoneViolations.length,
       integrityFlags: flags,
@@ -1236,11 +1363,13 @@ class MonitoringEngineService {
       proctoring: {
         summary,
         timeline: friendlyTimeline,
+        graceWarnings: friendlyGraceWarnings,
         riskScore: session.score,
         riskLevel: session.riskLevel,
       },
       eventsCount: {
-        total: totalEventsCount,
+        total: scoredEvents.length,
+        grace: graceWarnings.length,
         laptop: laptopEvents.length,
         mobile: mobileEvents.length,
       },

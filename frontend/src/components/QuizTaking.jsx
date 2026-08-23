@@ -240,57 +240,101 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
     }
   }, [])
 
-  /* ── fullscreenchange listener — implements the 3-strike rule ──────── */
+  const fsExitTimerRef = useRef(null)
+  const fsExitStartTimeRef = useRef(null)
+
+  /* ── fullscreenchange listener — debounced 2.0s confirmation window ──────── */
   useEffect(() => {
     const onChange = () => {
       const inFs = !!fsApi.element()
       setIsFullscreen(inFs)
 
+      console.log('[QuizTaking] Fullscreen state transition detected:', {
+        inFs,
+        fullscreenElement: document.fullscreenElement?.tagName || null,
+        activeElement: document.activeElement?.tagName || 'UNKNOWN',
+        enteredOnce: enteredFullscreenOnce.current,
+        timestamp: new Date().toISOString(),
+      })
+
       if (inFs) {
-        // Entered fullscreen — first time we ever enter, mark the ref.
+        // Entered / returned to fullscreen
         enteredFullscreenOnce.current = true
-        // If a warning modal was open, close it.
         setWarningOpen(false)
+
+        // Cancel any pending exit violation confirmation timer
+        if (fsExitTimerRef.current) {
+          console.log('[QuizTaking] Fullscreen re-established within 2.0s confirmation window. Violation cancelled.')
+          clearTimeout(fsExitTimerRef.current)
+          fsExitTimerRef.current = null
+          fsExitStartTimeRef.current = null
+        }
         return
       }
 
-      // Exited fullscreen.
-      // Skip if quiz is already submitted/terminated, or if user never managed
-      // to enter (browser blocked the auto-call) — we don't punish for that.
+      // Exited fullscreen — check guards
       if (submittedRef.current || terminated) return
-      if (!enteredFullscreenOnce.current) return
+      if (!enteredFullscreenOnce.current) {
+        console.log('[QuizTaking] Fullscreen not active on initial mount. Awaiting candidate user gesture...')
+        return
+      }
 
-      reportMonitoringEvent('FULLSCREEN_EXIT', 'WARNING', { exitCount: warnings + 1 })
+      // Start 2000ms debounce confirmation window before logging violation
+      if (!fsExitTimerRef.current) {
+        fsExitStartTimeRef.current = Date.now()
+        console.warn('[QuizTaking] Candidate exited fullscreen. Starting 2.0s confirmation window before logging violation...')
 
-      setWarnings((prev) => {
-        const next = prev + 1
-        if (next >= MAX_WARNINGS) {
-          // 3rd strike — auto-submit silently and show termination overlay.
-          setTerminated(true)
-          setWarningOpen(false)
-          // Defer slightly so the overlay paints before the network call.
-          setTimeout(() => {
-            handleSubmit({ silent: true }).finally(() => {
-              // Give the user a brief moment to read the message, then exit.
-              setTimeout(() => onSubmit?.(null), 1800)
+        fsExitTimerRef.current = setTimeout(() => {
+          const stillOut = !fsApi.element()
+          console.log('[QuizTaking] Checking fullscreen status after 2.0s confirmation window:', { stillOut })
+
+          if (stillOut && !submittedRef.current && !terminated) {
+            const durationSec = Math.max(2.0, (Date.now() - (fsExitStartTimeRef.current || Date.now())) / 1000)
+            console.warn(`[QuizTaking] Confirmed FULLSCREEN_EXIT (duration: ${durationSec}s). Reporting violation to proctoring engine.`)
+
+            reportMonitoringEvent('FULLSCREEN_EXIT', 'HIGH', {
+              duration: durationSec,
+              trigger: 'confirmed_fullscreen_exit_2s',
+              exitCount: warnings + 1,
             })
-          }, 50)
-        } else {
-          setWarningOpen(true)
-        }
-        return next
-      })
+
+            setWarnings((prev) => {
+              const next = prev + 1
+              if (next >= MAX_WARNINGS) {
+                // 3rd strike — auto-submit silently and show termination overlay.
+                setTerminated(true)
+                setWarningOpen(false)
+                setTimeout(() => {
+                  handleSubmit({ silent: true }).finally(() => {
+                    setTimeout(() => onSubmit?.(null), 1800)
+                  })
+                }, 50)
+              } else {
+                setWarningOpen(true)
+              }
+              return next
+            })
+          }
+
+          fsExitTimerRef.current = null
+          fsExitStartTimeRef.current = null
+        }, 2000) // 2000ms debounce
+      }
     }
 
     fsApi.changeEvents.forEach((evt) =>
       document.addEventListener(evt, onChange)
     )
     return () => {
+      if (fsExitTimerRef.current) {
+        clearTimeout(fsExitTimerRef.current)
+        fsExitTimerRef.current = null
+      }
       fsApi.changeEvents.forEach((evt) =>
         document.removeEventListener(evt, onChange)
       )
     }
-  }, [terminated, handleSubmit, onSubmit])
+  }, [terminated, handleSubmit, onSubmit, warnings])
 
   /* ── Objective Monitoring Event Dispatcher (Backend Ingestion) ────── */
   const lastReportedEventTime = useRef({})

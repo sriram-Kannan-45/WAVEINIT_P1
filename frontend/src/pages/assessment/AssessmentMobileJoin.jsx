@@ -40,23 +40,6 @@ const ICE_SERVERS = [
   { urls: 'stun:stun2.l.google.com:19302' },
   { urls: 'stun:stun3.l.google.com:19302' },
   { urls: 'stun:stun4.l.google.com:19302' },
-  { urls: 'stun:global.stun.twilio.com:3478' },
-  { urls: 'stun:stun.relay.metered.ca:80' },
-  {
-    urls: 'turn:standard.relay.metered.ca:80',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-  {
-    urls: 'turn:standard.relay.metered.ca:443',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-  {
-    urls: 'turn:standard.relay.metered.ca:443?transport=tcp',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
 ];
 
 export default function AssessmentMobileJoin() {
@@ -69,6 +52,7 @@ export default function AssessmentMobileJoin() {
   const [peerConnected, setPeerConnected] = useState(false);
   const [facingMode, setFacingMode] = useState('environment'); // 'environment' (back) | 'user' (front)
   const [isSwitchingCamera, setIsSwitchingCamera] = useState(false);
+  const [isAssessmentStarted, setIsAssessmentStarted] = useState(false);
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -121,16 +105,16 @@ export default function AssessmentMobileJoin() {
     };
   }, [token]);
 
-  // WebRTC Helper: Exactly ONE controlled WebRTC negotiation function
+  // WebRTC Helper: Ultra-low latency P2P WebRTC negotiation
   const startWebRTCOffer = useCallback(async (targetSocketId = null) => {
     const target = targetSocketId || laptopSocketIdRef.current;
     if (!socketRef.current?.connected || !streamRef.current || !info?.sessionId) {
-      console.log('[MOBILE] Cannot start WebRTC yet: socket, stream, or session not ready');
+      console.log('[MOBILE-P2P] Socket, stream, or session not ready yet');
       return;
     }
 
     if (!target) {
-      console.log('[MOBILE] Laptop socket missing, waiting for laptop_joined');
+      console.log('[MOBILE-P2P] Laptop socket not discovered yet, waiting for peer join');
       return;
     }
 
@@ -138,28 +122,32 @@ export default function AssessmentMobileJoin() {
       if (pcRef.current) {
         try {
           pcRef.current.close();
-        } catch (e) {
-          console.error('[WEBRTC ERROR]', e);
-        }
+        } catch (e) {}
         pcRef.current = null;
       }
 
-      console.log('[MOBILE-7] PEER CREATED');
+      console.log('[MOBILE-P2P] Creating RTCPeerConnection with low-latency configuration');
       const pc = new RTCPeerConnection({
         iceServers: ICE_SERVERS,
+        iceCandidatePoolSize: 2,
       });
       pcRef.current = pc;
 
-      // Add every live camera track
-      streamRef.current.getVideoTracks().forEach((track) => {
-        pc.addTrack(track, streamRef.current);
-      });
+      // Add camera video track with motion hint for low latency encoding
+      const videoTrack = streamRef.current.getVideoTracks()[0];
+      if (videoTrack) {
+        if ('contentHint' in videoTrack) {
+          videoTrack.contentHint = 'motion';
+        }
+        pc.addTransceiver(videoTrack, {
+          direction: 'sendonly',
+          streams: [streamRef.current],
+        });
+      }
 
-      console.log('[MOBILE-8] SENDERS', pc.getSenders());
-
+      // Trickle ICE: emit candidates immediately
       pc.onicecandidate = ({ candidate }) => {
         if (!candidate) return;
-        console.log('[MOBILE] ICE SEND');
         if (socketRef.current?.connected) {
           socketRef.current.emit('assessment_verif:ice-candidate', {
             sessionId: info.sessionId,
@@ -170,7 +158,7 @@ export default function AssessmentMobileJoin() {
       };
 
       pc.onconnectionstatechange = () => {
-        console.log('[MOBILE] CONNECTION STATE', pc.connectionState);
+        console.log('[MOBILE-P2P] Connection state:', pc.connectionState);
         if (pc.connectionState === 'connected') {
           setPeerConnected(true);
         } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
@@ -178,72 +166,27 @@ export default function AssessmentMobileJoin() {
         }
       };
 
-      pc.oniceconnectionstatechange = () => {
-        console.log('[MOBILE] ICE STATE', pc.iceConnectionState);
-      };
-
-      pc.onsignalingstatechange = () => {
-        console.log('[MOBILE] signalingState:', pc.signalingState);
-      };
-
-      console.log('[MOBILE-9] CREATING OFFER');
-      const offer = await pc.createOffer();
+      // Create low-latency video offer
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: false,
+        offerToReceiveVideo: false,
+      });
       await pc.setLocalDescription(offer);
-      console.log('[MOBILE-10] OFFER CREATED');
 
-      console.log('[MOBILE-11] SENDING OFFER TO', laptopSocketIdRef.current || target);
-      console.log('[MOBILE] OFFER SEND');
+      console.log('[MOBILE-P2P] Offer sent to laptop peer:', laptopSocketIdRef.current || target);
       socketRef.current.emit('assessment_verif:offer', {
         sessionId: info.sessionId,
         targetSocketId: laptopSocketIdRef.current || target,
         offer: pc.localDescription,
       });
     } catch (err) {
-      console.error('[WEBRTC ERROR]', err);
+      console.error('[MOBILE-P2P] WebRTC Offer error:', err);
     }
   }, [info?.sessionId]);
 
-  // Frame Fallback Relay Stream (Bandwidth-efficient canvas capture)
-  const startFrameCapture = useCallback(() => {
-    if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
-    if (!canvasRef.current) {
-      canvasRef.current = document.createElement('canvas');
-      canvasRef.current.width = 320;
-      canvasRef.current.height = 240;
-    }
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-
-    const captureAndEmit = () => {
-      const vid = videoRef.current;
-      const socket = socketRef.current;
-      if (vid && vid.videoWidth > 0 && socket && socket.connected) {
-        try {
-          ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
-          const frame = canvas.toDataURL('image/jpeg', 0.45);
-          socket.emit('assessment_verif:frame', {
-            sessionId: info?.sessionId,
-            participantId: info?.participantId || 1,
-            moduleType: info?.assessmentType || 'QUIZ',
-            cameraSource: 'MOBILE_CAMERA',
-            frame,
-          });
-        } catch (e) {
-          console.error('[WEBRTC ERROR]', e);
-        }
-      }
-    };
-
-    frameIntervalRef.current = setInterval(captureAndEmit, 150);
-  }, [info?.sessionId, info?.participantId, info?.assessmentType]);
-
-  // Session Closed / Completed Handler: Releases camera hardware immediately
+  // Session Closed / Completed Handler: Releases camera hardware ONLY upon genuine end
   const handleSessionClosed = useCallback((reason = 'ASSESSMENT_COMPLETED') => {
-    console.log('[AssessmentMobileJoin] Assessment finished/closed, releasing camera hardware:', reason);
-    if (frameIntervalRef.current) {
-      clearInterval(frameIntervalRef.current);
-      frameIntervalRef.current = null;
-    }
+    console.warn(`[AssessmentMobileJoin] >> Transitioning to PHASE.COMPLETED. Trigger Reason: "${reason}"`);
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => {
         try {
@@ -277,11 +220,14 @@ export default function AssessmentMobileJoin() {
     setPhase(PHASE.COMPLETED);
   }, []);
 
-  // Periodic polling check to detect if laptop closed / submitted the assessment
+  // Periodic fallback check to detect if assessment was legitimately submitted/completed
   useEffect(() => {
     const activeToken = token || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('token') : null) || info?.token;
     const activeSessionId = info?.sessionId;
     if ((!activeToken && !activeSessionId) || phase === PHASE.COMPLETED || phase === PHASE.ERROR) return;
+
+    // Only check for completion if stream has started
+    if (phase !== PHASE.STREAMING) return;
 
     const interval = setInterval(async () => {
       try {
@@ -291,15 +237,17 @@ export default function AssessmentMobileJoin() {
         const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
-          const isEnded = data?.isEnded || ['COMPLETED', 'ENDED', 'EXPIRED', 'USED', 'SUBMITTED', 'TERMINATED'].includes(data?.status);
-          if (isEnded) {
-            handleSessionClosed('ASSESSMENT_COMPLETED');
+          // STRICT CHECK: ONLY trigger completed if backend explicitly confirms isEnded === true AND terminal status
+          const isTerminatedStatus = ['COMPLETED', 'SUBMITTED', 'TERMINATED', 'EVALUATED', 'AUTO_SUBMITTED'].includes(data?.status);
+          if (data?.isEnded === true && isTerminatedStatus) {
+            console.log('[AssessmentMobileJoin] Fallback polling confirmed attempt submitted:', data);
+            handleSessionClosed(`POLLING_CONFIRMED_${data?.status}`);
           }
         }
       } catch (e) {
-        // Non-blocking
+        // Non-blocking network drop
       }
-    }, 1500);
+    }, 4000);
 
     return () => clearInterval(interval);
   }, [token, info, phase, handleSessionClosed]);
@@ -320,10 +268,7 @@ export default function AssessmentMobileJoin() {
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('[MOBILE-1] socket connected', socket.connected);
-      console.log('[MOBILE-2] socket id', socket.id);
-      console.log('[MOBILE-3] session id', sessionId);
-      console.log('[MOBILE-4] laptop socket id', laptopSocketIdRef.current);
+      console.log('[MOBILE-P2P] Socket connected:', socket.id, 'session:', sessionId);
       setSocketConnected(true);
       socket.emit('assessment_verif:join', {
         sessionId,
@@ -334,35 +279,29 @@ export default function AssessmentMobileJoin() {
       if (streamRef.current && laptopSocketIdRef.current) {
         startWebRTCOffer(laptopSocketIdRef.current);
       }
-      if (streamRef.current) {
-        startFrameCapture();
-      }
     });
 
     socket.on('disconnect', () => {
-      console.log('[MOBILE] Socket disconnected');
+      console.log('[MOBILE-P2P] Socket disconnected');
       setSocketConnected(false);
       setPeerConnected(false);
     });
 
     // Laptop joined room → store socket ID & start negotiation if camera is active
     socket.on('assessment_verif:laptop_joined', ({ socketId }) => {
-      console.log('[MOBILE] LAPTOP JOINED', socketId);
+      console.log('[MOBILE-P2P] Laptop joined:', socketId);
       laptopSocketIdRef.current = socketId;
-      console.log('[MOBILE-4] laptop socket id', laptopSocketIdRef.current);
       if (streamRef.current) {
         startWebRTCOffer(socketId);
-        startFrameCapture();
       }
     });
 
     // Laptop answered SDP offer
     socket.on('assessment_verif:answer', async ({ answer }) => {
-      console.log('[MOBILE] answer received');
+      console.log('[MOBILE-P2P] SDP Answer received from laptop');
       if (pcRef.current && answer) {
         try {
           await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-          console.log('[MOBILE] remote description set');
 
           // Flush queued candidates
           if (mobileCandidateQueueRef.current.length > 0) {
@@ -370,13 +309,13 @@ export default function AssessmentMobileJoin() {
               try {
                 await pcRef.current.addIceCandidate(new RTCIceCandidate(cand));
               } catch (e) {
-                console.error('[WEBRTC ERROR]', e);
+                console.error('[MOBILE-P2P] ICE error:', e);
               }
             }
             mobileCandidateQueueRef.current = [];
           }
         } catch (err) {
-          console.error('[WEBRTC ERROR]', err);
+          console.error('[MOBILE-P2P] Remote description error:', err);
         }
       }
     });
@@ -384,14 +323,12 @@ export default function AssessmentMobileJoin() {
     // ICE candidates from laptop
     socket.on('assessment_verif:ice-candidate', async ({ candidate }) => {
       if (candidate) {
-        console.log('[MOBILE] ICE candidate received');
         const pc = pcRef.current;
         if (pc && pc.remoteDescription && pc.remoteDescription.type) {
           try {
             await pc.addIceCandidate(new RTCIceCandidate(candidate));
-            console.log('[MOBILE] Added ICE candidate from laptop');
           } catch (err) {
-            console.error('[WEBRTC ERROR]', err);
+            console.error('[MOBILE-P2P] ICE candidate error:', err);
           }
         } else {
           mobileCandidateQueueRef.current.push(candidate);
@@ -399,18 +336,32 @@ export default function AssessmentMobileJoin() {
       }
     });
 
+    // Assessment started by laptop -> transition to IN_PROGRESS active proctoring state
+    socket.on('assessment_verif:assessment_started', () => {
+      console.log('[AssessmentMobileJoin] Assessment started on laptop');
+      setIsAssessmentStarted(true);
+    });
+    socket.on('assessment_verif:in_progress', () => {
+      console.log('[AssessmentMobileJoin] Assessment in progress on laptop');
+      setIsAssessmentStarted(true);
+    });
+
     // Assessment ended / submitted by laptop → immediately stop camera
-    socket.on('assessment_verif:session_ended', () => {
-      handleSessionClosed('ASSESSMENT_COMPLETED');
+    socket.on('assessment_verif:session_ended', (data) => {
+      console.log('[AssessmentMobileJoin] Received assessment_verif:session_ended:', data);
+      handleSessionClosed(data?.reason || 'SOCKET_ASSESSMENT_VERIF_SESSION_ENDED');
     });
-    socket.on('assessment_verif:assessment_completed', () => {
-      handleSessionClosed('ASSESSMENT_COMPLETED');
+    socket.on('assessment_verif:assessment_completed', (data) => {
+      console.log('[AssessmentMobileJoin] Received assessment_verif:assessment_completed:', data);
+      handleSessionClosed('SOCKET_ASSESSMENT_COMPLETED');
     });
-    socket.on('monitoring:session_ended', () => {
-      handleSessionClosed('ASSESSMENT_COMPLETED');
+    socket.on('monitoring:session_ended', (data) => {
+      console.log('[AssessmentMobileJoin] Received monitoring:session_ended:', data);
+      handleSessionClosed(data?.reason || 'SOCKET_MONITORING_SESSION_ENDED');
     });
-    socket.on('assessment_verif:session_expired', () => {
-      handleSessionClosed('SESSION_EXPIRED');
+    socket.on('assessment_verif:session_expired', (data) => {
+      console.log('[AssessmentMobileJoin] Received assessment_verif:session_expired:', data);
+      handleSessionClosed('SOCKET_SESSION_EXPIRED');
     });
 
     return () => {
@@ -418,12 +369,10 @@ export default function AssessmentMobileJoin() {
       if (pcRef.current) {
         try {
           pcRef.current.close();
-        } catch (e) {
-          console.error('[WEBRTC ERROR]', e);
-        }
+        } catch (e) {}
       }
     };
-  }, [sessionId, socketToken, startWebRTCOffer, startFrameCapture, handleSessionClosed]);
+  }, [sessionId, socketToken, startWebRTCOffer, handleSessionClosed]);
 
   // 3. Request Mobile Camera Access (Defaults to Back Camera / Environment)
   const enableCamera = useCallback(async (requestedFacingMode = 'environment') => {
@@ -433,7 +382,7 @@ export default function AssessmentMobileJoin() {
         throw new Error('Camera access is not supported on this browser. Try Chrome or Safari.');
       }
 
-      console.log(`[MOBILE] Requesting mobile camera with facingMode: ${requestedFacingMode}...`);
+      console.log(`[MOBILE-P2P] Requesting camera facingMode: ${requestedFacingMode}...`);
       let stream = null;
       let usedFacingMode = requestedFacingMode;
 
@@ -441,41 +390,48 @@ export default function AssessmentMobileJoin() {
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: { ideal: requestedFacingMode },
-            width: { ideal: 640 },
-            height: { ideal: 480 },
+            width: { ideal: 640, max: 640 },
+            height: { ideal: 480, max: 480 },
+            frameRate: { ideal: 24, max: 24 },
           },
           audio: false,
         });
       } catch (prefErr) {
-        console.warn(`[MOBILE] Preferred facingMode ${requestedFacingMode} failed, trying fallback:`, prefErr);
+        console.warn(`[MOBILE-P2P] Preferred facingMode ${requestedFacingMode} failed, trying fallback:`, prefErr);
         const fallbackMode = requestedFacingMode === 'environment' ? 'user' : 'environment';
         try {
           stream = await navigator.mediaDevices.getUserMedia({
             video: {
               facingMode: fallbackMode,
-              width: { ideal: 640 },
-              height: { ideal: 480 },
+              width: { ideal: 640, max: 640 },
+              height: { ideal: 480, max: 480 },
+              frameRate: { ideal: 24, max: 24 },
             },
             audio: false,
           });
           usedFacingMode = fallbackMode;
         } catch (fallErr) {
-          console.warn('[MOBILE] Fallback facingMode failed, trying generic video constraints:', fallErr);
+          console.warn('[MOBILE-P2P] Fallback facingMode failed, trying basic video constraints:', fallErr);
           stream = await navigator.mediaDevices.getUserMedia({
-            video: true,
+            video: {
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+              frameRate: { ideal: 24 },
+            },
             audio: false,
           });
         }
       }
 
       const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack && 'contentHint' in videoTrack) {
+        videoTrack.contentHint = 'motion';
+      }
       const actualSettings = videoTrack?.getSettings?.() || {};
       const finalFacingMode = actualSettings.facingMode || usedFacingMode;
       setFacingMode(finalFacingMode);
 
-      console.log('[MOBILE-5] CAMERA STREAM CREATED', finalFacingMode);
-      console.log('[MOBILE-6] VIDEO TRACK', videoTrack);
-
+      console.log('[MOBILE-P2P] Camera stream acquired:', finalFacingMode);
       streamRef.current = stream;
       setCameraActive(true);
       setPhase(PHASE.STREAMING);
@@ -484,9 +440,6 @@ export default function AssessmentMobileJoin() {
       if (socketRef.current?.connected && laptopSocketIdRef.current) {
         startWebRTCOffer(laptopSocketIdRef.current);
       }
-
-      // Start Fallback Frame Streaming
-      startFrameCapture();
 
       // Notify backend via HTTP that mobile camera permission was granted
       await fetch(`${API_BASE}/assessment-verification/mobile-connected`, {
@@ -499,16 +452,16 @@ export default function AssessmentMobileJoin() {
             timestamp: new Date().toISOString(),
           },
         }),
-      }).catch((err) => console.error('[WEBRTC ERROR]', err));
+      }).catch((err) => console.error('[MOBILE-P2P] mobile-connected error:', err));
     } catch (err) {
-      console.error('[WEBRTC ERROR]', err);
+      console.error('[MOBILE-P2P] Camera permission error:', err);
       setError(
         err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError'
           ? 'Camera permission was denied. Please allow camera access in your mobile browser settings.'
           : err.message || 'Unable to access mobile camera.'
       );
     }
-  }, [token, startWebRTCOffer, startFrameCapture]);
+  }, [token, startWebRTCOffer]);
 
   // 4. Switch / Toggle Camera between Back and Front
   const toggleCamera = useCallback(async () => {
@@ -517,43 +470,44 @@ export default function AssessmentMobileJoin() {
     const targetMode = facingMode === 'environment' ? 'user' : 'environment';
 
     try {
-      // 1. Stop current tracks
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
       }
 
-      // 2. Request new stream with alternate facing mode
-      let newStream = null;
-      try {
-        newStream = await navigator.mediaDevices.getUserMedia({
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { exact: targetMode },
+          width: { ideal: 640, max: 640 },
+          height: { ideal: 480, max: 480 },
+          frameRate: { ideal: 24, max: 24 },
+        },
+        audio: false,
+      }).catch(async () => {
+        return await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: { ideal: targetMode },
             width: { ideal: 640 },
             height: { ideal: 480 },
+            frameRate: { ideal: 24 },
           },
           audio: false,
         });
-      } catch (err) {
-        console.warn(`[MOBILE] Could not switch to ${targetMode}:`, err);
-        newStream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: false,
-        });
-      }
-
-      const newTrack = newStream.getVideoTracks()[0];
-      const actualSettings = newTrack?.getSettings?.() || {};
-      const effectiveMode = actualSettings.facingMode || targetMode;
-      setFacingMode(effectiveMode);
+      });
 
       streamRef.current = newStream;
+      setFacingMode(targetMode);
+
       if (videoRef.current) {
         videoRef.current.srcObject = newStream;
         videoRef.current.play().catch(() => {});
       }
 
-      // 3. Update WebRTC sender track seamlessly
+      // Update WebRTC Sender Track with new track
       if (pcRef.current) {
+        const newTrack = newStream.getVideoTracks()[0];
+        if (newTrack && 'contentHint' in newTrack) {
+          newTrack.contentHint = 'motion';
+        }
         const senders = pcRef.current.getSenders();
         const videoSender = senders.find((s) => s.track && s.track.kind === 'video');
         if (videoSender && newTrack) {
@@ -563,7 +517,7 @@ export default function AssessmentMobileJoin() {
         }
       }
     } catch (err) {
-      console.error('[MOBILE] Switch camera error:', err);
+      console.error('[MOBILE-P2P] Switch camera error:', err);
       setError('Unable to switch camera. Please try again.');
     } finally {
       setIsSwitchingCamera(false);
@@ -578,14 +532,12 @@ export default function AssessmentMobileJoin() {
       if (playPromise !== undefined) {
         playPromise.catch((e) => console.warn('[AssessmentMobileJoin] Video play error:', e));
       }
-      startFrameCapture();
     }
-  }, [phase, cameraActive, startFrameCapture]);
+  }, [phase, cameraActive]);
 
   // Cleanup media tracks on unmount
   useEffect(() => {
     return () => {
-      if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
       }
@@ -756,24 +708,35 @@ export default function AssessmentMobileJoin() {
               style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}
             >
               {/* Header Badge */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                <span style={{ fontSize: '13px', fontWeight: '700', color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '13px', fontWeight: '700', color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '160px' }}>
                   {info?.assessmentTitle || 'Assessment'}
                 </span>
                 <span style={{
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: '5px',
-                  padding: '4px 10px',
+                  gap: '6px',
+                  padding: '5px 12px',
                   borderRadius: '20px',
                   fontSize: '11px',
                   fontWeight: '700',
-                  background: '#EAF8F0',
+                  background: isAssessmentStarted ? '#EAF8F0' : '#F0FDF4',
                   color: '#16A34A',
                   border: '1px solid #DCFCE7'
                 }}>
-                  <CheckCircle2 size={13} color="#16A34A" />
-                  <span>Camera Connected</span>
+                  <span style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    backgroundColor: '#16A34A',
+                    boxShadow: '0 0 0 2px rgba(22, 163, 74, 0.25)',
+                    display: 'inline-block',
+                  }} className="animate-pulse" />
+                  <span>
+                    {isAssessmentStarted
+                      ? 'Assessment in progress — keep this camera connected'
+                      : 'Camera Connected — Waiting for assessment to begin'}
+                  </span>
                 </span>
               </div>
 
@@ -792,10 +755,8 @@ export default function AssessmentMobileJoin() {
                   muted
                   onLoadedMetadata={(e) => {
                     e.target.play().catch(() => {});
-                    startFrameCapture();
                   }}
                   onPlaying={() => {
-                    startFrameCapture();
                     if (socketRef.current?.connected) {
                       console.log('[AssessmentMobileJoin] onPlaying -> emitting mobile_ready and stream_status');
                       socketRef.current.emit('assessment_verif:mobile_ready', {
@@ -838,12 +799,26 @@ export default function AssessmentMobileJoin() {
               {/* Framing Instructions Reminder */}
               <div className="wi-mobile-instruction-card">
                 <div className="wi-mobile-instruction-icon">
-                  <CheckCircle2 size={20} color="#16A34A" />
+                  {isAssessmentStarted ? (
+                    <CheckCircle2 size={20} color="#16A34A" />
+                  ) : (
+                    <Shield size={20} color="#16A34A" />
+                  )}
                 </div>
                 <div className="wi-mobile-instruction-content">
-                  <h3 className="wi-mobile-instruction-title">Verification Ready</h3>
+                  <h3 className="wi-mobile-instruction-title">
+                    {isAssessmentStarted ? 'Assessment In Progress' : 'Camera Connected & Waiting'}
+                  </h3>
                   <p className="wi-mobile-instruction-text">
-                    <strong>Position your phone so your face, upper body, and laptop screen are visible.</strong> Keep this screen active and do not close this browser tab during your assessment.
+                    {isAssessmentStarted ? (
+                      <>
+                        <strong>Your assessment is currently in progress on your laptop.</strong> Position your phone so your face, upper body, and laptop screen are clearly visible. Keep this page open.
+                      </>
+                    ) : (
+                      <>
+                        <strong>Your phone camera is paired and streaming.</strong> Please complete the verification steps on your laptop. Keep this page open while you start the assessment.
+                      </>
+                    )}
                   </p>
                 </div>
               </div>

@@ -36,7 +36,7 @@ const getStats = async (userId, role) => {
           include: [{ model: AIQuiz, as: 'quiz', where: { trainerId: userId }, attributes: [] }],
           raw: true,
         }).catch(() => ({ avg: null })),
-        Certificate.count({ where: { issuedFor: userId } }).catch(() => 0),
+        Certificate.count({ where: { userId } }).catch(() => 0),
       ]);
 
       const createdIds = createdCourses.map(c => c.id).filter(Boolean);
@@ -75,7 +75,6 @@ const getStats = async (userId, role) => {
         attendanceRows,
         enrollmentRows,
         feedbackRows,
-        noteRows,
         discussionRows
       ] = await Promise.all([
         Enrollment.count({ where: { participantId: userId } }).catch(() => 0),
@@ -86,7 +85,7 @@ const getStats = async (userId, role) => {
           where: { participantId: userId },
           raw: true,
         }).catch(() => ({ avg: null })),
-        Certificate.count({ where: { participantId: userId } }).catch(() => 0),
+        Certificate.count({ where: { userId } }).catch(() => 0),
         LessonProgress.findAll({ where: { participantId: userId }, attributes: ['id', 'status', 'contentViewed', 'completedAt', 'created_at', 'updated_at'], raw: true }).catch(() => []),
         QuizAttempt.findAll({ where: { participantId: userId }, attributes: ['id', 'status', 'startedAt', 'submittedAt', 'timeTaken', 'created_at'], raw: true }).catch(() => []),
         CodingAttempt.findAll({ where: { participantId: userId }, attributes: ['id', 'status', 'startedAt', 'submittedAt', 'timeTaken', 'created_at'], raw: true }).catch(() => []),
@@ -94,8 +93,7 @@ const getStats = async (userId, role) => {
         ActivityLog.findAll({ where: { userId }, attributes: ['id', 'action', 'created_at'], raw: true }).catch(() => []),
         Attendance.findAll({ where: { userId }, attributes: ['id', 'joinTime', 'leaveTime', 'durationSeconds', 'created_at'], raw: true }).catch(() => []),
         Enrollment.findAll({ where: { participantId: userId }, attributes: ['id', 'courseId', 'trainingId', 'enrolled_at', 'created_at'], raw: true }).catch(() => []),
-        (require('../models').Feedback || { findAll: () => [] }).findAll({ where: { participantId: userId }, attributes: ['id', 'created_at'], raw: true }).catch(() => []),
-        (require('../models').Note || { findAll: () => [] }).findAll({ where: { userId }, attributes: ['id', 'created_at'], raw: true }).catch(() => []),
+        (require('../models').Feedback || { findAll: () => [] }).findAll({ where: { participantId: userId }, attributes: ['id', 'submitted_at'], raw: true }).catch(() => []),
         (require('../models').DiscussionPost || { findAll: () => [] }).findAll({ where: { userId }, attributes: ['id', 'created_at'], raw: true }).catch(() => []),
       ]);
 
@@ -145,10 +143,7 @@ const getStats = async (userId, role) => {
         addDaily(en.enrolled_at || en.created_at, 'courses', 1, 600);
       });
       feedbackRows.forEach(fb => {
-        addDaily(fb.created_at, 'general', 1, 300);
-      });
-      noteRows.forEach(n => {
-        addDaily(n.created_at, 'general', 1, 300);
+        addDaily(fb.submitted_at || fb.created_at, 'general', 1, 300);
       });
       discussionRows.forEach(dp => {
         addDaily(dp.created_at, 'general', 1, 300);

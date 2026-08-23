@@ -11,37 +11,44 @@ import {
   User as UserIcon,
   ArrowRight,
   Camera,
-  ChevronRight,
-  ExternalLink,
+  CheckCircle2,
+  Zap,
 } from 'lucide-react';
 import { participantChatbotService } from '../../services/participantChatbotService';
+import { executeParticipantAction } from '../../services/participantActionRegistry';
 import ParticipantQRScannerModal from './ParticipantQRScannerModal';
 
 const DEFAULT_SUGGESTIONS = {
   profile: [
     'How do I complete my profile?',
-    'How do I add my skills?',
-    'How do I upload my resume?',
+    'Edit my profile',
+    'Open my course',
     'What should I do next?',
   ],
   courses: [
-    'How do I start this course?',
-    'How do I complete a lesson?',
-    'Where can I see my progress?',
-    'What should I do next?',
+    'Open my course',
+    'Continue my course',
+    'Show assessments',
+    'Show certificates',
   ],
   quizzes: [
-    'How do I take a quiz?',
-    'How do I scan the QR code?',
-    'Where can I see my results?',
-    'What happens after submission?',
+    'Start assessment',
+    'Scan QR',
+    'Show my results',
+    'Open my course',
+  ],
+  interviews: [
+    'Scan QR',
+    'Show my interviews',
+    'Open my course',
+    'What should I do next?',
   ],
   general: [
     '✨ What should I do next?',
-    'How do I complete my profile?',
-    'How do I start my training?',
-    'How do I scan the QR code?',
-    'Where can I find my certificates?',
+    'Open my course',
+    'Show certificates',
+    'Scan QR',
+    'Show my profile',
   ],
 };
 
@@ -50,6 +57,7 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isExecutingAction, setIsExecutingAction] = useState(false);
   const [isQrScannerOpen, setIsQrScannerOpen] = useState(false);
 
   const location = useLocation();
@@ -62,8 +70,9 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
   // Determine current active section for dynamic suggestion pills
   const activeContextType = useMemo(() => {
     if (currentRoute === '/my-profile' || activeTab === 'profile') return 'profile';
-    if (activeTab === 'myCourses' || currentRoute.includes('/courses')) return 'courses';
-    if (activeTab === 'myQuizzes' || activeTab === 'myEnrollments' || currentRoute.includes('/quizzes') || currentRoute.includes('/exam')) return 'quizzes';
+    if (activeTab === 'myCourses' || activeTab === 'myEnrollments' || currentRoute.includes('/courses')) return 'courses';
+    if (activeTab === 'ai-quizzes' || activeTab === 'myQuizzes' || currentRoute.includes('/quizzes') || currentRoute.includes('/exam')) return 'quizzes';
+    if (activeTab === 'interviews' || currentRoute.includes('/interview')) return 'interviews';
     return 'general';
   }, [currentRoute, activeTab]);
 
@@ -78,10 +87,11 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
         {
           id: 'welcome-1',
           role: 'assistant',
-          content: `Hi **${user.name || 'there'}** 👋\n\nI'm your **WAVE INIT LMS Assistant**. How can I help you today?`,
+          content: `Hi **${user.name || 'there'}** 👋\n\nI am your **WAVE INIT LMS Agent**.\nTell me what to open, start, or guide you through!`,
           actionButtons: [
             { label: '✨ What should I do next?', action: 'send_message', message: 'What should I do next?' },
-            { label: '📷 How to scan QR code?', action: 'send_message', message: 'How do I scan the QR code?' },
+            { label: '📖 Open my course', action: 'navigate', type: 'OPEN_COURSES', route: '/participant', tab: 'myEnrollments' },
+            { label: '📷 Scan QR', action: 'open_qr_scanner', type: 'OPEN_QR_SCANNER' },
           ],
         },
       ]);
@@ -108,9 +118,30 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
     }
   }, [isOpen]);
 
+  // Action Dispatcher wrapper
+  const dispatchAction = async (action) => {
+    if (!action) return;
+    setIsExecutingAction(true);
+
+    try {
+      const result = await executeParticipantAction(action, {
+        navigate,
+        openQrScanner: () => setIsQrScannerOpen(true),
+      });
+
+      if (result && result.success) {
+        return result.confirmationMessage;
+      }
+    } catch (err) {
+      console.warn('Action dispatch error:', err);
+    } finally {
+      setIsExecutingAction(false);
+    }
+  };
+
   const handleSendMessage = async (customText = null) => {
     const textToSend = (customText !== null ? customText : inputText).trim();
-    if (!textToSend || isLoading) return;
+    if (!textToSend || isLoading || isExecutingAction) return;
 
     const userMessage = {
       id: `user-${Date.now()}`,
@@ -137,10 +168,19 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
         },
       });
 
+      let confirmation = null;
+
+      // ── AUTO-EXECUTE ACTION ──
+      if (res.action && res.action.autoExecute) {
+        confirmation = await dispatchAction(res.action);
+      }
+
       const assistantMessage = {
         id: `ai-${Date.now()}`,
         role: 'assistant',
-        content: res.reply || 'Here is what you can do next:',
+        content: res.reply || 'Action completed.',
+        action: res.action || null,
+        confirmation: confirmation || res.action?.confirmationMessage || null,
         actionButtons: res.actionButtons || [],
       };
 
@@ -151,10 +191,10 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
         {
           id: `ai-err-${Date.now()}`,
           role: 'assistant',
-          content: 'I had trouble getting the latest updates. You can use the links below:',
+          content: 'I had trouble reaching the server. You can use the quick actions below:',
           actionButtons: [
-            { label: 'Open My Courses', action: 'navigate', route: '/participant', tab: 'myCourses' },
-            { label: 'Open My Profile', action: 'navigate', route: '/my-profile' },
+            { label: 'Open My Courses', action: 'navigate', type: 'OPEN_COURSES', route: '/participant', tab: 'myEnrollments' },
+            { label: 'Open My Profile', action: 'navigate', type: 'OPEN_PROFILE', route: '/my-profile' },
           ],
         },
       ]);
@@ -168,28 +208,52 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
       {
         id: `welcome-${Date.now()}`,
         role: 'assistant',
-        content: `Hi **${user?.name || 'there'}** 👋\n\nChat reset! What do you need help with?`,
+        content: `Hi **${user?.name || 'there'}** 👋\n\nSession reset! What would you like me to open or guide you through?`,
         actionButtons: [
           { label: '✨ What should I do next?', action: 'send_message', message: 'What should I do next?' },
-          { label: '📷 How to scan QR code?', action: 'send_message', message: 'How do I scan the QR code?' },
+          { label: '📖 Open my course', action: 'navigate', type: 'OPEN_COURSES', route: '/participant', tab: 'myEnrollments' },
+          { label: '📷 Scan QR', action: 'open_qr_scanner', type: 'OPEN_QR_SCANNER' },
         ],
       },
     ]);
   };
 
-  const handleActionButtonClick = (btn) => {
-    if (btn.action === 'navigate') {
-      if (btn.route) {
-        if (btn.tab) {
-          navigate(btn.route, { state: { tab: btn.tab } });
-        } else {
-          navigate(btn.route);
-        }
-      }
-    } else if (btn.action === 'open_qr_scanner') {
-      setIsQrScannerOpen(true);
-    } else if (btn.action === 'send_message') {
+  const handleActionButtonClick = async (btn) => {
+    if (isLoading || isExecutingAction) return;
+
+    if (btn.action === 'send_message') {
       handleSendMessage(btn.message || btn.label);
+      return;
+    }
+
+    if (btn.action === 'open_qr_scanner' || btn.type === 'OPEN_QR_SCANNER') {
+      setIsQrScannerOpen(true);
+      return;
+    }
+
+    // Direct real action execution
+    const actionPayload = {
+      type: btn.type || (btn.courseId ? 'OPEN_COURSE' : 'NAVIGATE'),
+      route: btn.route,
+      tab: btn.tab,
+      subtab: btn.subtab,
+      courseId: btn.courseId,
+      lessonId: btn.lessonId,
+      quizId: btn.quizId,
+      quizTitle: btn.quizTitle,
+      courseName: btn.courseName || btn.label,
+    };
+
+    const confirmation = await dispatchAction(actionPayload);
+    if (confirmation) {
+      setMessages(prev => [
+        ...prev,
+        {
+          id: `ai-act-${Date.now()}`,
+          role: 'assistant',
+          content: `✅ ${confirmation}`,
+        },
+      ]);
     }
   };
 
@@ -271,7 +335,7 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
             fontWeight: 700,
             letterSpacing: '0.01em',
           }}
-          aria-label="Open WAVE INIT AI Guide Assistant"
+          aria-label="Open WAVE INIT AI LMS Agent"
         >
           <div
             style={{
@@ -313,8 +377,8 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
               bottom: 84,
               right: 24,
               width: 'calc(100vw - 32px)',
-              maxWidth: 390,
-              height: 540,
+              maxWidth: 400,
+              height: 560,
               maxHeight: 'calc(100vh - 120px)',
               background: '#FFFFFF',
               borderRadius: 20,
@@ -356,11 +420,11 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
                 </div>
                 <div>
                   <h4 style={{ margin: 0, fontSize: 13.5, fontWeight: 700, color: '#FFFFFF', display: 'flex', alignItems: 'center', gap: 6 }}>
-                    WAVE INIT AI Assistant
+                    WAVE INIT AI Agent
                   </h4>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, color: '#DCFCE7' }}>
                     <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#86EFAC' }} />
-                    Active LMS Guide
+                    Action-Based Assistant
                   </div>
                 </div>
               </div>
@@ -403,7 +467,7 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
               </div>
             </div>
 
-            {/* ── Suggested Question Pills ── */}
+            {/* ── Suggested Action Pills ── */}
             <div
               style={{
                 padding: '8px 14px',
@@ -421,6 +485,7 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
                   key={`sug-${sIdx}`}
                   type="button"
                   onClick={() => handleSendMessage(sug)}
+                  disabled={isLoading || isExecutingAction}
                   style={{
                     background: '#FFFFFF',
                     border: '1px solid #E2E8F0',
@@ -429,15 +494,18 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
                     fontSize: 11,
                     fontWeight: 500,
                     color: '#334155',
-                    cursor: 'pointer',
+                    cursor: isLoading || isExecutingAction ? 'default' : 'pointer',
                     whiteSpace: 'nowrap',
                     flexShrink: 0,
                     transition: 'all 0.15s ease',
+                    opacity: isLoading || isExecutingAction ? 0.6 : 1,
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor = '#16A34A';
-                    e.currentTarget.style.color = '#16A34A';
-                    e.currentTarget.style.background = '#F0FDF4';
+                    if (!isLoading && !isExecutingAction) {
+                      e.currentTarget.style.borderColor = '#16A34A';
+                      e.currentTarget.style.color = '#16A34A';
+                      e.currentTarget.style.background = '#F0FDF4';
+                    }
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.borderColor = '#E2E8F0';
@@ -515,10 +583,32 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
                         }}
                       >
                         {isUser ? msg.content : renderFormattedMarkdown(msg.content)}
+
+                        {/* Confirmation Badge for Executed Actions */}
+                        {!isUser && msg.confirmation && (
+                          <div
+                            style={{
+                              marginTop: 8,
+                              padding: '5px 8px',
+                              background: '#F0FDF4',
+                              border: '1px solid #BBF7D0',
+                              borderRadius: 6,
+                              fontSize: 11,
+                              color: '#15803D',
+                              fontWeight: 600,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 5,
+                            }}
+                          >
+                            <CheckCircle2 size={13} color="#16A34A" />
+                            <span>{msg.confirmation}</span>
+                          </div>
+                        )}
                       </div>
                     </div>
 
-                    {/* Action Buttons (if attached by assistant) */}
+                    {/* Action Buttons */}
                     {!isUser && msg.actionButtons && msg.actionButtons.length > 0 && (
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginLeft: 34, marginTop: 4 }}>
                         {msg.actionButtons.map((btn, bIdx) => (
@@ -526,30 +616,34 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
                             key={`btn-${bIdx}`}
                             type="button"
                             onClick={() => handleActionButtonClick(btn)}
+                            disabled={isLoading || isExecutingAction}
                             style={{
                               background: '#F0FDF4',
                               border: '1px solid #BBF7D0',
                               borderRadius: 8,
-                              padding: '5px 10px',
+                              padding: '5px 11px',
                               fontSize: 11.5,
                               fontWeight: 600,
                               color: '#15803D',
-                              cursor: 'pointer',
+                              cursor: isLoading || isExecutingAction ? 'default' : 'pointer',
                               display: 'flex',
                               alignItems: 'center',
                               gap: 5,
                               transition: 'all 0.15s ease',
+                              opacity: isLoading || isExecutingAction ? 0.6 : 1,
                             }}
                             onMouseEnter={(e) => {
-                              e.currentTarget.style.background = '#DCFCE7';
-                              e.currentTarget.style.borderColor = '#86EFAC';
+                              if (!isLoading && !isExecutingAction) {
+                                e.currentTarget.style.background = '#DCFCE7';
+                                e.currentTarget.style.borderColor = '#86EFAC';
+                              }
                             }}
                             onMouseLeave={(e) => {
                               e.currentTarget.style.background = '#F0FDF4';
                               e.currentTarget.style.borderColor = '#BBF7D0';
                             }}
                           >
-                            {btn.action === 'open_qr_scanner' ? <Camera size={12} /> : null}
+                            {btn.action === 'open_qr_scanner' || btn.type === 'OPEN_QR_SCANNER' ? <Camera size={12} /> : null}
                             <span>{btn.label}</span>
                             {btn.action === 'navigate' ? <ArrowRight size={11} /> : null}
                           </button>
@@ -560,8 +654,8 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
                 );
               })}
 
-              {/* Typing / Loading indicator */}
-              {isLoading && (
+              {/* Execution / Loading Indicator */}
+              {(isLoading || isExecutingAction) && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 2 }}>
                   <div
                     style={{
@@ -585,12 +679,13 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
                       borderRadius: '4px 16px 16px 16px',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: 4,
+                      gap: 6,
+                      fontSize: 11.5,
+                      color: '#475569',
                     }}
                   >
-                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#16A34A', animation: 'bounceDot 1s infinite 0ms' }} />
-                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#16A34A', animation: 'bounceDot 1s infinite 200ms' }} />
-                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#16A34A', animation: 'bounceDot 1s infinite 400ms' }} />
+                    <Zap size={12} color="#16A34A" style={{ animation: 'spin 1.5s linear infinite' }} />
+                    <span>{isExecutingAction ? 'Executing LMS action...' : 'Analyzing request & LMS context...'}</span>
                   </div>
                 </div>
               )}
@@ -620,7 +715,8 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
                     handleSendMessage();
                   }
                 }}
-                placeholder="Type your question..."
+                placeholder="Ask or tell me what to open..."
+                disabled={isLoading || isExecutingAction}
                 style={{
                   flex: 1,
                   border: '1px solid #CBD5E1',
@@ -641,10 +737,10 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
               <button
                 type="button"
                 onClick={() => handleSendMessage()}
-                disabled={!inputText.trim() || isLoading}
+                disabled={!inputText.trim() || isLoading || isExecutingAction}
                 style={{
-                  background: inputText.trim() && !isLoading ? '#16A34A' : '#E2E8F0',
-                  color: inputText.trim() && !isLoading ? '#FFFFFF' : '#94A3B8',
+                  background: inputText.trim() && !isLoading && !isExecutingAction ? '#16A34A' : '#E2E8F0',
+                  color: inputText.trim() && !isLoading && !isExecutingAction ? '#FFFFFF' : '#94A3B8',
                   border: 'none',
                   borderRadius: 10,
                   width: 36,
@@ -652,7 +748,7 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  cursor: inputText.trim() && !isLoading ? 'pointer' : 'default',
+                  cursor: inputText.trim() && !isLoading && !isExecutingAction ? 'pointer' : 'default',
                   transition: 'all 0.15s ease',
                   flexShrink: 0,
                 }}
@@ -674,19 +770,11 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
             {
               id: `ai-qr-${Date.now()}`,
               role: 'assistant',
-              content: `✅ **QR code scanned successfully!**\n\nPayload: \`${data.slice(0, 45)}...\`\n\nYou are ready to proceed with your proctored assessment or interview.`,
+              content: `✅ **QR code scanned successfully!**\n\nPayload: \`${data.slice(0, 45)}...\`\n\nYou can now proceed with your proctored assessment or interview.`,
             },
           ]);
         }}
       />
-
-      {/* Animation styles for typing dots */}
-      <style>{`
-        @keyframes bounceDot {
-          0%, 80%, 100% { transform: scale(0); }
-          40% { transform: scale(1.0); }
-        }
-      `}</style>
     </>
   );
 }

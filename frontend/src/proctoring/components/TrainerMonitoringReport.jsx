@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Download, FileText, Users, AlertTriangle, Clock,
   Monitor, Eye, Copy, Shield, Activity, ExternalLink, ChevronDown, ChevronUp, Video,
-  CheckCircle2, X, RefreshCw, Smartphone, Laptop, BookOpen, AlertCircle
+  CheckCircle2, X, RefreshCw, Smartphone, Laptop, BookOpen, AlertCircle, ShieldAlert
 } from 'lucide-react'
 import { proctorApi } from '../api'
 import { GlassCard } from './ui'
@@ -144,6 +144,8 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
   const riskLevel = p.riskLevel || data?.riskLevel || 'LOW'
   const riskScore = p.riskScore != null ? Math.round(p.riskScore) : (data?.score != null ? Math.round(data.score) : 0)
   const riskStyle = RISK_BADGE[riskLevel] || RISK_BADGE.LOW
+  const graceWarnings = data?.graceWarnings || summary?.graceWarnings || p?.graceWarnings || []
+  const graceWarningsCount = data?.graceWarningsCount != null ? data.graceWarningsCount : (summary?.graceWarningsCount != null ? summary.graceWarningsCount : graceWarnings.length)
 
   const durationSec = data?.durationSeconds || data?.timeTaken || (summary.monitoringDuration ? (() => {
     const m = summary.monitoringDuration.match(/(\d+)m/);
@@ -571,10 +573,98 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                 </div>
               </div>
 
+              {/* Dedicated Pre-Assessment Warnings (Grace Flow) Card */}
+              <div style={{
+                marginBottom: 20,
+                background: graceWarningsCount > 0 ? '#fffbeb' : '#f8fafc',
+                borderRadius: 12,
+                border: graceWarningsCount > 0 ? '1px solid #fde68a' : '1px solid #e2e8f0',
+                padding: '14px 18px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <ShieldAlert size={16} color={graceWarningsCount > 0 ? '#d97706' : '#64748b'} />
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>
+                      Pre-Assessment Warnings (First 3 Alerts — Unscored Grace Flow)
+                    </span>
+                  </div>
+                  <span style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    padding: '3px 9px',
+                    borderRadius: 6,
+                    background: graceWarningsCount > 0 ? '#fef3c7' : '#f1f5f9',
+                    color: graceWarningsCount > 0 ? '#b45309' : '#475569',
+                    border: graceWarningsCount > 0 ? '1px solid #fcd34d' : '1px solid #cbd5e1',
+                  }}>
+                    {graceWarningsCount} of 3 Live Warnings Issued
+                  </span>
+                </div>
+                <div style={{ fontSize: 11.5, color: '#64748b', marginBottom: 10, lineHeight: 1.4 }}>
+                  The first 3 alerts of any monitoring session are surfaced as live on-screen corrective guidance without penalty scoring. Scored report violations begin strictly from strike 4 onward.
+                </div>
+                {graceWarnings.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {graceWarnings.map((gw, idx) => (
+                      <div
+                        key={gw.id || idx}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          background: '#ffffff',
+                          border: '1px solid #fde68a',
+                          borderRadius: 6,
+                          padding: '6px 12px',
+                          fontSize: 11.5,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{
+                            background: '#d97706',
+                            color: '#ffffff',
+                            fontWeight: 800,
+                            fontSize: 10,
+                            padding: '2px 6px',
+                            borderRadius: 4,
+                          }}>
+                            WARNING {gw.warningNumber || idx + 1}
+                          </span>
+                          <span style={{ fontWeight: 600, color: '#1e293b' }}>
+                            {gw.event || (gw.eventType ? gw.eventType.replace(/_/g, ' ') : 'Pre-Warning')}
+                          </span>
+                          <span style={{ color: '#64748b', fontSize: 11 }}>
+                            ({gw.source || 'LAPTOP'})
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span style={{ color: '#64748b', fontSize: 11 }}>{gw.time || '—'}</span>
+                          <span style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: '#059669',
+                            background: '#ecfdf5',
+                            padding: '2px 6px',
+                            borderRadius: 4,
+                            border: '1px solid #a7f3d0',
+                          }}>
+                            0 pts (Grace)
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 11.5, color: '#059669', fontWeight: 600 }}>
+                    ✓ Candidate received 0 pre-warnings during this attempt.
+                  </div>
+                )}
+              </div>
+
               {/* Event Timeline Table */}
               <div>
                 <h4 style={{ fontSize: 13, fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 10px' }}>
-                  Event Timeline &amp; Incident Drill-Down ({timeline.length})
+                  Scored Incident Timeline ({timeline.length})
                 </h4>
                 {timeline.length === 0 ? (
                   <div style={{ padding: 30, textAlign: 'center', background: '#f8fafc', borderRadius: 8, border: '1px dashed #cbd5e1', color: '#64748b', fontSize: 13 }}>

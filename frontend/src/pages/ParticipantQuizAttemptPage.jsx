@@ -54,8 +54,22 @@ function ParticipantQuizAttemptPageInner({ user }) {
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState(null)
   const [quizData, setQuizData] = useState(null)
-  const [qrVerified, setQrVerified] = useState(false)
-  const [verifSessionInfo, setVerifSessionInfo] = useState(null)
+  const [qrVerified, setQrVerified] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(`assessment_verif_QUIZ_${quizId}_${attemptId}`)
+      return !!cached
+    } catch (e) {
+      return false
+    }
+  })
+  const [verifSessionInfo, setVerifSessionInfo] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(`assessment_verif_QUIZ_${quizId}_${attemptId}`)
+      return cached ? JSON.parse(cached) : null
+    } catch (e) {
+      return null
+    }
+  })
   const [consented, setConsented] = useState(false)
 
   useEffect(() => {
@@ -208,21 +222,8 @@ function ParticipantQuizAttemptPageInner({ user }) {
 
   // Pre-test Step 1: Mobile Camera Pairing via QR Code
   if (!qrVerified && quizData) {
-    return (
-      <AssessmentQRPairingModal
-        assessmentType="QUIZ"
-        assessmentId={parseInt(quizId, 10)}
-        attemptId={parseInt(attemptId, 10)}
-        assessmentTitle={quizData.title || 'Quiz Assessment'}
-        participantName={user?.name || 'Participant'}
-        userToken={user?.token}
-        onVerified={(data) => {
-          setVerifSessionInfo(data);
-          setQrVerified(true);
-        }}
-        onCancel={() => navigate('/participant')}
-      />
-    )
+    navigate(`/trainings/${trainingId || 0}/quizzes/${quizId}/verification?attemptId=${attemptId}&sessionToken=${sessionToken || ''}`, { replace: true })
+    return null
   }
 
   // Pre-test Step 2: Assessment Consent, Camera Calibration & Fullscreen Gate

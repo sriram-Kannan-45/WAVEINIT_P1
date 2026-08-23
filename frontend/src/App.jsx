@@ -40,6 +40,7 @@ const ForgotPassword = lazyRetry(() => import('./pages/ForgotPassword'))
 const Login = lazyRetry(() => import('./pages/Login'))
 const ParticipantDashboard = lazyRetry(() => import('./pages/ParticipantDashboard'))
 const ParticipantQuizAttemptPage = lazyRetry(() => import('./pages/ParticipantQuizAttemptPage'))
+const ParticipantQuizVerificationPage = lazyRetry(() => import('./pages/ParticipantQuizVerificationPage'))
 const ParticipantQuizResultPage = lazyRetry(() => import('./pages/ParticipantQuizResultPage'))
 const PreExamReadiness = lazyRetry(() => import('./pages/PreExamReadiness'))
 const Register = lazyRetry(() => import('./pages/Register'))
@@ -494,6 +495,39 @@ function AppRoutes({ user, onLogin, onLogout }) {
       <Route
         path="/quizzes"
         element={<Navigate to="/participant" replace />}
+      />
+
+      <Route
+        path="/trainings/:trainingId/quizzes/:quizId/verification"
+        element={
+          user?.role === 'PARTICIPANT' ? (
+            <ParticipantQuizVerificationPage user={user} onLogout={onLogout} />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+
+      <Route
+        path="/trainings/:trainingId/quizzes/:quizId/attempt/:attemptId/verification"
+        element={
+          user?.role === 'PARTICIPANT' ? (
+            <ParticipantQuizVerificationPage user={user} onLogout={onLogout} />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+
+      <Route
+        path="/quizzes/:quizId/verification"
+        element={
+          user?.role === 'PARTICIPANT' ? (
+            <ParticipantQuizVerificationPage user={user} onLogout={onLogout} />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
       />
 
       <Route

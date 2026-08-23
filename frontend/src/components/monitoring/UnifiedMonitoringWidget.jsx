@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
 import {
   Camera,
@@ -107,6 +108,8 @@ export default function UnifiedMonitoringWidget({
   });
 
   const [recentViolation, setRecentViolation] = useState(null);
+  const [activeGraceWarning, setActiveGraceWarning] = useState(null);
+  const graceWarningTimeoutRef = useRef(null);
 
   const webcamVideoRef = useRef(null);
   const mobileVideoRef = useRef(null);
@@ -509,6 +512,29 @@ export default function UnifiedMonitoringWidget({
     socket.on('monitoring:mobile_composition', handleMobileComposition);
     socket.on('assessment_verif:yolo_detection', handleMobileComposition);
 
+    // Live Grace Warning Listener (First 3 Alerts as Live In-UI Banners)
+    const handleGraceWarning = (data) => {
+      console.log('[UnifiedMonitoringWidget] Received live grace warning:', data);
+      if (data) {
+        if (graceWarningTimeoutRef.current) clearTimeout(graceWarningTimeoutRef.current);
+        setActiveGraceWarning({
+          warningNumber: data.warningNumber || 1,
+          maxWarnings: data.maxWarnings || 3,
+          eventType: data.eventType,
+          message: data.message || `${(data.eventType || '').replace(/_/g, ' ')} detected`,
+          source: data.source || 'LAPTOP',
+          timestamp: Date.now(),
+        });
+        // Auto-dismiss after 6.5 seconds
+        graceWarningTimeoutRef.current = setTimeout(() => {
+          setActiveGraceWarning(null);
+        }, 6500);
+      }
+    };
+
+    socket.on('monitoring:grace_warning', handleGraceWarning);
+    socket.on('assessment_verif:grace_warning', handleGraceWarning);
+
     // Watchdog check for genuine mobile drop (Grace period active after 8s of no frames/heartbeat)
     const watchdog = setInterval(() => {
       if (Date.now() - lastMobileActivityRef.current > 8000) {
@@ -541,10 +567,6 @@ export default function UnifiedMonitoringWidget({
 
     return () => {
       clearInterval(watchdog);
-      if (socket.connected && activeSessionId) {
-        socket.emit('assessment_verif:end', { sessionId: activeSessionId });
-        socket.emit('monitoring:end_session', { sessionId: activeSessionId });
-      }
       socket.disconnect();
       if (pcRef.current) {
         try {
@@ -757,6 +779,83 @@ export default function UnifiedMonitoringWidget({
           </div>
         )}
       </div>
+
+      {/* Live Proctor Grace Warning Banner (First 3 Alerts As On-Screen Warnings) */}
+      <AnimatePresence>
+        {activeGraceWarning && (
+          <motion.div
+            initial={{ opacity: 0, y: -40, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -40, scale: 0.95 }}
+            transition={{ type: 'spring', damping: 22, stiffness: 320 }}
+            style={{
+              position: 'fixed',
+              top: '18px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 999999,
+              width: '92%',
+              maxWidth: '580px',
+              background: activeGraceWarning.warningNumber === 3 ? '#FEF2F2' : '#FFFBEB',
+              border: activeGraceWarning.warningNumber === 3 ? '2px solid #F87171' : '2px solid #FCD34D',
+              borderRadius: '12px',
+              boxShadow: '0 20px 30px -10px rgba(0, 0, 0, 0.25), 0 10px 10px -5px rgba(0, 0, 0, 0.08)',
+              padding: '12px 18px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '14px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{
+                background: activeGraceWarning.warningNumber === 3 ? '#DC2626' : '#D97706',
+                color: '#FFFFFF',
+                fontSize: '11px',
+                fontWeight: '800',
+                padding: '4px 8px',
+                borderRadius: '6px',
+                letterSpacing: '0.5px',
+                textTransform: 'uppercase',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                whiteSpace: 'nowrap',
+              }}>
+                <AlertTriangle size={13} />
+                <span>WARNING {activeGraceWarning.warningNumber} OF {activeGraceWarning.maxWarnings || 3}</span>
+              </div>
+              <div>
+                <div style={{ fontSize: '13px', fontWeight: '700', color: activeGraceWarning.warningNumber === 3 ? '#991B1B' : '#92400E', lineHeight: 1.3 }}>
+                  {activeGraceWarning.message}
+                </div>
+                <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>
+                  {activeGraceWarning.warningNumber === 3
+                    ? 'Final warning — subsequent events will be scored into the proctoring report.'
+                    : 'Live alert only (unscored). Please correct your framing/environment.'}
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveGraceWarning(null)}
+              style={{
+                background: '#FFFFFF',
+                border: '1px solid #CBD5E1',
+                borderRadius: '6px',
+                padding: '5px 10px',
+                fontSize: '11.5px',
+                fontWeight: '700',
+                color: '#334155',
+                cursor: 'pointer',
+                flexShrink: 0,
+              }}
+            >
+              Dismiss
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

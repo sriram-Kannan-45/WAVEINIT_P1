@@ -317,6 +317,19 @@ module.exports = (io, socket) => {
     });
   });
 
+  // Assessment started on laptop -> notify mobile to transition to in-progress
+  socket.on('assessment_verif:start_assessment', (data) => {
+    const { sessionId } = data || {};
+    const targetSessionId = sessionId || socket.sessionId;
+    if (!targetSessionId) return;
+
+    io.to(`assessment_verif_${targetSessionId}`).emit('assessment_verif:assessment_started', {
+      sessionId: targetSessionId,
+      status: 'IN_PROGRESS',
+      timestamp: Date.now(),
+    });
+  });
+
   // Assessment session ended / submitted trigger -> close mobile camera
   socket.on('assessment_verif:end', (data) => {
     const { sessionId } = data || {};

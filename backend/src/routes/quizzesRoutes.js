@@ -1641,6 +1641,12 @@ router.post('/:quizId/attempts/:attemptId/submit', async (req, res) => {
       console.error('[submit] Non-blocking proctoring report generation failure:', reportErr.message);
     }
 
+    // Conclude verification session and close mobile camera stream
+    try {
+      const verificationService = require('../services/assessmentVerificationService');
+      await verificationService.endSession({ attemptId: attempt.id, participantId }).catch(() => {});
+    } catch (_) {}
+
     // Participant-safe response: NEVER leak internal proctoring reports or risk scores
     return res.json({
       success: true,

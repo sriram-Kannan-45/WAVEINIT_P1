@@ -1123,13 +1123,8 @@ function QuizzesView({ user, courseId, trainingId }) {
       const res = await fetch(startUrl, { method: 'POST', headers: auth(token) })
       const response = await res.json()
       if (!res.ok) { showError(response.error || 'Failed to start quiz'); return }
-      if (response.quiz?.proctoringEnabled) {
-        navigate(`/participant/exam/${quizId}`, {
-          state: { attemptId: response.attemptId, quizData: response.quiz }
-        })
-      } else {
-        navigate(`/trainings/${trainingId}/quizzes/${quizId}/attempt?attemptId=${response.attemptId}&sessionToken=${response.sessionToken}`)
-      }
+      // Navigate to Mobile Camera Verification Step
+      navigate(`/trainings/${trainingId}/quizzes/${quizId}/verification?attemptId=${response.attemptId}&sessionToken=${response.sessionToken}`)
     } catch (err) { showError(err.message) }
   }
 

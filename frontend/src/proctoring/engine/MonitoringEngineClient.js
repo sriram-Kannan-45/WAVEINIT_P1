@@ -195,9 +195,17 @@ class MonitoringEngineClient {
         document.msFullscreenElement
       );
 
+      console.log('[MonitoringEngineClient] Fullscreen event transition:', {
+        inFs,
+        element: document.fullscreenElement?.tagName || null,
+        activeElement: document.activeElement?.tagName || 'UNKNOWN',
+        timestamp: new Date().toISOString(),
+      });
+
       if (!inFs) {
         if (!this.fsExitTimer) {
           this.fsExitStartTime = Date.now();
+          console.warn('[MonitoringEngineClient] Fullscreen exit detected. Starting 2.0s confirmation window...');
           this.fsExitTimer = setTimeout(() => {
             const stillOutFs = !(
               document.fullscreenElement ||
@@ -208,8 +216,9 @@ class MonitoringEngineClient {
             if (stillOutFs) {
               const now = Date.now();
               const last = this.lastReportedEventTimes['FULLSCREEN_EXIT'] || 0;
-              const durationMs = Math.max(1500, now - (this.fsExitStartTime || now));
+              const durationMs = Math.max(2000, now - (this.fsExitStartTime || now));
               if (now - last >= (this.config.browserEventCooldownMs || 15000)) {
+                console.warn('[MonitoringEngineClient] Confirmed FULLSCREEN_EXIT after 2.0s. Reporting event...');
                 this.reportEvent({
                   source: 'LAPTOP',
                   eventType: 'FULLSCREEN_EXIT',
@@ -222,18 +231,21 @@ class MonitoringEngineClient {
                     isFullscreen: false,
                     activeElement: document.activeElement?.tagName || 'UNKNOWN',
                     durationMs,
-                    trigger: 'confirmed_fullscreen_exit',
+                    trigger: 'confirmed_fullscreen_exit_2s',
                   },
                 });
               }
+            } else {
+              console.log('[MonitoringEngineClient] Fullscreen restored before timer fired. Violation cancelled.');
             }
             this.fsExitTimer = null;
             this.fsExitStartTime = null;
-          }, 1500); // 1.5s confirmation window
+          }, 2000); // 2.0s confirmation window
         }
       } else {
         // Re-entered fullscreen before confirmation duration -> cancel
         if (this.fsExitTimer) {
+          console.log('[MonitoringEngineClient] Re-entered fullscreen before confirmation window elapsed. Violation cancelled.');
           clearTimeout(this.fsExitTimer);
           this.fsExitTimer = null;
           this.fsExitStartTime = null;

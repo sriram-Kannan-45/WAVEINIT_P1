@@ -262,6 +262,21 @@ class MonitoringController {
       // Broadcast event update via Socket.IO if available
       const io = req.app.get('io');
       if (io && result.event) {
+        if (result.isGraceWarning) {
+          const gracePayload = {
+            sessionId,
+            warningNumber: result.warningNumber,
+            maxWarnings: result.maxWarnings || 3,
+            eventType: result.event?.eventType || eventType,
+            severity: result.event?.severity || severity,
+            source: result.event?.source || source,
+            message: result.warningMessage || `${(eventType || '').replace(/_/g, ' ')} detected`,
+            timestamp: new Date().toISOString(),
+          };
+          io.to(`proctor_session_${sessionId}`).emit('monitoring:grace_warning', gracePayload);
+          io.to(`monitoring_room_${sessionId}`).emit('monitoring:grace_warning', gracePayload);
+          io.to(`assessment_verif_${sessionId}`).emit('monitoring:grace_warning', gracePayload);
+        }
         io.to(`proctor_session_${sessionId}`).emit('monitoring:event', result);
         io.to(`monitoring_room_${sessionId}`).emit('monitoring:event', result);
       }

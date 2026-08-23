@@ -224,6 +224,16 @@ class AssessmentVerificationController {
         return res.status(400).json({ success: false, error: result.error });
       }
 
+      // Broadcast assessment start to mobile peer so it transitions to in-progress
+      const io = getIO();
+      if (io && result.sessionId) {
+        io.to(`assessment_verif_${result.sessionId}`).emit('assessment_verif:assessment_started', {
+          sessionId: result.sessionId,
+          status: 'IN_PROGRESS',
+          timestamp: Date.now(),
+        });
+      }
+
       return res.json({ success: true, message: 'Verification valid. Assessment unlocked.', data: result });
     } catch (error) {
       logger.error('Error verifying assessment start', { error: error.message });
@@ -302,40 +312,29 @@ class AssessmentVerificationController {
       }
 
       let sessionStatus = session?.status || monitoringSession?.status;
-      let isEnded = ['COMPLETED', 'USED', 'ENDED', 'EXPIRED', 'SUBMITTED', 'TERMINATED'].includes(sessionStatus);
+      let isEnded = false;
 
-      // Check linked attempt if available
+      // Check linked attempt if available - ONLY actual attempt submission ends the assessment!
       const attemptId = session?.attempt_id || monitoringSession?.attemptId;
-      if (!isEnded && attemptId) {
+      if (attemptId) {
         const qa = await QuizAttempt.findByPk(attemptId).catch(() => null);
         const ca = !qa ? await CodingAttempt.findByPk(attemptId).catch(() => null) : null;
         const att = qa || ca;
-        if (att && ['SUBMITTED', 'COMPLETED', 'AUTO_SUBMITTED', 'TERMINATED'].includes(att.status)) {
+        if (att && ['SUBMITTED', 'COMPLETED', 'EVALUATED', 'AUTO_SUBMITTED', 'TERMINATED', 'disqualified_copy_violation', 'disqualified_policy_violation'].includes(att.status)) {
           isEnded = true;
           sessionStatus = 'COMPLETED';
-          if (session) await session.update({ status: 'COMPLETED' }).catch(() => {});
-          if (monitoringSession) await monitoringSession.update({ status: 'COMPLETED' }).catch(() => {});
+          if (session && session.status !== 'COMPLETED') await session.update({ status: 'COMPLETED' }).catch(() => {});
+          if (monitoringSession && monitoringSession.status !== 'COMPLETED') await monitoringSession.update({ status: 'COMPLETED' }).catch(() => {});
         }
       }
 
-      const activeSessionId = session?.session_id || monitoringSession?.sessionId;
-      if (isEnded && activeSessionId) {
-        const io = getIO();
-        if (io) {
-          io.to(`assessment_verif_${activeSessionId}`).emit('assessment_verif:session_ended', {
-            sessionId: activeSessionId,
-            status: 'COMPLETED',
-            reason: 'ASSESSMENT_COMPLETED',
-            timestamp: Date.now(),
-          });
-          io.to(`monitoring_room_${activeSessionId}`).emit('monitoring:session_ended', {
-            sessionId: activeSessionId,
-            status: 'COMPLETED',
-            reason: 'ASSESSMENT_COMPLETED',
-            timestamp: Date.now(),
-          });
-        }
+      // If session was explicitly ended by submit / endSession
+      if (!isEnded && (session?.status === 'COMPLETED' || monitoringSession?.status === 'COMPLETED')) {
+        isEnded = true;
+        sessionStatus = 'COMPLETED';
       }
+
+      const activeSessionId = session?.session_id || monitoringSession?.sessionId;
 
       return res.json({
         success: true,
