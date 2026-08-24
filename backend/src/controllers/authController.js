@@ -44,34 +44,99 @@ const generateUsername = async (name) => {
 // ── LOGIN ──────────────────────────────────────────────────────────────────
 const login = async (req, res) => {
   const startTime = Date.now();
+  const isDev = process.env.NODE_ENV !== 'production';
+  let userFound = false;
+  let trainerId = null;
+  let userRole = null;
+  let userStatus = null;
+  let passwordValid = false;
+  let jwtSuccess = false;
+  let resStatus = 200;
+
   try {
     const { email, username, password, role: requestedRole } = req.body;
-    const credential = email || username;
+    const rawCredential = (email || username || '').toString();
+    const normalizedEmail = rawCredential.trim().toLowerCase();
+    const normalizedUsername = rawCredential.trim();
 
-    if (!credential || !password) {
+    if (isDev) {
+      console.log('\n--- [AUTH DEBUG] Trainer login request received ---');
+      console.log(`Email received: ${normalizedEmail}`);
+    }
+
+    if (!rawCredential.trim() || !password) {
+      resStatus = 422;
+      if (isDev) {
+        console.log(`Trainer found: false`);
+        console.log(`Password comparison result: false`);
+        console.log(`JWT generation: failure`);
+        console.log(`Login response status: ${resStatus}`);
+        console.log('---------------------------------------------------\n');
+      }
       return res.status(422).json({ error: 'Email/Username and password are required' });
     }
 
+    const { Op } = require('sequelize');
     const user = await User.findOne({
-      where: { email: credential, isDeleted: false }
-    }) || await User.findOne({
-      where: { username: credential, isDeleted: false }
+      where: {
+        [Op.or]: [
+          { email: normalizedEmail },
+          { email: rawCredential.trim() },
+          { username: normalizedUsername },
+          { username: rawCredential.trim() }
+        ],
+        isDeleted: false
+      }
     });
 
+    userFound = !!user;
+    if (user) {
+      trainerId = user.id;
+      userRole = user.role;
+      userStatus = user.status;
+    }
+
+    if (isDev) {
+      console.log(`Trainer found: ${userFound}`);
+      if (user) {
+        console.log(`Trainer ID: ${trainerId}`);
+        console.log(`Role: ${userRole}`);
+        console.log(`Account status: ${userStatus}`);
+      }
+    }
+
     if (!user) {
+      resStatus = 401;
+      if (isDev) {
+        console.log(`Password comparison result: false`);
+        console.log(`JWT generation: failure`);
+        console.log(`Login response status: ${resStatus}`);
+        console.log('---------------------------------------------------\n');
+      }
       await logAudit({
         action: ACTIONS.LOGIN_FAILED,
         category: 'AUTH',
         severity: 'WARNING',
-        details: { reason: 'User not found', credential: credential.slice(0, 3) + '***' },
+        details: { reason: 'User not found', credential: rawCredential.slice(0, 3) + '***' },
         req,
       });
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
     const isValidPassword = await bcrypt.compare(password, user.password);
+    passwordValid = isValidPassword;
+
+    if (isDev) {
+      console.log(`Password comparison result: ${passwordValid}`);
+    }
 
     if (!isValidPassword) {
+      resStatus = 401;
+      if (isDev) {
+        console.log(`JWT generation: failure`);
+        console.log(`Login response status: ${resStatus}`);
+        console.log('---------------------------------------------------\n');
+      }
       await logAudit({
         userId: user.id,
         action: ACTIONS.LOGIN_FAILED,
@@ -90,18 +155,42 @@ const login = async (req, res) => {
     }
 
     if (user.role === 'PARTICIPANT' && user.status === 'PENDING') {
+      resStatus = 403;
+      if (isDev) {
+        console.log(`JWT generation: failure`);
+        console.log(`Login response status: ${resStatus}`);
+        console.log('---------------------------------------------------\n');
+      }
       return res.status(403).json({ error: 'Your account is pending admin approval. You will be able to log in once an administrator approves your account.' });
     }
 
     if (user.status === 'REJECTED') {
+      resStatus = 403;
+      if (isDev) {
+        console.log(`JWT generation: failure`);
+        console.log(`Login response status: ${resStatus}`);
+        console.log('---------------------------------------------------\n');
+      }
       return res.status(403).json({ error: 'Your registration was rejected. Please contact support if you believe this is an error.' });
     }
 
     if (user.status === 'INACTIVE') {
+      resStatus = 403;
+      if (isDev) {
+        console.log(`JWT generation: failure`);
+        console.log(`Login response status: ${resStatus}`);
+        console.log('---------------------------------------------------\n');
+      }
       return res.status(403).json({ error: 'Your account has been deactivated.' });
     }
 
     if (requestedRole && requestedRole.toLowerCase() !== user.role.toLowerCase()) {
+      resStatus = 403;
+      if (isDev) {
+        console.log(`JWT generation: failure`);
+        console.log(`Login response status: ${resStatus}`);
+        console.log('---------------------------------------------------\n');
+      }
       return res.status(403).json({ error: 'Incorrect role selected.' });
     }
 
@@ -110,6 +199,7 @@ const login = async (req, res) => {
 
     // Generate token pair
     const { accessToken, refreshToken, tokenFamily } = await tokenService.generateTokenPair(user, req);
+    jwtSuccess = !!accessToken;
 
     // Create session
     const session = await sessionManager.createSession(user, req, tokenFamily);
@@ -151,6 +241,13 @@ const login = async (req, res) => {
       warnings.push('Unusual login detected — new device or location.');
     }
 
+    resStatus = 200;
+    if (isDev) {
+      console.log(`JWT generation: ${jwtSuccess ? 'success' : 'failure'}`);
+      console.log(`Login response status: ${resStatus}`);
+      console.log('---------------------------------------------------\n');
+    }
+
     res.json({
       id: user.id,
       name: user.name,
@@ -166,13 +263,23 @@ const login = async (req, res) => {
       warnings: warnings.length > 0 ? warnings : undefined,
     });
   } catch (error) {
+    resStatus = 500;
+    if (isDev) {
+      console.log(`Trainer found: ${userFound}`);
+      console.log(`Password comparison result: ${passwordValid}`);
+      console.log(`JWT generation: failure`);
+      console.log(`Login response status: ${resStatus}`);
+      console.log(`Error details: ${error.message}`);
+      console.log('---------------------------------------------------\n');
+    }
+    logger.error('Login error:', { message: error.message, stack: error.stack });
     await logAudit({
       action: ACTIONS.LOGIN_FAILED,
       category: 'AUTH',
       severity: 'ERROR',
       details: { error: error.message },
       req,
-    });
+    }).catch(() => {});
     res.status(500).json({ error: 'Server error during login' });
   }
 };

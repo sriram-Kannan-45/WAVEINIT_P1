@@ -59,7 +59,10 @@ export default function Login({ onLogin, defaultRole }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.email) {
+    if (loading) return; // Prevent duplicate requests
+
+    const trimmedEmail = (form.email || '').trim();
+    if (!trimmedEmail) {
       showError('Username or Email is required');
       return;
     }
@@ -70,10 +73,16 @@ export default function Login({ onLogin, defaultRole }) {
 
     setLoading(true);
     try {
+      const payload = {
+        email: trimmedEmail,
+        password: form.password,
+        role: form.role,
+      };
+
       const res = await fetch(API.LOGIN, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       });
       let data;
       try { 
@@ -82,6 +91,18 @@ export default function Login({ onLogin, defaultRole }) {
         throw new Error('Server error or unavailable. Please try again.'); 
       }
       if (!res.ok) {
+        if (res.status === 429) {
+          throw new Error(data.error || 'Too many login attempts. Please wait a minute and try again.');
+        }
+        if (res.status === 423) {
+          throw new Error(data.error || 'Account is temporarily locked. Please try again later.');
+        }
+        if (res.status === 403) {
+          throw new Error(data.error || 'Account is not authorized or incorrect role selected.');
+        }
+        if (res.status >= 500) {
+          throw new Error(data.error || 'Server error during login. Please try again later.');
+        }
         throw new Error(data.error || 'Invalid email or password');
       }
 
@@ -89,7 +110,7 @@ export default function Login({ onLogin, defaultRole }) {
       localStorage.setItem('lastRole', form.role);
       if (rememberMe) {
         localStorage.setItem('rememberMe', 'true');
-        localStorage.setItem('rememberedEmail', form.email);
+        localStorage.setItem('rememberedEmail', trimmedEmail);
       } else {
         localStorage.removeItem('rememberMe');
         localStorage.removeItem('rememberedEmail');

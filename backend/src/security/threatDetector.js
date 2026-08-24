@@ -105,6 +105,8 @@ function recordThreat(ip, type, details = {}) {
   }
 }
 
+const SENSITIVE_AUTH_FIELDS = new Set(['password', 'newPassword', 'oldPassword', 'confirmPassword', 'currentPassword']);
+
 // ── Middleware: SQL injection detection ─────────────────────────────────────
 function detectSqlInjection(req, res, next) {
   const checkString = (str) => {
@@ -114,7 +116,8 @@ function detectSqlInjection(req, res, next) {
 
   const checkObject = (obj) => {
     if (!obj || typeof obj !== 'object') return false;
-    for (const value of Object.values(obj)) {
+    for (const [key, value] of Object.entries(obj)) {
+      if (SENSITIVE_AUTH_FIELDS.has(key)) continue; // Never check raw password payloads
       if (typeof value === 'string' && checkString(value)) return true;
       if (typeof value === 'object' && checkObject(value)) return true;
     }
@@ -153,7 +156,8 @@ function detectXss(req, res, next) {
 
   const checkObject = (obj) => {
     if (!obj || typeof obj !== 'object') return false;
-    for (const value of Object.values(obj)) {
+    for (const [key, value] of Object.entries(obj)) {
+      if (SENSITIVE_AUTH_FIELDS.has(key)) continue; // Never check raw password payloads
       if (typeof value === 'string' && checkString(value)) return true;
       if (typeof value === 'object' && checkObject(value)) return true;
     }
