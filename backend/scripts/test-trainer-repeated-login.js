@@ -107,8 +107,8 @@ async function runRepeatedLoginSuite() {
   const roleMismatchRes = await request(app)
     .post('/api/auth/login')
     .send({ email: trainerEmail, password: validPassword, role: 'PARTICIPANT' });
-  const roleMismatchOk = roleMismatchRes.status === 403 && roleMismatchRes.body.error === 'Incorrect role selected.';
-  console.log(`  Role mismatch: HTTP ${roleMismatchRes.status} -> ${roleMismatchOk ? 'PASSED (403)' : 'FAILED'}`);
+  const roleMismatchOk = roleMismatchRes.status === 403 && (roleMismatchRes.body.error || '').includes('Role mismatch');
+  console.log(`  Role mismatch: HTTP ${roleMismatchRes.status} -> ${roleMismatchOk ? 'PASSED (403 Role Mismatch)' : 'FAILED'}`);
 
   console.log('\n================================================================');
   console.log('                 FINAL TEST REPORT SUMMARY                      ');

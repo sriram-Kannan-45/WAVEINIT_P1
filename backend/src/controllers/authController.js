@@ -30,6 +30,15 @@ function isWeakHash(hash) {
   );
 }
 
+function formatRoleLabel(role) {
+  if (!role) return 'User';
+  const r = role.toString().toUpperCase();
+  if (r === 'PARTICIPANT') return 'Learner';
+  if (r === 'TRAINER') return 'Trainer';
+  if (r === 'ADMIN') return 'Admin';
+  return r.charAt(0) + r.slice(1).toLowerCase();
+}
+
 const generateUsername = async (name) => {
   const baseName = name.replace(/[^a-zA-Z]/g, '').toLowerCase().slice(0, 4);
   let username = baseName + Math.floor(1000 + Math.random() * 9000);
@@ -186,12 +195,31 @@ const login = async (req, res) => {
 
     if (requestedRole && requestedRole.toLowerCase() !== user.role.toLowerCase()) {
       resStatus = 403;
+      const actualRoleLabel = formatRoleLabel(user.role);
+      const requestedRoleLabel = formatRoleLabel(requestedRole);
+      const errorMsg = `Role mismatch — this account is registered as ${actualRoleLabel}, not ${requestedRoleLabel}. Please use the ${actualRoleLabel} login tab.`;
+
       if (isDev) {
+        console.log(`Role mismatch: actual=${user.role} (${actualRoleLabel}), requested=${requestedRole} (${requestedRoleLabel})`);
         console.log(`JWT generation: failure`);
         console.log(`Login response status: ${resStatus}`);
         console.log('---------------------------------------------------\n');
       }
-      return res.status(403).json({ error: 'Incorrect role selected.' });
+
+      await logAudit({
+        userId: user.id,
+        action: ACTIONS.LOGIN_FAILED,
+        category: 'AUTH',
+        severity: 'WARNING',
+        details: { reason: 'Role mismatch', actualRole: user.role, requestedRole },
+        req,
+      });
+
+      return res.status(403).json({
+        error: errorMsg,
+        actualRole: user.role,
+        requestedRole,
+      });
     }
 
     // Force password change on first login (disabled to prevent redirect loops to forgot-password)
