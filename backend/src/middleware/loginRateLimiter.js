@@ -34,7 +34,7 @@ const FRONTEND_URL = (process.env.FRONTEND_URL || 'http://localhost:5174').repla
 // ── Tunables ───────────────────────────────────────────────────
 const isDev               = process.env.NODE_ENV !== 'production';
 const IP_WINDOW_MS        = 60_000;          // 1 minute
-const IP_MAX_REQUESTS     = isDev ? 120 : 15; // Higher limit in development to allow repetitive testing
+const IP_MAX_REQUESTS     = isDev ? 120 : 60; // 60 req/min in prod (sufficient for repeated testing and NAT offices while protecting against brute force)
 const MAX_FAILED_ATTEMPTS = 5;               // lock after 5 consecutive failures
 const LOCKOUT_MS          = 15 * 60_000;     // 15 minutes
 const PROGRESSIVE_DELAYS  = [0, 1000, 2000, 4000, 8000]; // ms per attempt

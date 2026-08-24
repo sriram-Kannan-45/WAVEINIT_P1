@@ -61,6 +61,8 @@ const codingAssessmentRoutes = require('./routes/codingAssessmentRoutes');
 const interviewRoutes = require('./routes/interviewRoutes');
 
 const app = express();
+// Enable trust proxy so Express parses the real client IP behind reverse proxies/load balancers (Render, Cloudflare, AWS, Nginx)
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3001;
 

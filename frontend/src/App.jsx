@@ -178,10 +178,12 @@ function App() {
       const response = await originalFetch(url, mergedOptions)
 
       if (response.status === 401) {
-        const urlStr = response.url || ''
-        const isAuthEndpoint = urlStr.includes('/api/auth/login') || urlStr.includes('/api/auth/register')
-        const isRefreshEndpoint = urlStr.includes('/api/auth/refresh')
-        const isVerifEndpoint = urlStr.includes('/api/assessment-verification')
+        const rawUrl = (typeof url === 'string' ? url : (url?.url || '')).toString();
+        const responseUrl = response.url || '';
+        const isAuthEndpoint = rawUrl.includes('/auth/login') || rawUrl.includes('/auth/register') ||
+                               responseUrl.includes('/auth/login') || responseUrl.includes('/auth/register');
+        const isRefreshEndpoint = rawUrl.includes('/auth/refresh') || responseUrl.includes('/auth/refresh');
+        const isVerifEndpoint = rawUrl.includes('/assessment-verification') || responseUrl.includes('/assessment-verification');
 
         if (!isAuthEndpoint && !isRefreshEndpoint && !isVerifEndpoint) {
           const newToken = await doRefresh()
@@ -213,6 +215,20 @@ function App() {
   }
 
   const handleLogout = () => {
+    try {
+      const savedUser = JSON.parse(localStorage.getItem('user') || '{}');
+      const token = savedUser?.token || savedUser?.accessToken;
+      if (token) {
+        originalFetch(`${API_BASE}/auth/logout`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          credentials: 'include'
+        }).catch(() => {});
+      }
+    } catch {}
     setUser(null)
     localStorage.removeItem('user')
   }
