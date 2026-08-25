@@ -35,13 +35,14 @@ const FRONTEND_URL = (process.env.FRONTEND_URL || 'http://localhost:5174').repla
 const isDev               = process.env.NODE_ENV !== 'production';
 const IP_WINDOW_MS        = 60_000;          // 1 minute
 const IP_MAX_REQUESTS     = isDev ? 120 : 60; // 60 req/min in prod (sufficient for repeated testing and NAT offices while protecting against brute force)
-const MAX_FAILED_ATTEMPTS = 5;               // lock after 5 consecutive failures
-const LOCKOUT_MS          = 15 * 60_000;     // 15 minutes
-const PROGRESSIVE_DELAYS  = [0, 1000, 2000, 4000, 8000]; // ms per attempt
+const MAX_FAILED_ATTEMPTS = 10;              // lock after 10 consecutive failures (tuned from 5)
+const LOCKOUT_MS          = 5 * 60_000;      // 5 minutes (tuned from 15 minutes)
+const PROGRESSIVE_DELAYS  = [0, 0, 0, 0, 0, 500, 1000, 1500, 2000, 3000]; // gentle progressive delay ms
 const CLEANUP_INTERVAL_MS = 60_000;          // purge stale entries every 60s
+const logger              = require('../utils/logger');
 
 // ── In-memory store ────────────────────────────────────────────
-// Keyed by normalized email (lowercased, trimmed).
+// Keyed by normalized email/username (lowercased, trimmed).
 const store = new Map();
 
 function getEmail(req) {
@@ -55,6 +56,7 @@ const ipLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (_req, res) => {
+    logger.warn(`[AUTH RATE LIMIT] IP rate limit exceeded: ${_req.ip}`);
     res.status(429).json({ error: 'Too many login attempts. Please wait a minute and try again.' });
   },
 });
@@ -63,7 +65,7 @@ const ipLimiter = rateLimit({
 function getRecord(email) {
   let rec = store.get(email);
   if (!rec) {
-    rec = { count: 0, lockoutUntil: null, lockedAt: null };
+    rec = { count: 0, lockoutUntil: null, lockedAt: null, lastAttempt: Date.now() };
     store.set(email, rec);
   }
   return rec;
@@ -71,6 +73,29 @@ function getRecord(email) {
 
 function isLocked(rec) {
   return rec.lockoutUntil !== null && Date.now() < rec.lockoutUntil;
+}
+
+function resetLockout(identifier) {
+  if (!identifier) return;
+  const key = identifier.toString().toLowerCase().trim();
+  store.delete(key);
+}
+
+function unlockAll() {
+  store.clear();
+}
+
+function getLockoutStatus(identifier) {
+  if (!identifier) return { locked: false, count: 0 };
+  const key = identifier.toString().toLowerCase().trim();
+  const rec = store.get(key);
+  if (!rec) return { locked: false, count: 0 };
+  return {
+    locked: isLocked(rec),
+    count: rec.count,
+    lockoutUntil: rec.lockoutUntil,
+    remainingSeconds: rec.lockoutUntil ? Math.max(0, Math.ceil((rec.lockoutUntil - Date.now()) / 1000)) : 0,
+  };
 }
 
 async function sendLockoutEmail(email) {
@@ -139,7 +164,13 @@ function accountLock(req, res, next) {
 
   // Already locked — respond with locked status
   if (isLocked(rec)) {
-    return res.status(423).json({ error: 'Account is temporarily locked due to multiple failed login attempts. Please try again later or reset your password.' });
+    const remainingMs = rec.lockoutUntil - Date.now();
+    const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+    logger.warn(`[AUTH LOCKOUT] Blocked request for locked account "${email}". Remaining: ${remainingSeconds}s`);
+    return res.status(423).json({
+      error: 'Account is temporarily locked due to multiple failed login attempts. Please try again later or reset your password.',
+      remainingSeconds,
+    });
   }
 
   // Not locked — pass through
@@ -159,10 +190,11 @@ function trackOutcome(req, res, next) {
     if (isSuccess) {
       // Login successful — clear history
       store.delete(email);
-    } else if (res.statusCode === 401 || res.statusCode === 422) {
-      // Login failed — record the attempt
+    } else if (res.statusCode === 401) {
+      // Login failed due to invalid credentials — record the attempt (422 validation errors do NOT count)
       const rec = getRecord(email);
       rec.count += 1;
+      rec.lastAttempt = Date.now();
 
       // Progressive delay (artificial wait proportional to attempt count)
       const idx = Math.min(rec.count - 1, PROGRESSIVE_DELAYS.length - 1);
@@ -172,6 +204,8 @@ function trackOutcome(req, res, next) {
       if (rec.count >= MAX_FAILED_ATTEMPTS) {
         rec.lockoutUntil = Date.now() + LOCKOUT_MS;
         rec.lockedAt = Date.now();
+
+        logger.warn(`[AUTH LOCKOUT] Account "${email}" reached ${rec.count} failed attempts. Locked for ${LOCKOUT_MS / 60000} minutes.`);
 
         // Fire-and-forget lockout notification email
         sendLockoutEmail(email);
@@ -202,4 +236,14 @@ setInterval(() => {
   }
 }, CLEANUP_INTERVAL_MS).unref();
 
-module.exports = { ipLimiter, accountLock, trackOutcome };
+module.exports = {
+  ipLimiter,
+  accountLock,
+  trackOutcome,
+  resetLockout,
+  unlockAll,
+  getLockoutStatus,
+  MAX_FAILED_ATTEMPTS,
+  LOCKOUT_MS,
+};
+

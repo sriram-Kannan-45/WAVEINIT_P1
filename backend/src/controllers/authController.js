@@ -13,14 +13,29 @@
  */
 
 const bcrypt = require('bcryptjs');
+const os = require('os');
 const { User, TrainerProfile } = require('../models');
+const { sequelize } = require('../config/db');
 const tokenService = require('../security/tokenService');
 const sessionManager = require('../security/sessionManager');
 const { logAudit, ACTIONS } = require('../security/auditLogger');
+const { resetLockout } = require('../middleware/loginRateLimiter');
 const logger = require('../utils/logger');
 require('dotenv').config();
 
 const BCRYPT_COST = 12;
+const INSTANCE_ID = process.env.INSTANCE_ID || process.env.HOSTNAME || os.hostname() || `pid-${process.pid}`;
+
+function maskCredential(cred) {
+  if (!cred || typeof cred !== 'string') return '***';
+  const trimmed = cred.trim();
+  if (trimmed.includes('@')) {
+    const [local, domain] = trimmed.split('@');
+    const maskedLocal = local.length <= 2 ? local.charAt(0) + '***' : local.slice(0, 2) + '***' + local.slice(-1);
+    return `${maskedLocal}@${domain}`;
+  }
+  return trimmed.length <= 3 ? '***' : trimmed.slice(0, 2) + '***' + trimmed.slice(-1);
+}
 
 function isWeakHash(hash) {
   return typeof hash === 'string' && (
@@ -53,42 +68,32 @@ const generateUsername = async (name) => {
 // ── LOGIN ──────────────────────────────────────────────────────────────────
 const login = async (req, res) => {
   const startTime = Date.now();
-  const isDev = process.env.NODE_ENV !== 'production';
-  let userFound = false;
-  let trainerId = null;
+  const clientIp = req.ip || req.connection?.remoteAddress || 'unknown';
+  let internalReason = 'UNKNOWN';
+  let userId = null;
   let userRole = null;
   let userStatus = null;
-  let passwordValid = false;
-  let jwtSuccess = false;
-  let resStatus = 200;
 
   try {
     const { email, username, password, role: requestedRole } = req.body;
     const rawCredential = (email || username || '').toString();
     const normalizedEmail = rawCredential.trim().toLowerCase();
     const normalizedUsername = rawCredential.trim();
-
-    if (isDev) {
-      console.log('\n--- [AUTH DEBUG] Trainer login request received ---');
-      console.log(`Email received: ${normalizedEmail}`);
-    }
+    const masked = maskCredential(rawCredential);
 
     if (!rawCredential.trim() || !password) {
-      resStatus = 422;
-      if (isDev) {
-        console.log(`Trainer found: false`);
-        console.log(`Password comparison result: false`);
-        console.log(`JWT generation: failure`);
-        console.log(`Login response status: ${resStatus}`);
-        console.log('---------------------------------------------------\n');
-      }
+      internalReason = 'MISSING_CREDENTIALS';
+      logger.warn(`[AUTH LOGIN ATTEMPT] REJECTED (422) - Reason: ${internalReason} | Credential: "${masked}" | Role: ${requestedRole || 'none'} | IP: ${clientIp} | Instance: ${INSTANCE_ID} | Duration: ${Date.now() - startTime}ms`);
       return res.status(422).json({ error: 'Email/Username and password are required' });
     }
 
     const { Op } = require('sequelize');
+    // Case-insensitive and trimmed lookup for both email and username across database dialects
     const user = await User.findOne({
       where: {
         [Op.or]: [
+          sequelize.where(sequelize.fn('LOWER', sequelize.fn('TRIM', sequelize.col('User.email'))), normalizedEmail),
+          sequelize.where(sequelize.fn('LOWER', sequelize.fn('TRIM', sequelize.col('User.username'))), normalizedEmail),
           { email: normalizedEmail },
           { email: rawCredential.trim() },
           { username: normalizedUsername },
@@ -98,60 +103,38 @@ const login = async (req, res) => {
       }
     });
 
-    userFound = !!user;
     if (user) {
-      trainerId = user.id;
+      userId = user.id;
       userRole = user.role;
       userStatus = user.status;
     }
 
-    if (isDev) {
-      console.log(`Trainer found: ${userFound}`);
-      if (user) {
-        console.log(`Trainer ID: ${trainerId}`);
-        console.log(`Role: ${userRole}`);
-        console.log(`Account status: ${userStatus}`);
-      }
-    }
-
     if (!user) {
-      resStatus = 401;
-      if (isDev) {
-        console.log(`Password comparison result: false`);
-        console.log(`JWT generation: failure`);
-        console.log(`Login response status: ${resStatus}`);
-        console.log('---------------------------------------------------\n');
-      }
+      internalReason = 'USER_NOT_FOUND';
+      logger.warn(`[AUTH LOGIN ATTEMPT] REJECTED (401) - Reason: ${internalReason} | Credential: "${masked}" | Role: ${requestedRole || 'none'} | IP: ${clientIp} | Instance: ${INSTANCE_ID} | Duration: ${Date.now() - startTime}ms`);
+      
       await logAudit({
         action: ACTIONS.LOGIN_FAILED,
         category: 'AUTH',
         severity: 'WARNING',
-        details: { reason: 'User not found', credential: rawCredential.slice(0, 3) + '***' },
+        details: { reason: 'User not found', credential: masked, instance: INSTANCE_ID },
         req,
       });
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
     const isValidPassword = await bcrypt.compare(password, user.password);
-    passwordValid = isValidPassword;
-
-    if (isDev) {
-      console.log(`Password comparison result: ${passwordValid}`);
-    }
 
     if (!isValidPassword) {
-      resStatus = 401;
-      if (isDev) {
-        console.log(`JWT generation: failure`);
-        console.log(`Login response status: ${resStatus}`);
-        console.log('---------------------------------------------------\n');
-      }
+      internalReason = 'PASSWORD_MISMATCH';
+      logger.warn(`[AUTH LOGIN ATTEMPT] REJECTED (401) - Reason: ${internalReason} | User ID: ${userId} | Role: ${userRole} | Credential: "${masked}" | IP: ${clientIp} | Instance: ${INSTANCE_ID} | Duration: ${Date.now() - startTime}ms`);
+
       await logAudit({
         userId: user.id,
         action: ACTIONS.LOGIN_FAILED,
         category: 'AUTH',
         severity: 'WARNING',
-        details: { reason: 'Invalid password' },
+        details: { reason: 'Invalid password', instance: INSTANCE_ID },
         req,
       });
       return res.status(401).json({ error: 'Invalid email or password' });
@@ -164,54 +147,37 @@ const login = async (req, res) => {
     }
 
     if (user.role === 'PARTICIPANT' && user.status === 'PENDING') {
-      resStatus = 403;
-      if (isDev) {
-        console.log(`JWT generation: failure`);
-        console.log(`Login response status: ${resStatus}`);
-        console.log('---------------------------------------------------\n');
-      }
+      internalReason = 'ACCOUNT_PENDING';
+      logger.warn(`[AUTH LOGIN ATTEMPT] REJECTED (403) - Reason: ${internalReason} | User ID: ${userId} | Role: ${userRole} | Credential: "${masked}" | IP: ${clientIp} | Instance: ${INSTANCE_ID} | Duration: ${Date.now() - startTime}ms`);
       return res.status(403).json({ error: 'Your account is pending admin approval. You will be able to log in once an administrator approves your account.' });
     }
 
     if (user.status === 'REJECTED') {
-      resStatus = 403;
-      if (isDev) {
-        console.log(`JWT generation: failure`);
-        console.log(`Login response status: ${resStatus}`);
-        console.log('---------------------------------------------------\n');
-      }
+      internalReason = 'ACCOUNT_REJECTED';
+      logger.warn(`[AUTH LOGIN ATTEMPT] REJECTED (403) - Reason: ${internalReason} | User ID: ${userId} | Role: ${userRole} | Credential: "${masked}" | IP: ${clientIp} | Instance: ${INSTANCE_ID} | Duration: ${Date.now() - startTime}ms`);
       return res.status(403).json({ error: 'Your registration was rejected. Please contact support if you believe this is an error.' });
     }
 
     if (user.status === 'INACTIVE') {
-      resStatus = 403;
-      if (isDev) {
-        console.log(`JWT generation: failure`);
-        console.log(`Login response status: ${resStatus}`);
-        console.log('---------------------------------------------------\n');
-      }
+      internalReason = 'ACCOUNT_INACTIVE';
+      logger.warn(`[AUTH LOGIN ATTEMPT] REJECTED (403) - Reason: ${internalReason} | User ID: ${userId} | Role: ${userRole} | Credential: "${masked}" | IP: ${clientIp} | Instance: ${INSTANCE_ID} | Duration: ${Date.now() - startTime}ms`);
       return res.status(403).json({ error: 'Your account has been deactivated.' });
     }
 
     if (requestedRole && requestedRole.toLowerCase() !== user.role.toLowerCase()) {
-      resStatus = 403;
+      internalReason = 'ROLE_MISMATCH';
       const actualRoleLabel = formatRoleLabel(user.role);
       const requestedRoleLabel = formatRoleLabel(requestedRole);
       const errorMsg = `Role mismatch — this account is registered as ${actualRoleLabel}, not ${requestedRoleLabel}. Please use the ${actualRoleLabel} login tab.`;
 
-      if (isDev) {
-        console.log(`Role mismatch: actual=${user.role} (${actualRoleLabel}), requested=${requestedRole} (${requestedRoleLabel})`);
-        console.log(`JWT generation: failure`);
-        console.log(`Login response status: ${resStatus}`);
-        console.log('---------------------------------------------------\n');
-      }
+      logger.warn(`[AUTH LOGIN ATTEMPT] REJECTED (403) - Reason: ${internalReason} | Actual: ${user.role} | Requested: ${requestedRole} | User ID: ${userId} | Credential: "${masked}" | IP: ${clientIp} | Instance: ${INSTANCE_ID} | Duration: ${Date.now() - startTime}ms`);
 
       await logAudit({
         userId: user.id,
         action: ACTIONS.LOGIN_FAILED,
         category: 'AUTH',
         severity: 'WARNING',
-        details: { reason: 'Role mismatch', actualRole: user.role, requestedRole },
+        details: { reason: 'Role mismatch', actualRole: user.role, requestedRole, instance: INSTANCE_ID },
         req,
       });
 
@@ -227,13 +193,17 @@ const login = async (req, res) => {
 
     // Generate token pair
     const { accessToken, refreshToken, tokenFamily } = await tokenService.generateTokenPair(user, req);
-    jwtSuccess = !!accessToken;
 
     // Create session
     const session = await sessionManager.createSession(user, req, tokenFamily);
 
     // Set refresh token in HttpOnly cookie
     tokenService.setRefreshTokenCookie(res, refreshToken);
+
+    // Clear lockout history across all user aliases upon successful login
+    resetLockout(user.email);
+    if (user.username) resetLockout(user.username);
+    if (normalizedEmail !== (user.email || '').toLowerCase()) resetLockout(normalizedEmail);
 
     // Track login activity
     try {
@@ -259,6 +229,7 @@ const login = async (req, res) => {
         sessionId: session.sessionId,
         suspiciousScore: session.suspiciousScore,
         suspiciousReasons: session.suspiciousReasons,
+        instance: INSTANCE_ID,
       },
       req,
     });
@@ -269,12 +240,8 @@ const login = async (req, res) => {
       warnings.push('Unusual login detected — new device or location.');
     }
 
-    resStatus = 200;
-    if (isDev) {
-      console.log(`JWT generation: ${jwtSuccess ? 'success' : 'failure'}`);
-      console.log(`Login response status: ${resStatus}`);
-      console.log('---------------------------------------------------\n');
-    }
+    internalReason = 'LOGIN_SUCCESS';
+    logger.info(`[AUTH LOGIN ATTEMPT] SUCCESS (200) - Reason: ${internalReason} | User ID: ${userId} | Role: ${userRole} | Credential: "${masked}" | IP: ${clientIp} | Instance: ${INSTANCE_ID} | Duration: ${Date.now() - startTime}ms`);
 
     res.json({
       id: user.id,
@@ -291,24 +258,17 @@ const login = async (req, res) => {
       warnings: warnings.length > 0 ? warnings : undefined,
     });
   } catch (error) {
-    resStatus = 500;
-    if (isDev) {
-      console.log(`Trainer found: ${userFound}`);
-      console.log(`Password comparison result: ${passwordValid}`);
-      console.log(`JWT generation: failure`);
-      console.log(`Login response status: ${resStatus}`);
-      console.log(`Error details: ${error.message}`);
-      console.log('---------------------------------------------------\n');
-    }
-    logger.error('Login error:', { message: error.message, stack: error.stack });
+    internalReason = 'SERVER_ERROR';
+    logger.error(`[AUTH LOGIN ATTEMPT] ERROR (500) - Reason: ${internalReason} | Credential: "${maskCredential(req.body?.email || req.body?.username)}" | Error: ${error.message} | Stack: ${error.stack} | IP: ${clientIp} | Instance: ${INSTANCE_ID} | Duration: ${Date.now() - startTime}ms`);
+    
     await logAudit({
       action: ACTIONS.LOGIN_FAILED,
       category: 'AUTH',
       severity: 'ERROR',
-      details: { error: error.message },
+      details: { error: error.message, instance: INSTANCE_ID },
       req,
     }).catch(() => {});
-    res.status(500).json({ error: 'Server error during login' });
+    return res.status(500).json({ error: 'Server error during login' });
   }
 };
 

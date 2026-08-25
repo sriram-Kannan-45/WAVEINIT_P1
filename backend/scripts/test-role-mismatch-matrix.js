@@ -28,6 +28,10 @@ async function runRoleMatrixTests() {
     process.exit(1);
   }
 
+  const origAdminPw = adminUser.password;
+  const origTrainerPw = trainerUser.password;
+  const origLearnerPw = learnerUser.password;
+
   const VALID_PASSWORD = 'RoleMatrixPass@2026!';
   const WRONG_PASSWORD = 'CompletelyWrongPassword@999!';
   const hashedPassword = await bcrypt.hash(VALID_PASSWORD, 12);
@@ -35,6 +39,9 @@ async function runRoleMatrixTests() {
   await adminUser.update({ password: hashedPassword });
   await trainerUser.update({ password: hashedPassword });
   await learnerUser.update({ password: hashedPassword });
+
+  const { unlockAll } = require('../src/middleware/loginRateLimiter');
+  unlockAll();
 
   console.log(`Test Accounts Loaded:`);
   console.log(`  - Admin   : ${adminUser.email}`);
@@ -68,20 +75,29 @@ async function runRoleMatrixTests() {
     return passed;
   }
 
-  console.log('>>> SCENARIO 1: CORRECT ROLE TAB + VALID PASSWORD (Expected: 200 OK)');
-  await runTestCase(1, 'Admin on Admin Tab (Valid Password)', adminUser, 'ADMIN', VALID_PASSWORD, 200);
-  await runTestCase(2, 'Trainer on Trainer Tab (Valid Password)', trainerUser, 'TRAINER', VALID_PASSWORD, 200);
-  await runTestCase(3, 'Learner on Learner Tab (Valid Password)', learnerUser, 'PARTICIPANT', VALID_PASSWORD, 200);
+  try {
+    console.log('>>> SCENARIO 1: CORRECT ROLE TAB + VALID PASSWORD (Expected: 200 OK)');
+    await runTestCase(1, 'Admin on Admin Tab (Valid Password)', adminUser, 'ADMIN', VALID_PASSWORD, 200);
+    await runTestCase(2, 'Trainer on Trainer Tab (Valid Password)', trainerUser, 'TRAINER', VALID_PASSWORD, 200);
+    await runTestCase(3, 'Learner on Learner Tab (Valid Password)', learnerUser, 'PARTICIPANT', VALID_PASSWORD, 200);
 
-  console.log('\n>>> SCENARIO 2: WRONG ROLE TAB + VALID PASSWORD (Expected: 403 Role Mismatch)');
-  await runTestCase(4, 'Admin on Trainer Tab (Valid Password)', adminUser, 'TRAINER', VALID_PASSWORD, 403, 'Role mismatch — this account is registered as Admin, not Trainer');
-  await runTestCase(5, 'Trainer on Admin Tab (Valid Password)', trainerUser, 'ADMIN', VALID_PASSWORD, 403, 'Role mismatch — this account is registered as Trainer, not Admin');
-  await runTestCase(6, 'Learner on Admin Tab (Valid Password)', learnerUser, 'ADMIN', VALID_PASSWORD, 403, 'Role mismatch — this account is registered as Learner, not Admin');
+    console.log('\n>>> SCENARIO 2: WRONG ROLE TAB + VALID PASSWORD (Expected: 403 Role Mismatch)');
+    await runTestCase(4, 'Admin on Trainer Tab (Valid Password)', adminUser, 'TRAINER', VALID_PASSWORD, 403, 'Role mismatch — this account is registered as Admin, not Trainer');
+    await runTestCase(5, 'Trainer on Admin Tab (Valid Password)', trainerUser, 'ADMIN', VALID_PASSWORD, 403, 'Role mismatch — this account is registered as Trainer, not Admin');
+    await runTestCase(6, 'Learner on Admin Tab (Valid Password)', learnerUser, 'ADMIN', VALID_PASSWORD, 403, 'Role mismatch — this account is registered as Learner, not Admin');
 
-  console.log('\n>>> SCENARIO 3: WRONG PASSWORD (Expected: 401 Generic, No Role Leak)');
-  await runTestCase(7, 'Admin on Admin Tab (Wrong Password)', adminUser, 'ADMIN', WRONG_PASSWORD, 401, 'Invalid email or password');
-  await runTestCase(8, 'Trainer on Trainer Tab (Wrong Password)', trainerUser, 'TRAINER', WRONG_PASSWORD, 401, 'Invalid email or password');
-  await runTestCase(9, 'Learner on Learner Tab (Wrong Password)', learnerUser, 'PARTICIPANT', WRONG_PASSWORD, 401, 'Invalid email or password');
+    console.log('\n>>> SCENARIO 3: WRONG PASSWORD (Expected: 401 Generic, No Role Leak)');
+    await runTestCase(7, 'Admin on Admin Tab (Wrong Password)', adminUser, 'ADMIN', WRONG_PASSWORD, 401, 'Invalid email or password');
+    await runTestCase(8, 'Trainer on Trainer Tab (Wrong Password)', trainerUser, 'TRAINER', WRONG_PASSWORD, 401, 'Invalid email or password');
+    await runTestCase(9, 'Learner on Learner Tab (Wrong Password)', learnerUser, 'PARTICIPANT', WRONG_PASSWORD, 401, 'Invalid email or password');
+  } finally {
+    // Always restore original passwords
+    await adminUser.update({ password: origAdminPw });
+    await trainerUser.update({ password: origTrainerPw });
+    await learnerUser.update({ password: origLearnerPw });
+    unlockAll();
+    console.log('\n✓ Restored original user passwords and cleared lockout store.');
+  }
 
   const totalPassed = results.filter(r => r.passed).length;
 

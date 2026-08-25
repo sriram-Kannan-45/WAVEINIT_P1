@@ -31,10 +31,14 @@ async function runRepeatedLoginSuite() {
     process.exit(1);
   }
 
+  const origTrainerPw = trainer.password;
   const trainerEmail = trainer.email;
   const validPassword = 'TrainerPass@2026!Repeat';
   const hashedPassword = await bcrypt.hash(validPassword, 12);
   await trainer.update({ password: hashedPassword });
+
+  const { unlockAll } = require('../src/middleware/loginRateLimiter');
+  unlockAll();
 
   console.log(`Target Trainer: ${trainerEmail} (ID: ${trainer.id}, Role: ${trainer.role})\n`);
 
@@ -44,71 +48,82 @@ async function runRepeatedLoginSuite() {
 
   console.log(`>>> Starting ${TOTAL_CYCLES} sequential Login -> Logout cycles...`);
 
-  for (let i = 1; i <= TOTAL_CYCLES; i++) {
-    // 1. LOGIN
-    const loginRes = await request(app)
+  let wrongPassOk = false;
+  let wrongEmailOk = false;
+  let emptyOk = false;
+  let roleMismatchOk = false;
+
+  try {
+    for (let i = 1; i <= TOTAL_CYCLES; i++) {
+      // 1. LOGIN
+      const loginRes = await request(app)
+        .post('/api/auth/login')
+        .send({ email: trainerEmail, password: validPassword, role: 'TRAINER' });
+
+      const loginOk = loginRes.status === 200 && !!loginRes.body.token;
+      const token = loginRes.body.token;
+
+      if (!loginOk) {
+        console.log(`  Cycle ${i.toString().padStart(2, ' ')}: ✗ LOGIN FAILED (HTTP ${loginRes.status}) - ${JSON.stringify(loginRes.body)}`);
+        cycleLogs.push({ cycle: i, login: false, logout: false, error: loginRes.body });
+        continue;
+      }
+
+      // 2. LOGOUT with token
+      const logoutRes = await request(app)
+        .post('/api/auth/logout')
+        .set('Authorization', `Bearer ${token}`)
+        .send();
+
+      const logoutOk = logoutRes.status === 200;
+
+      if (loginOk && logoutOk) {
+        successfulCycles++;
+        console.log(`  Cycle ${i.toString().padStart(2, ' ')}/${TOTAL_CYCLES}: ✓ Login 200 OK (Token issued) → ✓ Logout 200 OK (Session ended)`);
+        cycleLogs.push({ cycle: i, login: true, logout: true });
+      } else {
+        console.log(`  Cycle ${i.toString().padStart(2, ' ')}: ✗ LOGOUT FAILED (HTTP ${logoutRes.status}) - ${JSON.stringify(logoutRes.body)}`);
+        cycleLogs.push({ cycle: i, login: true, logout: false, error: logoutRes.body });
+      }
+    }
+
+    console.log(`\nCycle Results: ${successfulCycles}/${TOTAL_CYCLES} successful\n`);
+
+    // ── ERROR CLASSIFICATION TESTS ──
+    console.log('>>> Checking Error Classifications:');
+
+    // Test: Wrong password
+    const wrongPassRes = await request(app)
       .post('/api/auth/login')
-      .send({ email: trainerEmail, password: validPassword, role: 'TRAINER' });
+      .send({ email: trainerEmail, password: 'IncorrectPassword999!', role: 'TRAINER' });
+    wrongPassOk = wrongPassRes.status === 401 && wrongPassRes.body.error === 'Invalid email or password';
+    console.log(`  Wrong password: HTTP ${wrongPassRes.status} -> ${wrongPassOk ? 'PASSED (401)' : 'FAILED'}`);
 
-    const loginOk = loginRes.status === 200 && !!loginRes.body.token;
-    const token = loginRes.body.token;
+    // Test: Nonexistent email
+    const wrongEmailRes = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'fake_nonexistent_user_99999@domain.com', password: validPassword, role: 'TRAINER' });
+    wrongEmailOk = wrongEmailRes.status === 401 && wrongEmailRes.body.error === 'Invalid email or password';
+    console.log(`  Wrong email: HTTP ${wrongEmailRes.status} -> ${wrongEmailOk ? 'PASSED (401)' : 'FAILED'}`);
 
-    if (!loginOk) {
-      console.log(`  Cycle ${i.toString().padStart(2, ' ')}: ✗ LOGIN FAILED (HTTP ${loginRes.status}) - ${JSON.stringify(loginRes.body)}`);
-      cycleLogs.push({ cycle: i, login: false, logout: false, error: loginRes.body });
-      continue;
-    }
+    // Test: Empty credentials
+    const emptyRes = await request(app)
+      .post('/api/auth/login')
+      .send({ email: '', password: '', role: 'TRAINER' });
+    emptyOk = emptyRes.status === 422;
+    console.log(`  Empty credentials: HTTP ${emptyRes.status} -> ${emptyOk ? 'PASSED (422)' : 'FAILED'}`);
 
-    // 2. LOGOUT with token
-    const logoutRes = await request(app)
-      .post('/api/auth/logout')
-      .set('Authorization', `Bearer ${token}`)
-      .send();
-
-    const logoutOk = logoutRes.status === 200;
-
-    if (loginOk && logoutOk) {
-      successfulCycles++;
-      console.log(`  Cycle ${i.toString().padStart(2, ' ')}/${TOTAL_CYCLES}: ✓ Login 200 OK (Token issued) → ✓ Logout 200 OK (Session ended)`);
-      cycleLogs.push({ cycle: i, login: true, logout: true });
-    } else {
-      console.log(`  Cycle ${i.toString().padStart(2, ' ')}: ✗ LOGOUT FAILED (HTTP ${logoutRes.status}) - ${JSON.stringify(logoutRes.body)}`);
-      cycleLogs.push({ cycle: i, login: true, logout: false, error: logoutRes.body });
-    }
+    // Test: Role mismatch
+    const roleMismatchRes = await request(app)
+      .post('/api/auth/login')
+      .send({ email: trainerEmail, password: validPassword, role: 'PARTICIPANT' });
+    roleMismatchOk = roleMismatchRes.status === 403 && (roleMismatchRes.body.error || '').includes('Role mismatch');
+    console.log(`  Role mismatch: HTTP ${roleMismatchRes.status} -> ${roleMismatchOk ? 'PASSED (403 Role Mismatch)' : 'FAILED'}`);
+  } finally {
+    await trainer.update({ password: origTrainerPw });
+    unlockAll();
+    console.log('\n✓ Restored original trainer password and cleared lockout store.');
   }
-
-  console.log(`\nCycle Results: ${successfulCycles}/${TOTAL_CYCLES} successful\n`);
-
-  // ── ERROR CLASSIFICATION TESTS ──
-  console.log('>>> Checking Error Classifications:');
-
-  // Test: Wrong password
-  const wrongPassRes = await request(app)
-    .post('/api/auth/login')
-    .send({ email: trainerEmail, password: 'IncorrectPassword999!', role: 'TRAINER' });
-  const wrongPassOk = wrongPassRes.status === 401 && wrongPassRes.body.error === 'Invalid email or password';
-  console.log(`  Wrong password: HTTP ${wrongPassRes.status} -> ${wrongPassOk ? 'PASSED (401)' : 'FAILED'}`);
-
-  // Test: Nonexistent email
-  const wrongEmailRes = await request(app)
-    .post('/api/auth/login')
-    .send({ email: 'fake_nonexistent_user_99999@domain.com', password: validPassword, role: 'TRAINER' });
-  const wrongEmailOk = wrongEmailRes.status === 401 && wrongEmailRes.body.error === 'Invalid email or password';
-  console.log(`  Wrong email: HTTP ${wrongEmailRes.status} -> ${wrongEmailOk ? 'PASSED (401)' : 'FAILED'}`);
-
-  // Test: Empty credentials
-  const emptyRes = await request(app)
-    .post('/api/auth/login')
-    .send({ email: '', password: '', role: 'TRAINER' });
-  const emptyOk = emptyRes.status === 422;
-  console.log(`  Empty credentials: HTTP ${emptyRes.status} -> ${emptyOk ? 'PASSED (422)' : 'FAILED'}`);
-
-  // Test: Role mismatch
-  const roleMismatchRes = await request(app)
-    .post('/api/auth/login')
-    .send({ email: trainerEmail, password: validPassword, role: 'PARTICIPANT' });
-  const roleMismatchOk = roleMismatchRes.status === 403 && (roleMismatchRes.body.error || '').includes('Role mismatch');
-  console.log(`  Role mismatch: HTTP ${roleMismatchRes.status} -> ${roleMismatchOk ? 'PASSED (403 Role Mismatch)' : 'FAILED'}`);
 
   console.log('\n================================================================');
   console.log('                 FINAL TEST REPORT SUMMARY                      ');

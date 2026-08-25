@@ -91,19 +91,23 @@ export default function Login({ onLogin, defaultRole }) {
         throw new Error('Server error or unavailable. Please try again.'); 
       }
       if (!res.ok) {
+        const errorDetail = data?.error || data?.message || data?.err;
         if (res.status === 429) {
-          throw new Error(data.error || 'Too many login attempts. Please wait a minute and try again.');
+          throw new Error(errorDetail || 'Too many login attempts. Please wait a minute and try again.');
         }
         if (res.status === 423) {
-          throw new Error(data.error || 'Account is temporarily locked. Please try again later.');
+          throw new Error(errorDetail || 'Account is temporarily locked due to multiple failed login attempts. Please try again later or reset your password.');
         }
         if (res.status === 403) {
-          throw new Error(data.error || 'Account is not authorized or incorrect role selected.');
+          throw new Error(errorDetail || 'Account is not authorized or incorrect role selected.');
+        }
+        if (res.status === 422) {
+          throw new Error(errorDetail || 'Email/Username and password are required.');
         }
         if (res.status >= 500) {
-          throw new Error(data.error || 'Server error during login. Please try again later.');
+          throw new Error(errorDetail || 'Server error during login. Please try again later.');
         }
-        throw new Error(data.error || 'Invalid email or password');
+        throw new Error(errorDetail || 'Invalid email or password');
       }
 
       localStorage.setItem('user', JSON.stringify(data));
