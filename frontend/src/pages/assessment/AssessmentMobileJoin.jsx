@@ -42,8 +42,88 @@ const ICE_SERVERS = [
   { urls: 'stun:stun4.l.google.com:19302' },
 ];
 
-export default function AssessmentMobileJoin() {
-  const { token } = useParams();
+/** On-screen diagnostic log overlay component for mobile testing */
+function MobileDebugPanel({ logs, isOpen, onToggle }) {
+  if (!logs || logs.length === 0) return null;
+  const isDebug = typeof window !== 'undefined' && (window.location.search.indexOf('debug') !== -1 || window.location.hash.indexOf('debug') !== -1);
+  if (!isOpen && !isDebug) return null;
+
+  return (
+    <div style={{
+      position: 'fixed', bottom: 10, left: 10, right: 10, zIndex: 99999,
+      background: 'rgba(15, 23, 42, 0.95)', border: '1px solid #334155',
+      borderRadius: 12, padding: '8px 12px', color: '#f8fafc',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.8)', fontSize: 10, fontFamily: 'monospace',
+      maxHeight: isOpen ? '240px' : '36px', overflow: 'hidden', display: 'flex', flexDirection: 'column'
+    }}>
+      <div
+        onClick={onToggle}
+        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', fontWeight: 'bold', color: '#4ade80', marginBottom: isOpen ? 6 : 0 }}
+      >
+        <span>📱 MOBILE DIAGNOSTICS ({logs.length})</span>
+        <span style={{ background: '#334155', padding: '1px 6px', borderRadius: 4 }}>{isOpen ? 'Minimize' : 'Expand'}</span>
+      </div>
+      {isOpen && (
+        <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column-reverse', gap: 2 }}>
+          {logs.slice().reverse().map((log, idx) => (
+            <div key={idx} style={{ color: log.type === 'error' ? '#f87171' : log.type === 'warn' ? '#fbbf24' : '#86efac', wordBreak: 'break-all' }}>
+              [{log.time}] {log.text}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+class AssessmentMobileErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, errorInfo) {
+    console.error('[AssessmentMobileJoin ErrorBoundary]', error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="wi-mobile-page">
+          <div className="wi-mobile-header">
+            <div className="wi-mobile-shield-icon">
+              <Shield size={24} strokeWidth={2.4} />
+            </div>
+            <h1 className="wi-mobile-brand-title">WAVE INIT LMS</h1>
+            <p className="wi-mobile-brand-subtitle">Secure Proctoring &bull; Verification</p>
+          </div>
+          <div className="wi-mobile-card">
+            <div className="wi-mobile-state-box">
+              <div className="wi-mobile-error-icon">
+                <AlertCircle size={30} />
+              </div>
+              <h3 className="wi-mobile-error-title">Verification Page Error</h3>
+              <p className="wi-mobile-error-msg">{this.state.error?.message || 'An unexpected rendering error occurred.'}</p>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="wi-mobile-btn-primary"
+              >
+                <RefreshCw size={15} /> Reload Page
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function AssessmentMobileJoinContent() {
+  const params = useParams();
+  const token = params?.token || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('token') : null);
   const [phase, setPhase] = useState(PHASE.LOADING);
   const [info, setInfo] = useState(null);
   const [error, setError] = useState(null);
@@ -53,6 +133,8 @@ export default function AssessmentMobileJoin() {
   const [facingMode, setFacingMode] = useState('environment'); // 'environment' (back) | 'user' (front)
   const [isSwitchingCamera, setIsSwitchingCamera] = useState(false);
   const [isAssessmentStarted, setIsAssessmentStarted] = useState(false);
+  const [logs, setLogs] = useState([]);
+  const [showDebug, setShowDebug] = useState(false);
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -64,13 +146,38 @@ export default function AssessmentMobileJoin() {
   const mobileCandidateQueueRef = useRef([]);
   const frameIntervalRef = useRef(null);
 
-  // 1. Initial QR Token Validation
+  const addLog = useCallback((text, type = 'info') => {
+    const time = new Date().toLocaleTimeString();
+    console.log(`[MOBILE-LOG] ${text}`);
+    setLogs((prev) => [...prev.slice(-40), { time, text, type }]);
+  }, []);
+
+  // 1. Initial Page Load Instrumentation
+  useEffect(() => {
+    const isSecure = typeof window !== 'undefined' && window.isSecureContext === true;
+    const hasMedia = typeof navigator !== 'undefined' && !!navigator?.mediaDevices?.getUserMedia;
+    addLog(`Boot: isSecure=${isSecure}, origin=${typeof window !== 'undefined' ? window.location.origin : ''}`);
+    addLog(`MediaDevices supported=${hasMedia}`);
+    if (typeof window !== 'undefined' && (window.location.search.indexOf('debug') !== -1 || window.location.hash.indexOf('debug') !== -1)) {
+      setShowDebug(true);
+    }
+  }, [addLog]);
+
+  // 2. Initial QR Token Validation
   useEffect(() => {
     let cancelled = false;
+
+    if (!token || token === 'mobile-join' || token === 'mobile') {
+      addLog('Validation failed: No token in URL', 'error');
+      setError('Invalid pairing link — no verification token found in QR code.');
+      setPhase(PHASE.ERROR);
+      return;
+    }
 
     const validateToken = async () => {
       try {
         setPhase(PHASE.LOADING);
+        addLog(`Validating token ${token.substring(0, 10)}...`);
         const res = await fetch(`${API_BASE}/assessment-verification/mobile-validate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -81,18 +188,18 @@ export default function AssessmentMobileJoin() {
         if (cancelled) return;
 
         if (!res.ok || !data.success) {
+          addLog(`Validation failed: ${data.error || res.statusText}`, 'error');
           setError(data.error || 'This QR code is invalid or has expired.');
           setPhase(PHASE.ERROR);
           return;
         }
 
-        console.log('[MOBILE SESSION]', data.sessionId);
-        console.log('[MOBILE] SOCKET ROOM:', `assessment_verif_${data.sessionId}`);
+        addLog(`Validation success: session=${data.sessionId}`);
         setInfo(data);
         setPhase(PHASE.CAMERA_REQUEST);
       } catch (err) {
         if (!cancelled) {
-          console.error('[AssessmentMobileJoin] Connection error:', err);
+          addLog(`Network validation error: ${err.message}`, 'error');
           setError(`Could not connect to the assessment server (${err.message || 'Network error'}). Please ensure your mobile device is connected to the internet and tap Try Again.`);
           setPhase(PHASE.ERROR);
         }
@@ -104,7 +211,7 @@ export default function AssessmentMobileJoin() {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, addLog]);
 
   // WebRTC Helper: Ultra-low latency P2P WebRTC negotiation
   const startWebRTCOffer = useCallback(async (targetSocketId = null) => {
@@ -918,7 +1025,18 @@ export default function AssessmentMobileJoin() {
         <Shield size={14} color="#16A34A" strokeWidth={2.2} />
         <span><strong>WAVE INIT Secure Proctoring</strong> &bull; Real-time Verification</span>
       </div>
+
+      <MobileDebugPanel logs={logs} isOpen={showDebug} onToggle={() => setShowDebug(!showDebug)} />
     </div>
   );
 }
+
+export default function AssessmentMobileJoin() {
+  return (
+    <AssessmentMobileErrorBoundary>
+      <AssessmentMobileJoinContent />
+    </AssessmentMobileErrorBoundary>
+  );
+}
+
 

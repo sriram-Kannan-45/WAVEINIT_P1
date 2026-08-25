@@ -9,7 +9,76 @@ import { AlertModalProvider } from './components/ui/AlertModal'
 import { AppThemeProvider } from './contexts/AppThemeContext'
 import { API_BASE } from './api/api'
 
+import AssessmentMobileJoin from './pages/assessment/AssessmentMobileJoin'
+import MobileJoin from './pages/interview/MobileJoin'
+
 // Resilient lazy loader with auto-retry and auto-reload on stale Vite chunks / HMR
+function ChunkLoadFallback({ error }) {
+  return (
+    <div style={{
+      minHeight: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '24px',
+      fontFamily: "'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+      textAlign: 'center',
+      background: '#f8fafc',
+      color: '#0f172a'
+    }}>
+      <div style={{
+        maxWidth: '380px',
+        width: '100%',
+        padding: '28px 22px',
+        borderRadius: '18px',
+        background: '#ffffff',
+        border: '1px solid #e2e8f0',
+        boxShadow: '0 10px 25px rgba(0,0,0,0.06)'
+      }}>
+        <div style={{
+          width: '48px',
+          height: '48px',
+          borderRadius: '50%',
+          background: '#fee2e2',
+          color: '#dc2626',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          margin: '0 auto 12px',
+          fontSize: '20px',
+          fontWeight: 'bold'
+        }}>!</div>
+        <h3 style={{ fontSize: '17px', fontWeight: 700, margin: '0 0 6px', color: '#0f172a' }}>
+          Page Failed to Load
+        </h3>
+        <p style={{ fontSize: '12.5px', color: '#64748b', margin: '0 0 18px', lineHeight: 1.5 }}>
+          A network connection issue interrupted loading. Tap below to reload.
+        </p>
+        <button
+          onClick={() => {
+            try { sessionStorage.clear(); } catch (e) {}
+            window.location.reload();
+          }}
+          style={{
+            width: '100%',
+            padding: '12px 20px',
+            background: '#16a34a',
+            color: '#fff',
+            border: 'none',
+            borderRadius: '12px',
+            fontWeight: 600,
+            fontSize: '13.5px',
+            cursor: 'pointer'
+          }}
+        >
+          Reload Page
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function lazyRetry(componentImport) {
   return lazy(async () => {
     try {
@@ -20,14 +89,24 @@ function lazyRetry(componentImport) {
         error?.name === 'ChunkLoadError' ||
         error?.toString()?.includes('dynamically imported module')
 
-      const refreshed = sessionStorage.getItem('page_auto_refreshed')
+      let refreshed = null
+      try {
+        refreshed = sessionStorage.getItem('page_auto_refreshed')
+      } catch (e) {}
+
       if (isDynamicImportError && !refreshed) {
-        sessionStorage.setItem('page_auto_refreshed', 'true')
+        try {
+          sessionStorage.setItem('page_auto_refreshed', 'true')
+        } catch (e) {}
         window.location.reload()
-        return { default: () => null }
+        return { default: () => <PageLoader /> }
       }
-      sessionStorage.removeItem('page_auto_refreshed')
-      throw error
+      try {
+        sessionStorage.removeItem('page_auto_refreshed')
+      } catch (e) {}
+
+      console.error('[LazyLoad Error]', error)
+      return { default: () => <ChunkLoadFallback error={error} /> }
     }
   })
 }
@@ -67,11 +146,7 @@ const TrainingLeaderboard = lazyRetry(() => import('./pages/TrainingLeaderboard'
 const InterviewDashboard = lazyRetry(() => import('./pages/interview/InterviewDashboard'))
 const ScheduleInterview = lazyRetry(() => import('./pages/interview/ScheduleInterview'))
 const InterviewRoom = lazyRetry(() => import('./pages/interview/InterviewRoom'))
-const MobileJoin = lazyRetry(() => import('./pages/interview/MobileJoin'))
 const InterviewEvaluation = lazyRetry(() => import('./pages/interview/InterviewEvaluation'))
-
-// Assessment Verification (Quiz & Coding)
-const AssessmentMobileJoin = lazyRetry(() => import('./pages/assessment/AssessmentMobileJoin'))
 
 function PageLoader() {
   return (
