@@ -70,7 +70,7 @@ export default function AssessmentMobileJoin() {
 
     const validateToken = async () => {
       try {
-        setPhase(PHASE.VALIDATING);
+        setPhase(PHASE.LOADING);
         const res = await fetch(`${API_BASE}/assessment-verification/mobile-validate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -92,7 +92,8 @@ export default function AssessmentMobileJoin() {
         setPhase(PHASE.CAMERA_REQUEST);
       } catch (err) {
         if (!cancelled) {
-          setError('Could not connect to the server. Please check your network connection.');
+          console.error('[AssessmentMobileJoin] Connection error:', err);
+          setError(`Could not connect to the assessment server (${err.message || 'Network error'}). Please ensure your mobile device is connected to the internet and tap Try Again.`);
           setPhase(PHASE.ERROR);
         }
       }

@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { useWebRTC } from '../../hooks/useWebRTC'
 import yoloProctoringService from '../../services/yoloProctoringService'
+import { API_BASE, BACKEND_ORIGIN } from '../../api/api'
 import '../../styles/assessment-verification.css'
 
 const PHASE = {
@@ -119,7 +120,7 @@ export default function MobileJoin() {
     ;(async () => {
       try {
         addLog(`Validating pairing token: ${token.substr(0, 10)}...`)
-        const res = await fetch('/api/interviews/pair-validate', {
+        const res = await fetch(`${API_BASE}/interviews/pair-validate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token }),
@@ -171,7 +172,8 @@ export default function MobileJoin() {
       setSocket(null)
     }
 
-    addLog(`BEFORE socket connect — URL: ${info.socketUrl || window.location.origin}`)
+    const wsUrl = info.socketUrl || BACKEND_ORIGIN || window.location.origin
+    addLog(`BEFORE socket connect — URL: ${wsUrl}`)
     setPhase(PHASE.CONNECTING)
     updateStatusLabel('connecting')
 
@@ -183,9 +185,9 @@ export default function MobileJoin() {
       }
     }, 10000)
 
-    const s = io({
+    const s = io(wsUrl, {
       auth: { token: info.socketToken },
-      transports: ['polling', 'websocket'],
+      transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,

@@ -5,17 +5,14 @@
  * Requirements:
  *  - Mobile camera access REQUIRES a secure context (HTTPS).
  *  - The QR URL generated MUST always start with https://.
- *  - Uses window.location.origin (e.g. "https://192.168.0.102:5174") as the default base.
- *  - Can be overridden via VITE_PUBLIC_URL or VITE_PUBLIC_HOST / VITE_PUBLIC_PORT environment variables.
+ *  - In production, uses window.location.origin directly (e.g. "https://einitlms.online").
+ *  - In local dev, uses LAN IP host / dev port when opened on localhost.
+ *  - Can be overridden via VITE_PUBLIC_URL environment variable.
  */
 
-function getViteEnv(name) {
-  return import.meta.env[name]
-}
-
 function normalizeHostname(hostname) {
-  const h = String(hostname || '').toLowerCase()
-  return h.replace(/^\[|\]$/g, '') // strip IPv6 brackets
+  const h = String(hostname || '').toLowerCase();
+  return h.replace(/^\[|\]$/g, ''); // strip IPv6 brackets
 }
 
 function isLocalHostname(hostname) {
@@ -24,60 +21,63 @@ function isLocalHostname(hostname) {
     hostname === '127.0.0.1' ||
     hostname === '::1' ||
     hostname === ''
-  )
+  );
 }
 
 /**
  * Resolve the base origin used for the mobile pairing QR.
- * e.g. "https://192.168.0.102:5174"
+ * e.g. "https://einitlms.online" in production or "http://192.168.1.100:5174" in local dev
  */
 export function getMobilePairingBaseUrl() {
-  if (typeof window === 'undefined') return ''
+  if (typeof window === 'undefined') return '';
 
-  // Custom full URL override if explicitly defined
-  const custom = getViteEnv('VITE_PUBLIC_URL')
-  if (custom) return custom.replace(/\/+$/, '')
-
-  const location = window.location
-  const hostname = normalizeHostname(location.hostname)
-
-  // Enforce HTTPS protocol for mobile media context
-  let protocol = getViteEnv('VITE_PUBLIC_PROTOCOL') || 'https'
-  if (location.protocol === 'https:') {
-    protocol = 'https'
+  // 1. Custom full URL override if explicitly defined (e.g., VITE_PUBLIC_URL=https://einitlms.online)
+  const custom = import.meta.env.VITE_PUBLIC_URL;
+  if (custom && typeof custom === 'string' && custom.trim()) {
+    let clean = custom.trim().replace(/\/+$/, '');
+    if (window.location.protocol === 'https:' && clean.startsWith('http://')) {
+      clean = clean.replace(/^http:\/\//i, 'https://');
+    }
+    return clean;
   }
 
-  let host = hostname
-  if (isLocalHostname(hostname)) {
-    host = getViteEnv('VITE_PUBLIC_HOST') || hostname
+  const location = window.location;
+  const hostname = normalizeHostname(location.hostname);
+
+  // 2. Production / Staging / Non-local domain
+  // Never append local dev ports (5174) to production hostnames!
+  if (!isLocalHostname(hostname)) {
+    return location.origin;
   }
 
-  const port = getViteEnv('VITE_PUBLIC_PORT') || location.port || '5174'
-  const defaultPort = (protocol === 'https' && port === '443') || (protocol === 'http' && port === '80')
-  const origin = `${protocol}://${host}${defaultPort ? '' : `:${port}`}`
+  // 3. Localhost Development only
+  const host = import.meta.env.VITE_PUBLIC_HOST || hostname;
+  const protocol = location.protocol === 'https:' ? 'https' : (import.meta.env.VITE_PUBLIC_PROTOCOL || 'http');
+  const port = location.port || import.meta.env.VITE_PUBLIC_PORT || '5174';
+  const defaultPort = (protocol === 'https' && port === '443') || (protocol === 'http' && port === '80');
 
-  return origin
+  return `${protocol}://${host}${defaultPort ? '' : `:${port}`}`;
 }
 
 /**
  * Build the full mobile pairing page URL from shortUrl or token.
- * Output format: "https://192.168.0.102:5174/interview/mobile/<token>"
+ * Output format: "https://einitlms.online/interview/mobile/<token>"
  */
 export function buildMobilePairingUrl(shortUrl) {
-  if (!shortUrl) return null
+  if (!shortUrl) return null;
   if (/^https?:\/\//i.test(shortUrl)) {
-    // If backend returns an http:// URL, rewrite scheme to https:// for secure context
-    return shortUrl.replace(/^http:\/\//i, 'https://')
+    return shortUrl;
   }
-  const base = getMobilePairingBaseUrl()
-  const path = shortUrl.startsWith('/') ? shortUrl : `/${shortUrl}`
-  return `${base}${path}`
+  const base = getMobilePairingBaseUrl();
+  const path = shortUrl.startsWith('/') ? shortUrl : `/${shortUrl}`;
+  return `${base}${path}`;
 }
 
 /**
  * True when the current page is a browser secure context (HTTPS or localhost).
  */
 export function isSecureContextForMedia() {
-  if (typeof window === 'undefined') return false
-  return window.isSecureContext === true
+  if (typeof window === 'undefined') return false;
+  return window.isSecureContext === true;
 }
+
