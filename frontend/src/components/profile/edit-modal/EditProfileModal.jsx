@@ -702,7 +702,7 @@ export default function EditProfileModal({ open, onClose, profile, onSave }) {
           </main>
 
           {/* ── STICKY FOOTER ACTIONS ───────────────────────────────── */}
-          <footer className="wip-footer">
+          <footer className="wip-footer" data-has-bottom-bar="true">
             <div className="wip-footer-left">
               <CheckCircle2 size={15} color="#16A34A" />
               <span>Changes are saved securely</span>

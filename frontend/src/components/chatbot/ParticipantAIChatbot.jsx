@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -52,6 +53,40 @@ const DEFAULT_SUGGESTIONS = {
   ],
 };
 
+const STORAGE_KEY = 'waveinit-ai-assistant-position';
+const SAFE_MARGIN = 10;
+
+// Helper to get safe clamped coordinates
+const clampCoordinates = (x, y, elemWidth = 145, elemHeight = 42) => {
+  if (typeof window === 'undefined') return { x, y };
+  const minX = SAFE_MARGIN;
+  const minY = SAFE_MARGIN;
+  const maxX = Math.max(SAFE_MARGIN, window.innerWidth - elemWidth - SAFE_MARGIN);
+  const maxY = Math.max(SAFE_MARGIN, window.innerHeight - elemHeight - SAFE_MARGIN);
+  return {
+    x: Math.min(Math.max(x, minX), maxX),
+    y: Math.min(Math.max(y, minY), maxY),
+  };
+};
+
+// Read saved position from localStorage if available
+const getSavedPosition = () => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed?.x === 'number' && typeof parsed?.y === 'number') {
+        const isNarrow = window.innerWidth < 768;
+        return clampCoordinates(parsed.x, parsed.y, isNarrow ? 48 : 145, isNarrow ? 48 : 42);
+      }
+    }
+  } catch (e) {
+    console.warn('Could not read saved assistant position:', e);
+  }
+  return null;
+};
+
 export default function ParticipantAIChatbot({ user, activeTab }) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState([]);
@@ -59,6 +94,25 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
   const [isLoading, setIsLoading] = useState(false);
   const [isExecutingAction, setIsExecutingAction] = useState(false);
   const [isQrScannerOpen, setIsQrScannerOpen] = useState(false);
+  const [bottomOffset, setBottomOffset] = useState(24);
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 768 : false);
+
+  // Floating draggable position state
+  const [customPosition, setCustomPosition] = useState(() => getSavedPosition());
+  const [isDragging, setIsDragging] = useState(false);
+  const triggerRef = useRef(null);
+  const dragTracker = useRef({
+    active: false,
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+    initialPosX: 0,
+    initialPosY: 0,
+    elemWidth: 145,
+    elemHeight: 42,
+    moved: false,
+  });
+  const dragOccurredRef = useRef(false);
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -66,6 +120,279 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
   const inputRef = useRef(null);
 
   const currentRoute = location.pathname;
+
+  // Measure button dimensions dynamically
+  const getButtonSize = () => {
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        return { width: rect.width, height: rect.height };
+      }
+    }
+    const isNarrow = typeof window !== 'undefined' ? window.innerWidth < 768 : false;
+    return {
+      width: isNarrow ? 48 : 145,
+      height: isNarrow ? 48 : 42,
+    };
+  };
+
+  // Default bottom-right position calculation
+  const getDefaultPosition = () => {
+    if (typeof window === 'undefined') return { x: 0, y: 0 };
+    const { width, height } = getButtonSize();
+    const isNarrow = window.innerWidth < 768;
+    const rightOffset = isNarrow ? 16 : 24;
+    const x = window.innerWidth - rightOffset - width;
+    const y = window.innerHeight - bottomOffset - height;
+    return clampCoordinates(x, y, width, height);
+  };
+
+  const currentPosition = customPosition || getDefaultPosition();
+
+  // ── Drag Event Handlers via Pointer Events ──────────
+  const handlePointerDown = (e) => {
+    if (e.button !== 0) return; // Only primary button / tap
+    const btn = triggerRef.current;
+    if (!btn) return;
+
+    const { width, height } = getButtonSize();
+    const activePos = customPosition || getDefaultPosition();
+
+    dragTracker.current = {
+      active: true,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      initialPosX: activePos.x,
+      initialPosY: activePos.y,
+      elemWidth: width,
+      elemHeight: height,
+      moved: false,
+    };
+    dragOccurredRef.current = false;
+
+    try {
+      btn.setPointerCapture(e.pointerId);
+    } catch (_) {}
+  };
+
+  const handlePointerMove = (e) => {
+    const dt = dragTracker.current;
+    if (!dt.active) return;
+
+    const dx = e.clientX - dt.startX;
+    const dy = e.clientY - dt.startY;
+    const distance = Math.hypot(dx, dy);
+
+    if (distance > 4 || dt.moved) {
+      dt.moved = true;
+      if (!isDragging) setIsDragging(true);
+
+      const newX = dt.initialPosX + dx;
+      const newY = dt.initialPosY + dy;
+      const clamped = clampCoordinates(newX, newY, dt.elemWidth, dt.elemHeight);
+      setCustomPosition(clamped);
+    }
+  };
+
+  const handlePointerUp = (e) => {
+    const dt = dragTracker.current;
+    if (!dt.active) return;
+
+    const btn = triggerRef.current;
+    if (btn) {
+      try {
+        btn.releasePointerCapture(e.pointerId);
+      } catch (_) {}
+    }
+
+    if (dt.moved) {
+      dragOccurredRef.current = true;
+      setTimeout(() => {
+        dragOccurredRef.current = false;
+      }, 120);
+
+      const dx = e.clientX - dt.startX;
+      const dy = e.clientY - dt.startY;
+      const finalClamped = clampCoordinates(
+        dt.initialPosX + dx,
+        dt.initialPosY + dy,
+        dt.elemWidth,
+        dt.elemHeight
+      );
+      setCustomPosition(finalClamped);
+
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(finalClamped));
+      } catch (err) {
+        console.warn('Failed to persist assistant position:', err);
+      }
+    }
+
+    dragTracker.current = {
+      active: false,
+      pointerId: null,
+      startX: 0,
+      startY: 0,
+      initialPosX: 0,
+      initialPosY: 0,
+      elemWidth: 145,
+      elemHeight: 42,
+      moved: false,
+    };
+    setIsDragging(false);
+  };
+
+  const handlePointerCancel = (e) => {
+    handlePointerUp(e);
+  };
+
+  const handleTriggerClick = (e) => {
+    if (dragOccurredRef.current) {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      return;
+    }
+    setIsOpen(prev => !prev);
+  };
+
+  // Adjust position within viewport boundaries on window resize
+  useEffect(() => {
+    const handleWindowResize = () => {
+      setCustomPosition(prev => {
+        if (!prev) return prev;
+        const { width, height } = getButtonSize();
+        const clamped = clampCoordinates(prev.x, prev.y, width, height);
+        if (clamped.x !== prev.x || clamped.y !== prev.y) {
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(clamped));
+          } catch (_) {}
+          return clamped;
+        }
+        return prev;
+      });
+    };
+
+    window.addEventListener('resize', handleWindowResize);
+    return () => window.removeEventListener('resize', handleWindowResize);
+  }, []);
+
+  // Compute anchored, viewport-clamped position for the open chat panel
+  const getChatPanelCoordinates = () => {
+    const isNarrow = isMobile;
+    const panelWidth = isNarrow ? Math.min(window.innerWidth - 24, 380) : 380;
+    const panelHeight = isNarrow
+      ? Math.min(500, window.innerHeight - 120)
+      : Math.min(540, window.innerHeight - 100);
+
+    const { width: btnWidth, height: btnHeight } = getButtonSize();
+    const btnX = currentPosition.x;
+    const btnY = currentPosition.y;
+
+    // Horizontal position
+    let left;
+    if (isNarrow) {
+      left = 12;
+    } else {
+      if (btnX + btnWidth / 2 > window.innerWidth / 2) {
+        left = btnX + btnWidth - panelWidth;
+      } else {
+        left = btnX;
+      }
+      left = Math.min(Math.max(left, SAFE_MARGIN), window.innerWidth - panelWidth - SAFE_MARGIN);
+    }
+
+    // Vertical position
+    let top;
+    if (btnY > window.innerHeight / 2) {
+      top = btnY - panelHeight - 12;
+      if (top < SAFE_MARGIN) {
+        top = SAFE_MARGIN;
+      }
+    } else {
+      top = btnY + btnHeight + 12;
+      if (top + panelHeight > window.innerHeight - SAFE_MARGIN) {
+        top = Math.max(SAFE_MARGIN, window.innerHeight - panelHeight - SAFE_MARGIN);
+      }
+    }
+
+    return {
+      left,
+      top,
+      width: isNarrow ? 'calc(100vw - 24px)' : panelWidth,
+      maxWidth: 'calc(100vw - 24px)',
+      height: isNarrow ? 'min(500px, calc(100vh - 120px))' : panelHeight,
+      maxHeight: 'calc(100vh - 40px)',
+    };
+  };
+
+  // ── Context-Aware Dynamic Offset & Bottom Action Bar Detection ──────────
+  useEffect(() => {
+    const updateLayoutMetrics = () => {
+      const isNarrow = window.innerWidth < 768;
+      setIsMobile(isNarrow);
+
+      // Selectors for bottom action bars, full-screen edit modals, and fixed footers
+      const bottomBarSelectors = [
+        '.wip-footer',
+        '.wip-edit-profile-root',
+        '[data-has-bottom-bar="true"]',
+        '.bottom-action-bar',
+        '.modal-footer-fixed',
+        '.fixed-bottom-bar',
+        '.assessment-footer-bar',
+      ];
+
+      let detectedHeight = 0;
+      let hasBottomBar = false;
+
+      for (const sel of bottomBarSelectors) {
+        const el = document.querySelector(sel);
+        if (el) {
+          hasBottomBar = true;
+          const rect = el.getBoundingClientRect();
+          if (rect && rect.height > 0 && rect.bottom >= window.innerHeight - 15) {
+            detectedHeight = Math.max(detectedHeight, rect.height);
+          } else {
+            detectedHeight = Math.max(detectedHeight, 60);
+          }
+        }
+      }
+
+      const basePadding = isNarrow ? 16 : 24;
+
+      if (hasBottomBar) {
+        // Position comfortably above the fixed bottom bar with a safe 24px clearance (16px on mobile)
+        const totalBottom = (detectedHeight || 60) + (isNarrow ? 16 : 24);
+        setBottomOffset(totalBottom);
+      } else {
+        setBottomOffset(basePadding);
+      }
+    };
+
+    updateLayoutMetrics();
+
+    // Observe DOM mutations to immediately elevate when modals or action bars mount/unmount
+    const observer = new MutationObserver(() => {
+      updateLayoutMetrics();
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'data-has-bottom-bar'],
+    });
+
+    window.addEventListener('resize', updateLayoutMetrics);
+    window.addEventListener('scroll', updateLayoutMetrics, { passive: true });
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateLayoutMetrics);
+      window.removeEventListener('scroll', updateLayoutMetrics);
+    };
+  }, [currentRoute, activeTab]);
 
   // Determine current active section for dynamic suggestion pills
   const activeContextType = useMemo(() => {
@@ -303,39 +630,59 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
     });
   };
 
-  return (
+  const chatbotJSX = (
     <>
-      {/* ── Floating AI Trigger Button (Bottom Right) ── */}
+      {/* ── Floating Draggable AI Trigger Button ── */}
       <div
         style={{
           position: 'fixed',
-          bottom: 24,
-          right: 24,
-          zIndex: 9990,
+          left: currentPosition.x,
+          top: currentPosition.y,
+          zIndex: 9999,
           fontFamily: "'Poppins', sans-serif",
+          pointerEvents: 'none',
+          touchAction: 'none',
+          userSelect: 'none',
+          transition: isDragging ? 'none' : 'left 0.12s ease-out, top 0.12s ease-out',
         }}
       >
         <motion.button
+          ref={triggerRef}
           type="button"
-          whileHover={{ scale: 1.06 }}
-          whileTap={{ scale: 0.94 }}
-          onClick={() => setIsOpen(prev => !prev)}
+          whileHover={isDragging ? {} : { scale: 1.05 }}
+          whileTap={isDragging ? {} : { scale: 0.95 }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerCancel}
+          onClick={handleTriggerClick}
+          title="Drag to move • Click to open WAVE INIT AI LMS Assistant"
+          aria-label="Open WAVE INIT AI LMS Assistant"
           style={{
+            pointerEvents: 'auto',
             background: 'linear-gradient(135deg, #16A34A 0%, #15803D 100%)',
             border: '2px solid #BBF7D0',
             color: '#FFFFFF',
-            padding: '12px 18px',
-            borderRadius: 30,
+            borderRadius: isMobile ? '50%' : 28,
+            width: isMobile ? 48 : 'auto',
+            height: isMobile ? 48 : 42,
+            padding: isMobile ? 0 : '8px 14px',
             display: 'flex',
             alignItems: 'center',
-            gap: 9,
-            cursor: 'pointer',
-            boxShadow: '0 10px 20px -3px rgba(22, 163, 74, 0.35), 0 4px 6px -4px rgba(22, 163, 74, 0.2)',
-            fontSize: 13,
-            fontWeight: 700,
+            justifyContent: 'center',
+            gap: 8,
+            cursor: isDragging ? 'grabbing' : 'grab',
+            boxShadow: isDragging
+              ? '0 20px 35px -5px rgba(22, 163, 74, 0.5), 0 10px 10px -5px rgba(22, 163, 74, 0.3)'
+              : '0 10px 25px -3px rgba(22, 163, 74, 0.4), 0 4px 6px -4px rgba(22, 163, 74, 0.2)',
+            fontSize: 12.5,
+            fontWeight: 600,
             letterSpacing: '0.01em',
+            transition: 'border-color 0.15s ease, background 0.15s ease, box-shadow 0.2s ease',
+            whiteSpace: 'nowrap',
+            touchAction: 'none',
+            userSelect: 'none',
           }}
-          aria-label="Open WAVE INIT AI LMS Agent"
         >
           <div
             style={{
@@ -346,19 +693,25 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              flexShrink: 0,
+              pointerEvents: 'none',
             }}
           >
-            <Sparkles size={14} color="#FFFFFF" />
+            <Sparkles size={13} color="#FFFFFF" />
           </div>
-          <span>AI Assistant</span>
+
+          {!isMobile && <span style={{ pointerEvents: 'none' }}>AI Assistant</span>}
+
           {/* Pulsing indicator dot */}
           <span
             style={{
-              width: 8,
-              height: 8,
+              width: 7,
+              height: 7,
               borderRadius: '50%',
               background: '#86EFAC',
               boxShadow: '0 0 6px #86EFAC',
+              flexShrink: 0,
+              pointerEvents: 'none',
             }}
           />
         </motion.button>
@@ -368,25 +721,23 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
       <AnimatePresence>
         {isOpen && (
           <motion.div
-            initial={{ opacity: 0, y: 20, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 15, scale: 0.96 }}
-            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{
+              opacity: 1,
+              scale: 1,
+              ...getChatPanelCoordinates(),
+            }}
+            exit={{ opacity: 0, scale: 0.96 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
             style={{
               position: 'fixed',
-              bottom: 84,
-              right: 24,
-              width: 'calc(100vw - 32px)',
-              maxWidth: 400,
-              height: 560,
-              maxHeight: 'calc(100vh - 120px)',
               background: '#FFFFFF',
-              borderRadius: 20,
+              borderRadius: 18,
               border: '1px solid #E2E8F0',
-              boxShadow: '0 25px 50px -12px rgba(15, 23, 42, 0.25)',
+              boxShadow: '0 25px 50px -12px rgba(15, 23, 42, 0.28)',
               display: 'flex',
               flexDirection: 'column',
-              zIndex: 9995,
+              zIndex: 9999,
               overflow: 'hidden',
               fontFamily: "'Poppins', sans-serif",
             }}
@@ -400,8 +751,8 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                borderTopLeftRadius: 19,
-                borderTopRightRadius: 19,
+                borderTopLeftRadius: 17,
+                borderTopRightRadius: 17,
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -558,7 +909,8 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
                           height: 26,
                           borderRadius: '50%',
                           background: isUser ? '#16A34A' : '#F0FDF4',
-                          border: `1px solid ${isUser ? '#15803D' : '#BBF7D0'}`,
+                          border: isUser ? 'none' : '1px solid #DCFCE7',
+                          color: isUser ? '#FFFFFF' : '#16A34A',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
@@ -566,117 +918,115 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
                           marginTop: 2,
                         }}
                       >
-                        {isUser ? <UserIcon size={14} color="#FFFFFF" /> : <Bot size={14} color="#16A34A" />}
+                        {isUser ? <UserIcon size={14} /> : <Bot size={14} />}
                       </div>
 
                       {/* Bubble */}
                       <div
                         style={{
                           background: isUser ? '#16A34A' : '#F8FAFC',
-                          color: isUser ? '#FFFFFF' : '#0F172A',
-                          border: isUser ? 'none' : '1px solid #E2E8F0',
+                          color: isUser ? '#FFFFFF' : '#1E293B',
                           padding: '10px 14px',
-                          borderRadius: isUser ? '16px 4px 16px 16px' : '4px 16px 16px 16px',
+                          borderRadius: 14,
+                          borderTopRightRadius: isUser ? 3 : 14,
+                          borderTopLeftRadius: isUser ? 14 : 3,
                           fontSize: 12.5,
-                          lineHeight: 1.45,
-                          boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                          lineHeight: 1.55,
+                          border: isUser ? 'none' : '1px solid #E2E8F0',
+                          wordBreak: 'break-word',
                         }}
                       >
-                        {isUser ? msg.content : renderFormattedMarkdown(msg.content)}
+                        <div style={{ whiteSpace: 'pre-wrap' }}>
+                          {renderFormattedMarkdown(msg.content)}
+                        </div>
 
-                        {/* Confirmation Badge for Executed Actions */}
-                        {!isUser && msg.confirmation && (
+                        {/* Action Buttons inside Bot Message */}
+                        {msg.actionButtons && msg.actionButtons.length > 0 && (
                           <div
                             style={{
-                              marginTop: 8,
-                              padding: '5px 8px',
-                              background: '#F0FDF4',
-                              border: '1px solid #BBF7D0',
-                              borderRadius: 6,
-                              fontSize: 11,
-                              color: '#15803D',
-                              fontWeight: 600,
+                              marginTop: 10,
+                              paddingTop: 8,
+                              borderTop: isUser ? '1px solid rgba(255, 255, 255, 0.2)' : '1px solid #E2E8F0',
                               display: 'flex',
-                              alignItems: 'center',
-                              gap: 5,
+                              flexDirection: 'column',
+                              gap: 6,
                             }}
                           >
-                            <CheckCircle2 size={13} color="#16A34A" />
-                            <span>{msg.confirmation}</span>
+                            {msg.actionButtons.map((btn, bIdx) => (
+                              <button
+                                key={`abtn-${bIdx}`}
+                                type="button"
+                                onClick={() => handleActionButtonClick(btn)}
+                                disabled={isLoading || isExecutingAction}
+                                style={{
+                                  background: '#FFFFFF',
+                                  border: '1px solid #16A34A',
+                                  color: '#16A34A',
+                                  borderRadius: 8,
+                                  padding: '6px 10px',
+                                  fontSize: 11.5,
+                                  fontWeight: 600,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  cursor: isLoading || isExecutingAction ? 'default' : 'pointer',
+                                  transition: 'all 0.15s ease',
+                                  boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                                }}
+                                onMouseEnter={(e) => {
+                                  if (!isLoading && !isExecutingAction) {
+                                    e.currentTarget.style.background = '#16A34A';
+                                    e.currentTarget.style.color = '#FFFFFF';
+                                  }
+                                }}
+                                onMouseLeave={(e) => {
+                                  if (!isLoading && !isExecutingAction) {
+                                    e.currentTarget.style.background = '#FFFFFF';
+                                    e.currentTarget.style.color = '#16A34A';
+                                  }
+                                }}
+                              >
+                                <span>{btn.label}</span>
+                                <ArrowRight size={13} />
+                              </button>
+                            ))}
                           </div>
                         )}
                       </div>
                     </div>
-
-                    {/* Action Buttons */}
-                    {!isUser && msg.actionButtons && msg.actionButtons.length > 0 && (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginLeft: 34, marginTop: 4 }}>
-                        {msg.actionButtons.map((btn, bIdx) => (
-                          <button
-                            key={`btn-${bIdx}`}
-                            type="button"
-                            onClick={() => handleActionButtonClick(btn)}
-                            disabled={isLoading || isExecutingAction}
-                            style={{
-                              background: '#F0FDF4',
-                              border: '1px solid #BBF7D0',
-                              borderRadius: 8,
-                              padding: '5px 11px',
-                              fontSize: 11.5,
-                              fontWeight: 600,
-                              color: '#15803D',
-                              cursor: isLoading || isExecutingAction ? 'default' : 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 5,
-                              transition: 'all 0.15s ease',
-                              opacity: isLoading || isExecutingAction ? 0.6 : 1,
-                            }}
-                            onMouseEnter={(e) => {
-                              if (!isLoading && !isExecutingAction) {
-                                e.currentTarget.style.background = '#DCFCE7';
-                                e.currentTarget.style.borderColor = '#86EFAC';
-                              }
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.background = '#F0FDF4';
-                              e.currentTarget.style.borderColor = '#BBF7D0';
-                            }}
-                          >
-                            {btn.action === 'open_qr_scanner' || btn.type === 'OPEN_QR_SCANNER' ? <Camera size={12} /> : null}
-                            <span>{btn.label}</span>
-                            {btn.action === 'navigate' ? <ArrowRight size={11} /> : null}
-                          </button>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 );
               })}
 
-              {/* Execution / Loading Indicator */}
+              {/* Bot thinking indicator */}
               {(isLoading || isExecutingAction) && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 2 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '8px 12px',
+                    background: '#F8FAFC',
+                    borderRadius: 12,
+                    border: '1px solid #E2E8F0',
+                    width: 'fit-content',
+                  }}
+                >
                   <div
                     style={{
-                      width: 26,
-                      height: 26,
+                      width: 20,
+                      height: 20,
                       borderRadius: '50%',
                       background: '#F0FDF4',
-                      border: '1px solid #BBF7D0',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                     }}
                   >
-                    <Bot size={14} color="#16A34A" />
+                    <Bot size={12} color="#16A34A" />
                   </div>
                   <div
                     style={{
-                      background: '#F8FAFC',
-                      border: '1px solid #E2E8F0',
-                      padding: '8px 14px',
-                      borderRadius: '4px 16px 16px 16px',
                       display: 'flex',
                       alignItems: 'center',
                       gap: 6,
@@ -685,7 +1035,7 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
                     }}
                   >
                     <Zap size={12} color="#16A34A" style={{ animation: 'spin 1.5s linear infinite' }} />
-                    <span>{isExecutingAction ? 'Executing LMS action...' : 'Analyzing request & LMS context...'}</span>
+                    <span>{isExecutingAction ? 'Executing LMS action...' : 'Thinking...'}</span>
                   </div>
                 </div>
               )}
@@ -777,4 +1127,7 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
       />
     </>
   );
+
+  if (typeof document === 'undefined') return null;
+  return createPortal(chatbotJSX, document.body);
 }

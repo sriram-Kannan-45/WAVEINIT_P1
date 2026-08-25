@@ -545,9 +545,10 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 28px;
-  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.02);
-  z-index: 20;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.04);
+  z-index: 50;
   box-sizing: border-box;
+  pointer-events: auto;
 }
 
 .wip-footer-left {
@@ -563,6 +564,9 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  position: relative;
+  z-index: 55;
+  pointer-events: auto;
 }
 
 .wip-btn-cancel {
@@ -576,10 +580,13 @@
   cursor: pointer;
   transition: all 0.15s;
   font-family: 'Poppins', sans-serif;
+  pointer-events: auto;
+  user-select: none;
 }
 
 .wip-btn-cancel:hover {
   background: #F8FAFC;
+  border-color: #94A3B8;
 }
 
 .wip-btn-save {
@@ -596,8 +603,79 @@
   cursor: pointer;
   transition: all 0.15s;
   font-family: 'Poppins', sans-serif;
+  pointer-events: auto;
+  user-select: none;
+  box-shadow: 0 2px 4px rgba(22, 163, 74, 0.15);
 }
 
-.wip-btn-save:hover {
+.wip-btn-save:hover:not(:disabled) {
   background: #15803D;
+  border-color: #15803D;
+}
+
+.wip-btn-save:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* ── Responsive Adjustments for Mobile & Tablet ────────────────────────── */
+@media (max-width: 900px) {
+  .wip-sidebar {
+    width: 200px;
+    min-width: 200px;
+    max-width: 200px;
+    padding: 16px 12px;
+  }
+  .wip-nav-item {
+    font-size: 12px;
+    padding: 8px 10px;
+    gap: 8px;
+  }
+  .wip-header {
+    padding: 0 20px;
+  }
+  .wip-content {
+    padding: 20px 20px 84px 20px;
+  }
+  .wip-footer {
+    padding: 0 20px;
+  }
+}
+
+@media (max-width: 640px) {
+  .wip-sidebar {
+    display: none; /* Collapsed for full-width form on mobile */
+  }
+  .wip-header {
+    height: 54px;
+    padding: 0 14px;
+  }
+  .wip-header-title {
+    font-size: 15px;
+  }
+  .wip-content {
+    padding: 14px 14px 80px 14px;
+    gap: 14px;
+  }
+  .wip-card {
+    padding: 16px 14px;
+    border-radius: 10px;
+  }
+  .wip-footer {
+    height: 56px;
+    padding: 0 14px;
+  }
+  .wip-footer-left {
+    display: none; /* Hide security badge text on small screens for optimal action button clearance */
+  }
+  .wip-footer-right {
+    width: 100%;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .wip-btn-cancel,
+  .wip-btn-save {
+    padding: 8px 14px;
+    font-size: 12px;
+  }
 }
