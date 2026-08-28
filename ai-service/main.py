@@ -2907,6 +2907,7 @@ class AnalyzeFrameRequest(BaseModel):
     frame: str  # Base64 data URL or raw base64 JPEG/PNG
     sessionId: Optional[str] = "default"
     timestampMs: Optional[int] = None
+    configuredDuration: Optional[float] = None
 
 
 class YOLOAnalyzeFrameRequest(BaseModel):
@@ -2972,7 +2973,8 @@ async def analyze_proctoring_frame(req: AnalyzeFrameRequest):
     result = proctor_engine.process_b64_frame(
         b64_data=req.frame,
         session_id=req.sessionId or "default",
-        timestamp_ms=req.timestampMs
+        timestamp_ms=req.timestampMs,
+        configured_duration=req.configuredDuration
     )
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "Frame analysis failed"))
@@ -2987,7 +2989,8 @@ async def validate_proctoring_calibration(req: AnalyzeFrameRequest):
 
     result = proctor_engine.validate_calibration(
         b64_data=req.frame,
-        session_id=req.sessionId or "default"
+        session_id=req.sessionId or "default",
+        configured_duration=req.configuredDuration
     )
     return result
 
@@ -3035,6 +3038,24 @@ async def get_proctoring_status():
             }
         }
     }
+
+
+class GenerateReportRequest(BaseModel):
+    sessionId: str
+    outputPath: Optional[str] = None
+
+
+@app.post("/api/proctoring/generate-report")
+async def generate_proctoring_report_endpoint(req: GenerateReportRequest):
+    """Generate authoritative 2-sheet Excel report for a proctoring session."""
+    if not PROCTORING_ENGINE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="MediaPipe proctoring engine is unavailable")
+    try:
+        out_path = req.outputPath or str(Path(__file__).resolve().parent / "reports" / f"session_{req.sessionId}_report.xlsx")
+        saved_path = proctor_engine.generate_session_report(req.sessionId, out_path)
+        return {"success": True, "sessionId": req.sessionId, "excelPath": saved_path}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 def log_startup_banner(provider: str, model: str, port: int, health_status: str):

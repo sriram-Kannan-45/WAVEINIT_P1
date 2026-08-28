@@ -409,6 +409,42 @@ class MonitoringController {
       return fail(res, 500, err.message);
     }
   }
+
+  /**
+   * GET /api/monitoring/sessions/:id/excel
+   * Download the official 2-sheet Excel report (Monitoring Report + Summary).
+   */
+  async downloadExcelReport(req, res) {
+    try {
+      const sessionId = req.params.id;
+      const report = await monitoringService.getReport({ sessionId });
+      if (!report) return fail(res, 404, 'Monitoring session report not found');
+
+      const events = report.events || [];
+      const summaryMetrics = {
+        testDuration: report.session?.durationSeconds || report.durationSeconds || 60.0,
+        violationSeconds: report.uniqueViolationSeconds || 0.0,
+        violationPercentage: report.violationPercentage || 0.0,
+        monitoringScore: report.eyeHeadScore || report.scoreBreakdown?.eyeHead || 0.0,
+        multipleFaceCount: report.multipleFaceCount || 0,
+        multipleFaceScore: report.multipleFaceScore || 0.0,
+        noPersonDetected: report.noPersonDetected || false,
+        noPersonScore: report.noPersonScore || 0.0,
+        mobileCount: report.mobileCount || 0,
+        mobileScore: report.mobileScore || 0.0,
+        finalScore: report.finalScore || report.session?.score || 0.0,
+      };
+
+      const MonitoringExcelService = require('../services/monitoringExcelService');
+      const buffer = await MonitoringExcelService.generateReportBuffer(events, summaryMetrics);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="monitoring_report_${sessionId}.xlsx"`);
+      return res.send(buffer);
+    } catch (err) {
+      logger.error(`[MonitoringController] downloadExcelReport error: ${err.message}`);
+      return fail(res, 500, err.message);
+    }
+  }
 }
 
 module.exports = new MonitoringController();

@@ -178,9 +178,6 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
         const d = await r.json()
         if (!r.ok) {
           console.error('[AdminDashboard] Delete trainer failed:', r.status, d)
-          if (r.status === 500) {
-            throw new Error('Unexpected server error.')
-          }
           throw new Error(d.message || d.error || 'Server error deleting trainer')
         }
         success('Trainer deleted successfully')

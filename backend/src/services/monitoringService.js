@@ -23,6 +23,70 @@ const logger = require('../utils/logger');
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
 
+// ── Exact Eye + Head Duration Scoring Helpers ──────────────────────────────
+
+/**
+ * Authoritative Eye + Head Monitoring Score (Max 60 marks)
+ * Formula: EyeHeadScore = (TotalUniqueValidEyeHeadViolationSeconds / ActualParticipantTestDurationSeconds) * 60
+ * Clamped between 0 and 60.
+ */
+function calculateEyeHeadScore(totalUniqueViolationSeconds, actualTestDurationSeconds) {
+  const duration = Math.max(0, Number(actualTestDurationSeconds) || 0);
+  const violation = Math.max(0, Number(totalUniqueViolationSeconds) || 0);
+  if (duration <= 0) return 0;
+  const clampedViolation = Math.min(violation, duration);
+  const score = (clampedViolation / duration) * 60.0;
+  return Math.max(0, Math.min(60.0, score));
+}
+
+/**
+ * Merges overlapping or contiguous violation intervals so overlapping
+ * Eye and Head violations are counted only once (union duration).
+ * Only intervals with duration >= 3.0 seconds are considered valid.
+ */
+function mergeIntervals(intervals) {
+  if (!Array.isArray(intervals) || intervals.length === 0) return [];
+  const valid = [];
+  for (const item of intervals) {
+    let start, end;
+    if (Array.isArray(item)) {
+      start = Number(item[0]);
+      end = Number(item[1]);
+    } else if (item && typeof item === 'object') {
+      start = Number(item.start ?? item.startTime ?? item.startedAt);
+      end = Number(item.end ?? item.endTime ?? item.endedAt);
+    }
+    if (!isNaN(start) && !isNaN(end) && end > start) {
+      const dur = end - start;
+      if (dur >= 3.0) {
+        valid.push([start, end]);
+      }
+    }
+  }
+
+  if (valid.length === 0) return [];
+  valid.sort((a, b) => a[0] - b[0]);
+
+  const merged = [];
+  for (const [start, end] of valid) {
+    if (merged.length === 0 || start > merged[merged.length - 1][1]) {
+      merged.push([start, end]);
+    } else {
+      merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], end);
+    }
+  }
+  return merged;
+}
+
+/**
+ * Calculates total unique violation seconds from merged valid intervals
+ */
+function calculateUniqueViolationSeconds(intervals) {
+  const merged = mergeIntervals(intervals);
+  const sum = merged.reduce((acc, [start, end]) => acc + (end - start), 0);
+  return Math.round(sum * 100) / 100;
+}
+
 // Default Fallback Configurations
 const DEFAULT_CONFIGS = {
   global: {
@@ -1211,6 +1275,47 @@ class MonitoringEngineService {
       e.eventType === 'PHONE_DETECTED' || e.eventType === 'CELL_PHONE_DETECTED'
     );
 
+    // ── Exact Eye + Head Violation Duration & Interval Merging ──────────────
+    // Collect intervals for 6 categories (Head Left, Right, Up; Eye Left, Right, Up)
+    // Ignored direction: Down (permitted for reading/coding)
+    const eyeHeadIntervals = [];
+    const sessionStartMs = new Date(session.startedAt || session.createdAt).getTime();
+
+    for (const ev of mergedEvents) {
+      const typeStr = (ev.eventType || '').toUpperCase();
+      const dirStr = (ev.metadata?.direction || ev.direction || '').toUpperCase();
+      
+      const isEyeOrHead = (
+        typeStr.includes('GAZE') ||
+        typeStr.includes('EYE') ||
+        typeStr.includes('HEAD') ||
+        ev.source === 'LAPTOP' && (dirStr.includes('LEFT') || dirStr.includes('RIGHT') || dirStr.includes('UP'))
+      );
+      const isIgnoredDown = typeStr.includes('DOWN') || dirStr.includes('DOWN');
+
+      if (isEyeOrHead && !isIgnoredDown) {
+        const durSec = ev.durationMs ? ev.durationMs / 1000 : (Number(ev.duration) || 0);
+        const evOccurredMs = new Date(ev.occurredAt || ev.timestamp || Date.now()).getTime();
+        const endSec = Math.max(0, (evOccurredMs - sessionStartMs) / 1000);
+        const startSec = Math.max(0, endSec - durSec);
+
+        // 3-second validation threshold: only intervals >= 3.0s are valid
+        if (durSec >= 3.0) {
+          eyeHeadIntervals.push([startSec, endSec]);
+        }
+      }
+    }
+
+    // Merged non-overlapping unique Eye + Head violation seconds
+    const uniqueEyeHeadSec = calculateUniqueViolationSeconds(eyeHeadIntervals);
+    const configuredDurationSec = Number(session.metadata?.configuredDurationSeconds || session.metadata?.duration || 600);
+    const eyeHeadScore = calculateEyeHeadScore(uniqueEyeHeadSec, totalDurationSec);
+
+    const mobileScore = phoneViolations.length > 0 ? 20.0 : 0.0;
+    const multiFaceScore = categoryBreakdown.persons > 0 ? 10.0 : 0.0;
+    const noPersonScore = faceAbsentSec > 0 ? 10.0 : 0.0;
+    const finalScore = Math.min(100.0, eyeHeadScore + mobileScore + multiFaceScore + noPersonScore);
+
     const coverage = {
       faceDetection: `${Math.max(0, Math.min(100, Math.round(100 - (faceAbsentSec / totalDurationSec) * 100)))}%`,
       eyeTracking: `${Math.max(0, Math.min(100, Math.round(100 - (gazeDeviationSec / totalDurationSec) * 100)))}%`,
@@ -1307,6 +1412,17 @@ class MonitoringEngineService {
         camera: categoryBreakdown.composition,
       },
       coverage,
+      eyeHeadMonitoring: {
+        configuredDurationSeconds: configuredDurationSec,
+        actualTestDurationSeconds: totalDurationSec,
+        configuredDurationFormatted: `${Math.floor(configuredDurationSec / 60).toString().padStart(2, '0')}:${(configuredDurationSec % 60).toString().padStart(2, '0')}`,
+        actualTestDurationFormatted: `${Math.floor(totalDurationSec / 60).toString().padStart(2, '0')}:${(totalDurationSec % 60).toString().padStart(2, '0')}`,
+        violationSeconds: uniqueEyeHeadSec,
+        violationPercentage: (uniqueEyeHeadSec / totalDurationSec) * 100,
+        score: eyeHeadScore,
+        maxScore: 60,
+        scoreDisplay: `${eyeHeadScore.toFixed(2)} / 60`,
+      },
       objectMonitoring: {
         phoneEvents: phoneViolations.length,
         mobileDetected: phoneViolations.length > 0,
@@ -1341,9 +1457,18 @@ class MonitoringEngineService {
       mobileEnabled: session.mobileEnabled,
       calibrationPassed: session.calibrationPassed,
       calibrationDetails: session.calibrationDetails,
-      score: session.score,
-      riskScore: session.score,
-      riskLevel: session.riskLevel,
+      score: finalScore,
+      riskScore: finalScore,
+      riskLevel: finalScore >= 70 ? 'CRITICAL' : (finalScore >= 35 ? 'HIGH' : (finalScore >= 15 ? 'MEDIUM' : 'LOW')),
+      configuredDurationSeconds: configuredDurationSec,
+      actualTestDurationSeconds: totalDurationSec,
+      configuredDurationFormatted: `${Math.floor(configuredDurationSec / 60).toString().padStart(2, '0')}:${(configuredDurationSec % 60).toString().padStart(2, '0')}`,
+      actualTestDurationFormatted: `${Math.floor(totalDurationSec / 60).toString().padStart(2, '0')}:${(totalDurationSec % 60).toString().padStart(2, '0')}`,
+      eyeHeadViolationSeconds: uniqueEyeHeadSec,
+      eyeHeadScore: eyeHeadScore,
+      eyeHeadScoreDisplay: `${eyeHeadScore.toFixed(2)} / 60`,
+      finalScore: finalScore,
+      finalScoreDisplay: `${finalScore.toFixed(2)} / 100`,
       totalEvents: scoredEvents.length,
       warningEvents: summary.counts.warning,
       highEvents: summary.counts.high,
@@ -1364,8 +1489,8 @@ class MonitoringEngineService {
         summary,
         timeline: friendlyTimeline,
         graceWarnings: friendlyGraceWarnings,
-        riskScore: session.score,
-        riskLevel: session.riskLevel,
+        riskScore: finalScore,
+        riskLevel: finalScore >= 70 ? 'CRITICAL' : (finalScore >= 35 ? 'HIGH' : (finalScore >= 15 ? 'MEDIUM' : 'LOW')),
       },
       eventsCount: {
         total: scoredEvents.length,
@@ -1399,4 +1524,10 @@ class MonitoringEngineService {
   }
 }
 
-module.exports = new MonitoringEngineService();
+const serviceInstance = new MonitoringEngineService();
+serviceInstance.calculateEyeHeadScore = calculateEyeHeadScore;
+serviceInstance.mergeIntervals = mergeIntervals;
+serviceInstance.calculateUniqueViolationSeconds = calculateUniqueViolationSeconds;
+
+module.exports = serviceInstance;
+

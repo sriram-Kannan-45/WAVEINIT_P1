@@ -357,6 +357,52 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                 </div>
               </div>
 
+              {/* Eye + Head Monitoring Scorecard (60 Marks Max) */}
+              <div style={{
+                padding: '14px 18px',
+                borderRadius: 12,
+                background: '#f0fdfa',
+                border: '1px solid #99f6e4',
+                marginBottom: 16,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: 12,
+              }}>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: '#0f766e' }}>
+                    Eye + Head Tracking Score (Duration-Based)
+                  </div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: '#115e59', marginTop: 2 }}>
+                    {data?.eyeHeadScoreDisplay || `${(data?.eyeHeadScore != null ? data.eyeHeadScore : (summary?.eyeHeadMonitoring?.score || 0)).toFixed(2)} / 60`}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#134e4a', marginTop: 3 }}>
+                    Formula: (Unique Eye/Head Violation / Actual Test Duration) × 60
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                  <div style={{ padding: '8px 12px', background: '#ffffff', borderRadius: 8, border: '1px solid #ccfbf1', textAlign: 'center' }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Configured</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a' }}>
+                      {data?.configuredDurationFormatted || (data?.configuredDurationSeconds ? `${Math.floor(data.configuredDurationSeconds / 60)}m ${data.configuredDurationSeconds % 60}s` : '—')}
+                    </div>
+                  </div>
+                  <div style={{ padding: '8px 12px', background: '#ffffff', borderRadius: 8, border: '1px solid #ccfbf1', textAlign: 'center' }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Actual Test</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a' }}>
+                      {data?.actualTestDurationFormatted || (data?.actualTestDurationSeconds ? `${Math.floor(data.actualTestDurationSeconds / 60)}m ${data.actualTestDurationSeconds % 60}s` : summary.monitoringDuration || '—')}
+                    </div>
+                  </div>
+                  <div style={{ padding: '8px 12px', background: '#ffffff', borderRadius: 8, border: '1px solid #ccfbf1', textAlign: 'center' }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Violation Time</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: (data?.eyeHeadViolationSeconds > 0 || summary?.eyeHeadMonitoring?.violationSeconds > 0) ? '#dc2626' : '#0d9488' }}>
+                      {`${((data?.eyeHeadViolationSeconds ?? summary?.eyeHeadMonitoring?.violationSeconds) || 0).toFixed(1)}s`}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* High-Visibility Mobile Phone Alert Banner (if detected during test) */}
               {(summary.objectMonitoring?.phoneEvents > 0 || summary.mobilePhoneViolation?.detected || (categories.objects > 0)) && (
                 <div style={{

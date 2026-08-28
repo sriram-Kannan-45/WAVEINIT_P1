@@ -25,6 +25,7 @@ router.put('/config', requireUserId, ctrl.updateConfig);
 router.get('/reports', ctrl.getReportsList);
 router.get('/reports/attempt/:attemptId', ctrl.getAttemptReport);
 router.get('/sessions/:id/report', ctrl.getReport);
+router.get('/sessions/:id/excel', ctrl.downloadExcelReport);
 router.get('/sessions/:id/status', ctrl.getStatus);
 
 // Participant & Session Endpoints

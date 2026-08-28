@@ -402,40 +402,26 @@ const deleteTrainer = async (req, res) => {
       TrainingTrainerAssignment, CourseTrainerAssignment,
       Course, Lesson, Note, AIDocument, AIQuiz, LiveSession,
       DiscussionPost, Notification, Training, DeviceFingerprint, ChatMessage,
-      Attendance, ActivityLog, UserSession, RefreshToken, Interview, CodingAssessment
+      Attendance, ActivityLog, UserSession, RefreshToken, Interview, CodingAssessment,
+      QuizRecording, RegistrationApplication, InterviewNotes, InterviewFeedback,
+      InterviewResult, InterviewRecording, InterviewLog, InterviewDevice,
+      PasswordResetOtp, AssessmentSession, QuizResultsAudit
     } = require('../models');
     const { Op } = require('sequelize');
 
-    // 1. Cleanup assignments and transient user records
-    await Promise.all([
-      CourseTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t }).catch(() => {}),
-      TrainingTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t }).catch(() => {}),
-      Training.update({ trainerId: null }, { where: { trainerId: id }, transaction: t }).catch(() => {}),
-      Course.update({ trainerId: null }, { where: { trainerId: id }, transaction: t }).catch(() => {}),
-      DeviceFingerprint.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
-      UserSession.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
-      RefreshToken.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
-      Notification.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
-      DiscussionPost.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
-      ChatMessage.destroy({ where: { senderId: id }, transaction: t }).catch(() => {}),
-      Attendance.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
-      ActivityLog.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
-      TrainerProfile.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
-      TrainerEducation.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
-      TrainerExperience.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
-      UserProfile.destroy({ where: { userId: id }, transaction: t }).catch(() => {}),
-      Interview.destroy({ where: { interviewer_id: id }, transaction: t }).catch(() => {}),
-      CodingAssessment.destroy({ where: { trainerId: id }, transaction: t }).catch(() => {}),
-    ]);
-
-    // 2. Check if trainer is referenced by permanent educational content (lessons, quizzes, notes, documents, live sessions)
+    // 1. Check if trainer is referenced by permanent educational / assessment content
     const [
+      referencedCourses,
+      referencedTrainings,
       referencedLessons,
       referencedQuizzes,
       referencedNotes,
       referencedAIDocuments,
-      referencedLiveSessions
+      referencedLiveSessions,
+      referencedCodingAssessments
     ] = await Promise.all([
+      Course.findOne({ where: { trainerId: id }, transaction: t }),
+      Training.findOne({ where: { trainerId: id }, transaction: t }),
       Lesson.findOne({ where: { trainerId: id }, transaction: t }),
       AIQuiz.findOne({
         where: {
@@ -448,22 +434,34 @@ const deleteTrainer = async (req, res) => {
       }),
       Note.findOne({ where: { trainerId: id }, transaction: t }),
       AIDocument.findOne({ where: { trainerId: id }, transaction: t }),
-      LiveSession.findOne({ where: { trainerId: id }, transaction: t })
+      LiveSession.findOne({ where: { trainerId: id }, transaction: t }),
+      CodingAssessment.findOne({ where: { trainerId: id }, transaction: t })
     ]);
 
     const hasPermanentReferences =
+      referencedCourses ||
+      referencedTrainings ||
       referencedLessons ||
       referencedQuizzes ||
       referencedNotes ||
       referencedAIDocuments ||
-      referencedLiveSessions;
+      referencedLiveSessions ||
+      referencedCodingAssessments;
 
     if (hasPermanentReferences) {
-      console.log('[deleteTrainer] Trainer is referenced by existing content (lessons/quizzes/notes/materials). Soft-deleting and anonymizing trainer id:', id);
+      console.log('[deleteTrainer] Trainer is referenced by existing content. Soft-deleting and anonymizing trainer id:', id);
       
       const timestamp = Date.now();
       const anonymizedEmail = `${trainer.email}__deleted_${timestamp}`;
       const anonymizedUsername = trainer.username ? `${trainer.username}__deleted_${timestamp}` : null;
+
+      // Clean up assignments & transient sessions
+      await CourseTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t });
+      await TrainingTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t });
+      await DeviceFingerprint.destroy({ where: { userId: id }, transaction: t });
+      await UserSession.destroy({ where: { userId: id }, transaction: t });
+      await RefreshToken.destroy({ where: { userId: id }, transaction: t });
+      await Notification.destroy({ where: { userId: id }, transaction: t });
 
       const [affectedRows] = await User.update(
         { 
@@ -485,19 +483,89 @@ const deleteTrainer = async (req, res) => {
       });
     }
 
-    // 3. No permanent content references: perform complete hard delete
+    // 2. No permanent content references: perform complete clean hard delete
     console.log('[deleteTrainer] No permanent references. Hard-deleting trainer id:', id);
-    try {
+
+    // a. Assignments and registration references
+    await CourseTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t });
+    await TrainingTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t });
+    await RegistrationApplication.update({ reviewerId: null }, { where: { reviewerId: id }, transaction: t });
+    await RegistrationApplication.update({ trainerId: null }, { where: { trainerId: id }, transaction: t });
+    await RegistrationApplication.destroy({ where: { userId: id }, transaction: t });
+    await AssessmentSession.update({ resetByAdmin: null }, { where: { resetByAdmin: id }, transaction: t });
+
+    // b. Interviews (notes, feedback, logs, recordings, devices, interviews)
+    await InterviewNotes.destroy({ where: { author_id: id }, transaction: t });
+    await InterviewFeedback.destroy({ where: { interviewer_id: id }, transaction: t });
+    await InterviewResult.destroy({ where: { decided_by: id }, transaction: t });
+    await InterviewRecording.update({ uploaded_by: null }, { where: { uploaded_by: id }, transaction: t });
+    await InterviewLog.update({ actor_id: null }, { where: { actor_id: id }, transaction: t });
+    await InterviewDevice.destroy({ where: { user_id: id }, transaction: t });
+    await Interview.destroy({
+      where: {
+        [Op.or]: [
+          { interviewer_id: id },
+          { created_by: id },
+          { candidate_id: id }
+        ]
+      },
+      transaction: t
+    });
+
+    // c. Quiz recordings and audit logs
+    await QuizRecording.destroy({
+      where: {
+        [Op.or]: [
+          { trainerId: id },
+          { participantId: id }
+        ]
+      },
+      transaction: t
+    });
+    await QuizResultsAudit.destroy({ where: { performedBy: id }, transaction: t });
+
+    // d. Discussion posts (clear parentId on replies first, then delete)
+    const posts = await DiscussionPost.findAll({ where: { userId: id }, attributes: ['id'], transaction: t });
+    const postIds = posts.map(p => p.id);
+    if (postIds.length > 0) {
+      await DiscussionPost.update({ parentId: null }, { where: { parentId: { [Op.in]: postIds } }, transaction: t });
+      await DiscussionPost.destroy({ where: { id: { [Op.in]: postIds } }, transaction: t });
+    }
+
+    // e. Chat messages, attendance, logs
+    await ChatMessage.destroy({ where: { senderId: id }, transaction: t });
+    await Attendance.destroy({ where: { userId: id }, transaction: t });
+    await ActivityLog.destroy({ where: { userId: id }, transaction: t });
+
+    // f. Profiles and profile children
+    await TrainerEducation.destroy({ where: { userId: id }, transaction: t });
+    await TrainerExperience.destroy({ where: { userId: id }, transaction: t });
+    await TrainerProfile.destroy({ where: { userId: id }, transaction: t });
+    await UserProfile.destroy({ where: { userId: id }, transaction: t });
+
+    // g. Auth and security tokens
+    await Notification.destroy({ where: { userId: id }, transaction: t });
+    await DeviceFingerprint.destroy({ where: { userId: id }, transaction: t });
+    await UserSession.destroy({ where: { userId: id }, transaction: t });
+    await RefreshToken.destroy({ where: { userId: id }, transaction: t });
+    await PasswordResetOtp.destroy({ where: { email: trainer.email }, transaction: t });
+
+    // h. Destroy user (toggling FK checks only if dialect is MySQL)
+    const isMySql = sequelize.getDialect() === 'mysql';
+    if (isMySql) {
       await sequelize.query('SET FOREIGN_KEY_CHECKS = 0', { transaction: t });
-      const affectedRows = await User.destroy({ where: { id }, transaction: t });
-      console.log('[deleteTrainer] Hard delete completed. Rows deleted:', affectedRows);
-    } finally {
+    }
+
+    const affectedRows = await User.destroy({ where: { id }, transaction: t });
+    console.log('[deleteTrainer] Hard delete completed. Rows deleted:', affectedRows);
+
+    if (isMySql) {
       await sequelize.query('SET FOREIGN_KEY_CHECKS = 1', { transaction: t }).catch(() => {});
     }
-    
+
     await t.commit();
     logger.info(`[deleteTrainer] Trainer #${id} hard-deleted successfully.`);
-    res.json({
+    return res.json({
       success: true,
       message: 'Trainer deleted successfully.'
     });
@@ -512,28 +580,15 @@ const deleteTrainer = async (req, res) => {
       });
     }
 
-    if (error.name === 'SequelizeDatabaseError' && error.message && error.message.includes('Data truncated')) {
-      try {
-        const { sequelize } = require('../config/db');
-        const [colDef] = await sequelize.query("SHOW COLUMNS FROM `users` WHERE `Field` = 'status'");
-        const allowed = colDef.length > 0 ? colDef[0].Type : 'unknown';
-        logger.error('[deleteTrainer] Data truncated on users.status — ENUM may not include INACTIVE. Allowed values:', {
-          allowedEnum: allowed,
-          attemptedValue: 'INACTIVE',
-          trainerId: id
-        });
-      } catch (_) {}
-    } else {
-      logger.error('Delete trainer error:', {
-        method: req.method,
-        url: req.originalUrl,
-        trainerId: id,
-        error: error.message,
-        stack: error.stack,
-      });
-    }
+    logger.error('Delete trainer error:', {
+      method: req.method,
+      url: req.originalUrl,
+      trainerId: id,
+      error: error.message,
+      stack: error.stack,
+    });
 
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: error.message || 'Internal server error deleting trainer' });
   }
 };
 
