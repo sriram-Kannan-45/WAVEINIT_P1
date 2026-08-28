@@ -100,11 +100,11 @@ const ProfileContactLink = require('./ProfileContactLink');
 const ProfileActivityLog = require('./ProfileActivityLog');
 
 // Interview Module
-const Interview = require('./Interview');
+const Interview = require('./interview');
 const InterviewSession = require('./InterviewSession');
-const InterviewDevice = require('./InterviewDevice');
-const InterviewRecording = require('./InterviewRecording');
-const InterviewLog = require('./InterviewLog');
+const InterviewDevice = require('./interviewDevice');
+const InterviewRecording = require('./interviewRecording');
+const InterviewLog = require('./interviewLog');
 const InterviewAlert = require('./InterviewAlert');
 const InterviewFeedback = require('./InterviewFeedback');
 const InterviewResult = require('./InterviewResult');
