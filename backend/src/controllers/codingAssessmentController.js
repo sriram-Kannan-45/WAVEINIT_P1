@@ -243,9 +243,11 @@ exports.generateFromPrompt = async (req, res) => {
     const resolvedCourseId = courseId && courseId !== 'undefined' && courseId !== 'null' ? courseId : null;
     const resolvedTrainingId = trainingId && trainingId !== 'undefined' && trainingId !== 'null' ? trainingId : null;
     const lang = Array.isArray(languages) ? languages : (result.languages || ['javascript']);
+    const assessmentTimeLimit = parseInt(req.body.timeLimit || req.body.time_limit, 10) || 60;
     const assessment = await CodingAssessment.create({
       trainerId: req.user.id, trainingId: resolvedTrainingId, courseId: resolvedCourseId,
       title: result.title || `Coding: ${prompt.substring(0, 60)}`,
+      timeLimit: assessmentTimeLimit,
       numProblems: result.problems.length, difficulty, status: 'DRAFT',
       languages: Array.isArray(lang) ? lang : ['javascript'],
     });
@@ -952,15 +954,22 @@ exports.submitAssessment = async (req, res) => {
   }
 };
 
-// ── TRAINER: Results & Participants ──
-
 exports.getResults = async (req, res) => {
   try {
+    const { ProctoringReport, MonitoringSession } = require('../models');
     const results = await CodingResult.findAll({
       where: { assessmentId: req.params.id },
       include: [
         { model: User, as: 'participant', attributes: ['id', 'name', 'email'] },
-        { model: CodingAttempt, as: 'attempt', attributes: ['id', 'status', 'violationCount', 'timeTaken', 'startedAt', 'submittedAt'] }
+        {
+          model: CodingAttempt,
+          as: 'attempt',
+          attributes: ['id', 'status', 'violationCount', 'timeTaken', 'startedAt', 'submittedAt'],
+          include: [
+            { model: ProctoringReport, as: 'proctoringReport', required: false, attributes: ['riskScore', 'riskLevel', 'status', 'summary'] },
+            { model: MonitoringSession, as: 'monitoringSession', required: false, attributes: ['score', 'riskLevel', 'totalEvents', 'laptopStatus'] },
+          ]
+        }
       ],
       order: [['percentage', 'DESC']]
     });

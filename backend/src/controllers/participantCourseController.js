@@ -365,22 +365,42 @@ async function listMyCourses(req, res) {
       order: [['enrolled_at', 'DESC']],
     });
 
+    const validEnrollments = enrollments.filter(e => e.course);
+    const courseIds = validEnrollments.map(e => e.course.id);
+    let lc = {}, qc = {}, ec = {}, cc = {};
+
+    if (courseIds.length > 0) {
+      const [lessons, quizzes, enrolled, coding] = await Promise.all([
+        Lesson.findAll({ where: { courseId: courseIds }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }),
+        AIQuiz.findAll({ where: { courseId: courseIds }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }),
+        Enrollment.findAll({ where: { courseId: courseIds, status: 'ENROLLED' }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }),
+        CodingAssessment.findAll({ where: { courseId: courseIds }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }),
+      ]);
+      lc = Object.fromEntries(lessons.map(r => [String(r.courseId), Number(r.cnt)]));
+      qc = Object.fromEntries(quizzes.map(r => [String(r.courseId), Number(r.cnt)]));
+      ec = Object.fromEntries(enrolled.map(r => [String(r.courseId), Number(r.cnt)]));
+      cc = Object.fromEntries(coding.map(r => [String(r.courseId), Number(r.cnt)]));
+    }
+
     res.json({
       success: true,
-      courses: enrollments
-        .filter(e => e.course)
-        .map(e => ({
-          courseId: e.course.id,
-          title: e.course.title,
-          description: e.course.description,
-          thumbnailUrl: e.course.thumbnailUrl,
-          status: e.course.status,
-          programTitle: e.course.program?.title || null,
-          trainerName: e.course.trainer?.name || null,
-          progressPercent: Number(e.progressPercent || 0),
-          enrolledAt: e.enrolled_at || e.createdAt,
-          enrollmentStatus: e.status,
-        })),
+      courses: validEnrollments.map(e => ({
+        id: e.course.id,
+        courseId: e.course.id,
+        title: e.course.title,
+        description: e.course.description,
+        thumbnailUrl: e.course.thumbnailUrl,
+        status: e.course.status,
+        programTitle: e.course.program?.title || null,
+        trainerName: e.course.trainer?.name || null,
+        lessonCount: lc[String(e.course.id)] || 0,
+        quizCount: qc[String(e.course.id)] || 0,
+        enrolledCount: ec[String(e.course.id)] || 0,
+        codingCount: cc[String(e.course.id)] || 0,
+        progressPercent: Number(e.progressPercent || 0),
+        enrolledAt: e.enrolled_at || e.createdAt,
+        enrollmentStatus: e.status,
+      })),
     });
   } catch (e) {
     console.error('listMyCourses:', e.message);
@@ -435,23 +455,36 @@ async function getCourseOverview(req, res) {
     if (!ctx) return;
     const { course, enrollment } = ctx;
 
-    const [lessonCount, completedLessonCount, quizzes, submissions] = await Promise.all([
-      Lesson.count({ where: { courseId: course.id } }),
+    const courseWhere = course.trainingProgramId
+      ? { [Op.or]: [{ courseId: course.id }, { trainingId: course.trainingProgramId }] }
+      : { courseId: course.id };
+
+    const [lessonCount, completedLessonCount, quizzes, submissions, enrolledCount, codingCount] = await Promise.all([
+      Lesson.count({ where: courseWhere }),
       LessonProgress.count({
         where: { participantId: req.user.id, status: 'COMPLETED' },
-        include: [{ model: Lesson, as: 'lesson', where: { courseId: course.id }, required: true, attributes: [] }],
+        include: [{ model: Lesson, as: 'lesson', where: courseWhere, required: true, attributes: [] }],
       }),
-      AIQuiz.findAll({ where: { courseId: course.id }, attributes: ['id'] }),
+      AIQuiz.findAll({ where: courseWhere, attributes: ['id'] }),
       AssessmentSubmission.findAll({
         where: { participantId: req.user.id },
         include: [{
           model: LessonAssessment, as: 'assessment',
           required: true,
-          include: [{ model: Lesson, as: 'lesson', where: { courseId: course.id }, required: true, attributes: [] }],
+          include: [{ model: Lesson, as: 'lesson', where: courseWhere, required: true, attributes: [] }],
           attributes: ['id'],
         }],
         attributes: ['id'],
       }),
+      Enrollment.count({
+        where: {
+          status: 'ENROLLED',
+          ...(course.trainingProgramId
+            ? { [Op.or]: [{ courseId: course.id }, { trainingId: course.trainingProgramId }] }
+            : { courseId: course.id })
+        }
+      }),
+      CodingAssessment.count({ where: courseWhere }),
     ]);
 
     // Quiz attempts and avg score (only counts published results)
@@ -487,11 +520,13 @@ async function getCourseOverview(req, res) {
         progressPercent: Number(enrollment.progressPercent || 0),
       },
       stats: {
-        totalLessons: lessonCount,
-        completedLessons: completedLessonCount,
-        totalQuizzes: quizzes.length,
-        attemptedQuizzes: attemptedCount,
-        submittedAssessments: submissions.length,
+        totalLessons: Number(lessonCount || 0),
+        completedLessons: Number(completedLessonCount || 0),
+        totalQuizzes: Number(quizzes.length || 0),
+        attemptedQuizzes: Number(attemptedCount || 0),
+        enrolledCount: Number(enrolledCount || 0),
+        codingCount: Number(codingCount || 0),
+        submittedAssessments: Number(submissions.length || 0),
         avgQuizScore: avgScore,
       },
     });
@@ -874,20 +909,44 @@ async function loadAccessibleQuiz(req, res, quizId) {
       include: [{ model: Training, as: 'program' }]
     }]
   });
-  const isQuizPublished = quiz.status === 'PUBLISHED' || quiz.isPublished || quiz.published;
-  if (!isQuizPublished) { res.status(403).json({ error: 'Quiz not published' }); return null; }
-  if (!quiz.courseId) { res.status(403).json({ error: 'Quiz not associated with a course' }); return null; }
-  
-  // Must be enrolled in the quiz's course.
-  const enrollment = await Enrollment.findOne({
-    where: { courseId: quiz.courseId, participantId: req.user.id, status: 'ENROLLED' },
-  });
-  if (!enrollment) { res.status(403).json({ error: 'You are not enrolled in this course' }); return null; }
+  if (!quiz) {
+    res.status(404).json({ error: 'Quiz not found' });
+    return null;
+  }
 
-  // Check if any attempt already exists
+  // Check if any attempt already exists for this participant
   const existingAttempt = await QuizAttempt.findOne({
     where: { quizId: quiz.id, participantId: req.user.id }
   });
+
+  const isQuizPublished = quiz.status === 'PUBLISHED' || quiz.status === 'RESULTS_PUBLISHED' || quiz.isPublished || quiz.published;
+  if (!isQuizPublished && !existingAttempt) {
+    res.status(403).json({ error: 'Quiz not published' });
+    return null;
+  }
+
+  // Check enrollment across courseId, trainingId, or programId
+  let enrollment = null;
+  const enrollmentQuery = [];
+  if (quiz.courseId) enrollmentQuery.push({ courseId: quiz.courseId });
+  if (quiz.trainingId) enrollmentQuery.push({ trainingId: quiz.trainingId });
+  if (quiz.course?.programId) enrollmentQuery.push({ trainingId: quiz.course.programId });
+
+  if (enrollmentQuery.length > 0) {
+    enrollment = await Enrollment.findOne({
+      where: {
+        participantId: req.user.id,
+        [Op.or]: enrollmentQuery,
+        status: { [Op.in]: ['ENROLLED', 'COMPLETED'] },
+      },
+    });
+  }
+
+  // If no existing attempt and not enrolled, reject
+  if (!existingAttempt && !enrollment) {
+    res.status(403).json({ error: 'You are not enrolled in this course or training' });
+    return null;
+  }
 
   // Check availability only if no active attempt exists (new attempt)
   if (!existingAttempt) {
@@ -995,56 +1054,83 @@ async function submitQuiz(req, res) {
     if (!ctx) return;
     const { quiz } = ctx;
 
-    const { attemptId, answers } = req.body;
-    if (!Array.isArray(answers)) {
-      return res.status(422).json({ error: 'answers[] is required' });
-    }
-    const questions = await AIQuestion.findAll({ where: { quizId: quiz.id } });
-    const correctByQ = Object.fromEntries(questions.map(q => [String(q.id), q.correctAnswer]));
+    const { attemptId, answers = [] } = req.body;
+    const answerList = Array.isArray(answers) ? answers : [];
+
+    const questions = await AIQuestion.findAll({
+      where: { quizId: quiz.id },
+      order: [['order', 'ASC'], ['id', 'ASC']]
+    });
 
     let correct = 0;
     const total = questions.length;
-
     let attempt;
+
     await sequelize.transaction(async t => {
+      let whereClause = { quizId: quiz.id, participantId: req.user.id };
+      if (attemptId) {
+        whereClause = { id: attemptId, quizId: quiz.id, participantId: req.user.id };
+      }
       attempt = await QuizAttempt.findOne({
-        where: { id: attemptId, quizId: quiz.id, participantId: req.user.id },
+        where: whereClause,
+        order: [['id', 'DESC']],
         lock: t.LOCK.UPDATE,
         transaction: t
       });
-      if (!attempt) {
-        const err = new Error('Attempt not found');
-        err.status = 404;
-        throw err;
+
+      // Fallback search if attemptId didn't match directly
+      if (!attempt && attemptId) {
+        attempt = await QuizAttempt.findOne({
+          where: { quizId: quiz.id, participantId: req.user.id },
+          order: [['id', 'DESC']],
+          lock: t.LOCK.UPDATE,
+          transaction: t
+        });
       }
+
+      // If still no attempt found, create one on the fly to avoid failing the candidate
+      if (!attempt) {
+        attempt = await QuizAttempt.create({
+          quizId: quiz.id,
+          participantId: req.user.id,
+          status: 'IN_PROGRESS',
+          startedAt: new Date(),
+        }, { transaction: t });
+      }
+
+      // Idempotency: if already submitted, exit cleanly without throwing 409
       if (attempt.status === 'SUBMITTED' || attempt.status === 'EVALUATED') {
-        const err = new Error('Quiz already submitted');
-        err.status = 409;
-        throw err;
+        return;
       }
 
       // Wipe any prior partial answers for this attempt then recreate.
       await QuizAnswer.destroy({ where: { attemptId: attempt.id }, transaction: t });
 
-      // Index lookup so we can store both the raw answer text and the
-      // option index (helpful for the review screen).
       const questionsMap = Object.fromEntries(questions.map(q => [String(q.id), q]));
 
-      for (const a of answers) {
+      for (const a of answerList) {
         const qid = String(a.questionId);
         const question = questionsMap[qid];
         if (!question) continue;
 
-        const submittedText = String(a.answer ?? '').trim();
+        const submittedText = String(a.answerText ?? a.answer ?? '').trim();
         const submittedAnswer = {
           selectedOption: a.selectedOption !== undefined ? a.selectedOption : null,
-          answer: a.answer,
-          answerText: a.answer,
+          answer: submittedText,
+          answerText: submittedText,
           matches: a.matches
         };
 
-        const { isCorrect, score: gradeScore } = gradeAnswer(question, submittedAnswer);
-        const earnedScore = gradeScore / 100; // 0.0 to 1.0
+        let isCorrect = false;
+        let earnedScore = 0;
+        try {
+          const { isCorrect: gradedCorrect, score: gradeScore } = gradeAnswer(question, submittedAnswer);
+          isCorrect = !!gradedCorrect;
+          earnedScore = (gradeScore || 0) / 100;
+        } catch (_) {
+          isCorrect = false;
+          earnedScore = 0;
+        }
         correct += earnedScore;
 
         let optionIdx = -1;
@@ -1071,7 +1157,7 @@ async function submitQuiz(req, res) {
           : null,
       }, { transaction: t });
 
-      // Persist canonical score on QuizResult (stays HIDDEN until trainer publishes).
+      // Persist canonical score on QuizResult
       const percentage = total > 0 ? (correct / total) * 100 : 0;
       const totalScore = correct;
       const maxScore = total;
@@ -1087,28 +1173,32 @@ async function submitQuiz(req, res) {
       }, { transaction: t });
     });
 
-    // Recompute course progress (mandatory quiz might have flipped completion).
-    await recomputeCourseProgress(quiz.courseId, req.user.id);
+    // Recompute course progress safely (only if quiz.courseId exists)
+    if (quiz.courseId) {
+      await recomputeCourseProgress(quiz.courseId, req.user.id).catch(err => {
+        console.warn('recomputeCourseProgress non-fatal warning:', err.message);
+      });
+    }
 
-    // Automatically conclude verification and monitoring session and close mobile camera
-    try {
-      const verificationService = require('../services/assessmentVerificationService');
-      await verificationService.endSession({ attemptId: attempt.id, participantId: req.user.id }).catch(() => {});
-    } catch (_) {}
+    // Automatically conclude verification and monitoring session
+    if (attempt?.id) {
+      try {
+        const verificationService = require('../services/assessmentVerificationService');
+        await verificationService.endSession({ attemptId: attempt.id, participantId: req.user.id }).catch(() => {});
+      } catch (_) {}
+    }
 
-    // Note: never return the score here. Score is only revealed via /result
-    // after the trainer flips result_status.
     res.json({
       success: true,
       message: 'Quiz submitted. Results will be revealed once your trainer publishes them.',
-      attemptId: attempt.id,
+      attemptId: attempt?.id || attemptId,
     });
   } catch (e) {
-    console.error('submitQuiz:', e.message);
+    console.error('submitQuiz error:', e.message);
     if (e.status) {
       return res.status(e.status).json({ error: e.message });
     }
-    res.status(500).json({ error: 'Failed to submit quiz' });
+    res.status(500).json({ error: e.message || 'Failed to submit quiz' });
   }
 }
 
@@ -1123,15 +1213,35 @@ async function getQuizResult(req, res) {
       where: {
         quizId: quiz.id,
         participantId: req.user.id,
-        status: { [Op.in]: ['SUBMITTED', 'EVALUATED', 'AUTO_SUBMITTED', 'COMPLETED', 'GRADED', 'submitted', 'completed', 'evaluated', 'graded', 'disqualified_copy_violation'] }
+        status: { [Op.in]: ['SUBMITTED', 'EVALUATED', 'AUTO_SUBMITTED', 'disqualified_copy_violation', 'disqualified_policy_violation'] }
       },
       order: [['id', 'DESC']],
     });
     if (!attempt) {
+      // Check if an in-progress attempt exists
+      const anyAttempt = await QuizAttempt.findOne({
+        where: { quizId: quiz.id, participantId: req.user.id },
+        order: [['id', 'DESC']],
+      });
+      if (anyAttempt) {
+        return res.json({
+          success: true,
+          status: 'SUBMITTED_HIDDEN',
+          resultStatus: quiz.resultStatus || 'HIDDEN',
+          message: 'Your quiz has been submitted. Results are pending trainer review.',
+          submittedAt: anyAttempt.submittedAt || anyAttempt.updatedAt,
+          attemptStatus: anyAttempt.status,
+        });
+      }
       return res.json({ success: true, status: 'NOT_SUBMITTED', resultStatus: quiz.resultStatus });
     }
 
-    if (!quiz.isResultPublished) {
+    const isResultPublished =
+      quiz.status === 'RESULTS_PUBLISHED' ||
+      quiz.resultStatus === 'PUBLISHED' ||
+      !!quiz.isResultPublished;
+
+    if (!isResultPublished) {
       return res.json({
         success: true,
         status: 'SUBMITTED_HIDDEN',
@@ -1142,7 +1252,15 @@ async function getQuizResult(req, res) {
       });
     }
 
-    const result = await QuizResult.findOne({ where: { attemptId: attempt.id } });
+    const result = await QuizResult.findOne({
+      where: {
+        [Op.or]: [
+          { attemptId: attempt.id },
+          { quizId: quiz.id, participantId: req.user.id },
+        ],
+      },
+    });
+
     const reviewQuestions = await AIQuestion.findAll({
       where: { quizId: quiz.id },
       order: [['order', 'ASC'], ['id', 'ASC']],
@@ -1150,18 +1268,32 @@ async function getQuizResult(req, res) {
     const myAnswers = await QuizAnswer.findAll({ where: { attemptId: attempt.id } });
     const answerMap = Object.fromEntries(myAnswers.map(a => [String(a.questionId), a]));
 
+    const correctCount = myAnswers.filter(a => a.isCorrect).length;
+    const totalCount = reviewQuestions.length || myAnswers.length || 1;
+    const computedPercentage = result?.percentage != null
+      ? Number(result.percentage)
+      : Math.round((correctCount / totalCount) * 100);
+
+    const computedTotalScore = result?.totalScore != null
+      ? Number(result.totalScore)
+      : correctCount;
+
+    const computedMaxScore = result?.maxScore != null
+      ? Number(result.maxScore)
+      : (quiz.totalMarks ? Number(quiz.totalMarks) : totalCount);
+
     res.json({
       success: true,
       status: 'PUBLISHED',
       resultStatus: 'PUBLISHED',
-      score: result ? Number(result.percentage) : null,
-      totalScore: result ? Number(result.totalScore) : null,
-      maxScore: result ? Number(result.maxScore) : null,
+      score: computedPercentage,
+      totalScore: computedTotalScore,
+      maxScore: computedMaxScore,
       submittedAt: attempt.submittedAt,
       attemptStatus: attempt.status,
-      correctCount: myAnswers.filter(a => a.isCorrect).length,
-      wrongCount: reviewQuestions.length - myAnswers.filter(a => a.isCorrect).length,
-      passStatus: (result && Number(result.percentage) >= 50) ? 'Pass' : 'Fail',
+      correctCount,
+      wrongCount: Math.max(0, totalCount - correctCount),
+      passStatus: computedPercentage >= 50 ? 'Pass' : 'Fail',
       review: reviewQuestions.map(q => {
         const my = answerMap[String(q.id)];
         return {
@@ -1180,7 +1312,7 @@ async function getQuizResult(req, res) {
     });
   } catch (e) {
     console.error('getQuizResult:', e.message);
-    res.status(500).json({ error: 'Failed to load quiz result' });
+    res.status(500).json({ error: e.message || 'Failed to load quiz result' });
   }
 }
 

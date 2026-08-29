@@ -273,13 +273,6 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
                 <p className="tdb-header-subtitle">Here's an overview of your training activities.</p>
               </div>
             </div>
-
-            <button
-              className="tdb-create-btn"
-              onClick={() => setCreateModalOpen(true)}
-            >
-              <Plus size={15} strokeWidth={2.5} /> Create Course
-            </button>
           </div>
 
           {/* 2. Statistics Cards Row (4 Cards) */}
@@ -506,19 +499,6 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
             <div className="tdb-quick-actions-grid">
               <div
                 className="tdb-action-card"
-                onClick={() => setCreateModalOpen(true)}
-              >
-                <div className="tdb-action-icon tdb-action-icon--green">
-                  <Plus size={16} strokeWidth={2.4} />
-                </div>
-                <div>
-                  <h4 className="tdb-action-title">Create Course</h4>
-                  <div className="tdb-action-sub">Start a new training</div>
-                </div>
-              </div>
-
-              <div
-                className="tdb-action-card"
                 onClick={() => onTabChange?.('courses')}
               >
                 <div className="tdb-action-icon tdb-action-icon--blue">
@@ -557,54 +537,6 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
               </div>
             </div>
           </div>
-
-          {/* ── Create Course Modal ── */}
-          <AnimatePresence>
-            {createModalOpen && (
-              <motion.div
-                className="wl-modal-overlay"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() => setCreateModalOpen(false)}
-                style={{ zIndex: 1000 }}
-              >
-                <motion.div
-                  className="wl-modal-card"
-                  initial={{ scale: 0.95, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  exit={{ scale: 0.95, opacity: 0 }}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <h2 className="wl-modal-title">Create Course</h2>
-                  <p style={{ fontSize: 13, color: '#64748B', marginBottom: 16 }}>
-                    New courses are assigned under Training Programs by administrators. You can create learning modules and lessons inside assigned courses.
-                  </p>
-                  <div className="wl-modal-actions" style={{ marginTop: 24 }}>
-                    <button
-                      type="button"
-                      onClick={() => setCreateModalOpen(false)}
-                      className="wl-btn-secondary"
-                      style={{ height: 40 }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCreateModalOpen(false)
-                        onTabChange?.('courses')
-                      }}
-                      className="wl-btn-primary"
-                      style={{ height: 40 }}
-                    >
-                      Open Course Manager
-                    </button>
-                  </div>
-                </motion.div>
-              </motion.div>
-            )}
-          </AnimatePresence>
 
           {/* ── Bulk Import Modal ── */}
           <AnimatePresence>

@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { API, API_BASE } from '../api/api'
 import { useToast } from '../components/Toast'
+import { validateEmail } from '../utils/validators'
 
 const ease = [0.22, 1, 0.36, 1]
 
@@ -126,7 +127,7 @@ function RegistrationPage() {
 
   const canNext = () => {
     if (step === 0) return form.firstName.trim() && form.lastName.trim()
-    if (step === 1) return form.email.trim() && form.phone.trim()
+    if (step === 1) return form.email.trim() && validateEmail(form.email) && form.phone.trim()
     if (step === 2) return form.trainingId
     if (step === 3) return true
     if (step === 4) return form.agreeTerms
@@ -159,6 +160,7 @@ function RegistrationPage() {
 
   const handleSubmit = async () => {
     if (!form.agreeTerms) { setError('You must agree to the terms.'); return }
+    if (!validateEmail(form.email)) { setError('Please provide a valid email address.'); return }
     setLoading(true); setError(''); setSubmitStep(0)
 
     try {

@@ -42,7 +42,10 @@ function calculateEyeHeadScore(totalUniqueViolationSeconds, actualTestDurationSe
 /**
  * Merges overlapping or contiguous violation intervals so overlapping
  * Eye and Head violations are counted only once (union duration).
- * Only intervals with duration >= 3.0 seconds are considered valid.
+ *
+ * There is NO minimum-duration threshold: every positive-duration interval
+ * (e.g. 0.5s, 1s, 2s, 3s, 10s) is accumulated and merged. Only zero-duration
+ * or invalid intervals are dropped.
  */
 function mergeIntervals(intervals) {
   if (!Array.isArray(intervals) || intervals.length === 0) return [];
@@ -57,10 +60,7 @@ function mergeIntervals(intervals) {
       end = Number(item.end ?? item.endTime ?? item.endedAt);
     }
     if (!isNaN(start) && !isNaN(end) && end > start) {
-      const dur = end - start;
-      if (dur >= 3.0) {
-        valid.push([start, end]);
-      }
+      valid.push([start, end]);
     }
   }
 
@@ -85,6 +85,68 @@ function calculateUniqueViolationSeconds(intervals) {
   const merged = mergeIntervals(intervals);
   const sum = merged.reduce((acc, [start, end]) => acc + (end - start), 0);
   return Math.round(sum * 100) / 100;
+}
+
+const SEVERITY_RANK = { INFO: 0, LOW: 1, MEDIUM: 2, WARNING: 3, HIGH: 4, CRITICAL: 5 };
+
+function eventIntervalBounds(event) {
+  const metadata = event.metadata || {};
+  const fallbackEnd = new Date(event.occurredAt || event.timestamp || Date.now()).getTime();
+  const end = new Date(metadata.violationEndTime || metadata.endTime || fallbackEnd).getTime();
+  const durationMs = Math.max(0, Number(event.durationMs ?? (Number(event.duration) || 0) * 1000) || 0);
+  const start = new Date(metadata.violationStartTime || metadata.startTime || (end - durationMs)).getTime();
+  const safeEnd = Number.isFinite(end) ? end : fallbackEnd;
+  const safeStart = Number.isFinite(start) ? Math.min(start, safeEnd) : safeEnd - durationMs;
+  return { start: safeStart, end: safeEnd };
+}
+
+/**
+ * Collapse transport duplicates and polling fragments into one incident per
+ * detector/type/direction. Gaze and head remain distinct, then scoring takes
+ * the union of their time ranges so overlap is never counted twice.
+ */
+function aggregateMonitoringEvents(events, maxGapMs = 750) {
+  const grouped = new Map();
+  for (const event of events || []) {
+    const direction = String(event.metadata?.direction || event.direction || '').toUpperCase();
+    const key = `${event.source || 'LAPTOP'}|${event.eventType}|${direction}`;
+    const item = { ...event, ...eventIntervalBounds(event) };
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(item);
+  }
+
+  const incidents = [];
+  for (const items of grouped.values()) {
+    items.sort((a, b) => a.start - b.start || a.end - b.end);
+    let current = null;
+    for (const item of items) {
+      if (!current || item.start > current.end + maxGapMs) {
+        if (current) incidents.push(current);
+        current = { ...item, rawEventIds: [item.id] };
+        continue;
+      }
+      current.end = Math.max(current.end, item.end);
+      current.confidence = Math.max(Number(current.confidence) || 0, Number(item.confidence) || 0);
+      if ((SEVERITY_RANK[item.severity] || 0) > (SEVERITY_RANK[current.severity] || 0)) current.severity = item.severity;
+      current.rawEventIds.push(item.id);
+    }
+    if (current) incidents.push(current);
+  }
+
+  return incidents.map((incident) => ({
+    ...incident,
+    id: incident.rawEventIds.length === 1 ? incident.id : `incident_${incident.rawEventIds.join('_')}`,
+    durationMs: Math.max(0, incident.end - incident.start),
+    duration: Math.round(Math.max(0, incident.end - incident.start) / 100) / 10,
+    occurredAt: new Date(incident.end),
+    timestamp: new Date(incident.end),
+    metadata: {
+      ...(incident.metadata || {}),
+      violationStartTime: new Date(incident.start).toISOString(),
+      violationEndTime: new Date(incident.end).toISOString(),
+      aggregatedEventIds: incident.rawEventIds,
+    },
+  })).sort((a, b) => new Date(a.occurredAt) - new Date(b.occurredAt));
 }
 
 // Default Fallback Configurations
@@ -178,6 +240,8 @@ const DEFAULT_CONFIGS = {
 class MonitoringEngineService {
   constructor() {
     this.inMemoryCooldowns = new Map(); // key -> lastTimestamp
+    this.activeMobileViolations = new Map(); // sessionId -> current remote-camera interval
+    this.pendingSessionStarts = new Map(); // attempt key -> in-flight session creation
   }
 
   // ── Configuration Resolution ─────────────────────────────────────────────
@@ -257,6 +321,34 @@ class MonitoringEngineService {
     attemptId = null,
     mobileEnabled = false,
   }) {
+    const startKey = attemptId
+      ? `${participantId}:${String(contextType).toUpperCase()}:${Number(attemptId)}`
+      : null;
+    if (!startKey) {
+      return this._startSession({ participantId, contextType, contextId, attemptId, mobileEnabled });
+    }
+
+    const pending = this.pendingSessionStarts.get(startKey);
+    if (pending) return pending;
+
+    const operation = this._startSession({ participantId, contextType, contextId, attemptId, mobileEnabled });
+    this.pendingSessionStarts.set(startKey, operation);
+    try {
+      return await operation;
+    } finally {
+      if (this.pendingSessionStarts.get(startKey) === operation) {
+        this.pendingSessionStarts.delete(startKey);
+      }
+    }
+  }
+
+  async _startSession({
+    participantId,
+    contextType = 'QUIZ',
+    contextId = null,
+    attemptId = null,
+    mobileEnabled = false,
+  }) {
     if (!participantId) throw new Error('participantId is required');
 
     const normalizedContext = String(contextType).toUpperCase();
@@ -273,6 +365,7 @@ class MonitoringEngineService {
         },
       });
       if (existing) {
+        await this._linkAttemptToMonitoringSession(existing, normalizedContext, attemptId);
         return { session: existing, isResumed: true };
       }
     }
@@ -301,7 +394,19 @@ class MonitoringEngineService {
     }
 
     logger.info(`[MonitoringEngine] Started session ${sessionId} for participant ${participantId} (${normalizedContext})`);
+    await this._linkAttemptToMonitoringSession(session, normalizedContext, attemptId);
     return { session, isResumed: false };
+  }
+
+  async _linkAttemptToMonitoringSession(session, contextType, attemptId) {
+    if (!session?.sessionId || !attemptId) return;
+    const AttemptModel = contextType === 'CODING' ? CodingAttempt : contextType === 'QUIZ' ? QuizAttempt : null;
+    if (!AttemptModel) return;
+
+    const attempt = await AttemptModel.findByPk(Number(attemptId));
+    if (attempt && attempt.monitoringSessionId !== session.sessionId) {
+      await attempt.update({ monitoringSessionId: session.sessionId });
+    }
   }
 
   async getSession(sessionId) {
@@ -352,8 +457,8 @@ class MonitoringEngineService {
       criticalEvents: session.criticalEvents,
       integrityFlags: session.integrityFlags || [],
       isMobileDegraded,
-      startedAt: session.startedAt,
-      endedAt: session.endedAt,
+      startedAt: session.startedAt || session.createdAt || null,
+      endedAt: session.endedAt || null,
     };
   }
 
@@ -389,6 +494,9 @@ class MonitoringEngineService {
   async validateLaptop({ sessionId, participantId, frame }) {
     if (!frame) throw new Error('frame data is required');
 
+    const session = await this.getSession(sessionId);
+    const configuredDuration = Number(session?.metadata?.configuredDurationSeconds) || 600;
+
     try {
       const response = await axios.post(
         `${AI_SERVICE_URL}/api/proctoring/analyze-frame`,
@@ -396,6 +504,7 @@ class MonitoringEngineService {
           frame,
           sessionId: String(sessionId),
           timestampMs: Date.now(),
+          configuredDuration,
         },
         { timeout: 4000, headers: { 'Content-Type': 'application/json' } }
       );
@@ -404,49 +513,88 @@ class MonitoringEngineService {
       const violations = [];
 
       if (data?.success) {
-        const session = await this.getSession(sessionId);
         if (session) {
           session.lastLaptopHeartbeatAt = new Date();
           await session.save();
         }
 
-        // Check face absence / multiple persons
-        if (data.face_count === 0) {
+        const faceCount = Number(data.face_count) || 0;
+        const faceDetected = Boolean(data.face_detected ?? faceCount > 0);
+        // Occupant presence can be proven even without facial landmarks (e.g.
+        // the body/person fallback). "No person" only applies when neither the
+        // face nor the body is detected.
+        const personDetected = Boolean(data.person_detected ?? faceDetected);
+
+        // Normalize gaze
+        let rawGaze = String(data.gaze_direction || data.gaze_classification || '').toUpperCase();
+        if (rawGaze.startsWith('OFF_SCREEN_')) rawGaze = rawGaze.replace('OFF_SCREEN_', '');
+        const normGaze = ['STRAIGHT', 'CENTER', 'NOT DETECTED', 'NOT_DETECTED', 'UNKNOWN', 'ON_SCREEN'].includes(rawGaze)
+          ? 'CENTER'
+          : rawGaze;
+
+        // Normalize head
+        let rawHead = String(data.head_pose_classification || data.head_direction || '').toUpperCase();
+        if (rawHead.startsWith('HEAD_LOOKING_')) rawHead = rawHead.replace('HEAD_LOOKING_', '');
+        const normHead = ['STRAIGHT', 'CENTER', 'NOT DETECTED', 'NOT_DETECTED', 'UNKNOWN'].includes(rawHead)
+          ? 'CENTER'
+          : rawHead;
+
+        const yaw = Number(data.head_pose?.yaw ?? data.yaw ?? 0);
+        const pitch = Number(data.head_pose?.pitch ?? data.pitch ?? 0);
+        const headPose = { yaw, pitch, roll: 0 };
+
+        // 1. Face absence / Multiple persons
+        if ((!faceDetected || faceCount === 0) && !personDetected) {
           violations.push({
             type: 'FACE_ABSENT',
             severity: 'WARNING',
             detail: 'Candidate face absent from laptop camera view',
           });
-        } else if (data.face_count > 1) {
+        } else if (faceCount > 1) {
           violations.push({
             type: 'MULTIPLE_FACES',
             severity: 'HIGH',
-            detail: `Multiple persons detected (${data.face_count} faces in view)`,
+            detail: `Multiple persons detected (${faceCount} faces in view)`,
           });
         }
 
-        // Check gaze deviation
-        if (data.gaze_direction && data.gaze_direction !== 'CENTER' && data.gaze_direction !== 'UNKNOWN') {
+        // 2. Gaze deviation (Down is ignored/permitted for reading)
+        if (normGaze !== 'CENTER' && normGaze !== 'DOWN') {
           violations.push({
-            type: `GAZE_${data.gaze_direction}`,
+            type: `GAZE_OFF_SCREEN_${normGaze}`,
             severity: 'WARNING',
-            detail: `Gaze deviated (${data.gaze_direction.replace(/_/g, ' ')})`,
+            detail: `Gaze deviated ${normGaze}`,
           });
         }
 
-        // Check head pose deviation
-        if (data.head_pose_classification && data.head_pose_classification !== 'CENTER' && data.head_pose_classification !== 'UNKNOWN') {
+        // 3. Head pose deviation (Down is ignored/permitted for reading)
+        if (normHead !== 'CENTER' && normHead !== 'DOWN') {
           violations.push({
-            type: `HEAD_${data.head_pose_classification}`,
+            type: `HEAD_LOOKING_${normHead}`,
             severity: 'WARNING',
-            detail: `Head turned away (${data.head_pose_classification.replace(/_/g, ' ')})`,
+            detail: `Head turned ${normHead}`,
           });
         }
+
+        return {
+          ...data,
+          face_detected: faceDetected,
+          face_count: faceCount,
+          person_detected: personDetected,
+          gaze_direction: normGaze,
+          gaze_classification: normGaze === 'CENTER' ? 'ON_SCREEN' : `OFF_SCREEN_${normGaze}`,
+          gaze_confidence: Number(data.gaze_confidence) || 0.9,
+          head_direction: normHead,
+          head_pose_classification: normHead,
+          head_pose: headPose,
+          head_confidence: Number(data.head_confidence) || 0.85,
+          violations,
+        };
       }
 
       return {
         ...data,
-        violations,
+        violations: [],
       };
     } catch (err) {
       logger.warn(`[MonitoringEngine] Laptop validation error: ${err.message}`);
@@ -461,12 +609,17 @@ class MonitoringEngineService {
   async validateCalibrationFrame({ sessionId, frame }) {
     if (!frame) throw new Error('frame data is required');
 
+    let session = null;
+    try { session = await this.getSession(sessionId); } catch (_) { session = null; }
+    const configuredDuration = Number(session?.metadata?.configuredDurationSeconds) || 600;
+
     try {
       const response = await axios.post(
         `${AI_SERVICE_URL}/api/proctoring/validate-calibration`,
         {
           frame,
           sessionId: String(sessionId),
+          configuredDuration,
         },
         { timeout: 4000, headers: { 'Content-Type': 'application/json' } }
       );
@@ -537,6 +690,27 @@ class MonitoringEngineService {
 
     logger.info(`[MonitoringEngine] Mobile paired successfully for session ${sessionId}`);
     return { success: true, session };
+  }
+
+  async startTestSession({ sessionId, attemptId, testStartedAt }) {
+    const session = await MonitoringSession.findOne({
+      where: { [Op.or]: [{ sessionId }, ...(attemptId ? [{ attemptId }] : [])] }
+    });
+    if (session) {
+      const startTime = testStartedAt ? new Date(testStartedAt) : new Date();
+      await session.update({
+        startedAt: startTime,
+        attemptId: attemptId || session.attemptId,
+        laptopStatus: 'ACTIVE',
+        status: 'ACTIVE',
+        metadata: {
+          ...(session.metadata || {}),
+          testStartedAt: startTime.toISOString()
+        }
+      });
+      logger.info(`[MonitoringEngine] Test start time locked to ${startTime.toISOString()} for session ${session.sessionId}`);
+    }
+    return session;
   }
 
   async validateMobile({ sessionId, participantId, frame, confidenceThreshold = 0.35 }) {
@@ -611,7 +785,7 @@ class MonitoringEngineService {
                 const qa = await QuizAttempt.findOne({
                   where: {
                     participantId: session.participantId,
-                    status: { [Op.in]: ['IN_PROGRESS', 'STARTED', 'in_progress', 'started'] }
+                    status: 'IN_PROGRESS'
                   },
                   order: [['id', 'DESC']],
                 });
@@ -621,7 +795,7 @@ class MonitoringEngineService {
                   const ca = await CodingAttempt.findOne({
                     where: {
                       participantId: session.participantId,
-                      status: { [Op.in]: ['IN_PROGRESS', 'STARTED', 'in_progress', 'started'] }
+                      status: 'IN_PROGRESS'
                     },
                     order: [['id', 'DESC']],
                   });
@@ -661,78 +835,36 @@ class MonitoringEngineService {
           const hasSecondaryScreen = (data.laptop_count > 1) || detections.filter(d => ['laptop', 'tv', 'monitor', 'screen'].some(s => (d.class_name || '').toLowerCase().includes(s))).length > 1;
           const hasBookNotes = (data.book_count > 0) || detections.some(d => ['book', 'paper', 'notes'].some(s => (d.class_name || '').toLowerCase().includes(s)));
 
-          if (hasPhone) {
-            await this.reportEvent({
-              sessionId: session.sessionId,
-              attemptId: resolvedAttemptId,
-              participantId: session.participantId,
-              source: 'MOBILE',
-              eventType: 'PHONE_DETECTED',
-              severity: 'CRITICAL',
-              durationMs: 2000,
-              confidence: data.proctoring_event?.confidence || 0.92,
-              metadata: {
-                composition_state: data.composition_state,
-                user_message: data.user_message,
-                detections,
-              },
-            });
+          const commonMetadata = {
+            composition_state: data.composition_state,
+            user_message: data.user_message,
+            detections,
+          };
+          const mobileViolation = hasPhone
+            ? { eventType: 'PHONE_DETECTED', severity: 'CRITICAL', confidence: data.proctoring_event?.confidence || 0.92 }
+            : hasMultiPerson
+              ? { eventType: 'MULTIPLE_FACES', severity: 'HIGH', confidence: data.proctoring_event?.confidence || 0.90, metadata: { person_count: mobilePersonCount } }
+              : hasSecondaryScreen
+                ? { eventType: 'SECONDARY_DEVICE', severity: 'HIGH', confidence: 0.88 }
+                : hasBookNotes
+                  ? { eventType: 'BOOK_NOTES_DETECTED', severity: 'HIGH', confidence: 0.85 }
+                  : null;
 
+          await this.trackMobileViolation({
+            session,
+            attemptId: resolvedAttemptId,
+            participantId: session.participantId,
+            violation: mobileViolation,
+            metadata: { ...commonMetadata, ...(mobileViolation?.metadata || {}) },
+          });
+
+          if (hasPhone) {
             const flags = Array.isArray(session.integrityFlags) ? [...session.integrityFlags] : [];
             if (!flags.includes('UNAUTHORIZED_PHONE_DETECTED')) {
               flags.push('UNAUTHORIZED_PHONE_DETECTED');
               session.integrityFlags = flags;
               await session.save();
             }
-          } else if (hasMultiPerson) {
-            await this.reportEvent({
-              sessionId: session.sessionId,
-              attemptId: resolvedAttemptId,
-              participantId: session.participantId,
-              source: 'MOBILE',
-              eventType: 'MULTIPLE_FACES',
-              severity: 'HIGH',
-              durationMs: 2000,
-              confidence: data.proctoring_event?.confidence || 0.90,
-              metadata: {
-                composition_state: data.composition_state,
-                user_message: data.user_message,
-                person_count: mobilePersonCount,
-                detections,
-              },
-            });
-          } else if (hasSecondaryScreen) {
-            await this.reportEvent({
-              sessionId: session.sessionId,
-              attemptId: resolvedAttemptId,
-              participantId: session.participantId,
-              source: 'MOBILE',
-              eventType: 'SECONDARY_DEVICE',
-              severity: 'HIGH',
-              durationMs: 2000,
-              confidence: 0.88,
-              metadata: {
-                composition_state: data.composition_state,
-                user_message: data.user_message,
-                detections,
-              },
-            });
-          } else if (hasBookNotes) {
-            await this.reportEvent({
-              sessionId: session.sessionId,
-              attemptId: resolvedAttemptId,
-              participantId: session.participantId,
-              source: 'MOBILE',
-              eventType: 'BOOK_NOTES_DETECTED',
-              severity: 'HIGH',
-              durationMs: 2000,
-              confidence: 0.85,
-              metadata: {
-                composition_state: data.composition_state,
-                user_message: data.user_message,
-                detections,
-              },
-            });
           }
         }
       }
@@ -748,6 +880,41 @@ class MonitoringEngineService {
     }
   }
 
+  async trackMobileViolation({ session, attemptId, participantId, violation, metadata = {}, now = Date.now() }) {
+    const key = session.sessionId;
+    const active = this.activeMobileViolations.get(key);
+    if (active && (!violation || active.eventType !== violation.eventType)) {
+      const durationMs = Math.max(0, now - active.startedAt);
+      await this.reportEvent({
+        sessionId: key,
+        attemptId: active.attemptId,
+        participantId: active.participantId,
+        source: 'MOBILE',
+        eventType: active.eventType,
+        severity: active.severity,
+        durationMs,
+        occurredAt: new Date(now).toISOString(),
+        confidence: active.confidence,
+        metadata: {
+          ...active.metadata,
+          violationStartTime: new Date(active.startedAt).toISOString(),
+          violationEndTime: new Date(now).toISOString(),
+        },
+      });
+      this.activeMobileViolations.delete(key);
+    }
+
+    if (violation && (!active || active.eventType !== violation.eventType)) {
+      this.activeMobileViolations.set(key, {
+        ...violation,
+        metadata,
+        attemptId,
+        participantId,
+        startedAt: now,
+      });
+    }
+  }
+
   // ── Authoritative Server-Side Scoring & Event Ingestion ──────────────────
 
   async reportEvent({
@@ -758,6 +925,7 @@ class MonitoringEngineService {
     eventType,
     severity = 'INFO',
     durationMs = 0,
+    occurredAt = null,
     confidence = 1.0,
     evidenceRef = null,
     metadata = {},
@@ -803,7 +971,7 @@ class MonitoringEngineService {
           const qa = await QuizAttempt.findOne({
             where: {
               participantId: session.participantId,
-              status: { [Op.in]: ['IN_PROGRESS', 'STARTED', 'in_progress', 'started'] },
+              status: 'IN_PROGRESS',
             },
             order: [['id', 'DESC']],
           });
@@ -813,7 +981,7 @@ class MonitoringEngineService {
             const ca = await CodingAttempt.findOne({
               where: {
                 participantId: session.participantId,
-                status: { [Op.in]: ['IN_PROGRESS', 'STARTED', 'in_progress', 'started'] },
+                status: 'IN_PROGRESS',
               },
               order: [['id', 'DESC']],
             });
@@ -834,15 +1002,18 @@ class MonitoringEngineService {
 
     // 1. Debounce Check
     const cooldowns = config.cooldowns_ms || {};
-    const defaultCooldown = cooldowns.default || 4000;
+    const isGranularEyeHead = /^GAZE_OFF_SCREEN_(LEFT|RIGHT|UP)$/.test(eventType) || /^HEAD_LOOKING_(LEFT|RIGHT|UP)$/.test(eventType);
+    const defaultCooldown = isGranularEyeHead ? 600 : (cooldowns.default || 4000);
     const cooldownMs =
-      eventType.includes('GAZE') ? (cooldowns.gaze || defaultCooldown)
-      : eventType.includes('HEAD') ? (cooldowns.head_pose || defaultCooldown)
+      eventType.includes('GAZE') ? (isGranularEyeHead ? 600 : (cooldowns.gaze || defaultCooldown))
+      : eventType.includes('HEAD') ? (isGranularEyeHead ? 600 : (cooldowns.head_pose || defaultCooldown))
       : eventType.includes('FACE') ? (cooldowns.face_absence || defaultCooldown)
       : defaultCooldown;
 
     const cooldownKey = `${sessionId}_${normalizedSource}_${eventType}`;
     const now = Date.now();
+    const reportedAt = occurredAt ? new Date(occurredAt) : new Date(now);
+    const validReportedAt = Number.isNaN(reportedAt.getTime()) ? new Date(now) : reportedAt;
     const lastTriggered = this.inMemoryCooldowns.get(cooldownKey) || 0;
 
     if (now - lastTriggered < cooldownMs && normalizedSeverity !== 'CRITICAL') {
@@ -850,9 +1021,7 @@ class MonitoringEngineService {
     }
 
     // 2. Idempotency Key Generation / Verification
-    const timeBucket = Math.floor(now / cooldownMs);
-    const finalIdempotencyKey = idempotencyKey || `${sessionId}_${normalizedSource}_${eventType}_${timeBucket}`;
-
+    const finalIdempotencyKey = idempotencyKey || `${sessionId}_${normalizedSource}_${eventType}_${validReportedAt.getTime()}_${Number(durationMs) || 0}`;
     // 3. Authoritative Score Delta Computation
     const weights = config.score_weights || {};
     let baseWeight = weights[eventType];
@@ -917,11 +1086,13 @@ class MonitoringEngineService {
           severity: normalizedSeverity,
           scoreDelta: effectiveScoreDelta,
           durationMs: Number(durationMs) || 0,
-          occurredAt: new Date(),
+          occurredAt: validReportedAt,
           confidence: conf,
           evidenceRef,
           metadata: {
             ...metadata,
+            violationStartTime: metadata?.violationStartTime || new Date(validReportedAt.getTime() - (Number(durationMs) || 0)).toISOString(),
+            violationEndTime: metadata?.violationEndTime || validReportedAt.toISOString(),
             isGraceWarning,
             warningNumber,
             warningMessage,
@@ -984,9 +1155,11 @@ class MonitoringEngineService {
               severity: normalizedSeverity,
               confidence: conf,
               duration: Math.round(Number(durationMs) / 100) / 10,
-              timestamp: new Date(),
+              timestamp: validReportedAt,
               metadata: {
                 ...metadata,
+                violationStartTime: metadata?.violationStartTime || new Date(validReportedAt.getTime() - (Number(durationMs) || 0)).toISOString(),
+                violationEndTime: metadata?.violationEndTime || validReportedAt.toISOString(),
                 isGraceWarning,
                 warningNumber,
                 warningMessage,
@@ -1042,9 +1215,62 @@ class MonitoringEngineService {
 
   // ── Session Finalization & Report Generation ─────────────────────────────
 
+  async saveSessionVideo({ sessionId, attemptId, participantId, videoUrl, filename }) {
+    let session = null;
+    const finalUrl = videoUrl || (filename ? `/uploads/monitoring-videos/${filename}` : null);
+
+    if (sessionId) {
+      session = await this.getSession(sessionId);
+      if (!session) {
+        session = await MonitoringSession.findOne({
+          where: {
+            [Op.or]: [
+              { sessionId: String(sessionId) },
+              ...(Number(sessionId) ? [{ attemptId: Number(sessionId) }] : []),
+            ]
+          },
+          order: [['id', 'DESC']]
+        });
+      }
+    }
+    if (!session && attemptId) {
+      session = await MonitoringSession.findOne({
+        where: { attemptId: Number(attemptId) },
+        order: [['id', 'DESC']]
+      });
+    }
+    if (!session && participantId) {
+      session = await MonitoringSession.findOne({
+        where: { participantId },
+        order: [['id', 'DESC']]
+      });
+    }
+
+    if (session && finalUrl) {
+      session.videoUrl = finalUrl;
+      await session.save();
+      logger.info(`[MonitoringEngine] Saved monitoring video for session ${session.sessionId}: ${finalUrl}`);
+    } else {
+      logger.warn(`[MonitoringEngine] No active MonitoringSession found to associate video (${sessionId || attemptId}), saved at ${finalUrl}`);
+    }
+
+    return {
+      success: true,
+      sessionId: session?.sessionId || sessionId,
+      videoUrl: finalUrl,
+    };
+  }
+
   async endSession({ sessionId, participantId }) {
     const session = await this.getSession(sessionId);
     if (!session) throw new Error('Monitoring session not found');
+
+    await this.trackMobileViolation({
+      session,
+      attemptId: session.attemptId,
+      participantId: participantId || session.participantId,
+      violation: null,
+    });
 
     const flags = Array.isArray(session.integrityFlags) ? [...session.integrityFlags] : [];
 
@@ -1078,33 +1304,69 @@ class MonitoringEngineService {
     let session = null;
     if (sessionId) {
       session = await this.getSession(sessionId);
-    } else if (attemptId) {
+    }
+    if (!session && attemptId) {
       session = await MonitoringSession.findOne({
         where: { attemptId: Number(attemptId) },
         order: [['id', 'DESC']],
         include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email'] }],
       });
-      if (!session) {
-        // Check if QuizAttempt or CodingAttempt exists
-        const qa = await QuizAttempt.findByPk(attemptId, {
+    }
+
+    // Bridge lookup: If not found in MonitoringSession, resolve from QuizAttempt, CodingAttempt, or ProctoringSession
+    if (!session) {
+      const { QuizAttempt, CodingAttempt, ProctoringSession } = require('../models');
+      let att = null;
+      let isQuiz = true;
+
+      if (attemptId) {
+        att = await QuizAttempt.findByPk(attemptId, {
           include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email'] }],
         });
-        const ca = !qa ? await CodingAttempt.findByPk(attemptId, {
-          include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email'] }],
-        }) : null;
-        const att = qa || ca;
-        if (att) {
-          session = await MonitoringSession.findOne({
-            where: {
-              [Op.or]: [
-                { attemptId: Number(attemptId) },
-                ...(att.monitoringSessionId ? [{ sessionId: att.monitoringSessionId }] : []),
-              ],
-            },
-            order: [['id', 'DESC']],
+        if (!att) {
+          att = await CodingAttempt.findByPk(attemptId, {
             include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email'] }],
           });
+          if (att) isQuiz = false;
         }
+      } else if (sessionId) {
+        att = await QuizAttempt.findOne({
+          where: { monitoringSessionId: sessionId },
+          include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email'] }],
+        });
+        if (!att) {
+          att = await CodingAttempt.findOne({
+            where: { monitoringSessionId: sessionId },
+            include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email'] }],
+          });
+          if (att) isQuiz = false;
+        }
+      }
+
+      if (att) {
+        const sId = att.monitoringSessionId || sessionId || `ms_${isQuiz ? 'quiz' : 'coding'}_${att.id}_${Date.now()}`;
+        const [monSess] = await MonitoringSession.findOrCreate({
+          where: {
+            [Op.or]: [
+              { attemptId: att.id },
+              { sessionId: sId },
+            ]
+          },
+          defaults: {
+            sessionId: sId,
+            attemptId: att.id,
+            participantId: att.participantId,
+            contextType: isQuiz ? 'QUIZ' : 'CODING',
+            contextId: isQuiz ? att.quizId : att.assessmentId,
+            status: att.status === 'SUBMITTED' ? 'COMPLETED' : 'ACTIVE',
+            startedAt: att.startedAt || new Date(),
+            endedAt: att.submittedAt || null,
+            submittedAt: att.submittedAt || null,
+          },
+        });
+        session = await MonitoringSession.findByPk(monSess.id, {
+          include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email'] }],
+        });
       }
     }
 
@@ -1139,13 +1401,13 @@ class MonitoringEngineService {
 
     // Merge and deduplicate events
     const seenKeys = new Set();
-    const mergedEvents = [];
+    const rawEvents = [];
 
     for (const me of monitoringEvents) {
       const key = me.idempotencyKey || `${me.source}_${me.eventType}_${new Date(me.occurredAt).getTime()}`;
       if (!seenKeys.has(key)) {
         seenKeys.add(key);
-        mergedEvents.push({
+        rawEvents.push({
           id: me.id,
           source: me.source || 'LAPTOP',
           eventType: me.eventType,
@@ -1166,7 +1428,7 @@ class MonitoringEngineService {
       const key = pe.idempotencyKey || `PROCTOR_${pe.eventType}_${new Date(pe.timestamp).getTime()}`;
       if (!seenKeys.has(key)) {
         seenKeys.add(key);
-        mergedEvents.push({
+        rawEvents.push({
           id: `pe_${pe.id}`,
           source: 'LAPTOP',
           eventType: pe.eventType,
@@ -1183,7 +1445,7 @@ class MonitoringEngineService {
       }
     }
 
-    mergedEvents.sort((a, b) => new Date(a.occurredAt || a.timestamp) - new Date(b.occurredAt || b.timestamp));
+    const mergedEvents = aggregateMonitoringEvents(rawEvents);
 
     // Separate into Live Pre-Warnings (Grace 1-3) and Scored Incident Timeline (4+)
     const warningMessages = {
@@ -1211,7 +1473,7 @@ class MonitoringEngineService {
     let eventCounter = 0;
     for (const ev of mergedEvents) {
       eventCounter++;
-      const isGrace = ev.metadata?.isGraceWarning === true || (eventCounter <= 3 && ev.scoreDelta === 0);
+      const isGrace = ev.metadata?.isGraceWarning === true;
       if (isGrace) {
         graceWarnings.push({
           ...ev,
@@ -1233,58 +1495,151 @@ class MonitoringEngineService {
     const mobileEvents = scoredEvents.filter((e) => e.source === 'MOBILE');
 
     const categoryBreakdown = {
-      face: scoredEvents.filter((e) => ['FACE_ABSENT', 'FACE_NOT_DETECTED', 'FACE_NOT_VISIBLE', 'PARTICIPANT_ABSENT'].includes(e.eventType)).length,
-      gaze: scoredEvents.filter((e) => e.eventType.includes('GAZE') || e.eventType.includes('EYES_LOOKING')).length,
-      headPose: scoredEvents.filter((e) => e.eventType.includes('HEAD')).length,
-      facePresence: scoredEvents.filter((e) => e.eventType.includes('FACE')).length,
-      persons: scoredEvents.filter((e) => ['MULTIPLE_PERSONS_DETECTED', 'MULTIPLE_FACES'].includes(e.eventType)).length,
-      devices: scoredEvents.filter((e) => e.eventType.includes('PHONE') || e.eventType.includes('DEVICE') || e.eventType.includes('CELL_PHONE')).length,
-      objects: scoredEvents.filter((e) => e.eventType.includes('PHONE') || e.eventType.includes('DEVICE') || e.eventType.includes('CELL_PHONE') || e.eventType.includes('BOOK') || e.eventType.includes('LAPTOP_DETECTED')).length,
-      browserSecurity: scoredEvents.filter((e) =>
+      face: mergedEvents.filter((e) => ['FACE_ABSENT', 'FACE_NOT_DETECTED', 'FACE_NOT_VISIBLE', 'PARTICIPANT_ABSENT'].includes(e.eventType)).length,
+      gaze: mergedEvents.filter((e) => e.eventType.includes('GAZE') || e.eventType.includes('EYES_LOOKING')).length,
+      headPose: mergedEvents.filter((e) => e.eventType.includes('HEAD')).length,
+      facePresence: mergedEvents.filter((e) => e.eventType.includes('FACE')).length,
+      persons: mergedEvents.filter((e) => ['MULTIPLE_PERSONS_DETECTED', 'MULTIPLE_FACES'].includes(e.eventType)).length,
+      devices: mergedEvents.filter((e) => e.eventType.includes('PHONE') || e.eventType.includes('DEVICE') || e.eventType.includes('CELL_PHONE')).length,
+      objects: mergedEvents.filter((e) => e.eventType.includes('PHONE') || e.eventType.includes('DEVICE') || e.eventType.includes('CELL_PHONE') || e.eventType.includes('BOOK') || e.eventType.includes('LAPTOP_DETECTED')).length,
+      browserSecurity: mergedEvents.filter((e) =>
         ['TAB_SWITCH', 'FULLSCREEN_EXIT', 'WINDOW_BLUR', 'DEVTOOLS_OPENED', 'WINDOW_FOCUS_LOST'].includes(e.eventType)
       ).length,
-      composition: scoredEvents.filter((e) => e.eventType.includes('COMPOSITION')).length,
+      composition: mergedEvents.filter((e) => e.eventType.includes('COMPOSITION')).length,
     };
 
-    const totalDurationSec = session.endedAt && session.startedAt
-      ? Math.max(1, Math.round((new Date(session.endedAt) - new Date(session.startedAt)) / 1000))
-      : Math.max(1, Math.round((Date.now() - new Date(session.startedAt || session.createdAt).getTime()) / 1000));
+    let sessionEndedAt = session.endedAt;
+    let sessionStartedAt = session.startedAt || session.createdAt;
+    let configuredDurationSec = Number(session.metadata?.configuredDurationSeconds || session.metadata?.duration || 0);
+    let attemptTimeTakenSec = null;
+
+    // Authoritative ACTIVE test start: set by the frontend startActiveTestTimer()
+    // (endpoint /monitoring/sessions/:id/start-test) at the first second the question
+    // timer actually starts. This excludes the consent / calibration / fullscreen
+    // setup delay that attempt.startedAt (attempt creation time) incorrectly includes.
+    let activeTestStartedAt = null;
+    if (session.metadata?.testStartedAt) {
+      const parsed = new Date(session.metadata.testStartedAt).getTime();
+      if (!isNaN(parsed)) {
+        activeTestStartedAt = new Date(parsed);
+      }
+    }
+
+    // Fallback: If attemptId exists, check QuizAttempt or CodingAttempt for exact submission time & quiz limit
+    if (session.attemptId) {
+      try {
+        const { QuizAttempt, CodingAttempt, AIQuiz, CodingAssessment } = require('../models');
+        const qa = await QuizAttempt.findByPk(session.attemptId, {
+          include: [{ model: AIQuiz, as: 'quiz' }]
+        });
+        if (qa) {
+          if (qa.timeTaken && qa.timeTaken > 0) attemptTimeTakenSec = Number(qa.timeTaken);
+          if (!sessionEndedAt && qa.submittedAt) sessionEndedAt = qa.submittedAt;
+          // Only fall back to the attempt-creation timestamp when the real active
+          // test start is unavailable. The active start wins (avoids setup-delay inflation).
+          if (!activeTestStartedAt && qa.startedAt) sessionStartedAt = qa.startedAt;
+          if (!configuredDurationSec && qa.quiz?.timeLimit) {
+            configuredDurationSec = Number(qa.quiz.timeLimit) * 60;
+          }
+        } else {
+          const ca = await CodingAttempt.findByPk(session.attemptId, {
+            include: [{ model: CodingAssessment, as: 'assessment' }]
+          });
+          if (ca) {
+            if (ca.timeTaken && ca.timeTaken > 0) attemptTimeTakenSec = Number(ca.timeTaken);
+            if (!sessionEndedAt && ca.submittedAt) sessionEndedAt = ca.submittedAt;
+            if (!activeTestStartedAt && ca.startedAt) sessionStartedAt = ca.startedAt;
+            if (!configuredDurationSec && ca.assessment?.timeLimit) {
+              configuredDurationSec = Number(ca.assessment.timeLimit) * 60;
+            }
+          }
+        }
+      } catch (err) {
+        logger.warn(`[getReport] Attempt metadata lookup note: ${err.message}`);
+      }
+    }
+
+    // After resolving attempt fallbacks, promote the authoritative active test start.
+    if (activeTestStartedAt) {
+      sessionStartedAt = activeTestStartedAt;
+    }
+
+    // Also check session.contextId if configuredDurationSec is not yet found
+    if (!configuredDurationSec && session.contextId) {
+      try {
+        const { AIQuiz, CodingAssessment } = require('../models');
+        if (session.contextType === 'CODING') {
+          const ca = await CodingAssessment.findByPk(session.contextId);
+          if (ca?.timeLimit) configuredDurationSec = Number(ca.timeLimit) * 60;
+        } else {
+          const q = await AIQuiz.findByPk(session.contextId);
+          if (q?.timeLimit) configuredDurationSec = Number(q.timeLimit) * 60;
+        }
+      } catch (_) {}
+    }
+
+    if (!configuredDurationSec) configuredDurationSec = 600;
+
+    // Actual participant test duration (elapsed time from the REAL test start to completion)
+    // When the authoritative active test start exists, it is preferred over qa.timeTaken
+    // because qa.timeTaken uses attempt.startedAt (attempt-creation), which includes the
+    // pre-test setup delay and therefore inflates the denominator of the Eye+Head score.
+    const useActiveStartElapsed = activeTestStartedAt != null;
+    let totalDurationSec;
+    if (useActiveStartElapsed) {
+      const endMs = sessionEndedAt
+        ? new Date(sessionEndedAt).getTime()
+        : Date.now();
+      totalDurationSec = Math.max(1, Math.round((endMs - new Date(activeTestStartedAt).getTime()) / 1000));
+      // Diagnostic guard: if the authoritative elapsed is implausibly small or large
+      // relative to the attempt clock, keep a single source of truth (the active start).
+      logger.info(
+        `[getReport] Actual test duration ${totalDurationSec}s derived from authoritative active test start ` +
+        `${activeTestStartedAt.toISOString()} -> ${sessionEndedAt ? new Date(sessionEndedAt).toISOString() : 'now'} ` +
+        `(qa.timeTaken was ${attemptTimeTakenSec}s, skipped to avoid setup-delay inflation). attemptId=${session.attemptId}`
+      );
+    } else {
+      totalDurationSec = attemptTimeTakenSec || (sessionEndedAt && sessionStartedAt
+        ? Math.max(1, Math.round((new Date(sessionEndedAt) - new Date(sessionStartedAt)) / 1000))
+        : Math.max(1, Math.round((Date.now() - new Date(sessionStartedAt).getTime()) / 1000)));
+    }
 
     // Dynamic Real Tracking Coverage Calculations (derived from actual test detection data)
     const faceAbsentSec = scoredEvents
       .filter((e) => ['FACE_ABSENT', 'FACE_NOT_DETECTED', 'FACE_NOT_VISIBLE', 'PARTICIPANT_ABSENT'].includes(e.eventType))
-      .reduce((acc, c) => acc + (c.durationMs ? c.durationMs / 1000 : Number(c.duration) || 2), 0);
+      .reduce((acc, c) => acc + (c.durationMs ? c.durationMs / 1000 : Number(c.duration) || 0), 0);
 
     const gazeDeviationSec = scoredEvents
       .filter((e) => e.eventType.includes('GAZE') || e.eventType.includes('EYES_LOOKING'))
-      .reduce((acc, c) => acc + (c.durationMs ? c.durationMs / 1000 : Number(c.duration) || 2), 0);
+      .reduce((acc, c) => acc + (c.durationMs ? c.durationMs / 1000 : Number(c.duration) || 0), 0);
 
-    const headDeviationSec = mergedEvents
+    const headDeviationSec = scoredEvents
       .filter((e) => e.eventType.includes('HEAD'))
-      .reduce((acc, c) => acc + (c.durationMs ? c.durationMs / 1000 : Number(c.duration) || 2), 0);
+      .reduce((acc, c) => acc + (c.durationMs ? c.durationMs / 1000 : Number(c.duration) || 0), 0);
 
-    const bodyFramingSec = mergedEvents
+    const bodyFramingSec = scoredEvents
       .filter((e) => e.eventType.includes('BODY') || e.eventType.includes('SHOULDER'))
-      .reduce((acc, c) => acc + (c.durationMs ? c.durationMs / 1000 : Number(c.duration) || 2), 0);
+      .reduce((acc, c) => acc + (c.durationMs ? c.durationMs / 1000 : Number(c.duration) || 0), 0);
 
-    const camDropSec = mergedEvents
+    const camDropSec = scoredEvents
       .filter((e) => e.eventType.includes('CAMERA_DISCONNECTED') || e.eventType.includes('MOBILE_DISCONNECTED'))
       .reduce((acc, c) => acc + (c.durationMs ? c.durationMs / 1000 : Number(c.duration) || 10), 0);
 
-    const phoneViolations = mergedEvents.filter((e) =>
+    const phoneViolations = scoredEvents.filter((e) =>
       e.eventType === 'PHONE_DETECTED' || e.eventType === 'CELL_PHONE_DETECTED'
     );
 
     // ── Exact Eye + Head Violation Duration & Interval Merging ──────────────
     // Collect intervals for 6 categories (Head Left, Right, Up; Eye Left, Right, Up)
     // Ignored direction: Down (permitted for reading/coding)
+    // NOTE: No 3.0s minimum. Every positive-duration interval is accumulated.
     const eyeHeadIntervals = [];
-    const sessionStartMs = new Date(session.startedAt || session.createdAt).getTime();
+    const sessionStartMs = new Date(sessionStartedAt).getTime();
 
-    for (const ev of mergedEvents) {
+    for (const ev of scoredEvents) {
       const typeStr = (ev.eventType || '').toUpperCase();
       const dirStr = (ev.metadata?.direction || ev.direction || '').toUpperCase();
-      
+
       const isEyeOrHead = (
         typeStr.includes('GAZE') ||
         typeStr.includes('EYE') ||
@@ -1295,26 +1650,55 @@ class MonitoringEngineService {
 
       if (isEyeOrHead && !isIgnoredDown) {
         const durSec = ev.durationMs ? ev.durationMs / 1000 : (Number(ev.duration) || 0);
-        const evOccurredMs = new Date(ev.occurredAt || ev.timestamp || Date.now()).getTime();
-        const endSec = Math.max(0, (evOccurredMs - sessionStartMs) / 1000);
-        const startSec = Math.max(0, endSec - durSec);
+        const bounds = eventIntervalBounds(ev);
+        const startSec = Math.max(0, (bounds.start - sessionStartMs) / 1000);
+        const endSec = Math.max(startSec, (bounds.end - sessionStartMs) / 1000);
 
-        // 3-second validation threshold: only intervals >= 3.0s are valid
-        if (durSec >= 3.0) {
+        // No minimum-duration validation here — short violations must count.
+        if (durSec > 0) {
           eyeHeadIntervals.push([startSec, endSec]);
         }
       }
     }
 
-    // Merged non-overlapping unique Eye + Head violation seconds
+    // Diagnostic: make a true "0 Eye+Head" distinguishable from a missing AI result.
+    // A 0 that results from zero Eye/Head events arriving is logged as a pipeline gap,
+    // while a 0 that results from real (empty) intervals is expected.
+    if (eyeHeadIntervals.length === 0) {
+      const eyeHeadEventCount = mergedEvents.filter((e) => {
+        const t = (e.eventType || '').toUpperCase();
+        return t.includes('GAZE') || t.includes('EYE') || t.includes('HEAD');
+      }).length;
+      logger.warn(
+        `[getReport] Eye+Head contribution is 0: computed ${eyeHeadIntervals.length} interval(s) from ${mergedEvents.length} merged events (${eyeHeadEventCount} Eye/Head-typed). ` +
+        `If Eye/Head events existed but produced no intervals, the duration denominator (` +
+        `${totalDurationSec}s) or event timestamp/duration mapping may be off. attemptId=${session.attemptId}`
+      );
+    }
+
+    // ── Exact 5-Part 100-Mark Audit Scoring Architecture ───────────────────────
+    // 1. Eye + Head Tracking (6 Categories): Max 60 Marks
     const uniqueEyeHeadSec = calculateUniqueViolationSeconds(eyeHeadIntervals);
-    const configuredDurationSec = Number(session.metadata?.configuredDurationSeconds || session.metadata?.duration || 600);
     const eyeHeadScore = calculateEyeHeadScore(uniqueEyeHeadSec, totalDurationSec);
 
-    const mobileScore = phoneViolations.length > 0 ? 20.0 : 0.0;
-    const multiFaceScore = categoryBreakdown.persons > 0 ? 10.0 : 0.0;
+    // 2. Mobile Phone Violation: Max 10 Marks
+    const mobileScore = phoneViolations.length > 0 ? 10.0 : 0.0;
+
+    // 3. Multiple Persons / Multi Face: Max 10 Marks
+    const multiFaceScore = (categoryBreakdown.persons > 0 || scoredEvents.some(e => ['MULTIPLE_PERSONS', 'MULTIPLE_FACES', 'EXTRA_FACE'].includes(e.eventType))) ? 10.0 : 0.0;
+
+    // 4. No Person / Face Absence: Max 10 Marks
     const noPersonScore = faceAbsentSec > 0 ? 10.0 : 0.0;
-    const finalScore = Math.min(100.0, eyeHeadScore + mobileScore + multiFaceScore + noPersonScore);
+
+    // 5. Tab Switch / Fullscreen Exit (> 3 attempts): Max 10 Marks
+    const tabSwitchEvents = scoredEvents.filter((e) =>
+      ['TAB_SWITCH', 'FULLSCREEN_EXIT', 'WINDOW_BLUR', 'PAGE_VISIBILITY_HIDDEN'].includes(e.eventType)
+    );
+    const tabSwitchCount = tabSwitchEvents.length;
+    const tabSwitchScore = tabSwitchCount > 3 ? 10.0 : 0.0;
+
+    // Total Malpractice Audit Score out of 100 Marks
+    const finalScore = Math.min(100.0, Math.max(0.0, eyeHeadScore + mobileScore + multiFaceScore + noPersonScore + tabSwitchScore));
 
     const coverage = {
       faceDetection: `${Math.max(0, Math.min(100, Math.round(100 - (faceAbsentSec / totalDurationSec) * 100)))}%`,
@@ -1341,7 +1725,7 @@ class MonitoringEngineService {
     const criticalCount = mergedEvents.filter((e) => e.severity === 'CRITICAL').length;
     const totalEventsCount = mergedEvents.length;
 
-    const friendlyTimeline = scoredEvents.map((e) => {
+    const friendlyTimeline = mergedEvents.map((e) => {
       const evDate = new Date(e.occurredAt || e.timestamp || Date.now());
       const timeStr = evDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       const friendlyName = e.eventType
@@ -1391,15 +1775,15 @@ class MonitoringEngineService {
     });
 
     const summary = {
-      totalEvents: scoredEvents.length,
+      totalEvents: mergedEvents.length,
       graceWarningsCount: graceWarnings.length,
       maxGraceWarnings: 3,
       graceWarnings: friendlyGraceWarnings,
       counts: {
-        info: scoredEvents.filter((e) => e.severity === 'INFO').length,
-        warning: scoredEvents.filter((e) => ['WARNING', 'LOW', 'MEDIUM'].includes(e.severity)).length,
-        high: scoredEvents.filter((e) => e.severity === 'HIGH').length,
-        critical: scoredEvents.filter((e) => e.severity === 'CRITICAL').length,
+        info: mergedEvents.filter((e) => e.severity === 'INFO').length,
+        warning: mergedEvents.filter((e) => ['WARNING', 'LOW', 'MEDIUM'].includes(e.severity)).length,
+        high: mergedEvents.filter((e) => e.severity === 'HIGH').length,
+        critical: mergedEvents.filter((e) => e.severity === 'CRITICAL').length,
       },
       categories: {
         face: categoryBreakdown.face,
@@ -1427,8 +1811,8 @@ class MonitoringEngineService {
         phoneEvents: phoneViolations.length,
         mobileDetected: phoneViolations.length > 0,
         mobileDetectionCount: phoneViolations.length,
-        laptopEvents: scoredEvents.filter((e) => e.eventType.includes('LAPTOP')).length,
-        bookEvents: scoredEvents.filter((e) => e.eventType.includes('BOOK')).length,
+        laptopEvents: mergedEvents.filter((e) => e.eventType.includes('LAPTOP')).length,
+        bookEvents: mergedEvents.filter((e) => e.eventType.includes('BOOK')).length,
         status: phoneViolations.length > 0 ? 'VIOLATION_FLAGGED' : 'CLEAR',
       },
       mobilePhoneViolation: {
@@ -1443,6 +1827,25 @@ class MonitoringEngineService {
       monitoringDuration: `${Math.floor(totalDurationSec / 60)}m ${totalDurationSec % 60}s`,
       monitoringDurationSeconds: totalDurationSec,
     };
+
+    let finalVideoUrl = session.videoUrl || null;
+    if (!finalVideoUrl && (session.attemptId || session.participantId)) {
+      try {
+        const otherSession = await MonitoringSession.findOne({
+          where: {
+            [Op.or]: [
+              ...(session.attemptId ? [{ attemptId: session.attemptId }] : []),
+              { participantId: session.participantId },
+            ],
+            videoUrl: { [Op.ne]: null }
+          },
+          order: [['id', 'DESC']]
+        });
+        if (otherSession?.videoUrl) {
+          finalVideoUrl = otherSession.videoUrl;
+        }
+      } catch (_) {}
+    }
 
     return {
       sessionId: session.sessionId,
@@ -1467,9 +1870,26 @@ class MonitoringEngineService {
       eyeHeadViolationSeconds: uniqueEyeHeadSec,
       eyeHeadScore: eyeHeadScore,
       eyeHeadScoreDisplay: `${eyeHeadScore.toFixed(2)} / 60`,
+      noPersonScore: noPersonScore,
+      noPersonScoreDisplay: `${noPersonScore.toFixed(2)} / 10`,
+      multiFaceScore: multiFaceScore,
+      multiFaceScoreDisplay: `${multiFaceScore.toFixed(2)} / 10`,
+      tabSwitchScore: tabSwitchScore,
+      tabSwitchScoreDisplay: `${tabSwitchScore.toFixed(2)} / 10`,
+      tabSwitchCount: tabSwitchCount,
+      mobileScore: mobileScore,
+      mobileScoreDisplay: `${mobileScore.toFixed(2)} / 10`,
+      scoringBreakdown: {
+        eyeHead: { score: eyeHeadScore, max: 60, violationSeconds: uniqueEyeHeadSec },
+        noPerson: { score: noPersonScore, max: 10, faceAbsentSeconds: faceAbsentSec },
+        multiPerson: { score: multiFaceScore, max: 10, detected: multiFaceScore > 0 },
+        tabSwitch: { score: tabSwitchScore, max: 10, count: tabSwitchCount, exceeded: tabSwitchCount > 3 },
+        mobile: { score: mobileScore, max: 10, count: phoneViolations.length },
+        total: finalScore,
+      },
       finalScore: finalScore,
       finalScoreDisplay: `${finalScore.toFixed(2)} / 100`,
-      totalEvents: scoredEvents.length,
+      totalEvents: mergedEvents.length,
       warningEvents: summary.counts.warning,
       highEvents: summary.counts.high,
       criticalEvents: summary.counts.critical,
@@ -1479,6 +1899,7 @@ class MonitoringEngineService {
       hasPhoneViolation: phoneViolations.length > 0 || flags.includes('UNAUTHORIZED_PHONE_DETECTED'),
       phoneViolationCount: phoneViolations.length,
       integrityFlags: flags,
+      videoUrl: finalVideoUrl,
       startedAt: session.startedAt,
       endedAt: session.endedAt,
       durationSeconds: totalDurationSec,
@@ -1492,13 +1913,28 @@ class MonitoringEngineService {
         riskScore: finalScore,
         riskLevel: finalScore >= 70 ? 'CRITICAL' : (finalScore >= 35 ? 'HIGH' : (finalScore >= 15 ? 'MEDIUM' : 'LOW')),
       },
-      eventsCount: {
-        total: scoredEvents.length,
-        grace: graceWarnings.length,
-        laptop: laptopEvents.length,
-        mobile: mobileEvents.length,
-      },
+      events: friendlyTimeline,
       timeline: friendlyTimeline,
+      session: {
+        sessionId: session.sessionId,
+        attemptId: session.attemptId,
+        participantId: session.participantId,
+        status: session.status,
+        laptopStatus: session.laptopStatus,
+        mobileStatus: session.mobileStatus,
+        score: finalScore,
+        startedAt: sessionStartedAt,
+        endedAt: sessionEndedAt || new Date(),
+        durationSeconds: totalDurationSec,
+        videoUrl: finalVideoUrl,
+      },
+      monitoringScore: eyeHeadScore,
+      uniqueViolationSeconds: uniqueEyeHeadSec,
+      violationSeconds: uniqueEyeHeadSec,
+      violationPercentage: totalDurationSec > 0 ? (uniqueEyeHeadSec / totalDurationSec) * 100 : 0,
+      multipleFaceCount: (categoryBreakdown?.persons || 0) || (multiFaceScore > 0 ? 1 : 0),
+      noPersonDetected: faceAbsentSec > 0,
+      mobileCount: phoneViolations.length,
     };
   }
 
@@ -1528,6 +1964,7 @@ const serviceInstance = new MonitoringEngineService();
 serviceInstance.calculateEyeHeadScore = calculateEyeHeadScore;
 serviceInstance.mergeIntervals = mergeIntervals;
 serviceInstance.calculateUniqueViolationSeconds = calculateUniqueViolationSeconds;
+serviceInstance.aggregateMonitoringEvents = aggregateMonitoringEvents;
 
 module.exports = serviceInstance;
 

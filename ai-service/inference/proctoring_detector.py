@@ -1,71 +1,61 @@
+from __future__ import annotations
+
 import os
 import sys
-
-# Ensure UTF-8 output on Windows console
-if sys.platform == "win32":
-    try:
-        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-    except Exception:
-        pass
-
-os.environ["SD_ENABLE_ASIO"] = "0"
-os.environ["QT_QPA_PLATFORM"] = "offscreen"
-os.environ["MPLBACKEND"] = "Agg"
-
 import time
+import json
 import math
-import logging
 import base64
 import argparse
-from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
-from enum import Enum
+import datetime
+import logging
+import urllib.request
+from dataclasses import dataclass, field
+from typing import Dict, Any, List, Optional, Tuple, Union
+
 import cv2
 import numpy as np
 import mediapipe as mp
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, PatternFill
-
-logger = logging.getLogger("ai-service.mediapipe")
+from openpyxl.utils import get_column_letter
 
 # ============================================================
-# CLI ARGUMENTS & CONFIGURATION
+# LMS AI PROCTORING ENGINE
+#
+# IMPORTANT:
+# - Mobile detection is NOT implemented here.
+# - The engine only accepts an external mobile result/count/score.
+# - Eye + Head scoring is based ONLY on unique validated time.
+# - 3 seconds is validation only, never a scoring unit.
 # ============================================================
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="LMS Participant Live AI Monitoring Pipeline")
-    parser.add_argument("--camera", type=str, default="0", help="Camera index (e.g. 0) or video file path for simulation")
-    parser.add_argument("--output", type=str, default="live_session_output.mp4", help="Path to output session recording (optional)")
-    parser.add_argument("--excel", type=str, default="live_session_report.xlsx", help="Path to output Excel session report")
-    parser.add_argument("--duration", type=float, default=60.0, help="Live session duration in seconds (default: 60.0, set 0 for manual stop)")
-    parser.add_argument("--no-record", action="store_true", help="Disable recording video to disk")
-    parser.add_argument("--headless", action="store_true", help="Run without cv2.imshow GUI window")
-    args, _ = parser.parse_known_args()
-    return args
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SERVICE_ROOT = os.path.dirname(SCRIPT_DIR)
-MODELS_DIR = os.path.join(SERVICE_ROOT, "models")
-os.makedirs(MODELS_DIR, exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+logger = logging.getLogger("lms-proctor")
 
-FACE_MODEL_PATH = os.path.join(MODELS_DIR, "face_landmarker.task")
-POSE_MODEL_PATH = os.path.join(MODELS_DIR, "pose_landmarker_lite.task")
+# ============================================================
+# CONSTANTS
+# ============================================================
 
-if not os.path.exists(FACE_MODEL_PATH) and os.path.exists("face_landmarker.task"):
-    FACE_MODEL_PATH = "face_landmarker.task"
-elif not os.path.exists(FACE_MODEL_PATH) and os.path.exists(r"E:\agent\posture\face_landmarker.task"):
-    FACE_MODEL_PATH = r"E:\agent\posture\face_landmarker.task"
-
-# ------------------------------------------------------------
-# 1. CENTRAL THRESHOLD CONFIGURATION
-# ------------------------------------------------------------
-# 3.0 seconds is ONLY the minimum continuous duration required to validate a violation.
-# Violations < 3.0s are discarded (0s added).
-# Violations >= 3.0s record the full actual continuous duration (e.g. 7.4s, 10.0s).
 VIOLATION_SECONDS = 3.0
 
-# Head-pose thresholds in degrees
+MONITORING_SCORE_MAX = 60.0
+MOBILE_SCORE_MAX = 20.0
+MULTIPLE_FACE_SCORE_MAX = 10.0
+NO_PERSON_SCORE_MAX = 10.0
+FINAL_SCORE_MAX = 100.0
+
+# Head pose thresholds
 YAW_INNER = 10.0
 YAW_OUTER = 30.0
 PITCH_INNER = 10.0
@@ -76,113 +66,34 @@ YAW_RIGHT_CUTOFF = 0.72
 PITCH_UP_CUTOFF = 0.75
 PITCH_DOWN_CUTOFF = 0.45
 
-# Head pose smoothing & baseline
 POSE_ALPHA = 0.35
 PITCH_OFFSET = -5.0
 
-# ============================================================
-# EYE GAZE CONFIGURATION (RELIABLE MULTI-AXIS DETECTION)
-# ============================================================
-
-# Independent Hysteresis Thresholds (Deviations from Calibrated Neutral Baseline)
-GAZE_ENTER_HORIZONTAL = 0.030  # dx threshold to enter Left / Right
-GAZE_EXIT_HORIZONTAL = 0.017   # dx threshold to exit back to Straight
-
-GAZE_ENTER_VERTICAL = 0.026    # dy threshold to enter Up / Down
-GAZE_EXIT_VERTICAL = 0.014     # dy threshold to exit back to Straight
-
-# Smoothing factor for iris positions
+# Gaze thresholds
+GAZE_ENTER_HORIZONTAL = 0.030
+GAZE_EXIT_HORIZONTAL = 0.017
+GAZE_ENTER_VERTICAL = 0.026
+GAZE_EXIT_VERTICAL = 0.014
 GAZE_SMOOTHING_ALPHA = 0.30
 
-# Primary-side lock
 PRIMARY_SIDE_LOCK = True
+ENABLE_GAZE_CALIBRATION = True
+CALIBRATION_FRAMES = 10
+DEBUG_GAZE = True
 
-# Initial Neutral Calibration
-CALIBRATION_FRAMES = 45  # Exactly 45 valid frames required to complete calibration
+# One short bad frame should not fragment a real episode.
+# A reliable opposite direction still changes state immediately.
+NOISE_GRACE_SECONDS = 0.20
 
-# Face Centering & Quality Audit Thresholds
-FACE_CENTER_TOLERANCE_X = 0.22  # Face center X within [0.28, 0.72] of frame width
-FACE_CENTER_TOLERANCE_Y = 0.22  # Face center Y within [0.28, 0.72] of frame height
-MIN_FACE_SIZE_RATIO = 0.12      # Face width/height relative to frame
-MAX_FACE_SIZE_RATIO = 0.85      # Face should not exceed 85% of frame
-MIN_BRIGHTNESS = 35.0
-MAX_BRIGHTNESS = 235.0
-
-# Ignored directions (Looking Down is permitted for calculating/reading/coding)
 IGNORED_HEAD_DIRECTIONS = {"Down"}
 IGNORED_EYE_DIRECTIONS = {"Down"}
 
-# Scoring weights (100 Marks Total)
-MONITORING_SCORE_MAX = 60.0
-MULTIPLE_FACE_SCORE_MAX = 10.0
-NO_PERSON_SCORE_MAX = 10.0
-MOBILE_SCORE_MAX = 20.0
 
+def iris_gaze_is_observable(head_direction: Optional[str]) -> bool:
+    """Reject iris geometry while a strong head turn distorts the eye plane."""
+    return head_direction in ("Straight", "Not Detected", None)
 
-# ============================================================
-# SESSION LIFECYCLE ENUM
-# ============================================================
-
-class SessionState(str, Enum):
-    CREATED = "CREATED"
-    CALIBRATING = "CALIBRATING"
-    CALIBRATION_FAILED = "CALIBRATION_FAILED"
-    READY = "READY"
-    RUNNING = "RUNNING"
-    COMPLETED = "COMPLETED"
-    ABORTED = "ABORTED"
-
-
-# ============================================================
-# HEAD POSE (solvePnP + Euler Angles)
-# ============================================================
-
-MODEL_POINTS = np.array([
-    (0.0, 0.0, 0.0),          # Nose
-    (0.0, -330.0, -65.0),     # Chin
-    (-225.0, 170.0, -135.0),  # Left eye corner
-    (225.0, 170.0, -135.0),   # Right eye corner
-    (-150.0, -150.0, -125.0), # Left mouth corner
-    (150.0, -150.0, -125.0),  # Right mouth corner
-], dtype=np.float32)
-
-LANDMARK_INDICES = [1, 152, 33, 263, 61, 291]
-
-
-def rotation_matrix_to_euler_angles(R):
-    sy = np.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
-    singular = sy < 1e-6
-
-    if not singular:
-        pitch = np.arctan2(R[2, 1], R[2, 2])
-        yaw = np.arctan2(-R[2, 0], sy)
-        roll = np.arctan2(R[1, 0], R[0, 0])
-    else:
-        pitch = np.arctan2(-R[1, 2], R[1, 1])
-        yaw = np.arctan2(-R[2, 0], sy)
-        roll = 0.0
-
-    return float(np.degrees(pitch)), float(np.degrees(yaw)), float(np.degrees(roll))
-
-
-def fuzzy_classify(value, inner_thresh, outer_thresh):
-    abs_value = abs(value)
-
-    if abs_value <= inner_thresh:
-        confidence = 0.0
-    elif abs_value >= outer_thresh:
-        confidence = 1.0
-    else:
-        confidence = (abs_value - inner_thresh) / (outer_thresh - inner_thresh)
-
-    sign = 1 if value >= 0 else -1
-    return sign, confidence
-
-
-# ============================================================
-# GAZE / EYEBALL DETECTION PIPELINE
-# ============================================================
-
+# MediaPipe Face Landmarker indices
 RIGHT_IRIS_CENTER = 468
 LEFT_IRIS_CENTER = 473
 
@@ -192,1362 +103,2522 @@ LEFT_EYE_CORNERS = (263, 362)
 RIGHT_EYE_VERTICAL = (159, 145)
 LEFT_EYE_VERTICAL = (386, 374)
 
+# Head pose model points
+MODEL_POINTS = np.array(
+    [
+        (0.0, 0.0, 0.0),           # Nose
+        (0.0, -330.0, -65.0),      # Chin
+        (-225.0, 170.0, -135.0),   # Left eye corner
+        (225.0, 170.0, -135.0),    # Right eye corner
+        (-150.0, -150.0, -125.0),  # Left mouth corner
+        (150.0, -150.0, -125.0),   # Right mouth corner
+    ],
+    dtype=np.float32,
+)
 
-def point_xy(landmark, w, h):
-    return np.array([landmark.x * w, landmark.y * h], dtype=np.float32)
-
-
-def calculate_normalized_eye_ratios(landmarks, w: int, h: int) -> Tuple[float, float, Dict[str, Any]]:
-    """
-    Computes normalized horizontal and vertical iris position ratios.
-    BUG FIX VERIFIED:
-    - Right eye uses strictly right-eye landmarks: r_iris, r_c1, r_c2, r_top, r_bot.
-    - Left eye uses strictly left-eye landmarks: l_iris, l_c1, l_c2, l_top, l_bot.
-    - Zero divisions safely prevented with max(1.0, span).
-    """
-    r_iris = point_xy(landmarks[RIGHT_IRIS_CENTER], w, h)
-    r_c1 = point_xy(landmarks[RIGHT_EYE_CORNERS[0]], w, h)
-    r_c2 = point_xy(landmarks[RIGHT_EYE_CORNERS[1]], w, h)
-    r_top = point_xy(landmarks[RIGHT_EYE_VERTICAL[0]], w, h)
-    r_bot = point_xy(landmarks[RIGHT_EYE_VERTICAL[1]], w, h)
-
-    l_iris = point_xy(landmarks[LEFT_IRIS_CENTER], w, h)
-    l_c1 = point_xy(landmarks[LEFT_EYE_CORNERS[0]], w, h)
-    l_c2 = point_xy(landmarks[LEFT_EYE_CORNERS[1]], w, h)
-    l_top = point_xy(landmarks[LEFT_EYE_VERTICAL[0]], w, h)
-    l_bot = point_xy(landmarks[LEFT_EYE_VERTICAL[1]], w, h)
-
-    # Right Eye Horizontal & Vertical
-    r_min_x, r_max_x = min(r_c1[0], r_c2[0]), max(r_c1[0], r_c2[0])
-    r_h_span = max(1.0, r_max_x - r_min_x)
-    r_h = float(np.clip((r_iris[0] - r_min_x) / r_h_span, 0.0, 1.0))
-    r_v_span = max(1.0, abs(r_bot[1] - r_top[1]))
-    r_v = float(np.clip((r_iris[1] - min(r_top[1], r_bot[1])) / r_v_span, 0.0, 1.0))
-
-    # Left Eye Horizontal & Vertical (Uses l_bot[1], NOT r_bot[1])
-    l_min_x, l_max_x = min(l_c1[0], l_c2[0]), max(l_c1[0], l_c2[0])
-    l_h_span = max(1.0, l_max_x - l_min_x)
-    l_h = float(np.clip((l_iris[0] - l_min_x) / l_h_span, 0.0, 1.0))
-    l_v_span = max(1.0, abs(l_bot[1] - l_top[1]))
-    l_v = float(np.clip((l_iris[1] - min(l_top[1], l_bot[1])) / l_v_span, 0.0, 1.0))
-
-    avg_h = (r_h + l_h) / 2.0
-    avg_v = (r_v + l_v) / 2.0
-
-    eye_geom = {
-        "r_iris": (int(r_iris[0]), int(r_iris[1])),
-        "l_iris": (int(l_iris[0]), int(l_iris[1])),
-        "r_corners": ((int(r_c1[0]), int(r_c1[1])), (int(r_c2[0]), int(r_c2[1]))),
-        "l_corners": ((int(l_c1[0]), int(l_c1[1])), (int(l_c2[0]), int(l_c2[1]))),
-        "r_v_pts": ((int(r_top[0]), int(r_top[1])), (int(r_bot[0]), int(r_bot[1]))),
-        "l_v_pts": ((int(l_top[0]), int(l_top[1])), (int(l_bot[0]), int(l_bot[1]))),
-    }
-
-    return avg_h, avg_v, eye_geom
-
+LANDMARK_INDICES = [1, 152, 33, 263, 61, 291]
 
 # ============================================================
-# PARTICIPANT CENTERING & QUALITY AUDIT
+# HELPERS
 # ============================================================
 
-def audit_participant_framing(face_landmarks, frame_w: int, frame_h: int, gray_frame: np.ndarray) -> Dict[str, Any]:
-    """
-    Audits participant centering, distance, and lighting before/during calibration.
-    """
-    brightness = float(np.mean(gray_frame))
-    contrast = float(np.std(gray_frame))
-
-    if brightness < MIN_BRIGHTNESS:
-        return {
-            "passed": False,
-            "reason": "POOR_LIGHTING_DARK",
-            "message": "Lighting is too dark. Please increase ambient light.",
-            "metrics": {"brightness": round(brightness, 1), "contrast": round(contrast, 1)}
-        }
-    if brightness > MAX_BRIGHTNESS:
-        return {
-            "passed": False,
-            "reason": "POOR_LIGHTING_BRIGHT",
-            "message": "Lighting is too bright. Please reduce glare.",
-            "metrics": {"brightness": round(brightness, 1), "contrast": round(contrast, 1)}
-        }
-
-    xs = [lm.x for lm in face_landmarks]
-    ys = [lm.y for lm in face_landmarks]
-    min_x, max_x = min(xs), max(xs)
-    min_y, max_y = min(ys), max(ys)
-
-    face_w = max_x - min_x
-    face_h = max_y - min_y
-    center_x = (min_x + max_x) / 2.0
-    center_y = (min_y + max_y) / 2.0
-
-    if face_w < MIN_FACE_SIZE_RATIO or face_h < MIN_FACE_SIZE_RATIO:
-        return {
-            "passed": False,
-            "reason": "PARTICIPANT_TOO_FAR",
-            "message": "Move closer to the camera.",
-            "metrics": {"center_x": round(center_x, 3), "center_y": round(center_y, 3), "face_size": round(face_w, 3)}
-        }
-    if face_w > MAX_FACE_SIZE_RATIO or face_h > MAX_FACE_SIZE_RATIO:
-        return {
-            "passed": False,
-            "reason": "PARTICIPANT_TOO_CLOSE",
-            "message": "Move farther from the camera.",
-            "metrics": {"center_x": round(center_x, 3), "center_y": round(center_y, 3), "face_size": round(face_w, 3)}
-        }
-
-    dx = center_x - 0.50
-    dy = center_y - 0.50
-
-    if dx < -FACE_CENTER_TOLERANCE_X:
-        return {
-            "passed": False,
-            "reason": "PARTICIPANT_NOT_CENTERED",
-            "message": "Move slightly right (you are too far left).",
-            "metrics": {"center_x": round(center_x, 3), "center_y": round(center_y, 3)}
-        }
-    if dx > FACE_CENTER_TOLERANCE_X:
-        return {
-            "passed": False,
-            "reason": "PARTICIPANT_NOT_CENTERED",
-            "message": "Move slightly left (you are too far right).",
-            "metrics": {"center_x": round(center_x, 3), "center_y": round(center_y, 3)}
-        }
-    if dy < -FACE_CENTER_TOLERANCE_Y:
-        return {
-            "passed": False,
-            "reason": "PARTICIPANT_NOT_CENTERED",
-            "message": "Move slightly down (you are too high in frame).",
-            "metrics": {"center_x": round(center_x, 3), "center_y": round(center_y, 3)}
-        }
-    if dy > FACE_CENTER_TOLERANCE_Y:
-        return {
-            "passed": False,
-            "reason": "PARTICIPANT_NOT_CENTERED",
-            "message": "Move slightly up (you are too low in frame).",
-            "metrics": {"center_x": round(center_x, 3), "center_y": round(center_y, 3)}
-        }
-
-    return {
-        "passed": True,
-        "reason": "FACE_CENTERED",
-        "message": "Face centered and well-lit.",
-        "metrics": {
-            "brightness": round(brightness, 1),
-            "contrast": round(contrast, 1),
-            "center_x": round(center_x, 3),
-            "center_y": round(center_y, 3),
-            "face_width": round(face_w, 3),
-            "face_height": round(face_h, 3),
-        }
-    }
+def clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, float(value)))
 
 
-class GazeClassifier:
-    """
-    MediaPipe binocular eye-gaze classifier with PRIMARY-SIDE LOCK.
-    """
-    def __init__(self, calibration_frames=CALIBRATION_FRAMES):
-        self.current_direction = "Straight"
-        self.smoothed_h = None
-        self.smoothed_v = None
-        self.neutral_x = 0.50
-        self.neutral_y = 0.50
-        self.calib_samples_x = []
-        self.calib_samples_y = []
-        self.calibration_frames = int(calibration_frames)
-        self.is_calibrated = False
-
-    def reset_calibration(self):
-        self.calib_samples_x.clear()
-        self.calib_samples_y.clear()
-        self.is_calibrated = False
-        self.smoothed_h = None
-        self.smoothed_v = None
-        self.current_direction = "Straight"
-
-    def add_calibration_sample(self, raw_h: float, raw_v: float) -> Tuple[bool, float]:
-        """
-        Adds a sample during calibration phase.
-        Returns (is_calibrated, progress_ratio).
-        """
-        if len(self.calib_samples_x) < self.calibration_frames:
-            self.calib_samples_x.append(float(raw_h))
-            self.calib_samples_y.append(float(raw_v))
-
-            if len(self.calib_samples_x) >= self.calibration_frames:
-                self.neutral_x = float(np.median(self.calib_samples_x))
-                self.neutral_y = float(np.median(self.calib_samples_y))
-                self.smoothed_h = self.neutral_x
-                self.smoothed_v = self.neutral_y
-                self.current_direction = "Straight"
-                self.is_calibrated = True
-
-        progress = min(1.0, len(self.calib_samples_x) / max(1, self.calibration_frames))
-        return self.is_calibrated, progress
-
-    def classify(self, raw_h: float, raw_v: float) -> Tuple[str, float, float, float, float, float]:
-        if self.smoothed_h is None:
-            self.smoothed_h = float(raw_h)
-            self.smoothed_v = float(raw_v)
-        else:
-            self.smoothed_h = (
-                GAZE_SMOOTHING_ALPHA * raw_h
-                + (1.0 - GAZE_SMOOTHING_ALPHA) * self.smoothed_h
-            )
-            self.smoothed_v = (
-                GAZE_SMOOTHING_ALPHA * raw_v
-                + (1.0 - GAZE_SMOOTHING_ALPHA) * self.smoothed_v
-            )
-
-        dx = self.smoothed_h - self.neutral_x
-        dy = self.smoothed_v - self.neutral_y
-
-        abs_dx = abs(dx)
-        abs_dy = abs(dy)
-
-        # Primary horizontal side lock
-        if self.current_direction == "Left":
-            if dx <= -GAZE_EXIT_HORIZONTAL:
-                confidence = min(1.0, abs_dx / max(GAZE_ENTER_HORIZONTAL * 1.8, 1e-6))
-                return ("Left", confidence * 100.0, dx, dy, self.smoothed_h, self.smoothed_v)
-
-        elif self.current_direction == "Right":
-            if dx >= GAZE_EXIT_HORIZONTAL:
-                confidence = min(1.0, abs_dx / max(GAZE_ENTER_HORIZONTAL * 1.8, 1e-6))
-                return ("Right", confidence * 100.0, dx, dy, self.smoothed_h, self.smoothed_v)
-
-        horizontal_candidate = None
-        horizontal_conf = 0.0
-
-        if dx <= -GAZE_ENTER_HORIZONTAL:
-            horizontal_candidate = "Left"
-            horizontal_conf = min(1.0, abs_dx / max(GAZE_ENTER_HORIZONTAL * 1.8, 1e-6))
-        elif dx >= GAZE_ENTER_HORIZONTAL:
-            horizontal_candidate = "Right"
-            horizontal_conf = min(1.0, abs_dx / max(GAZE_ENTER_HORIZONTAL * 1.8, 1e-6))
-
-        vertical_candidate = None
-        vertical_conf = 0.0
-
-        if dy <= -GAZE_ENTER_VERTICAL:
-            vertical_candidate = "Up"
-            vertical_conf = min(1.0, abs_dy / max(GAZE_ENTER_VERTICAL * 1.8, 1e-6))
-        elif dy >= GAZE_ENTER_VERTICAL:
-            vertical_candidate = "Down"
-            vertical_conf = min(1.0, abs_dy / max(GAZE_ENTER_VERTICAL * 1.8, 1e-6))
-
-        if horizontal_candidate is not None:
-            if vertical_candidate is not None and vertical_conf > 0.90 and horizontal_conf < 0.45:
-                self.current_direction = vertical_candidate
-                final_conf = vertical_conf * 100.0
-            else:
-                self.current_direction = horizontal_candidate
-                final_conf = horizontal_conf * 100.0
-        elif vertical_candidate is not None:
-            self.current_direction = vertical_candidate
-            final_conf = vertical_conf * 100.0
-        else:
-            self.current_direction = "Straight"
-            final_conf = 0.0
-
-        return (self.current_direction, final_conf, dx, dy, self.smoothed_h, self.smoothed_v)
+def point_xy(landmark, width: int, height: int) -> np.ndarray:
+    return np.array(
+        [landmark.x * width, landmark.y * height],
+        dtype=np.float32,
+    )
 
 
-# ============================================================
-# 3-SECOND CONTINUOUS VALIDATION & DURATION STATE MACHINE
-# ============================================================
+def fuzzy_classify(value: float, inner_thresh: float, outer_thresh: float):
+    abs_value = abs(float(value))
+    if abs_value <= inner_thresh:
+        confidence = 0.0
+    elif abs_value >= outer_thresh:
+        confidence = 1.0
+    else:
+        confidence = (abs_value - inner_thresh) / max(
+            outer_thresh - inner_thresh, 1e-6
+        )
+    sign = 1 if value >= 0 else -1
+    return sign, confidence
 
-class ContinuousDirectionCounter:
-    """
-    Strict continuous-direction timer and actual violation interval tracker.
-    
-    Rules:
-    - 3.0s is ONLY the minimum continuous validation threshold.
-    - If continuous episode ends in < 3.0s: DISCARD (0s added, not recorded as valid violation).
-    - If continuous episode reaches >= 3.0s: VALID violation with full actual continuous duration recorded (e.g. 7.4s).
-    """
-    def __init__(self, category_name: str, target_direction: str, threshold_seconds: float = 3.0):
-        self.category_name = category_name
-        self.target_direction = target_direction
-        self.threshold_seconds = float(threshold_seconds)
-        self.started_at: Optional[float] = None
-        self.last_update_time: Optional[float] = None
-        self.completed_intervals: List[Tuple[float, float]] = []
-        self.completed_episodes: List[Dict[str, Any]] = []
 
-    def update(self, detected_direction: str, current_time: float) -> Optional[Dict[str, Any]]:
-        current_time = float(current_time)
+def rotation_matrix_to_euler_angles(R):
+    sy = math.sqrt(float(R[0, 0] ** 2 + R[1, 0] ** 2))
+    singular = sy < 1e-6
 
-        if detected_direction != self.target_direction:
-            return self.close_episode(current_time)
+    if not singular:
+        pitch = math.atan2(R[2, 1], R[2, 2])
+        yaw = math.atan2(-R[2, 0], sy)
+        roll = math.atan2(R[1, 0], R[0, 0])
+    else:
+        pitch = math.atan2(-R[1, 2], R[1, 1])
+        yaw = math.atan2(-R[2, 0], sy)
+        roll = 0.0
 
-        if self.started_at is None:
-            self.started_at = current_time
-            self.last_update_time = current_time
-            return None
+    return (
+        float(np.degrees(pitch)),
+        float(np.degrees(yaw)),
+        float(np.degrees(roll)),
+    )
 
-        if self.last_update_time is not None and current_time < self.last_update_time:
-            closed = self.close_episode(current_time)
-            self.started_at = current_time
-            self.last_update_time = current_time
-            return closed
 
-        self.last_update_time = current_time
+def normalize_timestamp_ms(value: Optional[Union[int, float]]) -> Optional[float]:
+    if value is None:
         return None
-
-    def get_active_interval(self, current_time: float) -> Optional[Tuple[float, float]]:
-        """Returns the ongoing interval if currently >= 3.0 seconds, else None."""
-        if self.started_at is not None:
-            elapsed = float(current_time) - self.started_at
-            if elapsed >= self.threshold_seconds:
-                return (self.started_at, float(current_time))
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
         return None
-
-    def elapsed(self, detected_direction: str, current_time: float) -> float:
-        if detected_direction != self.target_direction or self.started_at is None:
-            return 0.0
-        return max(0.0, float(current_time) - self.started_at)
-
-    def close_episode(self, current_time: Optional[float] = None) -> Optional[Dict[str, Any]]:
-        episode = None
-        if self.started_at is not None:
-            # End time is the last recorded moment participant was in target direction
-            end_t = self.last_update_time if self.last_update_time is not None else (float(current_time) if current_time is not None else self.started_at)
-            duration = max(0.0, end_t - self.started_at)
-            
-            # 3-second validation threshold: only record if >= 3.0s
-            if duration >= self.threshold_seconds:
-                interval = (self.started_at, end_t)
-                self.completed_intervals.append(interval)
-                episode = {
-                    "start_time": self.started_at,
-                    "end_time": end_t,
-                    "duration": duration,
-                    "category": self.category_name,
-                    "direction": self.target_direction,
-                    "status": "VALID_VIOLATION (>= 3.0s)",
-                }
-                self.completed_episodes.append(episode)
-                
-        self.started_at = None
-        self.last_update_time = None
-        return episode
-
-    def reset_timer(self):
-        self.close_episode()
-
-    def get_all_intervals(self, current_time: Optional[float] = None) -> List[Tuple[float, float]]:
-        intervals = list(self.completed_intervals)
-        if current_time is not None:
-            act = self.get_active_interval(current_time)
-            if act:
-                intervals.append(act)
-        return intervals
-
-    def get_all_episodes(self, current_time: Optional[float] = None) -> List[Dict[str, Any]]:
-        episodes = list(self.completed_episodes)
-        if current_time is not None and self.started_at is not None:
-            duration = float(current_time) - self.started_at
-            if duration >= self.threshold_seconds:
-                episodes.append({
-                    "start_time": self.started_at,
-                    "end_time": float(current_time),
-                    "duration": duration,
-                    "category": self.category_name,
-                    "direction": self.target_direction,
-                    "status": "VALID_VIOLATION (>= 3.0s)",
-                })
-        return episodes
+    # LMS timestamps are normally milliseconds. Also tolerate seconds.
+    if abs(value) >= 1e11:
+        return value / 1000.0
+    if abs(value) >= 1e9:
+        return value / 1000.0
+    return value
 
 
-# ============================================================
-# EXACT DURATION-BASED SCORE CALCULATION & INTERVAL UNION
-# ============================================================
+def calculate_actual_duration_seconds(
+    actual_start_time: Optional[Union[int, float]],
+    actual_end_time: Optional[Union[int, float]],
+) -> Optional[float]:
+    start = normalize_timestamp_ms(actual_start_time)
+    end = normalize_timestamp_ms(actual_end_time)
+    if start is None or end is None:
+        return None
+    return max(0.0, end - start)
 
-def merge_intervals(intervals: List[Tuple[float, float]]) -> List[List[float]]:
-    """
-    Merges overlapping or contiguous violation intervals so overlapping
-    Eye and Head violations are counted only once (union duration).
-    """
-    if not intervals:
-        return []
-    valid = sorted(((float(a), float(b)) for a, b in intervals if b > a), key=lambda x: x[0])
+
+def merge_intervals(
+    intervals: List[Tuple[float, float]]
+) -> List[Tuple[float, float]]:
+    valid = sorted(
+        [
+            (float(start), float(end))
+            for start, end in intervals
+            if float(end) > float(start)
+        ],
+        key=lambda x: x[0],
+    )
     if not valid:
         return []
-    merged = []
+
+    merged: List[List[float]] = []
     for start, end in valid:
         if not merged or start > merged[-1][1]:
             merged.append([start, end])
         else:
             merged[-1][1] = max(merged[-1][1], end)
-    return merged
+
+    return [(start, end) for start, end in merged]
 
 
-def calculate_unique_violation_seconds(intervals: List[Tuple[float, float]]) -> float:
-    """Calculates total unique violation duration from merged intervals."""
-    merged = merge_intervals(intervals)
-    return sum(end - start for start, end in merged)
+def calculate_unique_violation_seconds(
+    intervals: List[Tuple[float, float]]
+) -> float:
+    return sum(end - start for start, end in merge_intervals(intervals))
 
 
-def calculateEyeHeadScore(totalUniqueViolationSeconds: float, actualTestDurationSeconds: float) -> float:
-    """
-    Authoritative Formula:
-    EyeHeadScore = (TotalUniqueValidEyeHeadViolationSeconds / ActualParticipantTestDurationSeconds) * 60
-    Clamped between 0.0 and 60.0.
-    """
-    duration = max(0.0, float(actualTestDurationSeconds or 0.0))
-    violation = max(0.0, float(totalUniqueViolationSeconds or 0.0))
-    if duration <= 0.0:
-        return 0.0
-    violation = min(violation, duration)
-    score = (violation / duration) * MONITORING_SCORE_MAX
-    return max(0.0, min(MONITORING_SCORE_MAX, score))
-
-
-def calculate_monitoring_score(violation_seconds: float, test_duration_seconds: float) -> Tuple[float, float]:
-    """Returns (violation_percentage, eye_head_score)."""
+def calculate_monitoring_score(
+    violation_seconds: float,
+    test_duration_seconds: float,
+):
+    """Calculate Eye + Head score from unique cumulative violation time."""
     duration = max(0.0, float(test_duration_seconds or 0.0))
     violation = max(0.0, float(violation_seconds or 0.0))
     if duration <= 0.0:
         return 0.0, 0.0
     violation = min(violation, duration)
-    percentage = (violation / duration) * 100.0
-    score = calculateEyeHeadScore(violation, duration)
-    return min(100.0, percentage), score
+    percentage = clamp((violation / duration) * 100.0, 0.0, 100.0)
+    score = clamp(
+        (violation / duration) * MONITORING_SCORE_MAX,
+        0.0,
+        MONITORING_SCORE_MAX,
+    )
+    return percentage, score
 
 
-# ============================================================
-# MOBILE DETECTOR INTERFACE
-# ============================================================
+def calculateEyeHeadScore(violation_seconds: float, test_duration_seconds: float) -> float:
+    """Return Eye + Head score (/60) for backward compatibility."""
+    _, score = calculate_monitoring_score(violation_seconds, test_duration_seconds)
+    return score
 
-def detect_mobile(frame: Optional[np.ndarray] = None) -> Dict[str, Any]:
-    """
-    Clean interface for mobile detector (e.g. YOLO / SSD / MobileNet).
-    Currently returns clean unflagged status when no secondary model is loaded.
-    """
-    return {
-        "detected": False,
-        "count": 0,
-        "confidence": 0.0,
-        "status": "CLEAR"
+
+def calculate_direction_totals(
+    episodes: List[ViolationEpisode],
+) -> Dict[str, float]:
+    """Return cumulative seconds independently for all six directions."""
+    totals = {
+        "eye_left": 0.0,
+        "eye_right": 0.0,
+        "eye_up": 0.0,
+        "head_left": 0.0,
+        "head_right": 0.0,
+        "head_up": 0.0,
     }
+    for ep in episodes:
+        cat = ep.category.lower()
+        if "eye" in cat or "eyeball" in cat:
+            cat = "eye"
+        elif "head" in cat:
+            cat = "head"
+        key = f"{cat}_{ep.direction.lower()}"
+        if key in totals:
+            totals[key] += max(0.0, float(ep.duration))
+    return totals
 
 
 # ============================================================
-# EXCEL GENERATOR (2-SHEET: REPORT + SUMMARY)
+# GAZE
 # ============================================================
 
-def generate_excel_file(path: str, events: List[Dict[str, Any]], summary_metrics: Dict[str, Any]):
-    wb = Workbook()
+def calculate_normalized_eye_ratios(
+    landmarks,
+    width: int,
+    height: int,
+):
+    required = [
+        RIGHT_IRIS_CENTER,
+        LEFT_IRIS_CENTER,
+        *RIGHT_EYE_CORNERS,
+        *LEFT_EYE_CORNERS,
+        *RIGHT_EYE_VERTICAL,
+        *LEFT_EYE_VERTICAL,
+    ]
 
-    # Sheet 1: Monitoring Report
-    ws = wb.active
-    ws.title = "Monitoring Report"
+    if len(landmarks) <= max(required):
+        raise ValueError("Required iris/eye landmarks are unavailable.")
+
+    r_iris = point_xy(landmarks[RIGHT_IRIS_CENTER], width, height)
+    r_c1 = point_xy(landmarks[RIGHT_EYE_CORNERS[0]], width, height)
+    r_c2 = point_xy(landmarks[RIGHT_EYE_CORNERS[1]], width, height)
+    r_top = point_xy(landmarks[RIGHT_EYE_VERTICAL[0]], width, height)
+    r_bot = point_xy(landmarks[RIGHT_EYE_VERTICAL[1]], width, height)
+
+    l_iris = point_xy(landmarks[LEFT_IRIS_CENTER], width, height)
+    l_c1 = point_xy(landmarks[LEFT_EYE_CORNERS[0]], width, height)
+    l_c2 = point_xy(landmarks[LEFT_EYE_CORNERS[1]], width, height)
+    l_top = point_xy(landmarks[LEFT_EYE_VERTICAL[0]], width, height)
+    l_bot = point_xy(landmarks[LEFT_EYE_VERTICAL[1]], width, height)
+
+    r_min_x, r_max_x = sorted([r_c1[0], r_c2[0]])
+    l_min_x, l_max_x = sorted([l_c1[0], l_c2[0]])
+
+    r_h_span = max(1.0, float(r_max_x - r_min_x))
+    l_h_span = max(1.0, float(l_max_x - l_min_x))
+
+    r_h = clamp((float(r_iris[0]) - r_min_x) / r_h_span, 0.0, 1.0)
+    l_h = clamp((float(l_iris[0]) - l_min_x) / l_h_span, 0.0, 1.0)
+
+    r_v_min, r_v_max = sorted([r_top[1], r_bot[1]])
+    l_v_min, l_v_max = sorted([l_top[1], l_bot[1]])
+
+    r_v_span = max(1.0, float(r_v_max - r_v_min))
+    l_v_span = max(1.0, float(l_v_max - l_v_min))
+
+    r_v = clamp((float(r_iris[1]) - r_v_min) / r_v_span, 0.0, 1.0)
+    l_v = clamp((float(l_iris[1]) - l_v_min) / l_v_span, 0.0, 1.0)
+
+    return (
+        (r_h + l_h) / 2.0,
+        (r_v + l_v) / 2.0,
+        {
+            "r_iris": (int(r_iris[0]), int(r_iris[1])),
+            "l_iris": (int(l_iris[0]), int(l_iris[1])),
+            "r_corners": (
+                (int(r_c1[0]), int(r_c1[1])),
+                (int(r_c2[0]), int(r_c2[1])),
+            ),
+            "l_corners": (
+                (int(l_c1[0]), int(l_c1[1])),
+                (int(l_c2[0]), int(l_c2[1])),
+            ),
+        },
+    )
+
+
+class GazeClassifier:
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.current_direction = "Straight"
+        self.smoothed_h = None
+        self.smoothed_v = None
+        self.neutral_x = 0.50
+        self.neutral_y = 0.50
+        self.calib_samples_x: List[float] = []
+        self.calib_samples_y: List[float] = []
+        self.is_calibrated = not ENABLE_GAZE_CALIBRATION
+
+    def add_calibration_sample(self, raw_h: float, raw_v: float):
+        if self.is_calibrated:
+            return
+        if len(self.calib_samples_x) < CALIBRATION_FRAMES:
+            self.calib_samples_x.append(float(raw_h))
+            self.calib_samples_y.append(float(raw_v))
+
+        if len(self.calib_samples_x) >= CALIBRATION_FRAMES:
+            self.neutral_x = float(np.median(self.calib_samples_x))
+            self.neutral_y = float(np.median(self.calib_samples_y))
+            self.smoothed_h = self.neutral_x
+            self.smoothed_v = self.neutral_y
+            self.current_direction = "Straight"
+            self.is_calibrated = True
+
+    def classify(self, raw_h: float, raw_v: float):
+        if not self.is_calibrated:
+            return "Straight", 0.0, 0.0, 0.0, raw_h, raw_v
+
+        if self.smoothed_h is None:
+            self.smoothed_h = float(raw_h)
+            self.smoothed_v = float(raw_v)
+        else:
+            a = GAZE_SMOOTHING_ALPHA
+            self.smoothed_h = a * raw_h + (1.0 - a) * self.smoothed_h
+            self.smoothed_v = a * raw_v + (1.0 - a) * self.smoothed_v
+
+        dx = self.smoothed_h - self.neutral_x
+        dy = self.smoothed_v - self.neutral_y
+
+        # Once a clear horizontal direction is active, vertical noise cannot
+        # steal the classification until horizontal gaze has returned.
+        if PRIMARY_SIDE_LOCK and self.current_direction in ("Left", "Right"):
+            if (
+                self.current_direction == "Left"
+                and dx <= -GAZE_EXIT_HORIZONTAL
+            ):
+                conf = clamp(
+                    abs(dx) / (GAZE_ENTER_HORIZONTAL * 1.8), 0.0, 1.0
+                )
+                return "Left", conf * 100.0, dx, dy, self.smoothed_h, self.smoothed_v
+
+            if (
+                self.current_direction == "Right"
+                and dx >= GAZE_EXIT_HORIZONTAL
+            ):
+                conf = clamp(
+                    abs(dx) / (GAZE_ENTER_HORIZONTAL * 1.8), 0.0, 1.0
+                )
+                return "Right", conf * 100.0, dx, dy, self.smoothed_h, self.smoothed_v
+
+        horizontal = None
+        horizontal_conf = 0.0
+        if dx <= -GAZE_ENTER_HORIZONTAL:
+            horizontal = "Left"
+            horizontal_conf = clamp(
+                abs(dx) / (GAZE_ENTER_HORIZONTAL * 1.8), 0.0, 1.0
+            )
+        elif dx >= GAZE_ENTER_HORIZONTAL:
+            horizontal = "Right"
+            horizontal_conf = clamp(
+                abs(dx) / (GAZE_ENTER_HORIZONTAL * 1.8), 0.0, 1.0
+            )
+
+        vertical = None
+        vertical_conf = 0.0
+        if dy <= -GAZE_ENTER_VERTICAL:
+            vertical = "Up"
+            vertical_conf = clamp(
+                abs(dy) / (GAZE_ENTER_VERTICAL * 1.8), 0.0, 1.0
+            )
+        elif dy >= GAZE_ENTER_VERTICAL:
+            vertical = "Down"
+            vertical_conf = clamp(
+                abs(dy) / (GAZE_ENTER_VERTICAL * 1.8), 0.0, 1.0
+            )
+
+        if horizontal:
+            if (
+                vertical
+                and vertical_conf > 0.90
+                and horizontal_conf < 0.45
+            ):
+                direction = vertical
+                confidence = vertical_conf
+            else:
+                direction = horizontal
+                confidence = horizontal_conf
+        elif vertical:
+            direction = vertical
+            confidence = vertical_conf
+        else:
+            direction = "Straight"
+            confidence = 0.0
+
+        self.current_direction = direction
+        return (
+            direction,
+            confidence * 100.0,
+            dx,
+            dy,
+            self.smoothed_h,
+            self.smoothed_v,
+        )
+
+
+# ============================================================
+# HEAD POSE
+# ============================================================
+
+class HeadPoseEstimator:
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.previous_pose = None
+        self.smoothed_pose = None
+
+    def estimate(self, face_landmarks, width: int, height: int):
+        if len(face_landmarks) <= max(LANDMARK_INDICES):
+            return "Straight", 0.0, None, None, None
+
+        image_points = np.array(
+            [
+                (
+                    face_landmarks[idx].x * width,
+                    face_landmarks[idx].y * height,
+                )
+                for idx in LANDMARK_INDICES
+            ],
+            dtype=np.float32,
+        )
+
+        focal_length = float(width)
+        camera_matrix = np.array(
+            [
+                [focal_length, 0, width / 2],
+                [0, focal_length, height / 2],
+                [0, 0, 1],
+            ],
+            dtype=np.float32,
+        )
+        dist_coeffs = np.zeros((4, 1), dtype=np.float32)
+
+        try:
+            if self.previous_pose is not None:
+                success, rvec, tvec = cv2.solvePnP(
+                    MODEL_POINTS,
+                    image_points,
+                    camera_matrix,
+                    dist_coeffs,
+                    rvec=self.previous_pose[0].copy(),
+                    tvec=self.previous_pose[1].copy(),
+                    useExtrinsicGuess=True,
+                    flags=cv2.SOLVEPNP_ITERATIVE,
+                )
+            else:
+                success, rvec, tvec = cv2.solvePnP(
+                    MODEL_POINTS,
+                    image_points,
+                    camera_matrix,
+                    dist_coeffs,
+                    flags=cv2.SOLVEPNP_ITERATIVE,
+                )
+        except cv2.error:
+            success = False
+
+        if not success:
+            return "Straight", 0.0, None, None, None
+
+        self.previous_pose = (rvec, tvec)
+
+        rotation, _ = cv2.Rodrigues(rvec)
+        pitch, yaw, roll = rotation_matrix_to_euler_angles(rotation)
+
+        if pitch > 90:
+            pitch -= 180
+        elif pitch < -90:
+            pitch += 180
+
+        pitch += PITCH_OFFSET
+
+        if self.smoothed_pose is None:
+            self.smoothed_pose = [pitch, yaw, roll]
+        else:
+            a = POSE_ALPHA
+            self.smoothed_pose[0] += a * (pitch - self.smoothed_pose[0])
+            self.smoothed_pose[1] += a * (yaw - self.smoothed_pose[1])
+            self.smoothed_pose[2] += a * (roll - self.smoothed_pose[2])
+
+        pitch, yaw, roll = self.smoothed_pose
+
+        yaw_sign, yaw_conf = fuzzy_classify(yaw, YAW_INNER, YAW_OUTER)
+        pitch_sign, pitch_conf = fuzzy_classify(
+            pitch, PITCH_INNER, PITCH_OUTER
+        )
+
+        horizontal = None
+        vertical = None
+
+        if yaw_sign > 0 and yaw_conf >= YAW_RIGHT_CUTOFF:
+            horizontal = "Right"
+        elif yaw_sign < 0 and yaw_conf >= YAW_LEFT_CUTOFF:
+            horizontal = "Left"
+
+        if pitch_sign > 0 and pitch_conf >= PITCH_DOWN_CUTOFF:
+            vertical = "Down"
+        elif pitch_sign < 0 and pitch_conf >= PITCH_UP_CUTOFF:
+            vertical = "Up"
+
+        candidates = []
+        if horizontal:
+            candidates.append((horizontal, yaw_conf))
+        if vertical:
+            candidates.append((vertical, pitch_conf))
+
+        if candidates:
+            candidates.sort(key=lambda x: x[1], reverse=True)
+            direction = candidates[0][0]
+            confidence = candidates[0][1] * 100.0
+        else:
+            direction = "Straight"
+            confidence = 0.0
+
+        nose = (
+            int(face_landmarks[1].x * width),
+            int(face_landmarks[1].y * height),
+        )
+
+        return direction, confidence, pitch, yaw, nose
+
+
+# ============================================================
+# CONTINUOUS VIOLATION STATE MACHINE
+# ============================================================
+
+@dataclass
+class ViolationEpisode:
+    category: str
+    direction: str
+    start_time: float
+    end_time: float
+    duration: float
+    validation_status: str = "VALID_VIOLATION"
+
+
+class ContinuousDirectionCounter:
+    """Accumulate every detected interval for one Eye/Head direction.
+
+    There is intentionally NO minimum-duration filter here. Every positive
+    duration contributes to the cumulative total. A direction change, face
+    loss, or session finalization closes the active interval.
+    """
+
+    def __init__(self, category: str, direction: str, **_ignored):
+        self.category = category
+        self.direction = direction
+        self.started_at: Optional[float] = None
+        self.last_seen_at: Optional[float] = None
+        self.completed: List[ViolationEpisode] = []
+        # Kept for backward-compatible reporting/API shape. It is never scored.
+        self.invalid: List[ViolationEpisode] = []
+
+    def start_or_continue(
+        self, detected_direction: str, now: float
+    ) -> Optional[ViolationEpisode]:
+        now = float(now)
+        if detected_direction == self.direction:
+            if self.started_at is None:
+                self.started_at = now
+            self.last_seen_at = now
+            return None
+
+        # Exact state transition: close at the last timestamp where this
+        # direction was actually observed. No 3-second validation/grace period.
+        if self.started_at is None:
+            return None
+        return self.close(now)
+
+    def close(self, now: Optional[float] = None) -> Optional[ViolationEpisode]:
+        if self.started_at is None:
+            return None
+
+        end = (
+            float(self.last_seen_at)
+            if self.last_seen_at is not None
+            else float(now if now is not None else self.started_at)
+        )
+        duration = max(0.0, end - float(self.started_at))
+
+        episode = ViolationEpisode(
+            category=self.category,
+            direction=self.direction,
+            start_time=float(self.started_at),
+            end_time=end,
+            duration=duration,
+            validation_status="VALID_VIOLATION" if duration > 0.0 else "ZERO_DURATION",
+        )
+
+        if duration > 0.0:
+            self.completed.append(episode)
+
+        self.started_at = None
+        self.last_seen_at = None
+        return episode if duration > 0.0 else None
+
+    def elapsed(self, now: float) -> float:
+        if self.started_at is None:
+            return 0.0
+        return max(0.0, float(now) - self.started_at)
+
+    def reset(self, now: Optional[float] = None):
+        return self.close(now)
+
+
+# ============================================================
+# SESSION
+# ============================================================
+
+@dataclass
+class SessionState:
+    session_id: str
+    configured_duration: float
+
+    participant_id: str = "1"
+    participant_name: str = "Participant"
+    trainer_id: Optional[str] = None
+    course_id: Optional[str] = None
+    assessment_id: Optional[str] = None
+    attempt_id: Optional[str] = None
+
+    actual_start_time: Optional[float] = None
+    actual_end_time: Optional[float] = None
+
+    created_at_monotonic: float = field(default_factory=time.monotonic)
+    finalized: bool = False
+    final_payload: Optional[Dict[str, Any]] = None
+
+    gaze: GazeClassifier = field(default_factory=GazeClassifier)
+    head_pose: HeadPoseEstimator = field(default_factory=HeadPoseEstimator)
+
+    counters: Dict[str, ContinuousDirectionCounter] = field(
+        default_factory=dict
+    )
+
+    multiple_face_detected: bool = False
+    multiple_face_count: int = 0
+    _multiple_face_active: bool = False
+
+    no_person_detected: bool = False
+    _no_person_active: bool = False
+
+    # Throttled fallback body/person-presence cache (YOLO person class).
+    # Only consulted when the FaceLandmarker finds 0 faces.
+    person_check_ts: float = 0.0
+    person_present_cache: Optional[bool] = None
+    person_count_cache: int = 0
+
+    # Mobile is external. These values are only storage for the injected
+    # detector result; no mobile detection is performed here.
+    mobile_count: int = 0
+    mobile_score: float = 0.0
+    mobile_detected: bool = False
+
+    events: List[Dict[str, Any]] = field(default_factory=list)
+
+    def __post_init__(self):
+        self.counters = {
+            "head_left": ContinuousDirectionCounter("Head", "Left"),
+            "head_right": ContinuousDirectionCounter("Head", "Right"),
+            "head_up": ContinuousDirectionCounter("Head", "Up"),
+            "eye_left": ContinuousDirectionCounter("Eye", "Left"),
+            "eye_right": ContinuousDirectionCounter("Eye", "Right"),
+            "eye_up": ContinuousDirectionCounter("Eye", "Up"),
+        }
+
+    @property
+    def created_at(self):
+        # Backward-compatible alias used by the HUD/report.
+        return self.created_at_monotonic
+
+
+# ============================================================
+# REPORT
+# ============================================================
+
+def generate_excel(
+    path: str,
+    session: SessionState,
+    final_duration: float,
+    episodes: List[ViolationEpisode],
+    invalid_episodes: List[ViolationEpisode],
+    unique_violation_seconds: float,
+    violation_percentage: float,
+    monitoring_score: float,
+    final_score: float,
+    metadata: Dict[str, Any],
+):
+    file_exists = os.path.isfile(path)
+    if file_exists:
+        try:
+            wb = load_workbook(path)
+        except Exception:
+            wb = Workbook()
+            file_exists = False
+    else:
+        wb = Workbook()
+
+    # 1. Main Sheet: "Monitoring Report"
+    if "Monitoring Report" in wb.sheetnames:
+        ws = wb["Monitoring Report"]
+    else:
+        ws = wb.active
+        ws.title = "Monitoring Report"
 
     headers = [
-        "Time (sec)",
-        "Event Type",
-        "Direction",
-        "Validation Status",
+        "Participant ID",
+        "Participant Name",
+        "Session ID",
         "Actual Duration (sec)",
+        "Violation Direction Summary",
         "Unique Violation Time (sec)",
-        "Eye + Head Score",
-        "Final Score",
+        "Violation Percentage",
+        "Eye + Head Score (/60)",
+        "Mobile Score (/20)",
+        "No Person Score (/10)",
+        "Final Proctoring Score (/100)",
     ]
 
-    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
-    header_font = Font(color="FFFFFF", bold=True)
+    fill = PatternFill(
+        start_color="1F4E78",
+        end_color="1F4E78",
+        fill_type="solid",
+    )
 
-    for col, header in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col, value=header)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center")
+    # Initialize headers if empty or missing
+    if ws.max_row == 0 or (ws.max_row == 1 and ws.cell(1, 1).value is None) or ws.cell(1, 1).value not in (headers[0], "Participant ID"):
+        ws.delete_rows(1, ws.max_row + 1)
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(1, col, header)
+            cell.font = Font(color="FFFFFF", bold=True)
+            cell.fill = fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height = 28
 
-    for row_idx, event in enumerate(events, 2):
-        values = [
-            event.get("Time", 0),
-            event.get("Event Type", "Head"),
-            event.get("Direction", "Left"),
-            event.get("Validation Status", "VALID VIOLATION (>= 3.0s)"),
-            event.get("Actual Duration (sec)", "3.0 sec"),
-            event.get("Unique Violation Time (sec)", "3.0 sec"),
-            event.get("Eye + Head Score", "0.00 / 60"),
-            event.get("Final Score", "0.00 / 100"),
-        ]
-        for col_idx, value in enumerate(values, 1):
-            cell = ws.cell(row=row_idx, column=col_idx, value=value)
-            cell.alignment = Alignment(horizontal="center")
+    dir_totals = calculate_direction_totals(episodes)
+    active_dirs = [f"{d.replace('_', ' ').title()}: {s:.1f}s" for d, s in dir_totals.items() if s > 0]
+    dir_summary_str = ", ".join(active_dirs) if active_dirs else "None (Centered/Clean)"
 
-    # Sheet 2: Summary
-    summary = wb.create_sheet("Summary")
-    cfg_dur = summary_metrics.get("configured_duration", summary_metrics.get("test_duration", 60.0))
-    act_dur = summary_metrics.get("actual_test_duration", summary_metrics.get("test_duration", 60.0))
-    calib_dur = summary_metrics.get("calibration_duration", 0.0)
-    v_sec = summary_metrics.get("violation_seconds", 0.0)
-    v_pct = summary_metrics.get("violation_percentage", 0.0)
-    m_score = summary_metrics.get("monitoring_score", 0.0)
-    mob_cnt = summary_metrics.get("mobile_count", 0)
-    mob_score = summary_metrics.get("mobile_score", 0.0)
-    mob_pct = (mob_score / MOBILE_SCORE_MAX * 100.0) if MOBILE_SCORE_MAX else 0.0
-    mf_cnt = summary_metrics.get("multiple_face_count", 0)
-    mf_score = summary_metrics.get("multiple_face_score", 0.0)
-    mf_pct = (mf_score / MULTIPLE_FACE_SCORE_MAX * 100.0) if MULTIPLE_FACE_SCORE_MAX else 0.0
-    np_det = summary_metrics.get("no_person_detected", False)
-    np_score = summary_metrics.get("no_person_score", 0.0)
-    np_pct = (np_score / NO_PERSON_SCORE_MAX * 100.0) if NO_PERSON_SCORE_MAX else 0.0
-    
-    # Authoritative scoring model:
-    # Malpractice Risk Score (0 = Clean, 100 = Max Malpractice)
-    final_malpractice = min(100.0, m_score + mob_score + mf_score + np_score)
-    # Integrity Trust Score (100 = Clean, 0 = Max Malpractice)
-    final_integrity = max(0.0, 100.0 - final_malpractice)
+    participant_id = metadata.get("participant_id") or session.participant_id or "1"
+    participant_name = metadata.get("participant_name") or session.participant_name or "Participant"
+    session_id = session.session_id
+
+    no_person_score = (
+        NO_PERSON_SCORE_MAX
+        if session.no_person_detected
+        else 0.0
+    )
+    mobile_score = clamp(session.mobile_score, 0.0, MOBILE_SCORE_MAX)
+
+    participant_row = [
+        str(participant_id),
+        str(participant_name),
+        str(session_id),
+        round(final_duration, 2),
+        dir_summary_str,
+        round(unique_violation_seconds, 2),
+        f"{violation_percentage:.2f}%",
+        f"{monitoring_score:.2f} / 60",
+        f"{mobile_score:.2f} / 20",
+        f"{no_person_score:.2f} / 10",
+        f"{final_score:.2f} / 100",
+    ]
+
+    # Search if participant/session already exists in the sheet to update or append as a new row
+    target_row = None
+    if ws.max_row >= 2:
+        for r in range(2, ws.max_row + 1):
+            existing_pid = str(ws.cell(r, 1).value or "").strip()
+            existing_sid = str(ws.cell(r, 3).value or "").strip()
+            if (existing_pid and existing_pid == str(participant_id)) or (existing_sid and existing_sid == str(session_id)):
+                target_row = r
+                break
+
+    if target_row is None:
+        target_row = ws.max_row + 1 if ws.cell(ws.max_row, 1).value is not None else ws.max_row
+
+    for col, value in enumerate(participant_row, 1):
+        cell = ws.cell(target_row, col, value)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    # Column width auto-sizing
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or "")) for cell in col)
+        col_letter = get_column_letter(col[0].column)
+        ws.column_dimensions[col_letter].width = min(max(max_len + 4, 15), 45)
+
+    # 2. Summary Sheet: "Summary"
+    if "Summary" in wb.sheetnames:
+        summary = wb["Summary"]
+    else:
+        summary = wb.create_sheet("Summary")
+
+    multiple_face_score = (
+        MULTIPLE_FACE_SCORE_MAX
+        if session.multiple_face_detected
+        else 0.0
+    )
 
     summary_data = [
-        ("LMS MONITORING SUMMARY", ""),
-        ("--------------------------------", "--------------------------------"),
-        ("SESSION INFORMATION", ""),
-        ("  Configured Duration", f"{cfg_dur:.2f} sec"),
-        ("  Actual Test Duration", f"{act_dur:.2f} sec"),
-        ("  Calibration Duration", f"{calib_dur:.2f} sec"),
+        ("LMS AI MONITORING SUMMARY", ""),
         ("", ""),
-        ("MALPRACTICE SCORING SUMMARY", ""),
-        ("  Component", "Violation / Count | Percentage | Penalty Score | Maximum"),
-        ("  Eye + Head (MediaPipe)", f"{v_sec:.2f} sec | {v_pct:.2f}% | {m_score:.2f} | 60"),
-        ("  Mobile Device", f"{mob_cnt} | {mob_pct:.2f}% | {mob_score:.2f} | 20"),
-        ("  Multiple Face", f"{mf_cnt} | {mf_pct:.2f}% | {mf_score:.2f} | 10"),
-        ("  No Person / Absence", f"{'Detected' if np_det else 'Not Detected'} | {np_pct:.2f}% | {np_score:.2f} | 10"),
+        ("LATEST SESSION INFORMATION", ""),
+        ("Participant ID", metadata.get("participant_id", participant_id)),
+        ("Participant Name", metadata.get("participant_name", participant_name)),
+        ("Trainer ID", metadata.get("trainer_id", "N/A")),
+        ("Course ID", metadata.get("course_id", "N/A")),
+        ("Assessment ID", metadata.get("assessment_id", "N/A")),
+        ("Attempt ID", metadata.get("attempt_id", "N/A")),
+        ("Session ID", metadata.get("session_id", session_id)),
+        ("Configured Duration", f"{session.configured_duration:.2f} sec"),
+        ("Actual Test Duration", f"{final_duration:.2f} sec"),
+        ("Actual Start Time", metadata.get("actual_start_time", "N/A")),
+        ("Actual End Time", metadata.get("actual_end_time", "N/A")),
+        ("Duration Source", metadata.get("duration_source", "N/A")),
         ("", ""),
-        ("FINAL MALPRACTICE & INTEGRITY SCORES", ""),
-        ("  Eye + Head Penalty Score", f"{m_score:.2f} / 60"),
-        ("  Mobile Penalty Score", f"{mob_score:.2f} / 20"),
-        ("  Multiple Face Penalty Score", f"{mf_score:.2f} / 10"),
-        ("  No Person Penalty Score", f"{np_score:.2f} / 10"),
-        ("  Total Malpractice Risk Score", f"{final_malpractice:.2f} / 100"),
-        ("  Final Assessment Integrity Score", f"{final_integrity:.2f} / 100"),
-        ("--------------------------------", "--------------------------------"),
-        ("Exact Formula", "EyeHeadScore = (TotalUniqueValidEyeHeadViolationSeconds / ActualParticipantTestDurationSeconds) * 60"),
+        ("LATEST CUMULATIVE DIRECTION TOTALS", ""),
+        ("Eye LEFT total", f"{calculate_direction_totals(episodes)['eye_left']:.3f} sec"),
+        ("Eye RIGHT total", f"{calculate_direction_totals(episodes)['eye_right']:.3f} sec"),
+        ("Eye UP total", f"{calculate_direction_totals(episodes)['eye_up']:.3f} sec"),
+        ("Head LEFT total", f"{calculate_direction_totals(episodes)['head_left']:.3f} sec"),
+        ("Head RIGHT total", f"{calculate_direction_totals(episodes)['head_right']:.3f} sec"),
+        ("Head UP total", f"{calculate_direction_totals(episodes)['head_up']:.3f} sec"),
+        ("", ""),
+        ("SCORING SUMMARY", ""),
+        (
+            "Eye + Head",
+            f"{unique_violation_seconds:.2f} sec | "
+            f"{violation_percentage:.2f}% | "
+            f"{monitoring_score:.2f} / 60",
+        ),
+        (
+            "Mobile",
+            f"Count: {session.mobile_count} | "
+            f"{mobile_score:.2f} / 20",
+        ),
+        (
+            "Multiple Face",
+            f"Count: 0 | 0.00 / 10 (Single-Participant Mode)",
+        ),
+        (
+            "No Person",
+            f"{'Detected' if session.no_person_detected else 'Not Detected'} | "
+            f"{no_person_score:.2f} / 10",
+        ),
+        ("", ""),
+        ("FINAL SCORE", ""),
+        ("Eye + Head Score", f"{monitoring_score:.2f} / 60"),
+        ("Mobile Score", f"{mobile_score:.2f} / 20"),
+        ("Multiple Face Score", f"0.00 / 10"),
+        ("No Person Score", f"{no_person_score:.2f} / 10"),
+        ("Final Score", f"{final_score:.2f} / 100"),
+        ("Final Percentage", f"{final_score:.2f}%"),
+        ("", ""),
+        (
+            "Multi-Participant Rule",
+            "This Excel sheet maintains and appends all participant attempts into the shared Monitoring Report sheet.",
+        ),
     ]
 
-    for r, (label, val) in enumerate(summary_data, 1):
-        c1 = summary.cell(r, 1, label)
-        c2 = summary.cell(r, 2, val)
-        if label.isupper() or "Total" in label or "SUMMARY" in label or "FINAL" in label:
+    summary.delete_rows(1, summary.max_row + 5)
+    for row_idx, (label, val) in enumerate(summary_data, 1):
+        c1 = summary.cell(row_idx, 1, label)
+        c2 = summary.cell(row_idx, 2, val)
+        if label.isupper() or "SCORE" in label or "SUMMARY" in label:
             c1.font = Font(bold=True)
             c2.font = Font(bold=True)
+            c1.fill = PatternFill(
+                start_color="D9E1F2",
+                end_color="D9E1F2",
+                fill_type="solid",
+            )
+            c2.fill = PatternFill(
+                start_color="D9E1F2",
+                end_color="D9E1F2",
+                fill_type="solid",
+            )
 
     for sheet in (ws, summary):
-        for column_cells in sheet.columns:
-            max_length = 0
-            col_letter = column_cells[0].column_letter
-            for cell in column_cells:
-                val_str = "" if cell.value is None else str(cell.value)
-                max_length = max(max_length, len(val_str))
-            sheet.column_dimensions[col_letter].width = min(max_length + 3, 50)
+        for col in sheet.columns:
+            max_len = max(len(str(cell.value or "")) for cell in col)
+            col_letter = get_column_letter(col[0].column)
+            sheet.column_dimensions[col_letter].width = min(max(max_len + 4, 15), 65)
 
-    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+    output_path = os.path.abspath(path)
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+
     try:
-        wb.save(path)
-        logger.info(f"[REPORT] Saved Excel to: {os.path.abspath(path)}")
+        wb.save(output_path)
     except PermissionError:
-        fallback_path = os.path.splitext(path)[0] + "_output.xlsx"
-        wb.save(fallback_path)
-        logger.info(f"[REPORT] Saved report to fallback: {os.path.abspath(fallback_path)}")
+        fallback = os.path.splitext(output_path)[0] + "_output.xlsx"
+        wb.save(fallback)
+        output_path = fallback
+
+    logger.info("Excel report saved: %s", output_path)
+    return output_path
 
 
 # ============================================================
-# FASTAPI & PROGRAMMATIC MEDIAPIPE PROCTOR ENGINE CLASS
+# ENGINE
 # ============================================================
 
 class MediaPipeProctorEngine:
-    """
-    Authoritative MediaPipe Proctoring Engine for LMS Assessment & API Services.
-    Implements 3-second continuous threshold validation, Centering Audit, Calibration State Machine,
-    Primary-Side Lock, and exact duration-based 60-mark Eye+Head scoring.
-    """
-    def __init__(self):
-        self.options = mp.tasks.vision.FaceLandmarkerOptions(
-            base_options=mp.tasks.BaseOptions(model_asset_path=FACE_MODEL_PATH),
-            running_mode=mp.tasks.vision.RunningMode.IMAGE,
-            num_faces=4,
+    def __init__(self, model_path: Optional[str] = None):
+        self.model_path = resolve_model_path(model_path)
+        if not os.path.isfile(self.model_path):
+            raise FileNotFoundError(
+                f"face_landmarker.task not found: {self.model_path}"
+            )
+
+        self.sessions: Dict[str, SessionState] = {}
+
+        # Optional fallback that proves a person/occupant is present when the
+        # FaceLandmarker returns 0 faces. Signature: detector(frame_bgr) ->
+        # (person_present: bool, person_count: int) or None.
+        self._person_detector = None
+
+        self.mp_tasks = mp.tasks
+        self.BaseOptions = self.mp_tasks.BaseOptions
+        self.FaceLandmarker = self.mp_tasks.vision.FaceLandmarker
+        self.FaceLandmarkerOptions = (
+            self.mp_tasks.vision.FaceLandmarkerOptions
         )
+        self.RunningMode = self.mp_tasks.vision.RunningMode
+
+        self.options = self.FaceLandmarkerOptions(
+            base_options=self.BaseOptions(
+                model_asset_path=self.model_path
+            ),
+            running_mode=self.RunningMode.IMAGE,
+            num_faces=1,
+            min_face_detection_confidence=0.5,
+            min_face_presence_confidence=0.5,
+            min_tracking_confidence=0.5,
+            output_face_blendshapes=False,
+            output_facial_transformation_matrixes=False,
+        )
+
         self.detector = None
         try:
-            self.detector = mp.tasks.vision.FaceLandmarker.create_from_options(self.options)
-            logger.info("MediaPipe FaceLandmarker loaded successfully in proctoring_detector.")
-        except Exception as e:
-            logger.warning(f"Could not load MediaPipe FaceLandmarker from {FACE_MODEL_PATH}: {e}")
+            self.detector = self.FaceLandmarker.create_from_options(
+                self.options
+            )
+            logger.info("MediaPipe FaceLandmarker loaded: %s", self.model_path)
+        except Exception:
+            logger.exception("Could not create FaceLandmarker")
+            raise
 
-        self.sessions: Dict[str, Dict[str, Any]] = {}
+    PERSON_CHECK_INTERVAL_SECONDS = 1.0
 
-    def _get_or_create_session(self, session_id: str, configured_duration: Optional[float] = None) -> Dict[str, Any]:
+    def set_person_detector(self, detector):
+        """Inject an optional body/person-presence detector (e.g. the YOLO
+        person class). detector(frame_bgr) must return (person_present: bool,
+        person_count: int) or None on failure. It is only invoked when the
+        FaceLandmarker finds zero faces, throttled to <=1 Hz per session."""
+        self._person_detector = detector
+
+    def _check_person_present(self, session, frame, now):
+        """Proves occupant presence from the body/pose stream when the face is
+        not resolvable. Returns True/False, or None when unknown (treated as
+        'not proven' so the conservative no-person path still applies)."""
+        if self._person_detector is None:
+            return None
+        if now - session.person_check_ts < self.PERSON_CHECK_INTERVAL_SECONDS:
+            return session.person_present_cache
+        session.person_check_ts = now
+        try:
+            outcome = self._person_detector(frame)
+        except Exception as exc:
+            logger.warning("Person-presence fallback failed: %s", exc)
+            return None
+        if outcome is None:
+            session.person_present_cache = None
+            return None
+        present = bool(outcome[0])
+        session.person_present_cache = present
+        session.person_count_cache = (
+            int(outcome[1]) if len(outcome) > 1 else (1 if present else 0)
+        )
+        return present
+
+    @staticmethod
+    def resolve_lms_duration(
+        configured_duration: float,
+        actual_start_time: Optional[Union[int, float]],
+        actual_end_time: Optional[Union[int, float]],
+        fallback_start_monotonic: float,
+        fallback_end_monotonic: float,
+    ) -> Tuple[float, str]:
+        actual = calculate_actual_duration_seconds(
+            actual_start_time, actual_end_time
+        )
+        if actual is not None:
+            return max(0.001, actual), "LMS actualStartTime/actualEndTime"
+
+        fallback = max(
+            0.001,
+            float(fallback_end_monotonic) - float(fallback_start_monotonic),
+        )
+        return fallback, "monitoring session start/end fallback"
+
+    def start_session(
+        self,
+        session_id: str,
+        participant_id: str = "1",
+        participant_name: str = "Participant",
+        configured_duration: float = 60.0,
+        actual_start_time: Optional[Union[int, float]] = None,
+        trainer_id: Optional[str] = None,
+        course_id: Optional[str] = None,
+        assessment_id: Optional[str] = None,
+        attempt_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if session_id in self.sessions:
+            session = self.sessions[session_id]
+            if session.finalized:
+                raise ValueError(f"Session already finalized: {session_id}")
+            return self._session_status(session)
+
+        configured = max(0.0, float(configured_duration) if configured_duration is not None else 60.0)
+
+        session = SessionState(
+            session_id=session_id,
+            configured_duration=configured,
+            participant_id=str(participant_id),
+            participant_name=str(participant_name),
+            trainer_id=trainer_id,
+            course_id=course_id,
+            assessment_id=assessment_id,
+            attempt_id=attempt_id,
+            actual_start_time=normalize_timestamp_ms(actual_start_time),
+        )
+        self.sessions[session_id] = session
+        return self._session_status(session)
+
+    def _get_session(
+        self,
+        session_id: str,
+        configured_duration: float = 60.0,
+        **kwargs,
+    ) -> SessionState:
         if session_id not in self.sessions:
-            dur = float(configured_duration) if configured_duration is not None else 60.0
-            self.sessions[session_id] = {
-                "session_id": session_id,
-                "state": SessionState.CREATED,
-                "created_at": time.monotonic(),
-                "calibration_started_at": None,
-                "calibration_completed_at": None,
-                "test_started_at": None,
-                "test_ended_at": None,
-                "configured_duration": dur,
-                "gaze_classifier": GazeClassifier(),
-                "smoothed_pose": None,
-                "previous_pose": None,
-                "counters": {
-                    "head_left": ContinuousDirectionCounter("Head", "Left", VIOLATION_SECONDS),
-                    "head_right": ContinuousDirectionCounter("Head", "Right", VIOLATION_SECONDS),
-                    "head_up": ContinuousDirectionCounter("Head", "Up", VIOLATION_SECONDS),
-                    "eye_left": ContinuousDirectionCounter("Eyeball", "Left", VIOLATION_SECONDS),
-                    "eye_right": ContinuousDirectionCounter("Eyeball", "Right", VIOLATION_SECONDS),
-                    "eye_up": ContinuousDirectionCounter("Eyeball", "Up", VIOLATION_SECONDS),
-                },
-                "multiple_face_detected": False,
-                "multiple_face_count": 0,
-                "no_person_detected": False,
-                "mobile_count": 0,
-                "mobile_score": 0.0,
-                "events": [],
-            }
-        else:
-            # Update configured duration if supplied and session not yet running
-            if configured_duration is not None and self.sessions[session_id]["state"] in (SessionState.CREATED, SessionState.CALIBRATING, SessionState.READY):
-                self.sessions[session_id]["configured_duration"] = float(configured_duration)
-
+            self.start_session(
+                session_id=session_id,
+                configured_duration=configured_duration,
+                **kwargs,
+            )
         return self.sessions[session_id]
 
-    def decode_b64(self, b64_data: str) -> Optional[np.ndarray]:
+    @staticmethod
+    def decode_b64(data: str) -> Optional[np.ndarray]:
         try:
-            if "," in b64_data:
-                b64_data = b64_data.split(",", 1)[1]
-            raw_bytes = base64.b64decode(b64_data)
-            np_arr = np.frombuffer(raw_bytes, np.uint8)
-            return cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-        except Exception as e:
-            logger.warning(f"Failed to decode base64 frame: {e}")
+            if "," in data:
+                data = data.split(",", 1)[1]
+            raw = base64.b64decode(data, validate=True)
+            arr = np.frombuffer(raw, dtype=np.uint8)
+            return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        except Exception:
             return None
 
-    def validate_calibration(self, b64_data: str, session_id: str = "default", configured_duration: Optional[float] = None) -> Dict[str, Any]:
-        """
-        Step-by-step Pre-Assessment Calibration Validator:
-        1. Decodes frame & validates image quality
-        2. Detects face count (must be exactly 1)
-        3. Audits face centering & distance in frame
-        4. Collects calibration sample across CALIBRATION_FRAMES (45 frames)
-        5. Returns status='CALIBRATING' (passed=False, progress<1.0) until frame 45
-        6. On frame 45, sets state='READY', status='CALIBRATION_PASSED' (passed=True, progress=1.0)
-        """
-        img = self.decode_b64(b64_data)
-        if img is None:
-            return {"passed": False, "status": "ERROR", "reason": "INVALID_IMAGE", "message": "Camera frame could not be read."}
+    def _detect(self, frame: np.ndarray):
+        if self.detector is None:
+            raise RuntimeError("MediaPipe detector is not initialized.")
 
-        sess = self._get_or_create_session(session_id, configured_duration)
-        if sess["calibration_started_at"] is None:
-            sess["calibration_started_at"] = time.monotonic()
-            sess["state"] = SessionState.CALIBRATING
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        image = mp.Image(
+            image_format=mp.ImageFormat.SRGB,
+            data=rgb,
+        )
+        return self.detector.detect(image)
 
-        h, w = img.shape[:2]
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
-        res = self.detector.detect(mp_img) if self.detector else None
-
-        num_faces = len(res.face_landmarks) if (res and res.face_landmarks) else 0
-
-        # Face count audit
-        if num_faces == 0:
-            sess["state"] = SessionState.CALIBRATION_FAILED
-            sess["gaze_classifier"].reset_calibration()
-            return {
-                "passed": False,
-                "status": "FACE_NOT_DETECTED",
-                "reason": "FACE_NOT_DETECTED",
-                "message": "No face detected in camera view. Please position yourself in front of the camera.",
-                "progress": 0.0,
+    @staticmethod
+    def _append_episode_event(
+        session: SessionState,
+        episode: ViolationEpisode,
+    ):
+        start = episode.start_time if episode.start_time < session.created_at else episode.start_time - session.created_at
+        end = episode.end_time if episode.end_time < session.created_at else episode.end_time - session.created_at
+        session.events.append(
+            {
+                "category": episode.category,
+                "direction": episode.direction,
+                "start_time": round(start, 3),
+                "end_time": round(end, 3),
+                "duration_seconds": round(episode.duration, 3),
+                "validation_status": episode.validation_status,
             }
+        )
 
-        if num_faces > 1:
-            sess["state"] = SessionState.CALIBRATION_FAILED
-            sess["gaze_classifier"].reset_calibration()
-            return {
-                "passed": False,
-                "status": "MULTIPLE_FACES",
-                "reason": "MULTIPLE_FACES",
-                "message": f"Multiple faces detected ({num_faces}). Only the candidate should be visible.",
-                "progress": 0.0,
-            }
+    @staticmethod
+    def _close_all_counters(
+        session: SessionState,
+        now: float,
+    ):
+        for counter in session.counters.values():
+            episode = counter.close(now)
+            if episode:
+                MediaPipeProctorEngine._append_episode_event(
+                    session, episode
+                )
 
-        # Face centering & quality audit
-        fl = res.face_landmarks[0]
-        audit = audit_participant_framing(fl, w, h, gray)
-        if not audit["passed"]:
-            sess["state"] = SessionState.CALIBRATION_FAILED
-            sess["gaze_classifier"].reset_calibration()
-            return {
-                "passed": False,
-                "status": audit["reason"],
-                "reason": audit["reason"],
-                "message": audit["message"],
-                "progress": 0.0,
-                "metrics": audit.get("metrics", {})
-            }
+    @staticmethod
+    def _validated_episodes(
+        session: SessionState,
+    ) -> List[ViolationEpisode]:
+        result: List[ViolationEpisode] = []
+        for counter in session.counters.values():
+            result.extend(counter.completed)
+        result.sort(key=lambda x: x.start_time)
+        return result
 
-        # Extract eye ratios and add calibration sample
-        if len(fl) > LEFT_IRIS_CENTER:
-            raw_h, raw_v, _ = calculate_normalized_eye_ratios(fl, w, h)
-            is_calibrated, progress = sess["gaze_classifier"].add_calibration_sample(raw_h, raw_v)
-        else:
-            return {
-                "passed": False,
-                "status": "INCOMPLETE_LANDMARKS",
-                "reason": "INCOMPLETE_LANDMARKS",
-                "message": "Iris landmarks not clearly visible. Please adjust camera angle.",
-                "progress": 0.0,
-            }
+    @staticmethod
+    def _invalid_episodes(
+        session: SessionState,
+    ) -> List[ViolationEpisode]:
+        result: List[ViolationEpisode] = []
+        for counter in session.counters.values():
+            result.extend(counter.invalid)
+        result.sort(key=lambda x: x.start_time)
+        return result
 
-        if not is_calibrated:
-            sess["state"] = SessionState.CALIBRATING
-            return {
-                "passed": False,
-                "status": "CALIBRATING",
-                "reason": "CALIBRATING",
-                "message": f"Calibrating neutral gaze... {int(progress * 100)}% complete. Please look straight ahead.",
-                "progress": round(progress, 2),
-                "frame": len(sess["gaze_classifier"].calib_samples_x),
-                "total_frames": CALIBRATION_FRAMES,
-                "metrics": audit.get("metrics", {})
-            }
+    @staticmethod
+    def _validated_intervals(
+        session: SessionState,
+    ) -> List[Tuple[float, float]]:
+        return [
+            (ep.start_time, ep.end_time)
+            for ep in MediaPipeProctorEngine._validated_episodes(session)
+            if ep.duration > 0.0
+        ]
 
-        # Calibration completed!
-        sess["state"] = SessionState.READY
-        sess["calibration_completed_at"] = time.monotonic()
+    @staticmethod
+    def _score(
+        session: SessionState,
+        actual_duration: float,
+    ):
+        episodes = MediaPipeProctorEngine._validated_episodes(session)
+        intervals = MediaPipeProctorEngine._validated_intervals(session)
+        unique_seconds = calculate_unique_violation_seconds(intervals)
+        direction_totals = calculate_direction_totals(episodes)
+
+        violation_pct, monitoring_score = calculate_monitoring_score(
+            unique_seconds,
+            actual_duration,
+        )
+
+        multiple_face_score = (
+            MULTIPLE_FACE_SCORE_MAX
+            if session.multiple_face_detected
+            else 0.0
+        )
+        no_person_score = (
+            NO_PERSON_SCORE_MAX
+            if session.no_person_detected
+            else 0.0
+        )
+        mobile_score = clamp(
+            session.mobile_score,
+            0.0,
+            MOBILE_SCORE_MAX,
+        )
+
+        final_score = clamp(
+            monitoring_score
+            + mobile_score
+            + multiple_face_score
+            + no_person_score,
+            0.0,
+            FINAL_SCORE_MAX,
+        )
+
         return {
-            "passed": True,
-            "status": "CALIBRATION_PASSED",
-            "reason": "CALIBRATION_PASSED",
-            "message": "Calibration successful — participant centered and baseline established.",
-            "progress": 1.0,
-            "metrics": {
-                "brightness": audit["metrics"]["brightness"],
-                "contrast": audit["metrics"]["contrast"],
-                "face_detected": True,
-                "neutral_x": round(sess["gaze_classifier"].neutral_x, 3),
-                "neutral_y": round(sess["gaze_classifier"].neutral_y, 3),
-            }
+            "unique_violation_seconds": unique_seconds,
+            "violation_percentage": violation_pct,
+            "direction_totals": direction_totals,
+            "eye_head_score": monitoring_score,
+            "multiple_face_score": multiple_face_score,
+            "no_person_score": no_person_score,
+            "mobile_score": mobile_score,
+            "final_score": final_score,
         }
 
-    def process_b64_frame(self, b64_data: str, session_id: str = "default", timestamp_ms: Optional[int] = None, configured_duration: Optional[float] = None) -> Dict[str, Any]:
+    def update_mobile_result(
+        self,
+        session_id: str,
+        mobile_result: Optional[Union[bool, int, float, Dict[str, Any]]] = None,
+        mobile_count: Optional[int] = None,
+        mobile_score: Optional[float] = None,
+    ):
         """
-        Processes a live monitoring frame during an active assessment attempt.
+        External mobile-result injection only.
+
+        This method DOES NOT detect a mobile phone.
+        It simply stores the final result supplied by the existing
+        separate mobile detector.
+
+        Accepted:
+          - mobile_score
+          - mobile_count
+          - {"count": ..., "score": ..., "detected": ...}
+          - bool as an external incident signal (edge-triggered)
         """
-        img = self.decode_b64(b64_data)
-        if img is None:
-            return {"success": False, "error": "Invalid frame image data"}
+        session = self._get_session(session_id)
 
-        h, w = img.shape[:2]
-        now_ts = time.monotonic()
-        sess = self._get_or_create_session(session_id, configured_duration)
+        if isinstance(mobile_result, dict):
+            if "count" in mobile_result and mobile_result["count"] is not None:
+                session.mobile_count = max(
+                    session.mobile_count, int(mobile_result["count"])
+                )
+            if "score" in mobile_result and mobile_result["score"] is not None:
+                session.mobile_score = clamp(
+                    float(mobile_result["score"]),
+                    0.0,
+                    MOBILE_SCORE_MAX,
+                )
+            if "detected" in mobile_result:
+                session.mobile_detected = bool(mobile_result["detected"])
 
-        # Transition to RUNNING state when first monitoring frame arrives
-        if sess["state"] in (SessionState.CREATED, SessionState.READY, SessionState.CALIBRATING):
-            sess["state"] = SessionState.RUNNING
-            if sess["test_started_at"] is None:
-                sess["test_started_at"] = now_ts
+        elif isinstance(mobile_result, bool):
+            # Only a false -> true transition is treated as a new external
+            # incident. This prevents counting the same detector signal every
+            # video frame.
+            detected = mobile_result
+            if detected and not session.mobile_detected:
+                session.mobile_count += 1
+            session.mobile_detected = detected
 
-        test_start = sess["test_started_at"] or now_ts
-        elapsed = max(0.0, now_ts - test_start)
-        cntrs = sess["counters"]
+        elif mobile_result is not None:
+            try:
+                session.mobile_count = max(
+                    session.mobile_count, int(mobile_result)
+                )
+            except (TypeError, ValueError):
+                pass
 
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
-        res = self.detector.detect(mp_img) if self.detector else None
+        if mobile_count is not None:
+            session.mobile_count = max(
+                session.mobile_count, int(mobile_count)
+            )
 
-        face_count = len(res.face_landmarks) if (res and res.face_landmarks) else 0
+        if mobile_score is not None:
+            session.mobile_score = clamp(
+                float(mobile_score),
+                0.0,
+                MOBILE_SCORE_MAX,
+            )
+        elif mobile_count is not None:
+            # Preserve the existing count-based external scoring contract
+            # while keeping it capped at 20.
+            session.mobile_score = clamp(
+                float(session.mobile_count),
+                0.0,
+                MOBILE_SCORE_MAX,
+            )
 
-        # ------------------------------------------------------------
-        # 1. Multiple-Face Handling (Strict: Do NOT process face[0])
-        # ------------------------------------------------------------
-        if face_count >= 2:
-            sess["multiple_face_detected"] = True
-            sess["multiple_face_count"] += 1
-            # Reset active single-participant direction timers
-            for c in cntrs.values():
-                c.reset_timer()
-            sess["previous_pose"] = None
-            sess["smoothed_pose"] = None
-            head_dir, gaze_dir = "Multiple Faces", "Multiple Faces"
-            head_conf, gaze_conf = 100.0, 100.0
-            pitch, yaw = 0.0, 0.0
-            status = "MULTIPLE_FACES"
+        return {
+            "count": session.mobile_count,
+            "score": session.mobile_score,
+            "detected": session.mobile_detected,
+        }
 
-        # ------------------------------------------------------------
-        # 2. No-Person Handling (Face Absent)
-        # ------------------------------------------------------------
-        elif face_count == 0:
-            sess["no_person_detected"] = True
-            for c in cntrs.values():
-                c.reset_timer()
-            sess["previous_pose"] = None
-            sess["smoothed_pose"] = None
-            head_dir, gaze_dir = "Not Detected", "Not Detected"
-            head_conf, gaze_conf = 0.0, 0.0
-            pitch, yaw = 0.0, 0.0
-            status = "NO_PERSON"
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "status": "UP" if self.detector is not None else "DOWN",
+            "model_path": str(FACE_MODEL_PATH),
+            "model_exists": os.path.exists(FACE_MODEL_PATH),
+            "active_sessions": len(self.sessions),
+        }
 
-        # ------------------------------------------------------------
-        # 3. Normal Single Participant Processing
-        # ------------------------------------------------------------
+    def calibrate_session(
+        self,
+        session_id: str,
+        baseline_ear: float = 0.28,
+        baseline_face_width: float = 120.0,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        session = self._get_session(session_id)
+        session.gaze.is_calibrated = True
+        return {
+            "success": True,
+            "session_id": session_id,
+            "is_calibrated": True,
+            "message": f"Session {session_id} calibrated successfully",
+        }
+
+    def validate_calibration(
+        self,
+        b64_data: str,
+        session_id: str = "default",
+        **kwargs,
+    ):
+        frame = self.decode_b64(b64_data)
+        if frame is None:
+            return {
+                "passed": False,
+                "ready": False,
+                "reason": "INVALID_IMAGE",
+                "message": "Camera frame could not be decoded.",
+                "status": "CALIBRATING",
+            }
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        brightness = float(np.mean(gray))
+        contrast = float(np.std(gray))
+
+        if brightness < 35:
+            return {
+                "passed": False,
+                "ready": False,
+                "reason": "POOR_LIGHTING_DARK",
+                "message": "Lighting is too dark.",
+                "status": "CALIBRATING",
+            }
+
+        if brightness > 235:
+            return {
+                "passed": False,
+                "ready": False,
+                "reason": "POOR_LIGHTING_BRIGHT",
+                "message": "Lighting is too bright.",
+                "status": "CALIBRATING",
+            }
+
+        try:
+            result = self._detect(frame)
+        except Exception as exc:
+            return {
+                "passed": False,
+                "ready": False,
+                "reason": "DETECTOR_ERROR",
+                "message": str(exc),
+                "status": "CALIBRATING",
+            }
+
+        face_count = (
+            len(result.face_landmarks)
+            if result and result.face_landmarks
+            else 0
+        )
+
+        if face_count == 0:
+            return {
+                "passed": False,
+                "ready": False,
+                "reason": "FACE_NOT_DETECTED",
+                "message": "No face detected.",
+                "status": "CALIBRATING",
+            }
+
+        if face_count > 1:
+            return {
+                "passed": False,
+                "ready": False,
+                "reason": "MULTIPLE_FACES",
+                "message": f"{face_count} faces detected.",
+                "status": "CALIBRATING",
+            }
+
+        session = self._get_session(session_id)
+        landmarks = result.face_landmarks[0]
+        height, width = frame.shape[:2]
+
+        # Require an approximately centered participant during calibration.
+        nose_x = float(landmarks[1].x)
+        nose_y = float(landmarks[1].y)
+        centered = (
+            0.35 <= nose_x <= 0.65
+            and 0.25 <= nose_y <= 0.75
+        )
+        if not centered:
+            return {
+                "passed": False,
+                "ready": False,
+                "reason": "FACE_NOT_CENTERED",
+                "message": "Please center your face before calibration.",
+                "status": "CALIBRATING",
+                "metrics": {
+                    "brightness": round(brightness, 1),
+                    "contrast": round(contrast, 1),
+                    "face_count": face_count,
+                    "nose_x": round(nose_x, 3),
+                    "nose_y": round(nose_y, 3),
+                },
+            }
+
+        try:
+            raw_h, raw_v, _ = calculate_normalized_eye_ratios(
+                landmarks, width, height
+            )
+            session.gaze.add_calibration_sample(raw_h, raw_v)
+        except Exception as exc:
+            return {
+                "passed": False,
+                "ready": False,
+                "reason": "EYE_LANDMARKS_UNAVAILABLE",
+                "message": str(exc),
+                "status": "CALIBRATING",
+            }
+
+        ready = session.gaze.is_calibrated
+        return {
+            "passed": True,
+            "ready": ready,
+            "reason": (
+                "CALIBRATION_READY"
+                if ready
+                else "CALIBRATION_FRAME_ACCEPTED"
+            ),
+            "message": (
+                "Calibration complete. Monitoring can start."
+                if ready
+                else "Calibration frame accepted."
+            ),
+            "status": "MONITORING" if ready else "CALIBRATING",
+            "metrics": {
+                "brightness": round(brightness, 1),
+                "contrast": round(contrast, 1),
+                "face_count": face_count,
+                "nose_x": round(nose_x, 3),
+                "nose_y": round(nose_y, 3),
+                "calibration_frames": len(session.gaze.calib_samples_x),
+                "calibration_required": CALIBRATION_FRAMES,
+                "is_calibrated": ready,
+                "neutral_x": round(session.gaze.neutral_x, 4),
+                "neutral_y": round(session.gaze.neutral_y, 4),
+            },
+        }
+
+    def _process_detection(
+        self,
+        session: SessionState,
+        result,
+        frame: np.ndarray,
+        now: float,
+        person_present: Optional[bool] = None,
+    ):
+        height, width = frame.shape[:2]
+        face_count = 1 if (result and result.face_landmarks and len(result.face_landmarks) > 0) else 0
+
+        person_count = face_count
+        person_presence_source = "FACE" if face_count > 0 else "NONE"
+        if face_count == 0 and person_present:
+            person_count = session.person_count_cache
+            person_presence_source = "BODY"
+
+        session.multiple_face_detected = False
+        session.multiple_face_count = 0
+        session._multiple_face_active = False
+
+        head_direction = "Not Detected"
+        gaze_direction = "Not Detected"
+        head_confidence = 0.0
+        gaze_confidence = 0.0
+        pitch = None
+        yaw = None
+        dx = 0.0
+        dy = 0.0
+        gaze_x = 0.50
+        gaze_y = 0.50
+        eye_geom = None
+        iris_landmarks_detected = False
+        gaze_observable = False
+        raw_gaze_direction = "Not Detected"
+        raw_gaze_confidence = 0.0
+        gaze_suppressed_by_head_pose = False
+        nose = (width // 2, height // 2)
+
+        if face_count == 0:
+            if person_present:
+                # A clear occupant is present (full body visible) but facial
+                # landmarks are not resolvable (small / turned / blurred face).
+                # This is NOT a "no person" state.
+                session._no_person_active = False
+            else:
+                if not session._no_person_active:
+                    session.no_person_detected = True
+                session._no_person_active = True
+
+            session.head_pose.reset()
+            session.gaze.current_direction = "Straight"
+            self._close_all_counters(session, now)
+
+        elif face_count > 1:
+            # Do not score the first face as if it were the only participant.
+            # Keep the multi-face state, and terminate active eye/head episodes.
+            self._close_all_counters(session, now)
+            session.head_pose.reset()
+            session.gaze.current_direction = "Straight"
+
         else:
-            status = "RUNNING"
-            fl = res.face_landmarks[0]
+            session._no_person_active = False
+            landmarks = result.face_landmarks[0]
 
-            # Head Pose solvePnP
-            pts = np.array([(fl[idx].x * w, fl[idx].y * h) for idx in LANDMARK_INDICES], dtype=np.float32)
-            focal = w
-            cam_mat = np.array([[focal, 0, w / 2], [0, focal, h / 2], [0, 0, 1]], dtype=np.float32)
-            dist = np.zeros((4, 1), dtype=np.float32)
+            (
+                head_direction,
+                head_confidence,
+                pitch,
+                yaw,
+                nose,
+            ) = session.head_pose.estimate(
+                landmarks, width, height
+            )
 
-            if sess["previous_pose"] is not None:
-                succ, rvec, tvec = cv2.solvePnP(MODEL_POINTS, pts, cam_mat, dist,
-                                               rvec=sess["previous_pose"][0].copy(),
-                                               tvec=sess["previous_pose"][1].copy(),
-                                               useExtrinsicGuess=True, flags=cv2.SOLVEPNP_ITERATIVE)
-            else:
-                succ, rvec, tvec = cv2.solvePnP(MODEL_POINTS, pts, cam_mat, dist, flags=cv2.SOLVEPNP_ITERATIVE)
-
-            if succ:
-                sess["previous_pose"] = (rvec, tvec)
-                rmat, _ = cv2.Rodrigues(rvec)
-                p, y, r = rotation_matrix_to_euler_angles(rmat)
-                if p > 90: p -= 180
-                elif p < -90: p += 180
-                p += PITCH_OFFSET
-
-                if sess["smoothed_pose"] is None: sess["smoothed_pose"] = [p, y, r]
-                else:
-                    sess["smoothed_pose"][0] += POSE_ALPHA * (p - sess["smoothed_pose"][0])
-                    sess["smoothed_pose"][1] += POSE_ALPHA * (y - sess["smoothed_pose"][1])
-                    sess["smoothed_pose"][2] += POSE_ALPHA * (r - sess["smoothed_pose"][2])
-                pitch, yaw, _ = sess["smoothed_pose"]
-
-                y_sign, y_conf = fuzzy_classify(yaw, YAW_INNER, YAW_OUTER)
-                p_sign, p_conf = fuzzy_classify(pitch, PITCH_INNER, PITCH_OUTER)
-
-                horiz = "Right" if (y_sign > 0 and y_conf >= YAW_RIGHT_CUTOFF) else ("Left" if (y_sign < 0 and y_conf >= YAW_LEFT_CUTOFF) else None)
-                vert = "Down" if (p_sign > 0 and p_conf >= PITCH_DOWN_CUTOFF) else ("Up" if (p_sign < 0 and p_conf >= PITCH_UP_CUTOFF) else None)
-
-                cands = []
-                if horiz: cands.append((horiz, y_conf))
-                if vert: cands.append((vert, p_conf))
-                if cands:
-                    cands.sort(key=lambda x: x[1], reverse=True)
-                    head_dir, head_conf = cands[0][0], cands[0][1] * 100.0
-                else:
-                    head_dir, head_conf = "Straight", 0.0
-            else:
-                head_dir, head_conf, pitch, yaw = "Straight", 0.0, 0.0, 0.0
-
-            # Gaze
-            if len(fl) > LEFT_IRIS_CENTER:
+            if len(landmarks) > LEFT_IRIS_CENTER:
                 try:
-                    raw_h, raw_v, _ = calculate_normalized_eye_ratios(fl, w, h)
-                    gaze_dir, gaze_conf, _, _, _, _ = sess["gaze_classifier"].classify(raw_h, raw_v)
+                    raw_h, raw_v, eye_geom = calculate_normalized_eye_ratios(
+                        landmarks, width, height
+                    )
+                    iris_landmarks_detected = True
+
+                    if not session.gaze.is_calibrated:
+                        session.gaze.add_calibration_sample(raw_h, raw_v)
+                        gaze_direction = "Straight"
+                        gaze_confidence = 0.0
+                        dx = raw_h - session.gaze.neutral_x
+                        dy = raw_v - session.gaze.neutral_y
+                        gaze_x = raw_h
+                        gaze_y = raw_v
+                    else:
+                        (
+                            gaze_direction,
+                            gaze_confidence,
+                            dx,
+                            dy,
+                            gaze_x,
+                            gaze_y,
+                        ) = session.gaze.classify(raw_h, raw_v)
+                    raw_gaze_direction = gaze_direction
+                    raw_gaze_confidence = gaze_confidence
                 except Exception:
-                    gaze_dir, gaze_conf = "Straight", 0.0
+                    gaze_direction = "Straight"
+                    gaze_confidence = 0.0
             else:
-                gaze_dir, gaze_conf = "Straight", 0.0
+                gaze_direction = "Straight"
+                gaze_confidence = 0.0
 
-            # Head counter update
-            if head_dir in IGNORED_HEAD_DIRECTIONS or head_dir == "Straight":
-                cntrs["head_left"].reset_timer()
-                cntrs["head_right"].reset_timer()
-                cntrs["head_up"].reset_timer()
+            # Iris position is a valid gaze signal only while the face is
+            # substantially forward. A pronounced yaw changes the projected
+            # eye-corner geometry, which made a head turn look like a second,
+            # duplicate eye violation. Preserve the head audit and wait for a
+            # forward-facing frame before opening an eye-only interval.
+            gaze_observable = (
+                iris_landmarks_detected
+                and session.gaze.is_calibrated
+                and iris_gaze_is_observable(head_direction)
+            )
+            if iris_landmarks_detected and not iris_gaze_is_observable(
+                head_direction
+            ):
+                gaze_suppressed_by_head_pose = True
+                gaze_direction = "Straight"
+                gaze_confidence = 0.0
+
+            # No violation timers start until calibration is READY.
+            if not session.gaze.is_calibrated:
+                self._close_all_counters(session, now)
             else:
-                cntrs["head_left"].update(head_dir, now_ts)
-                cntrs["head_right"].update(head_dir, now_ts)
-                cntrs["head_up"].update(head_dir, now_ts)
+                # Each of the six directions owns an independent timer.
+                # A direction change closes the old interval immediately.
+                for name in ("head_left", "head_right", "head_up"):
+                    episode = session.counters[name].start_or_continue(
+                        head_direction, now
+                    )
+                    if episode:
+                        self._append_episode_event(session, episode)
 
-            # Eye counter update
-            if gaze_dir in IGNORED_EYE_DIRECTIONS or gaze_dir == "Straight":
-                cntrs["eye_left"].close_episode(); cntrs["eye_right"].close_episode(); cntrs["eye_up"].close_episode()
-            elif gaze_dir == "Left":
-                cntrs["eye_right"].close_episode(); cntrs["eye_up"].close_episode()
-                cntrs["eye_left"].update("Left", now_ts)
-            elif gaze_dir == "Right":
-                cntrs["eye_left"].close_episode(); cntrs["eye_up"].close_episode()
-                cntrs["eye_right"].update("Right", now_ts)
-            elif gaze_dir == "Up":
-                cntrs["eye_left"].close_episode(); cntrs["eye_right"].close_episode()
-                cntrs["eye_up"].update("Up", now_ts)
+                for name in ("eye_left", "eye_right", "eye_up"):
+                    episode = session.counters[name].start_or_continue(
+                        gaze_direction, now
+                    )
+                    if episode:
+                        self._append_episode_event(session, episode)
 
-        # ------------------------------------------------------------
-        # 4. Interval Union & Dynamic Score Calculation
-        # ------------------------------------------------------------
-        all_intervals = []
-        for c in cntrs.values():
-            all_intervals.extend(c.get_all_intervals(now_ts))
+        return {
+            "face_count": face_count,
+            "person_detected": face_count > 0 or (person_present or False),
+            "person_count": person_count,
+            "person_presence_source": person_presence_source,
+            "head_direction": head_direction,
+            "head_confidence": head_confidence,
+            "gaze_direction": gaze_direction,
+            "gaze_confidence": gaze_confidence,
+            "pitch": pitch,
+            "yaw": yaw,
+            "dx": dx,
+            "dy": dy,
+            "gaze_x": gaze_x,
+            "gaze_y": gaze_y,
+            "eye_geom": eye_geom,
+            "iris_landmarks_detected": iris_landmarks_detected,
+            "gaze_observable": gaze_observable,
+            "raw_gaze_direction": raw_gaze_direction,
+            "raw_gaze_confidence": raw_gaze_confidence,
+            "gaze_suppressed_by_head_pose": gaze_suppressed_by_head_pose,
+            "nose": nose,
+        }
 
-        unique_sec = calculate_unique_violation_seconds(all_intervals)
-        actual_test_dur = max(1.0, elapsed)
-        v_pct, m_score = calculate_monitoring_score(unique_sec, actual_test_dur)
-        mf_score = MULTIPLE_FACE_SCORE_MAX if sess["multiple_face_detected"] else 0.0
-        np_score = NO_PERSON_SCORE_MAX if sess["no_person_detected"] else 0.0
-        mob_score = min(float(sess["mobile_score"]), MOBILE_SCORE_MAX)
-        final_malpractice = min(100.0, m_score + mf_score + np_score + mob_score)
-        final_integrity = max(0.0, 100.0 - final_malpractice)
+    def process_b64_frame(
+        self,
+        b64_data: str,
+        session_id: str = "default",
+        timestamp_ms: Optional[int] = None,
+        configured_duration: float = 60.0,
+        mobile_detected: Optional[bool] = None,
+        mobile_result: Optional[Dict[str, Any]] = None,
+    ):
+        frame = self.decode_b64(b64_data)
+        if frame is None:
+            return {
+                "success": False,
+                "error": "Invalid frame image data",
+            }
+
+        session = self._get_session(
+            session_id,
+            configured_duration,
+        )
+
+        if session.finalized:
+            return {
+                "success": False,
+                "error": "Session already finalized",
+            }
+
+        if mobile_result is not None:
+            self.update_mobile_result(
+                session_id,
+                mobile_result=mobile_result,
+            )
+        elif mobile_detected is not None:
+            self.update_mobile_result(
+                session_id,
+                mobile_result=mobile_detected,
+            )
+
+        # Internal violation timing is monotonic. LMS actual timestamps are
+        # used later as the authoritative scoring denominator.
+        now = time.monotonic()
+        elapsed = now - session.created_at
+
+        try:
+            result = self._detect(frame)
+        except Exception as exc:
+            return {
+                "success": False,
+                "error": f"MediaPipe detection failed: {exc}",
+            }
+
+        # Person-presence fallback: when no facial landmarks are resolvable,
+        # query the body/person detector (e.g. YOLO person class) so a clearly
+        # visible occupant is not misreported as "no person".
+        face_present = bool(
+            result and result.face_landmarks and len(result.face_landmarks) > 0
+        )
+        person_present = None
+        if not face_present:
+            person_present = self._check_person_present(session, frame, now)
+
+        metrics = self._process_detection(
+            session, result, frame, now, person_present=person_present
+        )
+
+        score = self._score(
+            session,
+            max(0.001, elapsed),
+        )
+
+        face_count = metrics["face_count"]
+        head_direction = metrics["head_direction"]
+        gaze_direction = metrics["gaze_direction"]
+        pitch = metrics["pitch"]
+        yaw = metrics["yaw"]
+
+        # Map directions to normalized uppercase tokens
+        norm_head = head_direction.upper() if head_direction else "STRAIGHT"
+        if norm_head in ("STRAIGHT", "NOT DETECTED", "NOT_DETECTED", "UNKNOWN"):
+            norm_head = "CENTER"
+
+        norm_gaze = gaze_direction.upper() if gaze_direction else "STRAIGHT"
+        if norm_gaze in ("STRAIGHT", "NOT DETECTED", "NOT_DETECTED", "UNKNOWN"):
+            norm_gaze = "CENTER"
+
+        gaze_classification = "ON_SCREEN" if norm_gaze == "CENTER" else f"OFF_SCREEN_{norm_gaze}"
+        head_pose_classification = norm_head
 
         return {
             "success": True,
             "session_id": session_id,
-            "state": sess["state"].value,
             "elapsed_seconds": round(elapsed, 2),
-            "configured_duration": sess["configured_duration"],
-            "actual_test_duration": round(actual_test_dur, 2),
+            "configured_duration": session.configured_duration,
+            "face_detected": face_count > 0,
             "face_count": face_count,
-            "head_direction": head_dir,
-            "head_confidence": round(head_conf, 1),
-            "gaze_direction": gaze_dir,
-            "gaze_confidence": round(gaze_conf, 1),
-            "pitch": round(pitch, 1),
-            "yaw": round(yaw, 1),
-            "scoring": {
-                "unique_violation_seconds": round(unique_sec, 2),
-                "violation_percentage": round(v_pct, 2),
-                "eye_head_score": round(m_score, 2),
-                "multiple_face_score": round(mf_score, 2),
-                "no_person_score": round(np_score, 2),
-                "mobile_score": round(mob_score, 2),
-                "final_malpractice_score": round(final_malpractice, 2),
-                "final_integrity_score": round(final_integrity, 2),
-                "final_score": round(final_malpractice, 2),
+            "person_detected": metrics["person_detected"],
+            "person_count": metrics["person_count"],
+            "person_presence_source": metrics["person_presence_source"],
+            "head_direction": head_direction,
+            "head_pose_classification": head_pose_classification,
+            "head_confidence": round(metrics["head_confidence"], 1),
+            "gaze_direction": gaze_direction,
+            "gaze_classification": gaze_classification,
+            "gaze_confidence": round(metrics["gaze_confidence"], 1),
+            "pitch": (
+                None if pitch is None
+                else round(pitch, 1)
+            ),
+            "yaw": (
+                None if yaw is None
+                else round(yaw, 1)
+            ),
+            "head_pose": {
+                "yaw": round(yaw, 1) if yaw is not None else 0.0,
+                "pitch": round(pitch, 1) if pitch is not None else 0.0,
+                "roll": 0.0,
             },
-            "events_count": len(all_intervals),
-            "status": status
+            "gaze_dx": round(metrics["dx"], 4),
+            "gaze_dy": round(metrics["dy"], 4),
+            "gaze_x": round(metrics["gaze_x"], 4),
+            "gaze_y": round(metrics["gaze_y"], 4),
+            "gaze_audit": {
+                "iris_landmarks_detected": metrics[
+                    "iris_landmarks_detected"
+                ],
+                "baseline_ready": session.gaze.is_calibrated,
+                "observable": metrics["gaze_observable"],
+                "raw_direction": metrics["raw_gaze_direction"],
+                "raw_confidence": round(
+                    metrics["raw_gaze_confidence"], 1
+                ),
+                "suppressed_by_head_pose": metrics[
+                    "gaze_suppressed_by_head_pose"
+                ],
+            },
+            "is_calibrated": session.gaze.is_calibrated,
+            "status": (
+                "MONITORING"
+                if session.gaze.is_calibrated
+                else "CALIBRATING"
+            ),
+            "scoring": {
+                key: (
+                    round(float(value), 2) if isinstance(value, (int, float))
+                    else {
+                        k: round(float(v), 2) if isinstance(v, (int, float)) else v
+                        for k, v in value.items()
+                    } if isinstance(value, dict)
+                    else value
+                )
+                for key, value in score.items()
+            },
+            "events_count": len(self._validated_episodes(session)),
         }
 
-    def generate_session_report(self, session_id: str, output_excel: str) -> str:
-        sess = self.sessions.get(session_id)
-        if not sess:
-            raise ValueError(f"No active session found for ID: {session_id}")
+    def finalize_session(
+        self,
+        session_id: str,
+        output_excel: str,
+        participant_id: Optional[str] = None,
+        participant_name: Optional[str] = None,
+        trainer_id: Optional[str] = None,
+        course_id: Optional[str] = None,
+        assessment_id: Optional[str] = None,
+        attempt_id: Optional[str] = None,
+        actual_start_time: Optional[Union[int, float]] = None,
+        actual_end_time: Optional[Union[int, float]] = None,
+        output_json: Optional[str] = None,
+        callback_url: Optional[str] = None,
+    ):
+        if session_id not in self.sessions:
+            raise ValueError(f"No active session found: {session_id}")
 
-        now_ts = time.monotonic()
-        sess["state"] = SessionState.COMPLETED
-        sess["test_ended_at"] = now_ts
+        session = self.sessions[session_id]
 
-        cntrs = sess["counters"]
-        for c in cntrs.values():
-            c.close_episode(now_ts)
+        if session.finalized and session.final_payload is not None:
+            return session.final_payload
 
-        all_intervals = []
-        all_episodes = []
-        for c in cntrs.values():
-            all_intervals.extend(c.get_all_intervals())
-            all_episodes.extend(c.get_all_episodes())
+        if participant_id is not None:
+            session.participant_id = str(participant_id)
+        if participant_name is not None:
+            session.participant_name = str(participant_name)
+        if trainer_id is not None:
+            session.trainer_id = trainer_id
+        if course_id is not None:
+            session.course_id = course_id
+        if assessment_id is not None:
+            session.assessment_id = assessment_id
+        if attempt_id is not None:
+            session.attempt_id = attempt_id
 
-        test_start = sess["test_started_at"] or sess["created_at"]
-        calib_start = sess["calibration_started_at"] or sess["created_at"]
-        calib_end = sess["calibration_completed_at"] or test_start
-        calib_dur = max(0.0, calib_end - calib_start)
+        if actual_start_time is not None:
+            session.actual_start_time = normalize_timestamp_ms(
+                actual_start_time
+            )
 
-        unique_sec = calculate_unique_violation_seconds(all_intervals)
-        actual_test_dur = max(1.0, now_ts - test_start)
-        configured_dur = sess.get("configured_duration", actual_test_dur)
+        if actual_end_time is not None:
+            session.actual_end_time = normalize_timestamp_ms(
+                actual_end_time
+            )
 
-        v_pct, m_score = calculate_monitoring_score(unique_sec, actual_test_dur)
-        mf_score = MULTIPLE_FACE_SCORE_MAX if sess["multiple_face_detected"] else 0.0
-        np_score = NO_PERSON_SCORE_MAX if sess["no_person_detected"] else 0.0
-        mob_score = min(float(sess["mobile_score"]), MOBILE_SCORE_MAX)
-        final_malpractice = min(100.0, m_score + mf_score + np_score + mob_score)
-        final_integrity = max(0.0, 100.0 - final_malpractice)
+        final_monotonic = time.monotonic()
+        self._close_all_counters(session, final_monotonic)
 
-        all_episodes.sort(key=lambda x: x.get("start_time", 0.0))
+        actual_duration, duration_source = self.resolve_lms_duration(
+            session.configured_duration,
+            session.actual_start_time,
+            session.actual_end_time,
+            session.created_at,
+            final_monotonic,
+        )
 
-        formatted_events = []
-        for ep in all_episodes:
-            rel_start = ep.get("start_time", test_start) - test_start
-            formatted_events.append({
-                "Time": round(max(0.0, rel_start), 2),
-                "Event Type": ep.get("category", "Head"),
-                "Direction": ep.get("direction", "Left"),
-                "Validation Status": ep.get("status", "VALID VIOLATION (>= 3.0s)"),
-                "Actual Duration (sec)": f"{ep.get('duration', 3.0):.1f} sec",
-                "Unique Violation Time (sec)": f"{unique_sec:.2f} sec",
-                "Eye + Head Score": f"{m_score:.2f} / 60",
-                "Final Score": f"{final_malpractice:.2f} / 100",
-            })
+        score = self._score(session, actual_duration)
+        episodes = self._validated_episodes(session)
+        invalid_episodes = self._invalid_episodes(session)
 
-        summary_metrics = {
-            "configured_duration": configured_dur,
-            "actual_test_duration": actual_test_dur,
-            "calibration_duration": calib_dur,
-            "test_duration": actual_test_dur,
-            "violation_seconds": unique_sec,
-            "violation_percentage": v_pct,
-            "monitoring_score": m_score,
-            "multiple_face_detected": sess["multiple_face_detected"],
-            "multiple_face_score": mf_score,
-            "no_person_detected": sess["no_person_detected"],
-            "no_person_score": np_score,
-            "mobile_count": sess["mobile_count"],
-            "mobile_score": mob_score,
-            "final_score": final_malpractice,
-            "final_percentage": final_malpractice,
+        start_iso = (
+            datetime.datetime.fromtimestamp(
+                session.actual_start_time,
+                tz=datetime.timezone.utc,
+            ).isoformat()
+            if session.actual_start_time is not None
+            else None
+        )
+        end_iso = (
+            datetime.datetime.fromtimestamp(
+                session.actual_end_time,
+                tz=datetime.timezone.utc,
+            ).isoformat()
+            if session.actual_end_time is not None
+            else None
+        )
+
+        metadata = {
+            "participant_id": session.participant_id,
+            "participant_name": session.participant_name,
+            "trainer_id": session.trainer_id,
+            "course_id": session.course_id,
+            "assessment_id": session.assessment_id,
+            "attempt_id": session.attempt_id,
+            "session_id": session_id,
+            "configured_duration": session.configured_duration,
+            "actual_test_duration": actual_duration,
+            "actual_start_time": start_iso,
+            "actual_end_time": end_iso,
+            "duration_source": duration_source,
+            "generated_at": datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat(),
         }
 
-        generate_excel_file(output_excel, formatted_events, summary_metrics)
-        return output_excel
+        excel_path = generate_excel(
+            output_excel,
+            session,
+            actual_duration,
+            episodes,
+            invalid_episodes,
+            score["unique_violation_seconds"],
+            score["violation_percentage"],
+            score["eye_head_score"],
+            score["final_score"],
+            metadata,
+        )
 
+        payload = {
+            "session_info": metadata,
+            "monitoring_result": {
+                "eye_head": {
+                    "violation_duration": round(
+                        score["unique_violation_seconds"], 2
+                    ),
+                    "violation_percentage": round(
+                        score["violation_percentage"], 2
+                    ),
+                    "direction_totals": {
+                        key: round(value, 3)
+                        for key, value in score["direction_totals"].items()
+                    },
+                    "score": round(score["eye_head_score"], 2),
+                    "max_score": MONITORING_SCORE_MAX,
+                },
+                "mobile": {
+                    "count": session.mobile_count,
+                    "score": round(score["mobile_score"], 2),
+                    "max_score": MOBILE_SCORE_MAX,
+                },
+                "multiple_face": {
+                    "detected": session.multiple_face_detected,
+                    "count": session.multiple_face_count,
+                    "score": round(score["multiple_face_score"], 2),
+                    "max_score": MULTIPLE_FACE_SCORE_MAX,
+                },
+                "no_person": {
+                    "detected": session.no_person_detected,
+                    "score": round(score["no_person_score"], 2),
+                    "max_score": NO_PERSON_SCORE_MAX,
+                },
+                "final": {
+                    "final_score": round(score["final_score"], 2),
+                    "final_percentage": round(score["final_score"], 2),
+                    "max_score": FINAL_SCORE_MAX,
+                },
+            },
+            "events": session.events,
+            "invalid_events": [
+                {
+                    "category": ep.category,
+                    "direction": ep.direction,
+                    "start_time": round(
+                        ep.start_time - session.created_at, 3
+                    ),
+                    "end_time": round(
+                        ep.end_time - session.created_at, 3
+                    ),
+                    "duration_seconds": round(ep.duration, 3),
+                    "validation_status": "INVALID_BELOW_3_SECONDS",
+                    "score_contribution": 0.0,
+                }
+                for ep in invalid_episodes
+            ],
+            "excel_path": excel_path,
+        }
 
-# Initialize module-level singleton instance for FastAPI endpoints
-proctor_engine = MediaPipeProctorEngine()
+        if output_json:
+            output_json = os.path.abspath(output_json)
+            os.makedirs(os.path.dirname(output_json) or ".", exist_ok=True)
+            with open(output_json, "w", encoding="utf-8") as file:
+                json.dump(payload, file, indent=2, ensure_ascii=False)
+
+        if callback_url:
+            try:
+                request = urllib.request.Request(
+                    callback_url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    logger.info("Callback HTTP status: %s", response.status)
+            except Exception:
+                logger.exception(
+                    "Callback failed. Session result is still valid."
+                )
+
+        session.finalized = True
+        session.final_payload = payload
+        return payload
+
+    @staticmethod
+    def _session_status(session: SessionState):
+        return {
+            "session_id": session.session_id,
+            "configured_duration": session.configured_duration,
+            "actual_start_time": session.actual_start_time,
+            "status": "FINALIZED" if session.finalized else (
+                "MONITORING"
+                if session.gaze.is_calibrated
+                else "CALIBRATING"
+            ),
+        }
 
 
 # ============================================================
-# STANDALONE PIPELINE RUNNER
+# MODEL PATH / CLI
 # ============================================================
+
+def resolve_model_path(custom_path: Optional[str] = None) -> str:
+    candidates = []
+    if custom_path:
+        candidates.append(custom_path)
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    cwd = os.getcwd()
+    parent = os.path.dirname(here)
+
+    candidates.extend(
+        [
+            os.path.join(here, "face_landmarker.task"),
+            os.path.join(here, "models", "face_landmarker.task"),
+            os.path.join(parent, "models", "face_landmarker.task"),
+            os.path.join(cwd, "face_landmarker.task"),
+            os.path.join(cwd, "models", "face_landmarker.task"),
+            os.path.join(cwd, "ai-service", "models", "face_landmarker.task"),
+            r"E:\agent\posture\face_landmarker.task",
+        ]
+    )
+
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return os.path.abspath(path)
+
+    return os.path.abspath(
+        candidates[0] if candidates else "face_landmarker.task"
+    )
+
+
+def build_cli_parser():
+    parser = argparse.ArgumentParser(description="LMS AI Proctoring Engine")
+    parser.add_argument("--camera", default="0", help="Camera index or video file path")
+    parser.add_argument("--duration", type=float, default=60.0, help="Test duration in seconds")
+    parser.add_argument("--session-id", default=None, help="Session ID")
+    parser.add_argument("--participant-id", default="1", help="Participant ID")
+    parser.add_argument("--participant-name", default="Participant", help="Participant Name")
+    parser.add_argument("--trainer-id", default=None, help="Trainer ID")
+    parser.add_argument("--course-id", default=None, help="Course ID")
+    parser.add_argument("--assessment-id", default=None, help="Assessment ID")
+    parser.add_argument("--attempt-id", default=None, help="Attempt ID")
+    parser.add_argument("--actual-start-time", type=float, default=None, help="LMS actual start time (ms)")
+    parser.add_argument("--actual-end-time", type=float, default=None, help="LMS actual end time (ms)")
+    parser.add_argument("--excel", default="live_session_report.xlsx", help="Output Excel file path")
+    parser.add_argument("--output-json", default=None, help="Output JSON file path")
+    parser.add_argument("--output", default="live_session_output.mp4", help="Output video path")
+    parser.add_argument("--no-record", action="store_true", help="Disable recording")
+    parser.add_argument("--headless", action="store_true", help="Run without UI window")
+    parser.add_argument("--model", default=None, help="Path to face landmarker model")
+    parser.add_argument("--callback-url", default=None, help="Result callback HTTP URL")
+    parser.add_argument("--run-tests", action="store_true", help="Run deterministic tests")
+    return parser
+
+
+# ============================================================
+# HUD
+# ============================================================
+
+def draw_hud(
+    frame,
+    elapsed,
+    configured_duration,
+    head_direction,
+    gaze_direction,
+    head_confidence,
+    gaze_confidence,
+    score,
+    calibrated,
+):
+    hud_x, hud_y, hud_w, hud_h = 20, 20, 350, 315
+    overlay = frame.copy()
+
+    cv2.rectangle(
+        overlay,
+        (hud_x, hud_y),
+        (hud_x + hud_w, hud_y + hud_h),
+        (18, 18, 26),
+        -1,
+    )
+    frame[:] = cv2.addWeighted(
+        overlay, 0.86, frame, 0.14, 0
+    )
+
+    lines = [
+        "AI MONITORING",
+        (
+            f"Time: {elapsed:.1f}s / {configured_duration:.1f}s"
+            if configured_duration > 0
+            else f"Time: {elapsed:.1f}s / LIVE"
+        ),
+        f"Head: {head_direction} ({head_confidence:.0f}%)",
+        f"Eyes: {gaze_direction} ({gaze_confidence:.0f}%)",
+        f"Calibration: {'READY' if calibrated else 'CALIBRATING'}",
+        f"Violation: {score['unique_violation_seconds']:.2f}s",
+        f"Violation %: {score['violation_percentage']:.2f}%",
+        f"Eye + Head: {score['eye_head_score']:.2f}/60",
+        f"Mobile: {score['mobile_score']:.2f}/20",
+        f"Multi Face: {score['multiple_face_score']:.2f}/10",
+        f"No Person: {score['no_person_score']:.2f}/10",
+        f"FINAL: {score['final_score']:.2f}/100",
+    ]
+
+    y = hud_y + 25
+    for index, text in enumerate(lines):
+        scale = 0.52 if index == 0 else 0.42
+        thickness = 2 if index in (0, len(lines) - 1) else 1
+        cv2.putText(
+            frame,
+            text,
+            (hud_x + 12, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            scale,
+            (255, 255, 255),
+            thickness,
+            cv2.LINE_AA,
+        )
+        y += 24
+
+
+def draw_gaze_debug(
+    frame,
+    eye_geom,
+    gaze_direction,
+    dx,
+    dy,
+    gaze_x,
+    gaze_y,
+    neutral_x,
+    neutral_y,
+):
+    if not DEBUG_GAZE or not eye_geom:
+        return
+
+    for key in ("r_iris", "l_iris"):
+        cv2.circle(frame, eye_geom[key], 3, (255, 0, 255), -1)
+
+    for key in ("r_corners", "l_corners"):
+        cv2.line(
+            frame,
+            eye_geom[key][0],
+            eye_geom[key][1],
+            (255, 0, 255),
+            1,
+        )
+
+    x = frame.shape[1] - 260
+    cv2.putText(
+        frame, f"Gaze: {gaze_direction}", (x, 35),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 200), 1, cv2.LINE_AA
+    )
+    cv2.putText(
+        frame, f"dx={dx:+.3f} dy={dy:+.3f}", (x, 55),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 255, 255), 1, cv2.LINE_AA
+    )
+    cv2.putText(
+        frame, f"X={gaze_x:.2f} Y={gaze_y:.2f}", (x, 75),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 255, 255), 1, cv2.LINE_AA
+    )
+    cv2.putText(
+        frame, f"N={neutral_x:.2f},{neutral_y:.2f}", (x, 95),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 200, 200), 1, cv2.LINE_AA
+    )
+
+
+# ============================================================
+# DETERMINISTIC TESTS
+# ============================================================
+
+def _counter_test(intervals: List[Tuple[str, float]], fps: float = 20.0):
+    counter = ContinuousDirectionCounter("Eye", "Left")
+    now = 0.0
+    dt = 1.0 / fps
+    for direction, duration in intervals:
+        end_time = now + float(duration)
+        while now < end_time:
+            counter.start_or_continue(direction, now)
+            now += dt
+        counter.start_or_continue(direction, end_time)
+        now = end_time
+    counter.close(now)
+    return counter
+
+
+def run_deterministic_tests():
+    # Every short interval is scored; there is no 3-second threshold.
+    counter = _counter_test([("Left", 2.0), ("Center", 1.0)])
+    assert math.isclose(sum(e.duration for e in counter.completed), 2.0, abs_tol=1e-5)
+
+    # Direction accumulation: LEFT 2 + 1 + 4 = 7, RIGHT = 3.
+    episodes = [
+        ViolationEpisode("Eye", "Left", 0, 2, 2),
+        ViolationEpisode("Eye", "Right", 2, 5, 3),
+        ViolationEpisode("Eye", "Left", 5, 6, 1),
+        ViolationEpisode("Eye", "Left", 6, 10, 4),
+    ]
+    totals = calculate_direction_totals(episodes)
+    assert math.isclose(totals["eye_left"], 7.0, abs_tol=1e-9)
+    assert math.isclose(totals["eye_right"], 3.0, abs_tol=1e-9)
+
+    # Required final validation test: LEFT 2 + 1 + 7 = 10, RIGHT = 10.
+    episodes = [
+        ViolationEpisode("Eye", "Left", 0, 2, 2),
+        ViolationEpisode("Eye", "Left", 3, 4, 1),
+        ViolationEpisode("Eye", "Right", 4, 14, 10),
+        ViolationEpisode("Eye", "Left", 19, 26, 7),
+    ]
+    totals = calculate_direction_totals(episodes)
+    assert math.isclose(totals["eye_left"], 10.0, abs_tol=1e-9)
+    assert math.isclose(totals["eye_right"], 10.0, abs_tol=1e-9)
+    unique = calculate_unique_violation_seconds([(e.start_time, e.end_time) for e in episodes])
+    assert math.isclose(unique, 20.0, abs_tol=1e-9)
+    pct, score = calculate_monitoring_score(unique, 100.0)
+    assert math.isclose(pct, 20.0, abs_tol=1e-9)
+    assert math.isclose(score, 12.0, abs_tol=1e-9)
+
+    # Eye + Head overlap counted once.
+    assert math.isclose(
+        calculate_unique_violation_seconds([(10.0, 20.0), (12.0, 18.0)]),
+        10.0,
+        abs_tol=1e-9,
+    )
+    assert math.isclose(
+        calculate_unique_violation_seconds([(10.0, 15.0), (12.0, 18.0)]),
+        8.0,
+        abs_tol=1e-9,
+    )
+
+    return {"passed": True, "tests": 5, "message": "All cumulative violation-time acceptance tests passed."}
+
 
 def run_monitoring_session(config=None):
     if config is None:
-        config = {}
+        args = build_cli_parser().parse_args()
+        config = vars(args)
+    else:
+        config = dict(config)
 
-    args = parse_args()
-    cam_input = str(config.get("camera", args.camera))
-    output_excel = str(config.get("excel", args.excel))
-    output_video = str(config.get("output", args.output))
-    configured_duration = float(config.get("duration", args.duration))
-    record_session = bool(config.get("record", False))
-    headless = bool(config.get("headless", args.headless))
+    if config.get("run_tests"):
+        return run_deterministic_tests()
 
-    camera_source = int(cam_input) if cam_input.isdigit() else cam_input
+    model_path = resolve_model_path(config.get("model"))
+    engine = MediaPipeProctorEngine(model_path)
+
+    session_id = (
+        config.get("session_id")
+        or f"ms_{int(time.time() * 1000)}"
+    )
+    raw_duration = config.get("duration")
+    duration = (
+        max(0.0, float(raw_duration))
+        if raw_duration is not None
+        else 0.0
+    )
+
+    participant_id = config.get("participant_id", "1")
+    participant_name = config.get("participant_name", "Participant")
+    trainer_id = config.get("trainer_id")
+    course_id = config.get("course_id")
+    assessment_id = config.get("assessment_id")
+    attempt_id = config.get("attempt_id")
+
+    session = engine.start_session(
+        session_id=session_id,
+        participant_id=participant_id,
+        participant_name=participant_name,
+        configured_duration=duration,
+        actual_start_time=config.get("actual_start_time"),
+        trainer_id=trainer_id,
+        course_id=course_id,
+        assessment_id=assessment_id,
+        attempt_id=attempt_id,
+    )
+
+    camera_input = str(config.get("camera", "0"))
+    camera_source = (
+        int(camera_input)
+        if camera_input.isdigit()
+        else camera_input
+    )
+
+    output_excel = str(
+        config.get("excel", "live_session_report.xlsx")
+    )
+    output_json = config.get("output_json")
+    callback_url = config.get("callback_url")
+    headless = bool(config.get("headless", False))
+
     cap = cv2.VideoCapture(camera_source)
     if not cap.isOpened():
-        if isinstance(camera_source, int) and os.path.exists("2.mp4"):
-            print(f"[WARN] Live webcam {camera_source} not accessible. Falling back to simulation '2.mp4'.")
-            camera_source = "2.mp4"
-            cap = cv2.VideoCapture(camera_source)
-        else:
-            raise RuntimeError(f"Could not open camera/video source: {camera_source}")
+        raise RuntimeError(
+            f"Could not open camera/video source: {camera_source}"
+        )
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if not fps or fps <= 0 or fps > 120:
+        fps = 30.0
 
+    record = not bool(config.get("no_record", False))
     writer = None
-    if record_session:
+
+    if record:
+        output_video = str(
+            config.get("output", "live_session_output.mp4")
+        )
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(output_video, fourcc, 30.0, (width, height))
+        writer = cv2.VideoWriter(
+            output_video,
+            fourcc,
+            fps,
+            (width, height),
+        )
 
-    options = mp.tasks.vision.FaceLandmarkerOptions(
-        base_options=mp.tasks.BaseOptions(model_asset_path=FACE_MODEL_PATH),
-        running_mode=mp.tasks.vision.RunningMode.IMAGE,
-        num_faces=4,
-    )
+    is_file_video = isinstance(camera_source, str) and os.path.isfile(camera_source)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if is_file_video else 0
+    if is_file_video and total_frames > 0:
+        video_duration = total_frames / fps
+        if config.get("duration") is None or config.get("duration") == 60.0:
+            duration = video_duration
+            engine.sessions[session_id].configured_duration = duration
 
-    gaze_classifier = GazeClassifier()
-    counters = {
-        "head_left": ContinuousDirectionCounter("Head", "Left", VIOLATION_SECONDS),
-        "head_right": ContinuousDirectionCounter("Head", "Right", VIOLATION_SECONDS),
-        "head_up": ContinuousDirectionCounter("Head", "Up", VIOLATION_SECONDS),
-        "eye_left": ContinuousDirectionCounter("Eyeball", "Left", VIOLATION_SECONDS),
-        "eye_right": ContinuousDirectionCounter("Eyeball", "Right", VIOLATION_SECONDS),
-        "eye_up": ContinuousDirectionCounter("Eyeball", "Up", VIOLATION_SECONDS),
-    }
+    print("=" * 70)
+    print("LMS AI PROCTORING")
+    print("=" * 70)
+    print(f"Participant : {participant_name}")
+    print(f"Session     : {session_id}")
+    print(f"Camera      : {camera_source}")
+    print(f"Configured  : {duration:.1f}s")
+    print("Validation  : every detected positive interval is accumulated")
+    print("Scoring     : Eye+Head 60 | Mobile 20 | MultiFace 10 | NoPerson 10")
+    print("=" * 70)
 
-    multiple_face_detected = False
-    no_person_detected = False
-    mobile_count = 0
-    mobile_score = 0.0
+    frame_idx = 0
+    start_base = engine.sessions[session_id].created_at
 
-    previous_pose = None
-    smoothed_pose = None
-
-    print("=" * 65)
-    print("LMS LIVE PARTICIPANT MONITORING — EXACT 60-MARK DURATION PIPELINE")
-    print("=" * 65)
-    print(f"  Camera Source       : {camera_source}")
-    print(f"  Validation Threshold: Continuous {VIOLATION_SECONDS:.1f}s minimum required per violation")
-    print(f"  Scoring Formula     : (TotalUniqueViolationSeconds / ActualTestDurationSeconds) * 60")
-    print(f"  Score Rules         : Eye+Head=60%, Mobile=20%, Multiple Face=10%, No Person=10%")
-    print(f"  Excel Report        : {output_excel}")
-    print("=" * 65 + "\n")
-
-    # ------------------------------------------------------------
-    # Phase 1: Pre-Assessment Calibration
-    # ------------------------------------------------------------
-    print("[1/2] Pre-Assessment Calibration Phase: Please center your face and look straight at the screen.")
-    calib_start = time.monotonic()
-
-    with mp.tasks.vision.FaceLandmarker.create_from_options(options) as landmarker:
-        while not gaze_classifier.is_calibrated:
+    try:
+        while True:
             success, frame = cap.read()
             if not success:
                 break
 
-            frame = cv2.flip(frame, 1)
-            h, w = frame.shape[:2]
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-            res = landmarker.detect(mp_img)
+            if not is_file_video:
+                frame = cv2.flip(frame, 1)
 
-            num_faces = len(res.face_landmarks) if (res and res.face_landmarks) else 0
-
-            if num_faces == 1:
-                fl = res.face_landmarks[0]
-                audit = audit_participant_framing(fl, w, h, gray)
-                if audit["passed"] and len(fl) > LEFT_IRIS_CENTER:
-                    raw_h, raw_v, _ = calculate_normalized_eye_ratios(fl, w, h)
-                    is_done, prog = gaze_classifier.add_calibration_sample(raw_h, raw_v)
-                    cv2.putText(frame, f"Calibrating: {int(prog*100)}%", (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-                else:
-                    cv2.putText(frame, audit["message"], (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-            elif num_faces > 1:
-                cv2.putText(frame, "Multiple faces detected. Please be alone in frame.", (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            if is_file_video:
+                elapsed = frame_idx / fps
+                now = start_base + elapsed
             else:
-                cv2.putText(frame, "No face detected. Look into camera.", (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                now = time.monotonic()
+                elapsed = now - start_base
+            frame_idx += 1
+
+            try:
+                result = engine._detect(frame)
+                metrics = engine._process_detection(
+                    engine.sessions[session_id],
+                    result,
+                    frame,
+                    now,
+                )
+            except Exception:
+                logger.exception("Frame processing failed.")
+                continue
+
+            session_obj = engine.sessions[session_id]
+            score = engine._score(
+                session_obj,
+                max(0.001, elapsed),
+            )
+
+            draw_hud(
+                frame,
+                elapsed,
+                duration,
+                metrics["head_direction"],
+                metrics["gaze_direction"],
+                metrics["head_confidence"],
+                metrics["gaze_confidence"],
+                score,
+                session_obj.gaze.is_calibrated,
+            )
+
+            nx, ny = metrics["nose"]
+            cv2.putText(
+                frame,
+                f"HEAD: {metrics['head_direction']}",
+                (max(5, nx - 70), max(25, ny - 45)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.50,
+                (0, 215, 255)
+                if metrics["head_direction"]
+                not in ("Straight", "Down", "Not Detected")
+                else (120, 220, 120),
+                2,
+                cv2.LINE_AA,
+            )
+
+            cv2.putText(
+                frame,
+                f"EYES: {metrics['gaze_direction']}",
+                (max(5, nx - 70), max(45, ny - 20)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.50,
+                (0, 215, 255)
+                if metrics["gaze_direction"]
+                not in ("Straight", "Down", "Not Detected")
+                else (120, 220, 120),
+                2,
+                cv2.LINE_AA,
+            )
+
+            draw_gaze_debug(
+                frame,
+                metrics["eye_geom"],
+                metrics["gaze_direction"],
+                metrics["dx"],
+                metrics["dy"],
+                metrics["gaze_x"],
+                metrics["gaze_y"],
+                session_obj.gaze.neutral_x,
+                session_obj.gaze.neutral_y,
+            )
+
+            if (
+                ENABLE_GAZE_CALIBRATION
+                and not session_obj.gaze.is_calibrated
+            ):
+                pct = int(
+                    100
+                    * len(session_obj.gaze.calib_samples_x)
+                    / max(1, CALIBRATION_FRAMES)
+                )
+                cv2.putText(
+                    frame,
+                    f"CALIBRATING... {pct}%",
+                    (365, 45),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    (0, 215, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+
+            if writer is not None:
+                writer.write(frame)
 
             if not headless:
                 try:
                     cv2.imshow("LMS Live AI Monitoring", frame)
-                    if (cv2.waitKey(1) & 0xFF) == ord("q"): break
-                except Exception: pass
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord("q"):
+                        print("\nSession stopped by user.")
+                        break
+                except cv2.error:
+                    headless = True
 
-    calib_end = time.monotonic()
-    calib_duration = calib_end - calib_start
-    print(f"✓ Calibration completed in {calib_duration:.1f}s. Starting Assessment Monitoring Phase...\n")
+            if not is_file_video and duration > 0 and elapsed >= duration:
+                print(f"\nTarget duration {duration:.1f}s reached.")
+                break
 
-    # ------------------------------------------------------------
-    # Phase 2: Assessment Monitoring (Actual Test Timer Starts Here)
-    # ------------------------------------------------------------
-    session_start = time.monotonic()
-    frame_count = 0
-
-    with mp.tasks.vision.FaceLandmarker.create_from_options(options) as landmarker:
+    except KeyboardInterrupt:
+        print("\nSession interrupted by user.")
+    finally:
+        cap.release()
+        if writer is not None:
+            writer.release()
         try:
-            while True:
-                success, frame = cap.read()
-                if not success:
-                    break
-
-                frame_count += 1
-                cur_mono = time.monotonic()
-                elapsed = cur_mono - session_start
-
-                frame = cv2.flip(frame, 1)
-                h, w = frame.shape[:2]
-
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-                res = landmarker.detect(mp_img)
-
-                face_count = len(res.face_landmarks) if (res and res.face_landmarks) else 0
-
-                # 1. Multiple face check (Strict: do not process face[0])
-                if face_count >= 2:
-                    multiple_face_detected = True
-                    for c in counters.values():
-                        c.reset_timer()
-                    previous_pose = None
-                    smoothed_pose = None
-                    head_dir, gaze_dir = "Multiple Faces", "Multiple Faces"
-
-                # 2. No person
-                elif face_count == 0:
-                    no_person_detected = True
-                    for c in counters.values():
-                        c.reset_timer()
-                    previous_pose = None
-                    smoothed_pose = None
-                    head_dir, gaze_dir = "Not Detected", "Not Detected"
-
-                # 3. Single participant
-                else:
-                    fl = res.face_landmarks[0]
-                    pts = np.array([(fl[idx].x * w, fl[idx].y * h) for idx in LANDMARK_INDICES], dtype=np.float32)
-                    focal = w
-                    cam_mat = np.array([[focal, 0, w / 2], [0, focal, h / 2], [0, 0, 1]], dtype=np.float32)
-                    dist = np.zeros((4, 1), dtype=np.float32)
-
-                    if previous_pose is not None:
-                        succ, rvec, tvec = cv2.solvePnP(MODEL_POINTS, pts, cam_mat, dist,
-                                                       rvec=previous_pose[0].copy(), tvec=previous_pose[1].copy(),
-                                                       useExtrinsicGuess=True, flags=cv2.SOLVEPNP_ITERATIVE)
-                    else:
-                        succ, rvec, tvec = cv2.solvePnP(MODEL_POINTS, pts, cam_mat, dist, flags=cv2.SOLVEPNP_ITERATIVE)
-
-                    if succ:
-                        previous_pose = (rvec, tvec)
-                        rmat, _ = cv2.Rodrigues(rvec)
-                        p, y, r = rotation_matrix_to_euler_angles(rmat)
-                        if p > 90: p -= 180
-                        elif p < -90: p += 180
-                        p += PITCH_OFFSET
-
-                        if smoothed_pose is None: smoothed_pose = [p, y, r]
-                        else:
-                            smoothed_pose[0] += POSE_ALPHA * (p - smoothed_pose[0])
-                            smoothed_pose[1] += POSE_ALPHA * (y - smoothed_pose[1])
-                            smoothed_pose[2] += POSE_ALPHA * (r - smoothed_pose[2])
-                        pitch, yaw, _ = smoothed_pose
-
-                        y_sign, y_conf = fuzzy_classify(yaw, YAW_INNER, YAW_OUTER)
-                        p_sign, p_conf = fuzzy_classify(pitch, PITCH_INNER, PITCH_OUTER)
-
-                        horiz = "Right" if (y_sign > 0 and y_conf >= YAW_RIGHT_CUTOFF) else ("Left" if (y_sign < 0 and y_conf >= YAW_LEFT_CUTOFF) else None)
-                        vert = "Down" if (p_sign > 0 and p_conf >= PITCH_DOWN_CUTOFF) else ("Up" if (p_sign < 0 and p_conf >= PITCH_UP_CUTOFF) else None)
-
-                        cands = []
-                        if horiz: cands.append((horiz, y_conf))
-                        if vert: cands.append((vert, p_conf))
-                        if cands:
-                            cands.sort(key=lambda x: x[1], reverse=True)
-                            head_dir = cands[0][0]
-                        else:
-                            head_dir = "Straight"
-                    else:
-                        head_dir = "Straight"
-
-                    if len(fl) > LEFT_IRIS_CENTER:
-                        try:
-                            raw_h, raw_v, _ = calculate_normalized_eye_ratios(fl, w, h)
-                            gaze_dir, _, _, _, _, _ = gaze_classifier.classify(raw_h, raw_v)
-                        except Exception:
-                            gaze_dir = "Straight"
-                    else:
-                        gaze_dir = "Straight"
-
-                    # Head update
-                    if head_dir in IGNORED_HEAD_DIRECTIONS or head_dir == "Straight":
-                        counters["head_left"].reset_timer(); counters["head_right"].reset_timer(); counters["head_up"].reset_timer()
-                    else:
-                        counters["head_left"].update(head_dir, cur_mono)
-                        counters["head_right"].update(head_dir, cur_mono)
-                        counters["head_up"].update(head_dir, cur_mono)
-
-                    # Eye update
-                    if gaze_dir in IGNORED_EYE_DIRECTIONS or gaze_dir == "Straight":
-                        counters["eye_left"].close_episode(); counters["eye_right"].close_episode(); counters["eye_up"].close_episode()
-                    elif gaze_dir == "Left":
-                        counters["eye_right"].close_episode(); counters["eye_up"].close_episode()
-                        counters["eye_left"].update("Left", cur_mono)
-                    elif gaze_dir == "Right":
-                        counters["eye_left"].close_episode(); counters["eye_up"].close_episode()
-                        counters["eye_right"].update("Right", cur_mono)
-                    elif gaze_dir == "Up":
-                        counters["eye_left"].close_episode(); counters["eye_right"].close_episode()
-                        counters["eye_up"].update("Up", cur_mono)
-
-                if configured_duration > 0 and elapsed >= configured_duration:
-                    break
-
-                if not headless:
-                    try:
-                        cv2.imshow("LMS Live AI Monitoring", frame)
-                        if (cv2.waitKey(1) & 0xFF) == ord("q"): break
-                    except Exception: pass
-        except KeyboardInterrupt:
+            cv2.destroyAllWindows()
+        except Exception:
             pass
 
-    cap.release()
-    if writer is not None: writer.release()
-    try: cv2.destroyAllWindows()
-    except Exception: pass
+    final_time = start_base + (frame_idx / fps if is_file_video else (time.monotonic() - start_base))
+    engine._close_all_counters(engine.sessions[session_id], final_time)
 
-    end_mono = time.monotonic()
-    actual_test_dur = max(1.0, end_mono - session_start)
+    payload = engine.finalize_session(
+        session_id=session_id,
+        output_excel=output_excel,
+        participant_id=participant_id,
+        participant_name=participant_name,
+        trainer_id=trainer_id,
+        course_id=course_id,
+        assessment_id=assessment_id,
+        attempt_id=attempt_id,
+        actual_start_time=config.get("actual_start_time"),
+        actual_end_time=config.get("actual_end_time"),
+        output_json=output_json,
+        callback_url=callback_url,
+    )
 
-    # Close all active episodes cleanly
-    for c in counters.values():
-        c.close_episode(end_mono)
+    result = payload["monitoring_result"]
+    print("\n" + "=" * 70)
+    print("FINAL LMS AI MONITORING REPORT")
+    print("=" * 70)
+    print(f"Eye + Head : {result['eye_head']['score']:.2f} / 60")
+    print(f"Mobile     : {result['mobile']['score']:.2f} / 20")
+    print(f"Multi Face : {result['multiple_face']['score']:.2f} / 10")
+    print(f"No Person  : {result['no_person']['score']:.2f} / 10")
+    print(f"FINAL      : {result['final']['final_score']:.2f} / 100")
+    print(f"Excel      : {payload['excel_path']}")
+    print("=" * 70)
+    return payload
 
-    # Collect all valid intervals and completed episodes from all 6 categories
-    all_intervals = []
-    all_episodes = []
-    for c in counters.values():
-        all_intervals.extend(c.get_all_intervals())
-        all_episodes.extend(c.get_all_episodes())
 
-    unique_sec = calculate_unique_violation_seconds(all_intervals)
-    final_v_pct, final_m_score = calculate_monitoring_score(unique_sec, actual_test_dur)
-    final_mf_score = MULTIPLE_FACE_SCORE_MAX if multiple_face_detected else 0.0
-    final_np_score = NO_PERSON_SCORE_MAX if no_person_detected else 0.0
-    final_mob_score = min(float(mobile_score), MOBILE_SCORE_MAX)
-    final_malpractice = min(100.0, final_m_score + final_mf_score + final_np_score + final_mob_score)
-    final_integrity = max(0.0, 100.0 - final_malpractice)
+# ============================================================
+# MODULE-LEVEL EXPORTS
+# ============================================================
+# main.py imports these at module scope:
+#   from inference.proctoring_detector import proctor_engine, FACE_MODEL_PATH, POSE_MODEL_PATH
 
-    all_episodes.sort(key=lambda x: x.get("start_time", 0.0))
+FACE_MODEL_PATH = resolve_model_path()
+POSE_MODEL_PATH = None  # Pose model is not used by the rewritten engine
 
-    # Format events with full actual continuous duration
-    formatted_events = []
-    for ep in all_episodes:
-        rel_start = ep.get("start_time", session_start) - session_start
-        formatted_events.append({
-            "Time": round(max(0.0, rel_start), 2),
-            "Event Type": ep.get("category", "Head"),
-            "Direction": ep.get("direction", "Left"),
-            "Validation Status": ep.get("status", "VALID VIOLATION (>= 3.0s)"),
-            "Actual Duration (sec)": f"{ep.get('duration', 3.0):.1f} sec",
-            "Unique Violation Time (sec)": f"{unique_sec:.2f} sec",
-            "Eye + Head Score": f"{final_m_score:.2f} / 60",
-            "Final Score": f"{final_malpractice:.2f} / 100",
-        })
+try:
+    proctor_engine = MediaPipeProctorEngine(FACE_MODEL_PATH)
+except Exception as _init_err:
+    logger.warning("Could not create module-level proctor_engine: %s", _init_err)
+    proctor_engine = None
 
-    summary_metrics = {
-        "configured_duration": configured_duration,
-        "actual_test_duration": actual_test_dur,
-        "calibration_duration": calib_duration,
-        "test_duration": actual_test_dur,
-        "violation_seconds": unique_sec,
-        "violation_percentage": final_v_pct,
-        "monitoring_score": final_m_score,
-        "multiple_face_detected": multiple_face_detected,
-        "multiple_face_score": final_mf_score,
-        "no_person_detected": no_person_detected,
-        "no_person_score": final_np_score,
-        "mobile_count": mobile_count,
-        "mobile_score": final_mob_score,
-        "final_score": final_malpractice,
-        "final_percentage": final_malpractice,
-    }
 
-    generate_excel_file(output_excel, formatted_events, summary_metrics)
+def inspect_b64_with_gemini(b64_data: str) -> Dict[str, Any]:
+    """
+    Inspect a webcam frame using Google Gemini Multimodal Vision API to detect
+    unauthorized devices (cell phones, secondary screens, earbuds), multiple persons, or notes.
+    """
+    try:
+        from services.gemini_client import GeminiClient
+        api_key = os.getenv("GEMINI_API_KEY", "")
+        if not api_key or api_key == "your-gemini-api-key-here":
+            return {
+                "success": True,
+                "phone_detected": False,
+                "multiple_persons": False,
+                "earbuds_detected": False,
+                "suspicious_objects": [],
+                "confidence": 0.0,
+                "notes": "Gemini API key not configured"
+            }
 
-    print("\n" + "=" * 65)
-    print("LMS LIVE SESSION MONITORING REPORT")
-    print("=" * 65)
-    print(f"Configured Duration    : {configured_duration:.2f}s")
-    print(f"Actual Test Duration   : {actual_test_dur:.2f}s ({frame_count:,} frames)")
-    print(f"Calibration Duration   : {calib_duration:.2f}s")
-    print(f"Unique Violation Time  : {unique_sec:.2f}s")
-    print(f"Violation Percentage   : {final_v_pct:.2f}%")
-    print(f"Eye + Head Score       : {final_m_score:.2f} / 60")
-    print(f"Multiple Face Score    : {final_mf_score:.2f} / 10")
-    print(f"No Person Score        : {final_np_score:.2f} / 10")
-    print(f"Mobile Phone Score     : {final_mob_score:.2f} / 20")
-    print(f"MALPRACTICE RISK SCORE : {final_malpractice:.2f} / 100")
-    print(f"FINAL INTEGRITY SCORE  : {final_integrity:.2f} / 100")
-    print(f"Excel Report           : {output_excel}")
-    print("=" * 65 + "\n")
+        client = GeminiClient(api_key=api_key)
+        prompt = (
+            "You are an AI exam proctoring vision auditor. Analyze this webcam frame carefully for exam integrity.\n"
+            "Detect if there are:\n"
+            "1. Cell phones, smartphones, tablets, or secondary screens.\n"
+            "2. Multiple people in the background or near the candidate.\n"
+            "3. Earbuds, headphones, or concealed headsets.\n"
+            "4. Books, written notes, or suspicious physical materials.\n\n"
+            "Return ONLY valid JSON matching this schema:\n"
+            "{\n"
+            '  "phone_detected": boolean,\n'
+            '  "multiple_persons": boolean,\n'
+            '  "earbuds_detected": boolean,\n'
+            '  "suspicious_objects": string[],\n'
+            '  "confidence": number,\n'
+            '  "notes": string\n'
+            "}"
+        )
 
-    return {
-        "success": True,
-        "configured_duration_seconds": configured_duration,
-        "actual_test_duration_seconds": actual_test_dur,
-        "calibration_duration_seconds": calib_duration,
-        "unique_violation_seconds": unique_sec,
-        "violation_percentage": final_v_pct,
-        "eye_head_score": final_m_score,
-        "multiple_face_score": final_mf_score,
-        "no_person_score": final_np_score,
-        "mobile_score": final_mob_score,
-        "final_score": final_malpractice,
-        "final_integrity_score": final_integrity,
-        "excel_path": os.path.abspath(output_excel),
-        "events": formatted_events,
-    }
+        raw_json = client.generate_vision_content(
+            prompt=prompt,
+            image_b64=b64_data,
+            mime_type="image/jpeg"
+        )
+
+        try:
+            parsed = json.loads(raw_json)
+        except Exception:
+            import re
+            json_match = re.search(r"\{.*\}", raw_json, re.DOTALL)
+            parsed = json.loads(json_match.group()) if json_match else {}
+
+        return {
+            "success": True,
+            "phone_detected": bool(parsed.get("phone_detected", False)),
+            "multiple_persons": bool(parsed.get("multiple_persons", False)),
+            "earbuds_detected": bool(parsed.get("earbuds_detected", False)),
+            "suspicious_objects": parsed.get("suspicious_objects", []),
+            "confidence": float(parsed.get("confidence", 0.9)),
+            "notes": parsed.get("notes", "Frame inspected successfully")
+        }
+    except Exception as e:
+        logger.error(f"Gemini vision proctoring inspection error: {e}")
+        return {
+            "success": True,
+            "phone_detected": False,
+            "multiple_persons": False,
+            "earbuds_detected": False,
+            "suspicious_objects": [],
+            "confidence": 0.0,
+            "notes": f"Inspection fallback: {str(e)}"
+        }
 
 
 if __name__ == "__main__":

@@ -92,6 +92,51 @@ export default function DualCameraProctorWidget({
   const mobileSocketIdRef = useRef(null);
   const candidateQueueRef = useRef([]);
 
+  const webcamStreamRef = useRef(null);
+  const remoteStreamRef = useRef(null);
+
+  useEffect(() => {
+    webcamStreamRef.current = webcamStream;
+  }, [webcamStream]);
+
+  useEffect(() => {
+    remoteStreamRef.current = remoteStream;
+  }, [remoteStream]);
+
+  // Global unmount cleanup: ensure camera tracks are released immediately
+  useEffect(() => {
+    return () => {
+      if (webcamStreamRef.current) {
+        try {
+          webcamStreamRef.current.getTracks().forEach((t) => t.stop());
+        } catch (_) {}
+      }
+      if (remoteStreamRef.current) {
+        try {
+          remoteStreamRef.current.getTracks().forEach((t) => t.stop());
+        } catch (_) {}
+      }
+      if (webcamVideoRef.current) {
+        webcamVideoRef.current.srcObject = null;
+      }
+      if (mobileVideoRef.current) {
+        mobileVideoRef.current.srcObject = null;
+      }
+      if (pcRef.current) {
+        try {
+          pcRef.current.close();
+        } catch (_) {}
+        pcRef.current = null;
+      }
+      if (socketRef.current) {
+        try {
+          socketRef.current.disconnect();
+        } catch (_) {}
+        socketRef.current = null;
+      }
+    };
+  }, []);
+
   const activeToken =
     userToken ||
     (typeof window !== 'undefined'

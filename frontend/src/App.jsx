@@ -148,6 +148,17 @@ const ScheduleInterview = lazyRetry(() => import('./pages/interview/ScheduleInte
 const InterviewRoom = lazyRetry(() => import('./pages/interview/InterviewRoom'))
 const InterviewEvaluation = lazyRetry(() => import('./pages/interview/InterviewEvaluation'))
 
+function TrainingRedirect({ user }) {
+  const { trainingId } = useParams()
+  if (!user) return <Navigate to="/login" replace />
+  if (user.role === 'PARTICIPANT') {
+    return <Navigate to={`/participant?tab=myEnrollments${trainingId && trainingId !== '0' ? `&courseId=${trainingId}` : ''}`} replace />
+  }
+  if (user.role === 'TRAINER') return <Navigate to="/trainer" replace />
+  if (user.role === 'ADMIN') return <Navigate to="/admin" replace />
+  return <Navigate to="/login" replace />
+}
+
 function PageLoader() {
   return (
     <div style={{
@@ -524,6 +535,26 @@ function AppRoutes({ user, onLogin, onLogout }) {
       />
 
       <Route
+        path="/trainings/:trainingId"
+        element={<TrainingRedirect user={user} />}
+      />
+
+      <Route
+        path="/trainings"
+        element={
+          user?.role === 'PARTICIPANT' ? (
+            <Navigate to="/participant?tab=myEnrollments" replace />
+          ) : user?.role === 'TRAINER' ? (
+            <Navigate to="/trainer" replace />
+          ) : user?.role === 'ADMIN' ? (
+            <Navigate to="/admin" replace />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+
+      <Route
         path="/trainer"
         element={
           user?.role === 'TRAINER' ? (
@@ -830,7 +861,20 @@ function AppRoutes({ user, onLogin, onLogout }) {
         element={<AssessmentMobileJoin />}
       />
 
-      <Route path="*" element={<Navigate to="/login" />} />
+      <Route
+        path="*"
+        element={
+          user?.role === 'ADMIN' ? (
+            <Navigate to="/admin" replace />
+          ) : user?.role === 'TRAINER' ? (
+            <Navigate to="/trainer" replace />
+          ) : user?.role === 'PARTICIPANT' ? (
+            <Navigate to="/participant" replace />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
     </Routes>
   )
 }

@@ -25,6 +25,7 @@ const {
   ProctoringReport
 } = require('../models');
 const proctoringReportService = require('../services/proctoringReportService');
+const monitoringService = require('../services/monitoringService');
 const authenticateToken = require('../middleware/auth');
 const roleMiddleware = require('../middleware/roles');
 const NotificationService = require('../services/notificationService');
@@ -633,32 +634,50 @@ router.get('/:id/results', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) 
     const hasAccess = await verifyTrainerAccess(req, res, quiz);
     if (!hasAccess) return;
 
-    const { User, QuizAttempt } = require('../models');
+    const { User, QuizAttempt, ProctoringReport, MonitoringSession } = require('../models');
     const results = await QuizResult.findAll({
       where: { quizId: quiz.id },
       include: [
         { model: User, as: 'participant', attributes: ['id', 'name', 'email', 'profilePic'] },
-        { model: QuizAttempt, as: 'attempt', attributes: ['id', 'status', 'violationCount'] }
+        {
+          model: QuizAttempt,
+          as: 'attempt',
+          attributes: ['id', 'status', 'violationCount', 'startedAt', 'submittedAt', 'timeTaken', 'monitoringSessionId'],
+          include: [
+            { model: ProctoringReport, as: 'proctoringReport', required: false, attributes: ['riskScore', 'riskLevel', 'status', 'summary'] },
+            { model: MonitoringSession, as: 'monitoringSession', required: false, attributes: ['score', 'riskLevel', 'totalEvents', 'laptopStatus'] },
+          ]
+        }
       ],
       order: [['percentage', 'DESC']]
     });
 
-    const participantResults = results.map((r, idx) => ({
-      id: r.id,
-      attemptId: r.attemptId,
-      participantId: r.participantId,
-      participantName: r.participant?.name || 'Unknown',
-      participantEmail: r.participant?.email || '',
-      totalScore: parseFloat(r.totalScore),
-      maxScore: parseFloat(r.maxScore),
-      percentage: parseFloat(r.percentage),
-      rank: r.rank || idx + 1,
-      evaluatedAt: r.evaluatedAt,
-      resultPublished: r.resultPublished,
-      publishedAt: r.publishedAt,
-      attemptStatus: r.attempt?.status || 'SUBMITTED',
-      violationCount: r.attempt?.violationCount || 0,
-    }));
+    const participantResults = results.map((r, idx) => {
+      const pReport = r.attempt?.proctoringReport;
+      const mSession = r.attempt?.monitoringSession;
+      const riskScore = pReport?.riskScore != null ? parseFloat(pReport.riskScore) : (mSession?.score != null ? parseFloat(mSession.score) : 0);
+      const riskLevel = pReport?.riskLevel || mSession?.riskLevel || (riskScore >= 70 ? 'CRITICAL' : riskScore >= 35 ? 'HIGH' : riskScore >= 15 ? 'MEDIUM' : 'LOW');
+
+      return {
+        id: r.id,
+        attemptId: r.attemptId,
+        participantId: r.participantId,
+        participantName: r.participant?.name || 'Unknown',
+        participantEmail: r.participant?.email || '',
+        totalScore: parseFloat(r.totalScore),
+        maxScore: parseFloat(r.maxScore),
+        percentage: parseFloat(r.percentage),
+        rank: r.rank || idx + 1,
+        evaluatedAt: r.evaluatedAt,
+        resultPublished: r.resultPublished,
+        publishedAt: r.publishedAt,
+        attemptStatus: r.attempt?.status || 'SUBMITTED',
+        violationCount: r.attempt?.violationCount || 0,
+        riskScore,
+        riskLevel,
+        proctoringSummary: pReport?.summary || null,
+      };
+    });
 
     res.json({ results: participantResults, quizTitle: quiz.title });
   } catch (error) {
@@ -851,7 +870,8 @@ router.get('/:id/questions', async (req, res) => {
         attempt: {
           id: hasAttempt.id,
           violationCount: hasAttempt.violationCount || 0,
-          status: hasAttempt.status
+          status: hasAttempt.status,
+          monitoringSessionId: hasAttempt.monitoringSessionId || null,
         },
         questions: questions.map(q => ({
           id: q.id,
@@ -1327,10 +1347,18 @@ const startQuizAttempt = async (req, res) => {
           await attempt.update({ monitoringSessionId: proctorSession.sessionId });
         }
 
+        const monitoring = await monitoringService.startSession({
+          participantId,
+          contextType: 'QUIZ',
+          contextId: quiz.id,
+          attemptId: attempt.id,
+          mobileEnabled: true,
+        });
+
         const apiResponse = {
           success: true,
           attemptId: attempt.id,
-          monitoringSessionId: proctorSession.sessionId,
+          monitoringSessionId: monitoring.session.sessionId,
           sessionToken: session.sessionToken,
           quiz: {
             id: quiz.id,
@@ -1372,6 +1400,14 @@ const startQuizAttempt = async (req, res) => {
       quizId: quiz.id,
       startedAt: new Date(),
       status: 'ACTIVE'
+    });
+
+    const monitoring = await monitoringService.startSession({
+      participantId,
+      contextType: 'QUIZ',
+      contextId: quiz.id,
+      attemptId: attempt.id,
+      mobileEnabled: true,
     });
 
     // Handle AssessmentSession lock
@@ -1426,7 +1462,7 @@ const startQuizAttempt = async (req, res) => {
     const apiResponse = {
       success: true,
       attemptId: attempt.id,
-      monitoringSessionId,
+      monitoringSessionId: monitoring.session.sessionId,
       sessionToken: session.sessionToken,
       quiz: {
         id: quiz.id,
@@ -1508,7 +1544,7 @@ router.post('/:quizId/attempts/:attemptId/submit', async (req, res) => {
       console.log(`[submit] Recovery successful. Found active attempt #${attempt.id} for participant #${participantId}, quiz #${quizId}`);
     }
     if (attempt.status === 'SUBMITTED' || attempt.status === 'EVALUATED') {
-      return res.status(409).json({ error: 'Quiz already submitted' });
+      return res.json({ success: true, message: 'Quiz already submitted', attemptId: attempt.id });
     }
 
     const quiz = await AIQuiz.findByPk(quizId);

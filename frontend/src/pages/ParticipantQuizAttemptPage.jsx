@@ -9,6 +9,7 @@ import { useToast } from '../components/Toast'
 import { Loader2, AlertCircle } from 'lucide-react'
 import { ProctorProvider, useProctor } from '../proctoring/ProctorContext'
 import useDeviceFingerprint from '../proctoring/hooks/useDeviceFingerprint'
+import monitoringClient from '../proctoring/engine/MonitoringEngineClient'
 
 const authHeaders = (token) => ({
   'Content-Type': 'application/json',
@@ -32,11 +33,12 @@ function ParticipantQuizAttemptPageInner({ user }) {
 
   let attemptId = searchParams.get('attemptId')
   let sessionToken = searchParams.get('sessionToken')
+  let monitoringSessionId = searchParams.get('monitoringSessionId')
 
   if (quizId) {
     const storageKey = `quiz_${quizId}_attempt`
     if (attemptId && sessionToken) {
-      sessionStorage.setItem(storageKey, JSON.stringify({ attemptId, sessionToken }))
+      sessionStorage.setItem(storageKey, JSON.stringify({ attemptId, sessionToken, monitoringSessionId }))
     } else {
       const cached = sessionStorage.getItem(storageKey)
       if (cached) {
@@ -44,6 +46,7 @@ function ParticipantQuizAttemptPageInner({ user }) {
           const parsed = JSON.parse(cached)
           attemptId = attemptId || parsed.attemptId
           sessionToken = sessionToken || parsed.sessionToken
+          monitoringSessionId = monitoringSessionId || parsed.monitoringSessionId
         } catch (e) {
           console.error('[ParticipantQuizAttemptPage] Error parsing cached session:', e)
         }
@@ -71,6 +74,8 @@ function ParticipantQuizAttemptPageInner({ user }) {
     }
   })
   const [consented, setConsented] = useState(false)
+  const [sharedCamStream, setSharedCamStream] = useState(null)
+  const [resolvedMonitoringSessionId, setResolvedMonitoringSessionId] = useState(monitoringSessionId || null)
 
   useEffect(() => {
     if (!quizId || !attemptId) {
@@ -97,6 +102,10 @@ function ParticipantQuizAttemptPageInner({ user }) {
           setErrorMsg(data.error || 'Failed to load quiz questions.')
           setLoading(false)
           return
+        }
+
+        if (data.attempt?.monitoringSessionId) {
+          setResolvedMonitoringSessionId(data.attempt.monitoringSessionId)
         }
 
         setQuizData({
@@ -148,22 +157,49 @@ function ParticipantQuizAttemptPageInner({ user }) {
 
   const handleCancel = useCallback(() => {
     endVerificationSession();
-    navigate(`/trainings/${trainingId}`)
+    navigate(trainingId ? `/participant?tab=myEnrollments&courseId=${trainingId}` : '/participant?tab=myEnrollments')
   }, [navigate, trainingId, endVerificationSession])
 
   // Stop media & exit fullscreen (called after quiz submission)
   const handleRecordingStop = useCallback(async () => {
+    try {
+      await monitoringClient.stopAndUploadRecording();
+    } catch (e) {
+      console.warn('[handleRecordingStop] Video upload note:', e.message);
+    }
+    if (sharedCamStream) {
+      try {
+        sharedCamStream.getTracks().forEach((t) => t.stop());
+      } catch (_) {}
+      setSharedCamStream(null);
+    }
+    try {
+      monitoringClient.destroy();
+    } catch (_) {}
     endVerificationSession();
     if (fsApi.element()) {
       try { await fsApi.exit() } catch {}
     }
-  }, [endVerificationSession])
+  }, [sharedCamStream, endVerificationSession]);
+
+  useEffect(() => {
+    return () => {
+      if (sharedCamStream) {
+        try {
+          sharedCamStream.getTracks().forEach((t) => t.stop());
+        } catch (_) {}
+      }
+      try {
+        monitoringClient.destroy();
+      } catch (_) {}
+    };
+  }, [sharedCamStream]);
 
   // Called from QuizTaking's "Back to Dashboard" button / auto-submit
   const handleSubmit = useCallback(async () => {
     await handleRecordingStop()
-    navigate(`/trainings/${trainingId}/quizzes/${quizId}/result`)
-  }, [handleRecordingStop, trainingId, quizId, navigate])
+    navigate(trainingId ? `/participant?tab=myEnrollments&courseId=${trainingId}` : '/participant?tab=myEnrollments')
+  }, [handleRecordingStop, trainingId, navigate])
 
   if (loading) {
     return (
@@ -201,7 +237,7 @@ function ParticipantQuizAttemptPageInner({ user }) {
           {errorMsg}
         </div>
         <button
-          onClick={() => navigate(`/trainings/${trainingId}`)}
+          onClick={() => navigate(trainingId ? `/participant?tab=myEnrollments&courseId=${trainingId}` : '/participant?tab=myEnrollments')}
           style={{
             padding: '10px 20px',
             background: '#2563eb',
@@ -218,12 +254,6 @@ function ParticipantQuizAttemptPageInner({ user }) {
         </button>
       </div>
     )
-  }
-
-  // Pre-test Step 1: Mobile Camera Pairing via QR Code
-  if (!qrVerified && quizData) {
-    navigate(`/trainings/${trainingId || 0}/quizzes/${quizId}/verification?attemptId=${attemptId}&sessionToken=${sessionToken || ''}`, { replace: true })
-    return null
   }
 
   // Pre-test Step 2: Assessment Consent, Camera Calibration & Fullscreen Gate
@@ -246,6 +276,7 @@ function ParticipantQuizAttemptPageInner({ user }) {
         quizData={quizData}
         sessionToken={sessionToken}
         isStandardQuiz={true}
+        webcamStream={sharedCamStream}
         onSubmit={handleSubmit}
         onRecordingStop={handleRecordingStop}
       />
@@ -255,12 +286,13 @@ function ParticipantQuizAttemptPageInner({ user }) {
         contextType="QUIZ"
         contextId={parseInt(quizId, 10)}
         attemptId={parseInt(attemptId, 10)}
-        sessionId={verifSessionInfo?.sessionId}
+        sessionId={resolvedMonitoringSessionId || verifSessionInfo?.sessionId}
         participantId={user?.id}
         userToken={user?.token}
         mobileEnabled={true}
         preCalibrated={true}
         prePaired={true}
+        onWebcamStreamReady={setSharedCamStream}
       />
     </>
   )

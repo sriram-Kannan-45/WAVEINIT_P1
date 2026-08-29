@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const path = require('path');
 const { User } = require('../models');
 const { Op } = require('sequelize');
+const { validateEmail } = require('../utils/validators');
 
 const BCRYPT_COST = 12;
 const MAX_ROWS = 10000;
@@ -50,10 +51,6 @@ function generateSecurePassword() {
 function generateUsername(email) {
   const base = (email || '').split('@')[0].replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
   return base || `user${Date.now()}`;
-}
-
-function validateEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 function validatePhone(phone) {

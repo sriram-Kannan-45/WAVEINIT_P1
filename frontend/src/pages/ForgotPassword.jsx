@@ -5,6 +5,7 @@ import { Mail, ArrowLeft, Eye, EyeOff, CheckCircle2, AlertCircle, Loader2, Shiel
 import { API } from '../api/api'
 import AuthLayout from '../components/auth/AuthLayout'
 import AuthCard from '../components/auth/AuthCard'
+import { validateEmail, validatePassword } from '../utils/validators'
 
 /* ── password strength ── */
 function getStrength(pw) {
@@ -151,7 +152,7 @@ export default function ForgotPassword() {
     e.preventDefault()
     if (inFlight.current) return
     setError('')
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!validateEmail(email)) {
       return setError('Enter a valid email address')
     }
     inFlight.current = true
@@ -178,8 +179,8 @@ export default function ForgotPassword() {
     setLoading(true)
     try {
       const data = await post(API.FORGOT_PASSWORD.VERIFY_OTP, { email, otp })
-      setResetToken(data.resetToken)
-      setInfo('')
+      setResetToken(data.resetToken || '')
+      setInfo('OTP verified! Choose your new password.')
       setStep(3)
     } catch (err) {
       setError(err.message)
@@ -211,7 +212,9 @@ export default function ForgotPassword() {
     e.preventDefault()
     if (inFlight.current) return
     setError('')
-    if (password.length < 8) return setError('Password must be at least 8 characters')
+    if (!validatePassword(password)) {
+      return setError('Password must be at least 8 characters long and contain uppercase, lowercase, a number, and a special character')
+    }
     if (password !== confirm) return setError('Passwords do not match')
     inFlight.current = true
     setLoading(true)

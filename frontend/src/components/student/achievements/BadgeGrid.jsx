@@ -133,83 +133,65 @@ export function buildBadgeCatalogue({ stats, enrollmentsCount = 0, streak = 0 })
 }
 
 const TONE_STYLES = {
-  primary: { bg: 'var(--academic-primary-50)', color: 'var(--academic-primary)', glow: 'rgba(13,148,136,0.18)' },
-  teal:    { bg: 'var(--academic-secondary-50)', color: 'var(--academic-secondary-600)', glow: 'rgba(20,184,166,0.16)' },
-  violet:  { bg: 'var(--academic-accent-50)', color: 'var(--academic-accent-500)', glow: 'rgba(20,184,166,0.16)' },
-  warning: { bg: 'var(--academic-warning-50)', color: 'var(--academic-warning)', glow: 'rgba(245,158,11,0.16)' },
-  danger:  { bg: 'var(--academic-danger-50)', color: 'var(--academic-danger)', glow: 'rgba(239,68,68,0.16)' },
+  primary: { bg: '#EAF8F0', color: '#16A34A', border: '#DCFCE7', glow: 'rgba(22, 163, 74, 0.18)' },
+  teal:    { bg: '#F0FDFA', color: '#0D9488', border: '#CCFBF1', glow: 'rgba(13, 148, 136, 0.16)' },
+  violet:  { bg: '#F5F3FF', color: '#7C3AED', border: '#EDE9FE', glow: 'rgba(124, 58, 237, 0.16)' },
+  warning: { bg: '#FFFBEB', color: '#D97706', border: '#FEF3C7', glow: 'rgba(217, 119, 6, 0.16)' },
+  danger:  { bg: '#FEF2F2', color: '#DC2626', border: '#FEE2E2', glow: 'rgba(220, 38, 38, 0.16)' },
 }
 
 function BadgeTile({ badge, index }) {
   const { earned, label, description, icon: Icon, tone, progress, requirement } = badge
   const t = TONE_STYLES[tone] || TONE_STYLES.primary
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10, scale: 0.96 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.3, delay: Math.min(index * 0.04, 0.4) }}
-      whileHover={{ y: -3 }}
-      className="ac-card"
-      style={{
-        textAlign: 'center',
-        padding: 20,
-        opacity: earned ? 1 : 0.65,
-        position: 'relative',
-        overflow: 'hidden',
-      }}
+      className={`ach-badge-card ${earned ? 'ach-badge-card--earned' : 'ach-badge-card--locked'}`}
     >
-      {/* Glow halo for earned badges */}
+      {/* Soft radial glow for earned badges */}
       {earned && (
         <div
-          aria-hidden
-          style={{
-            position: 'absolute', top: 0, left: '50%', transform: 'translate(-50%, -40%)',
-            width: 140, height: 140, borderRadius: '50%',
-            background: `radial-gradient(circle, ${t.glow}, transparent 70%)`,
-            pointerEvents: 'none',
-          }}
+          className="ach-badge-glow"
+          style={{ background: `radial-gradient(circle, ${t.glow}, transparent 70%)` }}
         />
       )}
-      <motion.div
-        whileHover={earned ? { scale: 1.08, rotate: 4 } : {}}
+
+      <div
+        className="ach-badge-icon-box"
         style={{
-          position: 'relative',
-          width: 64, height: 64, margin: '0 auto 12px',
-          borderRadius: '50%',
-          background: t.bg, color: t.color,
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          border: earned ? `2px solid ${t.color}` : '2px dashed var(--academic-border)',
-          filter: earned ? 'none' : 'grayscale(0.5)',
+          background: earned ? t.bg : '#F1F5F9',
+          color: earned ? t.color : '#94A3B8',
+          border: earned ? `2px solid ${t.color}` : '2px dashed #CBD5E1',
         }}
       >
-        {earned ? <Icon size={28} /> : <Lock size={22} style={{ color: 'var(--academic-text-muted)' }} />}
-      </motion.div>
-      <h4 style={{
-        fontFamily: "'Poppins', sans-serif", fontSize: 14, fontWeight: 700,
-        color: earned ? 'var(--academic-text)' : 'var(--academic-text-secondary)',
-        marginBottom: 4,
-      }}>
-        {label}
-      </h4>
-      <p style={{ fontSize: 12, color: 'var(--academic-text-muted)', marginBottom: 12, minHeight: 30 }}>
-        {description}
-      </p>
+        {earned ? <Icon size={26} strokeWidth={2.2} /> : <Lock size={20} />}
+      </div>
 
-      {!earned && (
-        <>
-          <div className="ac-progress" style={{ height: 5, marginBottom: 6 }}>
-            <div className="ac-progress__fill" style={{ width: `${progress * 100}%` }} />
+      <h4 className="ach-badge-name">{label}</h4>
+      <p className="ach-badge-desc">{description}</p>
+
+      <div className="ach-badge-footer">
+        {earned ? (
+          <span className="ach-earned-pill">
+            ✓ Earned
+          </span>
+        ) : (
+          <div>
+            <div className="ach-req-bar">
+              <div
+                className="ach-req-fill"
+                style={{ width: `${Math.round((progress || 0) * 100)}%` }}
+              />
+            </div>
+            <p className="ach-req-text" title={requirement}>
+              {requirement}
+            </p>
           </div>
-          <p style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--academic-text-muted)' }}>
-            {requirement}
-          </p>
-        </>
-      )}
-      {earned && (
-        <span className="ac-chip ac-chip-success" style={{ marginTop: 4 }}>
-          ✓ Earned
-        </span>
-      )}
+        )}
+      </div>
     </motion.div>
   )
 }
@@ -226,62 +208,61 @@ export default function BadgeGrid({ stats, enrollmentsCount = 0, streak = 0 }) {
     .sort((a, b) => (b.progress || 0) - (a.progress || 0))[0]
 
   return (
-    <div className="ac-stack">
-      {/* ─── Rich progress summary strip ────────────────────────────── */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* ─── Rich progress summary card ────────────────────────────── */}
       <motion.div
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-        className="ach-progress-strip"
+        transition={{ duration: 0.35 }}
+        className="ach-progress-card"
       >
-        <div className="ach-progress-strip__top">
-          <div className="ach-progress-strip__stats">
-            <span className="ach-progress-strip__count">
-              <span className="mono">{earned}</span>
-              <span className="ach-progress-strip__count-of">of</span>
-              <span className="mono">{total}</span>
-              <span className="ach-progress-strip__count-label">earned</span>
-            </span>
+        <div className="ach-progress-header">
+          <div className="ach-progress-left">
+            <div className="ach-count-badge">
+              <span className="ach-count-earned">{earned}</span>
+              <span className="ach-count-total">of {total} earned</span>
+            </div>
+
             {nextBadge ? (
-              <span className="ach-progress-strip__next">
-                Next up: <strong>{nextBadge.label}</strong>
-                <span className="ach-progress-strip__next-req">· {nextBadge.requirement}</span>
-              </span>
+              <div className="ach-next-pill">
+                <span>Next up:</span>
+                <strong>{nextBadge.label}</strong>
+                <span className="ach-next-pill-req">· {nextBadge.requirement}</span>
+              </div>
             ) : (
-              <span className="ach-progress-strip__next">
-                ✦ All badges earned — incredible work!
-              </span>
+              <div className="ach-next-pill" style={{ color: '#16A34A', background: '#EAF8F0', borderColor: '#DCFCE7' }}>
+                ✦ All badges earned — incredible achievement!
+              </div>
             )}
           </div>
-          <span className="ach-progress-strip__pct mono">{pct}%</span>
+
+          <div className="ach-progress-pct">{pct}%</div>
         </div>
-        <div className="ach-progress-strip__bar">
+
+        <div className="ach-bar-track">
           <motion.div
-            className="ach-progress-strip__fill"
+            className="ach-bar-fill"
             initial={{ width: 0 }}
             animate={{ width: `${pct}%` }}
-            transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
+            transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
           />
         </div>
       </motion.div>
 
-      {/* ─── Badges header ──────────────────────────────────────────── */}
-      <div className="flex items-center justify-between" style={{ flexWrap: 'wrap', gap: 12 }}>
-        <div>
-          <h3 className="ac-section-title" style={{ fontSize: 18 }}>Badges</h3>
-          <p className="ac-section-subtitle">{earned} of {total} earned</p>
+      {/* ─── Badges Section ──────────────────────────────────────────── */}
+      <div>
+        <div className="ach-section-head">
+          <div>
+            <h3 className="ach-section-title">Badges</h3>
+            <p className="ach-section-sub">{earned} of {total} unlocked</p>
+          </div>
         </div>
-      </div>
 
-      <div
-        className="grid"
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-          gap: 16,
-        }}
-      >
-        {badges.map((b, i) => <BadgeTile key={b.id} badge={b} index={i} />)}
+        <div className="ach-badges-grid">
+          {badges.map((b, i) => (
+            <BadgeTile key={b.id} badge={b} index={i} />
+          ))}
+        </div>
       </div>
     </div>
   )

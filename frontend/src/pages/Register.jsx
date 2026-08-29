@@ -1,20 +1,24 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { User, Mail, Phone, Lock, Eye, EyeOff, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { User, Mail, Phone, Lock, Eye, EyeOff, AlertCircle, CheckCircle2, Check, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { API } from '../api/api';
 import AuthLayout from '../components/auth/AuthLayout';
 import AuthCard from '../components/auth/AuthCard';
 import AuthButton from '../components/auth/AuthButton';
+import {
+  validateEmail,
+  validatePassword,
+  getPasswordValidationDetails,
+} from '../utils/validators';
 
 function getStrength(pw) {
   if (!pw) return { score: 0, label: '', color: '' };
   let s = 0;
-  if (pw.length >= 6) s++;
-  if (pw.length >= 10) s++;
+  if (pw.length >= 8) s++;
   if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) s++;
   if (/\d/.test(pw)) s++;
-  if (/[^A-Za-z0-9]/.test(pw)) s++;
+  if (/[@$!%*?&#^()_+\-=[\]{}|;:,.<>~`]/.test(pw)) s++;
   if (s <= 1) return { score: 1, label: 'Weak', color: '#dc2626' };
   if (s <= 2) return { score: 2, label: 'Fair', color: '#f59e0b' };
   if (s <= 3) return { score: 3, label: 'Good', color: '#2563eb' };
@@ -30,9 +34,12 @@ export default function Register() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [agreed, setAgreed] = useState(false);
+  const [emailTouched, setEmailTouched] = useState(false);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const strength = useMemo(() => getStrength(form.password), [form.password]);
+  const passwordDetails = useMemo(() => getPasswordValidationDetails(form.password), [form.password]);
+  const isEmailValid = useMemo(() => !form.email || validateEmail(form.email), [form.email]);
 
   useEffect(() => {
     const prev = { html: document.documentElement.style.overflow, body: document.body.style.overflow };
@@ -47,9 +54,12 @@ export default function Register() {
     setSuccess('');
     if (!form.name.trim()) return setError('Full name is required');
     if (!form.email.trim()) return setError('Email is required');
+    if (!validateEmail(form.email)) return setError('Please enter a valid email address (e.g., user@example.com)');
     if (!form.phone.trim()) return setError('Phone number is required');
     if (!form.password) return setError('Password is required');
-    if (form.password.length < 6) return setError('Password must be at least 6 characters');
+    if (!validatePassword(form.password)) {
+      return setError('Password must be at least 8 characters long and contain uppercase, lowercase, a number, and a special character');
+    }
     if (form.password !== form.confirmPassword) return setError('Passwords do not match');
     if (!agreed) return setError('You must agree to the terms');
 
@@ -95,30 +105,33 @@ export default function Register() {
           <p className="auth-card-subtitle">Join as a participant to start learning</p>
         </div>
 
-        <div className="auth-error-space">
-          <AnimatePresence>
-            {error && (
-              <motion.div className="auth-error" role="alert"
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -4 }}
-              >
-                <AlertCircle className="auth-error-icon" size={16} />
-                <span className="auth-error-text">{error}</span>
-              </motion.div>
-            )}
-            {success && (
-              <motion.div className="auth-success"
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -4 }}
-              >
-                <CheckCircle2 size={16} style={{ color: '#16a34a', flexShrink: 0 }} />
-                <span style={{ fontSize: 13, color: '#15803d' }}>{success}</span>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+        <AnimatePresence>
+          {error && (
+            <motion.div
+              className="auth-error"
+              role="alert"
+              initial={{ opacity: 0, y: -6, height: 0 }}
+              animate={{ opacity: 1, y: 0, height: 'auto' }}
+              exit={{ opacity: 0, y: -6, height: 0 }}
+              style={{ marginBottom: 14 }}
+            >
+              <AlertCircle className="auth-error-icon" size={17} />
+              <span className="auth-error-text">{error}</span>
+            </motion.div>
+          )}
+          {success && (
+            <motion.div
+              className="auth-success"
+              initial={{ opacity: 0, y: -6, height: 0 }}
+              animate={{ opacity: 1, y: 0, height: 'auto' }}
+              exit={{ opacity: 0, y: -6, height: 0 }}
+              style={{ marginBottom: 14 }}
+            >
+              <CheckCircle2 size={17} style={{ color: '#16a34a', flexShrink: 0, marginTop: 2 }} />
+              <span style={{ fontSize: 13, color: '#15803d', fontWeight: 500, lineHeight: 1.45 }}>{success}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {!success ? (
           <form onSubmit={handleSubmit} autoComplete="on">
@@ -152,12 +165,18 @@ export default function Register() {
                   type="email"
                   value={form.email}
                   onChange={e => set('email', e.target.value)}
+                  onBlur={() => setEmailTouched(true)}
                   placeholder="john@example.com"
                   autoComplete="email"
                   disabled={loading}
                   required
                 />
               </div>
+              {emailTouched && form.email && !isEmailValid && (
+                <p style={{ fontSize: 11.5, color: '#dc2626', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <AlertCircle size={12} /> Please enter a valid email address (e.g. user@domain.com)
+                </p>
+              )}
             </div>
 
             {/* Phone */}
@@ -190,9 +209,8 @@ export default function Register() {
                   type={showPassword ? 'text' : 'password'}
                   value={form.password}
                   onChange={e => set('password', e.target.value)}
-                  placeholder="Minimum 6 characters"
+                  placeholder="Minimum 8 characters (mixed case, number, symbol)"
                   autoComplete="new-password"
-                  minLength={6}
                   disabled={loading}
                   required
                 />
@@ -205,20 +223,52 @@ export default function Register() {
                   {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
                 </button>
               </div>
+
+              {/* Password strength & validation checklist */}
               <AnimatePresence>
                 {form.password.length > 0 && (
                   <motion.div
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: 'auto' }}
                     exit={{ opacity: 0, height: 0 }}
-                    style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 8 }}
+                    style={{ marginTop: 6 }}
                   >
-                    <div style={{ display: 'flex', gap: 3, flex: 1 }}>
-                      {[1, 2, 3, 4].map(i => (
-                        <div key={i} style={{ height: 3, flex: 1, borderRadius: 2, background: i <= strength.score ? strength.color : '#e2e8f0' }} />
-                      ))}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <div style={{ display: 'flex', gap: 3, flex: 1 }}>
+                        {[1, 2, 3, 4].map(i => (
+                          <div key={i} style={{ height: 3, flex: 1, borderRadius: 2, background: i <= strength.score ? strength.color : '#e2e8f0' }} />
+                        ))}
+                      </div>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: strength.color }}>{strength.label}</span>
                     </div>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: strength.color }}>{strength.label}</span>
+
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 1fr',
+                      gap: '3px 8px',
+                      padding: '8px 10px',
+                      background: '#f8fafc',
+                      borderRadius: 6,
+                      border: '1px solid #f1f5f9',
+                      fontSize: 11
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: passwordDetails.minLength ? '#16a34a' : '#94a3b8' }}>
+                        {passwordDetails.minLength ? <Check size={11} strokeWidth={3} /> : <X size={11} />}
+                        <span>At least 8 chars</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: (passwordDetails.hasUpper && passwordDetails.hasLower) ? '#16a34a' : '#94a3b8' }}>
+                        {(passwordDetails.hasUpper && passwordDetails.hasLower) ? <Check size={11} strokeWidth={3} /> : <X size={11} />}
+                        <span>Upper & lowercase</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: passwordDetails.hasNumber ? '#16a34a' : '#94a3b8' }}>
+                        {passwordDetails.hasNumber ? <Check size={11} strokeWidth={3} /> : <X size={11} />}
+                        <span>At least 1 number</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: passwordDetails.hasSpecial ? '#16a34a' : '#94a3b8' }}>
+                        {passwordDetails.hasSpecial ? <Check size={11} strokeWidth={3} /> : <X size={11} />}
+                        <span>Special character (!@#$)</span>
+                      </div>
+                    </div>
                   </motion.div>
                 )}
               </AnimatePresence>

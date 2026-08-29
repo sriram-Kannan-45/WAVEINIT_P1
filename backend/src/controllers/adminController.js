@@ -46,6 +46,7 @@ const {
 const ActivityService = require('../services/activityService');
 const logger = require('../utils/logger');
 const bcrypt = require('bcryptjs');
+const { validateEmail, validatePassword } = require('../utils/validators');
 
 const updateTraining = async (req, res) => {
   try {
@@ -679,7 +680,7 @@ const getStats = async (req, res) => {
     console.error('Get stats error:', error.message);
     res.status(500).json({ 
       success: false,
-      error: 'Server error fetching stats' 
+    error: 'Server error fetching stats' 
     });
   }
 };
@@ -687,33 +688,93 @@ const getStats = async (req, res) => {
 const getParticipants = async (req, res) => {
   try {
     const { Op } = require('sequelize');
-    const { search = '', status = '', limit = 50, offset = 0 } = req.query;
+    const { search = '', status = '', page, limit, offset } = req.query;
     
+    const parsedLimit = limit ? Math.max(1, Math.min(parseInt(limit, 10), 500)) : 10;
+    let parsedOffset = 0;
+    let currentPage = 1;
+
+    if (page) {
+      currentPage = Math.max(1, parseInt(page, 10));
+      parsedOffset = (currentPage - 1) * parsedLimit;
+    } else if (offset !== undefined) {
+      parsedOffset = Math.max(0, parseInt(offset, 10));
+      currentPage = Math.floor(parsedOffset / parsedLimit) + 1;
+    }
+
     const where = { role: 'PARTICIPANT', isDeleted: false };
     
     // Search filter
-    if (search) {
+    if (search && search.trim()) {
+      const q = search.trim();
       where[Op.or] = [
-        { name: { [Op.like]: `%${search}%` } },
-        { email: { [Op.like]: `%${search}%` } },
-        { phone: { [Op.like]: `%${search}%` } }
+        { name: { [Op.like]: `%${q}%` } },
+        { email: { [Op.like]: `%${q}%` } },
+        { phone: { [Op.like]: `%${q}%` } },
+        { username: { [Op.like]: `%${q}%` } }
       ];
     }
     
     // Status filter
-    if (status) {
-      where.status = status;
+    if (status && status !== 'ALL') {
+      where.status = status.toUpperCase();
     }
+
+    const total = await User.count({ where });
 
     const participants = await User.findAll({
       where,
       attributes: { exclude: ['password'] },
       order: [['created_at', 'DESC']],
-      limit: parseInt(limit),
-      offset: parseInt(offset)
+      limit: parsedLimit,
+      offset: parsedOffset
     });
 
-    const total = await User.count({ where });
+    const participantIds = participants.map(p => p.id);
+
+    // Fetch quiz scores and progress if participants found
+    let avgQuizScoreMap = {};
+    let progressMap = {};
+    if (participantIds.length > 0) {
+      try {
+        const { QuizResult, LessonProgress, Lesson } = require('../models');
+        if (QuizResult) {
+          const quizResults = await QuizResult.findAll({
+            where: { participantId: { [Op.in]: participantIds } },
+            attributes: ['participantId', 'score']
+          });
+          const userScores = {};
+          quizResults.forEach(qr => {
+            if (!userScores[qr.participantId]) userScores[qr.participantId] = [];
+            if (qr.score !== null && qr.score !== undefined) {
+              userScores[qr.participantId].push(Number(qr.score));
+            }
+          });
+          Object.keys(userScores).forEach(uId => {
+            const arr = userScores[uId];
+            if (arr.length > 0) {
+              avgQuizScoreMap[uId] = Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
+            }
+          });
+        }
+
+        if (LessonProgress) {
+          const progressRows = await LessonProgress.findAll({
+            where: { participantId: { [Op.in]: participantIds }, isCompleted: true },
+            attributes: ['participantId', [LessonProgress.sequelize.fn('COUNT', '*'), 'completedCount']],
+            group: ['participantId'],
+            raw: true
+          });
+          const totalLessonsCount = (await Lesson?.count().catch(() => 0)) || 1;
+          progressRows.forEach(pr => {
+            const completed = Number(pr.completedCount) || 0;
+            progressMap[String(pr.participantId)] = Math.min(100, Math.round((completed / Math.max(1, totalLessonsCount)) * 100));
+          });
+        }
+      } catch (err) {
+        console.warn('Error computing participant progress/quiz metrics:', err.message);
+      }
+    }
 
     const formattedParticipants = participants.map(p => ({
       id: p.id,
@@ -722,20 +783,28 @@ const getParticipants = async (req, res) => {
       phone: p.phone,
       username: p.username,
       status: p.status,
-      joinedAt: p.createdAt || p.dataValues?.created_at
+      joinedAt: p.createdAt || p.dataValues?.created_at,
+      created_at: p.createdAt || p.dataValues?.created_at,
+      progress: progressMap[String(p.id)] || 0,
+      quizScore: avgQuizScoreMap[String(p.id)] || 0
     }));
+
+    const totalPages = Math.ceil(total / parsedLimit) || 1;
 
     res.json({ 
       success: true,
       participants: formattedParticipants,
       total,
-      hasMore: parseInt(offset) + parseInt(limit) < total
+      page: currentPage,
+      limit: parsedLimit,
+      totalPages,
+      hasMore: parsedOffset + formattedParticipants.length < total
     });
 
   } catch (error) {
     console.error('Get participants error:', error.message, error.stack);
     res.status(500).json({ 
-      success: false,
+      success: false, 
       error: 'Server error fetching participants' 
     });
   }
@@ -1271,8 +1340,16 @@ const createParticipant = async (req, res) => {
     if (!email || !email.trim()) {
       return res.status(400).json({ error: 'Participant email is required' });
     }
-    if (!password || password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    if (!validateEmail(email)) {
+      return res.status(400).json({ error: 'Please provide a valid email address (e.g. user@example.com)' });
+    }
+    if (!password) {
+      return res.status(400).json({ error: 'Password is required' });
+    }
+    if (!validatePassword(password)) {
+      return res.status(400).json({
+        error: 'Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one number, and one special character'
+      });
     }
 
     const trimmedEmail = email.trim().toLowerCase();
@@ -1363,6 +1440,603 @@ const createParticipant = async (req, res) => {
   }
 };
 
+const bulkDeleteParticipants = async (req, res) => {
+  const { ids, force = false } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ success: false, error: 'Please provide an array of participant IDs to delete.' });
+  }
+
+  const validIds = ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id) && id > 0);
+  if (validIds.length === 0) {
+    return res.status(400).json({ success: false, error: 'No valid participant IDs provided.' });
+  }
+
+  const { Op } = require('sequelize');
+  const {
+    User, Enrollment, Feedback, Notification, ParticipantProfile,
+    DeviceFingerprint, ParticipantTracking, Certificate, Attendance, DiscussionPost,
+    LessonProgress, QuizProgress, QuizAttempt, QuizAnswer, QuizResult,
+    AssessmentSession, ExamSession, Violation, Screenshot, ProctorActivity,
+    QuizCopyViolation, QuizAssignment, AssessmentSubmission,
+    MonitorAttempt, MonitorViolation, MonitorScreenshot,
+    CodingAttempt, CodingSubmission, CodingResult,
+    QuizRecording, QuizResultsAudit,
+    ProctoringSession, ProctoringEvent, ProctoringReport,
+    Training, Course
+  } = require('../models');
+
+  const { sequelize } = require('../config/db');
+
+  try {
+    const participants = await User.findAll({
+      where: { id: { [Op.in]: validIds }, role: 'PARTICIPANT' }
+    });
+
+    if (participants.length === 0) {
+      return res.status(404).json({ success: false, error: 'No matching participants found.' });
+    }
+
+    const failed = [];
+    const eligibleIds = [];
+
+    // Check dependencies for each participant
+    for (const participant of participants) {
+      const pId = participant.id;
+
+      if (!force) {
+        // 1. Check active enrollments
+        const enrollments = await Enrollment.findAll({
+          where: { participantId: pId, status: 'ENROLLED' },
+          include: [
+            { model: Training, as: 'training', attributes: ['title'], required: false },
+            { model: Course, as: 'course', attributes: ['title'], required: false }
+          ]
+        }).catch(() => []);
+
+        // 2. Check quiz / exam attempts & certificates
+        const [quizAttemptsCount, codingAttemptsCount, certificatesCount] = await Promise.all([
+          QuizAttempt.count({ where: { participantId: pId } }).catch(() => 0),
+          CodingAttempt.count({ where: { participantId: pId } }).catch(() => 0),
+          Certificate.count({ where: { userId: pId } }).catch(() => 0)
+        ]);
+
+        const hasActiveEnrollments = enrollments.length > 0;
+        const hasSubmissions = quizAttemptsCount > 0 || codingAttemptsCount > 0 || certificatesCount > 0;
+
+        if (hasActiveEnrollments || hasSubmissions) {
+          const reasons = [];
+          if (hasActiveEnrollments) {
+            const courseTitles = enrollments.map(e => e.training?.title || e.course?.title).filter(Boolean);
+            reasons.push(`Enrolled in ${enrollments.length} active course/training${courseTitles.length > 0 ? ` (${courseTitles.slice(0, 2).join(', ')}${courseTitles.length > 2 ? '...' : ''})` : ''}`);
+          }
+          if (quizAttemptsCount > 0) reasons.push(`${quizAttemptsCount} quiz attempt(s)`);
+          if (codingAttemptsCount > 0) reasons.push(`${codingAttemptsCount} coding attempt(s)`);
+          if (certificatesCount > 0) reasons.push(`${certificatesCount} certificate(s)`);
+
+          failed.push({
+            id: pId,
+            name: participant.name || participant.email,
+            reason: `Participant has active records: ${reasons.join(', ')}`
+          });
+          continue;
+        }
+      }
+
+      eligibleIds.push(pId);
+    }
+
+    // If no participants are eligible for deletion
+    if (eligibleIds.length === 0) {
+      return res.json({
+        success: false,
+        message: 'None of the selected participants could be deleted due to active dependencies.',
+        summary: {
+          total: validIds.length,
+          deleted: 0,
+          failed: failed.length
+        },
+        deletedIds: [],
+        failed
+      });
+    }
+
+    // Execute deletion in a single database transaction
+    const t = await sequelize.transaction();
+    try {
+      // 1. Quiz attempt related cleanup
+      const attempts = await QuizAttempt.findAll({
+        where: { participantId: { [Op.in]: eligibleIds } }, attributes: ['id'], transaction: t
+      });
+      const attemptIds = attempts.map(a => a.id);
+
+      if (attemptIds.length > 0) {
+        if (ProctoringReport) await ProctoringReport.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+        if (ProctoringEvent) await ProctoringEvent.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+        if (ProctoringSession) await ProctoringSession.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+        if (QuizCopyViolation) await QuizCopyViolation.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+        if (QuizAnswer) await QuizAnswer.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+        if (QuizResult) await QuizResult.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+        if (AssessmentSession) await AssessmentSession.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+        if (ExamSession) await ExamSession.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+      }
+
+      // 2. Exam session & proctoring cleanup
+      const examSessions = await ExamSession.findAll({
+        where: { participantId: { [Op.in]: eligibleIds } }, attributes: ['id'], transaction: t
+      });
+      const sessionIds = examSessions.map(e => e.id);
+
+      if (sessionIds.length > 0) {
+        if (Violation) await Violation.destroy({ where: { sessionId: { [Op.in]: sessionIds } }, transaction: t }).catch(() => {});
+        if (Screenshot) await Screenshot.destroy({ where: { sessionId: { [Op.in]: sessionIds } }, transaction: t }).catch(() => {});
+        if (ProctorActivity) await ProctorActivity.destroy({ where: { sessionId: { [Op.in]: sessionIds } }, transaction: t }).catch(() => {});
+        await ExamSession.destroy({ where: { id: { [Op.in]: sessionIds } }, transaction: t });
+      }
+
+      if (Violation) await Violation.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (Screenshot) await Screenshot.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (ProctorActivity) await ProctorActivity.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (AssessmentSession) await AssessmentSession.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+
+      // 3. Discussion posts
+      const posts = await DiscussionPost.findAll({
+        where: { userId: { [Op.in]: eligibleIds } }, attributes: ['id'], transaction: t
+      });
+      const postIds = posts.map(p => p.id);
+      if (postIds.length > 0) {
+        await DiscussionPost.update({ parentId: null }, { where: { parentId: { [Op.in]: postIds } }, transaction: t }).catch(() => {});
+        await DiscussionPost.destroy({ where: { id: { [Op.in]: postIds } }, transaction: t });
+      }
+
+      // 4. Coding attempt cleanup
+      const codingAttempts = await CodingAttempt.findAll({
+        where: { participantId: { [Op.in]: eligibleIds } }, attributes: ['id'], transaction: t
+      });
+      const codingAttemptIds = codingAttempts.map(ca => ca.id);
+      if (codingAttemptIds.length > 0) {
+        if (CodingSubmission) await CodingSubmission.destroy({ where: { attemptId: { [Op.in]: codingAttemptIds } }, transaction: t }).catch(() => {});
+        if (CodingResult) await CodingResult.destroy({ where: { attemptId: { [Op.in]: codingAttemptIds } }, transaction: t }).catch(() => {});
+        await CodingAttempt.destroy({ where: { id: { [Op.in]: codingAttemptIds } }, transaction: t });
+      }
+
+      // 5. Monitor system cleanup
+      const monitorAttempts = await MonitorAttempt.findAll({
+        where: { participantId: { [Op.in]: eligibleIds } }, attributes: ['id'], transaction: t
+      });
+      const monitorAttemptIds = monitorAttempts.map(ma => ma.id);
+      if (monitorAttemptIds.length > 0) {
+        if (MonitorViolation) await MonitorViolation.destroy({ where: { attemptId: { [Op.in]: monitorAttemptIds } }, transaction: t }).catch(() => {});
+        if (MonitorScreenshot) await MonitorScreenshot.destroy({ where: { attemptId: { [Op.in]: monitorAttemptIds } }, transaction: t }).catch(() => {});
+        await MonitorAttempt.destroy({ where: { id: { [Op.in]: monitorAttemptIds } }, transaction: t });
+      }
+
+      // 6. Other participant scoped tables
+      if (QuizProgress) await QuizProgress.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (AssessmentSubmission) await AssessmentSubmission.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (QuizRecording) await QuizRecording.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (QuizResultsAudit) await QuizResultsAudit.destroy({ where: { performedBy: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (QuizAssignment) await QuizAssignment.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (Notification) await Notification.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (ParticipantProfile) await ParticipantProfile.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (DeviceFingerprint) await DeviceFingerprint.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (ParticipantTracking) await ParticipantTracking.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (Certificate) await Certificate.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (Attendance) await Attendance.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (LessonProgress) await LessonProgress.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (Feedback) await Feedback.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (Enrollment) await Enrollment.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (QuizAttempt) await QuizAttempt.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+
+      // 7. Finally destroy User records
+      await User.destroy({ where: { id: { [Op.in]: eligibleIds } }, transaction: t });
+
+      await t.commit();
+
+      return res.json({
+        success: true,
+        message: `Successfully deleted ${eligibleIds.length} participant(s).${failed.length > 0 ? ` ${failed.length} participant(s) could not be deleted due to dependencies.` : ''}`,
+        summary: {
+          total: validIds.length,
+          deleted: eligibleIds.length,
+          failed: failed.length
+        },
+        deletedIds: eligibleIds,
+        failed
+      });
+
+    } catch (err) {
+      await t.rollback();
+      console.error('Bulk delete participants transaction error:', err);
+      return res.status(500).json({ success: false, error: 'Database transaction error during participant bulk delete.', details: err.message });
+    }
+
+  } catch (error) {
+    console.error('bulkDeleteParticipants error:', error.message);
+    res.status(500).json({ success: false, error: 'Server error bulk deleting participants' });
+  }
+};
+
+const bulkDeleteTrainers = async (req, res) => {
+  const { ids, force = false } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ success: false, error: 'Please provide an array of trainer IDs to delete.' });
+  }
+
+  const validIds = ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id) && id > 0);
+  if (validIds.length === 0) {
+    return res.status(400).json({ success: false, error: 'No valid trainer IDs provided.' });
+  }
+
+  const { Op } = require('sequelize');
+  const {
+    User, TrainerProfile, TrainerEducation, TrainerExperience, UserProfile,
+    TrainingTrainerAssignment, CourseTrainerAssignment,
+    Course, Lesson, Note, AIDocument, AIQuiz, LiveSession,
+    DiscussionPost, Notification, Training, DeviceFingerprint, ChatMessage,
+    Attendance, ActivityLog, UserSession, RefreshToken, CodingAssessment,
+    QuizRecording, RegistrationApplication, PasswordResetOtp, AssessmentSession,
+    QuizResultsAudit
+  } = require('../models');
+
+  const { sequelize } = require('../config/db');
+
+  try {
+    const trainers = await User.findAll({
+      where: { id: { [Op.in]: validIds }, role: 'TRAINER', isDeleted: false }
+    });
+
+    if (trainers.length === 0) {
+      return res.status(404).json({ success: false, error: 'No matching active trainers found.' });
+    }
+
+    const failed = [];
+    const eligibleIds = [];
+    const softDeleteIds = [];
+
+    for (const trainer of trainers) {
+      const trId = trainer.id;
+
+      // Check referenced content
+      const [courses, trainingsList, lessons, quizzes, liveSessions, codingAssessments] = await Promise.all([
+        Course.findAll({ where: { trainerId: trId }, attributes: ['title'] }).catch(() => []),
+        Training.findAll({ where: { trainerId: trId }, attributes: ['title'] }).catch(() => []),
+        Lesson.findAll({ where: { trainerId: trId }, attributes: ['title'] }).catch(() => []),
+        AIQuiz.findAll({ where: { [Op.or]: [{ trainerId: trId }, { createdBy: trId }] }, attributes: ['title'] }).catch(() => []),
+        LiveSession.findAll({ where: { trainerId: trId }, attributes: ['title'] }).catch(() => []),
+        CodingAssessment.findAll({ where: { trainerId: trId }, attributes: ['title'] }).catch(() => [])
+      ]);
+
+      const hasContent = courses.length > 0 || trainingsList.length > 0 || lessons.length > 0 || quizzes.length > 0 || liveSessions.length > 0 || codingAssessments.length > 0;
+
+      if (hasContent && !force) {
+        const assignedItems = [];
+        if (courses.length > 0) assignedItems.push(`${courses.length} course(s) (${courses.map(c => c.title).slice(0, 2).join(', ')})`);
+        if (trainingsList.length > 0) assignedItems.push(`${trainingsList.length} training program(s) (${trainingsList.map(t => t.title).slice(0, 2).join(', ')})`);
+        if (lessons.length > 0) assignedItems.push(`${lessons.length} lesson(s)`);
+        if (quizzes.length > 0) assignedItems.push(`${quizzes.length} quiz(zes)`);
+
+        failed.push({
+          id: trId,
+          name: trainer.name || trainer.email,
+          reason: `Trainer is assigned to active LMS content: ${assignedItems.join('; ')}`
+        });
+        continue;
+      }
+
+      if (hasContent && force) {
+        softDeleteIds.push(trId);
+      } else {
+        eligibleIds.push(trId);
+      }
+    }
+
+    if (eligibleIds.length === 0 && softDeleteIds.length === 0) {
+      return res.json({
+        success: false,
+        message: 'None of the selected trainers could be deleted due to active course/training assignments.',
+        summary: { total: validIds.length, deleted: 0, failed: failed.length },
+        deletedIds: [],
+        failed
+      });
+    }
+
+    const t = await sequelize.transaction();
+    try {
+      const allDeletingIds = [...eligibleIds, ...softDeleteIds];
+
+      // Clean assignments & auth sessions for all deleting trainers
+      if (CourseTrainerAssignment) await CourseTrainerAssignment.destroy({ where: { trainerId: { [Op.in]: allDeletingIds } }, transaction: t }).catch(() => {});
+      if (TrainingTrainerAssignment) await TrainingTrainerAssignment.destroy({ where: { trainerId: { [Op.in]: allDeletingIds } }, transaction: t }).catch(() => {});
+      if (DeviceFingerprint) await DeviceFingerprint.destroy({ where: { userId: { [Op.in]: allDeletingIds } }, transaction: t }).catch(() => {});
+      if (UserSession) await UserSession.destroy({ where: { userId: { [Op.in]: allDeletingIds } }, transaction: t }).catch(() => {});
+      if (RefreshToken) await RefreshToken.destroy({ where: { userId: { [Op.in]: allDeletingIds } }, transaction: t }).catch(() => {});
+      if (Notification) await Notification.destroy({ where: { userId: { [Op.in]: allDeletingIds } }, transaction: t }).catch(() => {});
+
+      // For soft-delete candidates (have content references)
+      for (const sId of softDeleteIds) {
+        const tr = trainers.find(item => item.id === sId);
+        const timestamp = Date.now();
+        const anonymizedEmail = `${tr.email}__deleted_${timestamp}`;
+        const anonymizedUsername = tr.username ? `${tr.username}__deleted_${timestamp}` : null;
+        await User.update(
+          { isDeleted: true, status: 'INACTIVE', deletedAt: new Date(), email: anonymizedEmail, username: anonymizedUsername },
+          { where: { id: sId }, transaction: t }
+        );
+      }
+
+      // For hard-delete candidates (no permanent references)
+      if (eligibleIds.length > 0) {
+        if (RegistrationApplication) {
+          await RegistrationApplication.update({ reviewerId: null }, { where: { reviewerId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+          await RegistrationApplication.update({ trainerId: null }, { where: { trainerId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+          await RegistrationApplication.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+        }
+        if (AssessmentSession) await AssessmentSession.update({ resetByAdmin: null }, { where: { resetByAdmin: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+        if (QuizRecording) await QuizRecording.destroy({ where: { trainerId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+        if (QuizResultsAudit) await QuizResultsAudit.destroy({ where: { performedBy: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+        if (ChatMessage) await ChatMessage.destroy({ where: { senderId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+        if (Attendance) await Attendance.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+        if (ActivityLog) await ActivityLog.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+        if (TrainerEducation) await TrainerEducation.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+        if (TrainerExperience) await TrainerExperience.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+        if (TrainerProfile) await TrainerProfile.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+        if (UserProfile) await UserProfile.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+
+        const isMySql = sequelize.getDialect() === 'mysql';
+        if (isMySql) await sequelize.query('SET FOREIGN_KEY_CHECKS = 0', { transaction: t }).catch(() => {});
+        await User.destroy({ where: { id: { [Op.in]: eligibleIds } }, transaction: t });
+        if (isMySql) await sequelize.query('SET FOREIGN_KEY_CHECKS = 1', { transaction: t }).catch(() => {});
+      }
+
+      await t.commit();
+
+      const deletedCount = allDeletingIds.length;
+      return res.json({
+        success: true,
+        message: `Successfully deleted ${deletedCount} trainer(s).${failed.length > 0 ? ` ${failed.length} trainer(s) were protected due to active content.` : ''}`,
+        summary: {
+          total: validIds.length,
+          deleted: deletedCount,
+          failed: failed.length
+        },
+        deletedIds: allDeletingIds,
+        failed
+      });
+
+    } catch (err) {
+      await t.rollback();
+      console.error('Bulk delete trainers transaction error:', err);
+      return res.status(500).json({ success: false, error: 'Database transaction error during trainer bulk delete.', details: err.message });
+    }
+
+  } catch (error) {
+    console.error('bulkDeleteTrainers error:', error.message);
+    res.status(500).json({ success: false, error: 'Server error bulk deleting trainers' });
+  }
+};
+
+const bulkDeleteTrainings = async (req, res) => {
+  const { ids, force = false } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ success: false, error: 'Please provide an array of training IDs to delete.' });
+  }
+
+  const validIds = ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id) && id > 0);
+  if (validIds.length === 0) {
+    return res.status(400).json({ success: false, error: 'No valid training IDs provided.' });
+  }
+
+  const { Op } = require('sequelize');
+  const {
+    Training, Course, CourseTrainerAssignment, Certificate, Enrollment,
+    Lesson, LessonMaterial, LessonQuiz, QuizProgress, LessonAssessment,
+    AssessmentSubmission, LessonProgress, ParticipantTracking, AIQuiz,
+    AIQuestion, AIQuestionOption, QuizAttempt, QuizAnswer, QuizResult,
+    QuizAssignment, QuizCopyViolation, QuizResultsAudit, QuizRecording,
+    AssessmentSession, ExamSession, Violation, ProctorActivity, Screenshot,
+    LiveSession, Note, AIDocument, DiscussionPost, RegistrationApplication,
+    TrainingTrainerAssignment, CodingAssessment, CodingProblem, CodingTestCase,
+    CodingAttempt, CodingSubmission, CodingResult, Feedback
+  } = require('../models');
+
+  const { sequelize } = require('../config/db');
+
+  try {
+    const trainings = await Training.findAll({
+      where: { id: { [Op.in]: validIds } }
+    });
+
+    if (trainings.length === 0) {
+      return res.status(404).json({ success: false, error: 'No matching training programs found.' });
+    }
+
+    const failed = [];
+    const eligibleIds = [];
+
+    for (const training of trainings) {
+      const trId = training.id;
+
+      if (!force) {
+        const enrolledCount = await Enrollment.count({ where: { trainingId: trId, status: 'ENROLLED' } }).catch(() => 0);
+        const feedbackCount = await Feedback.count({ where: { trainingId: trId } }).catch(() => 0);
+        const quizCount = await AIQuiz.count({ where: { trainingId: trId } }).catch(() => 0);
+
+        if (enrolledCount > 0 || (feedbackCount > 0 && quizCount > 0)) {
+          const reasons = [];
+          if (enrolledCount > 0) reasons.push(`${enrolledCount} enrolled participant(s)`);
+          if (feedbackCount > 0) reasons.push(`${feedbackCount} feedback response(s)`);
+          if (quizCount > 0) reasons.push(`${quizCount} quiz(zes)`);
+
+          failed.push({
+            id: trId,
+            title: training.title,
+            reason: `Training has active records: ${reasons.join(', ')}`
+          });
+          continue;
+        }
+      }
+
+      eligibleIds.push(trId);
+    }
+
+    if (eligibleIds.length === 0) {
+      return res.json({
+        success: false,
+        message: 'None of the selected trainings could be deleted due to enrolled participants or dependent records.',
+        summary: { total: validIds.length, deleted: 0, failed: failed.length },
+        deletedIds: [],
+        failed
+      });
+    }
+
+    // Cascade deletion of eligible trainings in transaction
+    const t = await sequelize.transaction();
+    try {
+      // Find all associated courses
+      const courses = await Course.findAll({ where: { trainingProgramId: { [Op.in]: eligibleIds } }, attributes: ['id'], transaction: t });
+      const courseIds = courses.map(c => c.id);
+
+      if (courseIds.length > 0) {
+        if (CourseTrainerAssignment) await CourseTrainerAssignment.destroy({ where: { courseId: { [Op.in]: courseIds } }, transaction: t }).catch(() => {});
+        if (Certificate) await Certificate.destroy({ where: { courseId: { [Op.in]: courseIds } }, transaction: t }).catch(() => {});
+        if (Enrollment) await Enrollment.destroy({ where: { courseId: { [Op.in]: courseIds } }, transaction: t }).catch(() => {});
+
+        const lessons = await Lesson.findAll({ where: { courseId: { [Op.in]: courseIds } }, attributes: ['id'], transaction: t });
+        const lessonIds = lessons.map(l => l.id);
+        if (lessonIds.length > 0) {
+          if (LessonMaterial) await LessonMaterial.destroy({ where: { lessonId: { [Op.in]: lessonIds } }, transaction: t }).catch(() => {});
+          if (QuizProgress) {
+            const lessonQuizzes = await LessonQuiz.findAll({ where: { lessonId: { [Op.in]: lessonIds } }, attributes: ['id'], transaction: t });
+            const lessonQuizIds = lessonQuizzes.map(lq => lq.id);
+            if (lessonQuizIds.length > 0) {
+              await QuizProgress.destroy({ where: { lessonQuizId: { [Op.in]: lessonQuizIds } }, transaction: t }).catch(() => {});
+              await LessonQuiz.destroy({ where: { id: { [Op.in]: lessonQuizIds } }, transaction: t }).catch(() => {});
+            }
+          }
+          if (LessonAssessment) {
+            const assessments = await LessonAssessment.findAll({ where: { lessonId: { [Op.in]: lessonIds } }, attributes: ['id'], transaction: t });
+            const assessmentIds = assessments.map(a => a.id);
+            if (assessmentIds.length > 0) {
+              if (AssessmentSubmission) await AssessmentSubmission.destroy({ where: { assessmentId: { [Op.in]: assessmentIds } }, transaction: t }).catch(() => {});
+              await LessonAssessment.destroy({ where: { id: { [Op.in]: assessmentIds } }, transaction: t }).catch(() => {});
+            }
+          }
+          if (LessonProgress) await LessonProgress.destroy({ where: { lessonId: { [Op.in]: lessonIds } }, transaction: t }).catch(() => {});
+          if (ParticipantTracking) await ParticipantTracking.destroy({ where: { lessonId: { [Op.in]: lessonIds } }, transaction: t }).catch(() => {});
+          await Lesson.destroy({ where: { id: { [Op.in]: lessonIds } }, transaction: t });
+        }
+
+        const quizzes = await AIQuiz.findAll({ where: { courseId: { [Op.in]: courseIds } }, attributes: ['id'], transaction: t });
+        const quizIds = quizzes.map(q => q.id);
+        if (quizIds.length > 0) {
+          if (AIQuestion) {
+            const aiQuestions = await AIQuestion.findAll({ where: { quizId: { [Op.in]: quizIds } }, attributes: ['id'], transaction: t });
+            const aiQuestionIds = aiQuestions.map(q => q.id);
+            if (aiQuestionIds.length > 0 && AIQuestionOption) {
+              await AIQuestionOption.destroy({ where: { questionId: { [Op.in]: aiQuestionIds } }, transaction: t }).catch(() => {});
+            }
+            await AIQuestion.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t }).catch(() => {});
+          }
+          if (QuizAssignment) await QuizAssignment.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t }).catch(() => {});
+          if (QuizCopyViolation) await QuizCopyViolation.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t }).catch(() => {});
+          if (QuizResultsAudit) await QuizResultsAudit.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t }).catch(() => {});
+          if (QuizRecording) await QuizRecording.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t }).catch(() => {});
+
+          const attempts = await QuizAttempt.findAll({ where: { quizId: { [Op.in]: quizIds } }, attributes: ['id'], transaction: t });
+          const attemptIds = attempts.map(a => a.id);
+          if (attemptIds.length > 0) {
+            if (QuizAnswer) await QuizAnswer.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+            if (QuizResult) await QuizResult.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+            if (AssessmentSession) await AssessmentSession.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+            if (ExamSession) {
+              const examSessions = await ExamSession.findAll({ where: { attemptId: { [Op.in]: attemptIds } }, attributes: ['id'], transaction: t });
+              const sessionIds = examSessions.map(s => s.id);
+              if (sessionIds.length > 0) {
+                if (Violation) await Violation.destroy({ where: { sessionId: { [Op.in]: sessionIds } }, transaction: t }).catch(() => {});
+                if (ProctorActivity) await ProctorActivity.destroy({ where: { sessionId: { [Op.in]: sessionIds } }, transaction: t }).catch(() => {});
+                if (Screenshot) await Screenshot.destroy({ where: { sessionId: { [Op.in]: sessionIds } }, transaction: t }).catch(() => {});
+                await ExamSession.destroy({ where: { id: { [Op.in]: sessionIds } }, transaction: t });
+              }
+            }
+            await QuizAttempt.destroy({ where: { id: { [Op.in]: attemptIds } }, transaction: t });
+          }
+
+          if (QuizResult) await QuizResult.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t }).catch(() => {});
+          if (AssessmentSession) await AssessmentSession.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t }).catch(() => {});
+          await AIQuiz.destroy({ where: { id: { [Op.in]: quizIds } }, transaction: t });
+        }
+
+        await Course.destroy({ where: { id: { [Op.in]: courseIds } }, transaction: t });
+      }
+
+      // Legacy training-scoped children
+      if (DiscussionPost) await DiscussionPost.destroy({ where: { trainingId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (Feedback) await Feedback.destroy({ where: { trainingId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (Enrollment) await Enrollment.destroy({ where: { trainingId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (LiveSession) await LiveSession.destroy({ where: { trainingId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (Note) await Note.destroy({ where: { trainingId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (AIDocument) await AIDocument.destroy({ where: { trainingId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (TrainingTrainerAssignment) await TrainingTrainerAssignment.destroy({ where: { trainingId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (Certificate) await Certificate.destroy({ where: { trainingId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (ParticipantTracking) await ParticipantTracking.destroy({ where: { trainingId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      if (RegistrationApplication) await RegistrationApplication.destroy({ where: { trainingId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+
+      // Coding Assessments
+      if (CodingAssessment) {
+        const ca = await CodingAssessment.findAll({ where: { trainingId: { [Op.in]: eligibleIds } }, attributes: ['id'], transaction: t });
+        const caIds = ca.map(c => c.id);
+        if (caIds.length > 0) {
+          if (CodingProblem) {
+            const probs = await CodingProblem.findAll({ where: { assessmentId: { [Op.in]: caIds } }, attributes: ['id'], transaction: t });
+            const probIds = probs.map(p => p.id);
+            if (probIds.length > 0) {
+              if (CodingTestCase) await CodingTestCase.destroy({ where: { problemId: { [Op.in]: probIds } }, transaction: t }).catch(() => {});
+              if (CodingSubmission) await CodingSubmission.destroy({ where: { problemId: { [Op.in]: probIds } }, transaction: t }).catch(() => {});
+            }
+            await CodingProblem.destroy({ where: { assessmentId: { [Op.in]: caIds } }, transaction: t }).catch(() => {});
+          }
+          if (CodingAttempt) {
+            const attempts = await CodingAttempt.findAll({ where: { assessmentId: { [Op.in]: caIds } }, attributes: ['id'], transaction: t });
+            const attemptIds = attempts.map(a => a.id);
+            if (attemptIds.length > 0) {
+              if (CodingSubmission) await CodingSubmission.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+              if (CodingResult) await CodingResult.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+              await CodingAttempt.destroy({ where: { id: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+            }
+          }
+          await CodingAssessment.destroy({ where: { id: { [Op.in]: caIds } }, transaction: t });
+        }
+      }
+
+      // Destroy trainings
+      await Training.destroy({ where: { id: { [Op.in]: eligibleIds } }, transaction: t });
+
+      await t.commit();
+
+      return res.json({
+        success: true,
+        message: `Successfully deleted ${eligibleIds.length} training session(s).${failed.length > 0 ? ` ${failed.length} training(s) could not be deleted due to dependencies.` : ''}`,
+        summary: {
+          total: validIds.length,
+          deleted: eligibleIds.length,
+          failed: failed.length
+        },
+        deletedIds: eligibleIds,
+        failed
+      });
+
+    } catch (err) {
+      await t.rollback();
+      console.error('Bulk delete trainings transaction error:', err);
+      return res.status(500).json({ success: false, error: 'Database transaction error during training bulk delete.', details: err.message });
+    }
+
+  } catch (error) {
+    console.error('bulkDeleteTrainings error:', error.message);
+    res.status(500).json({ success: false, error: 'Server error bulk deleting trainings' });
+  }
+};
+
 module.exports = {
   updateTraining,
   deleteTraining,
@@ -1373,6 +2047,9 @@ module.exports = {
   createParticipant,
   sendReminders,
   deleteParticipant,
+  bulkDeleteParticipants,
+  bulkDeleteTrainers,
+  bulkDeleteTrainings,
   exportFeedbacksCSV,
   getTrainingStats,
   getPendingParticipants,

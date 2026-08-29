@@ -40,6 +40,7 @@ const {
   QuizAttempt,
   QuizAnswer,
   QuizResult,
+  CodingAssessment,
   ExamSession,
   Violation,
   ProctorActivity,
@@ -126,6 +127,7 @@ async function listMyCourses(req, res) {
   try {
     let where = {};
     if (!isAdmin(req.user)) {
+      // Find course IDs where trainer is assigned via CourseTrainerAssignment
       const assignments = await CourseTrainerAssignment.findAll({
         where: { trainerId: req.user.id },
         attributes: ['courseId']
@@ -149,14 +151,16 @@ async function listMyCourses(req, res) {
     if (courses.length === 0) return res.json({ success: true, courses: [] });
 
     const ids = courses.map(c => c.id);
-    const [lessons, quizzes, enrolled] = await Promise.all([
+    const [lessons, quizzes, enrolled, coding] = await Promise.all([
       Lesson.findAll({ where: { courseId: ids }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }),
       AIQuiz.findAll({ where: { courseId: ids }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }),
       Enrollment.findAll({ where: { courseId: ids, status: 'ENROLLED' }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }),
+      CodingAssessment.findAll({ where: { courseId: ids }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }),
     ]);
     const lc = Object.fromEntries(lessons.map(r => [String(r.courseId), Number(r.cnt)]));
     const qc = Object.fromEntries(quizzes.map(r => [String(r.courseId), Number(r.cnt)]));
     const ec = Object.fromEntries(enrolled.map(r => [String(r.courseId), Number(r.cnt)]));
+    const cc = Object.fromEntries(coding.map(r => [String(r.courseId), Number(r.cnt)]));
 
     const out = courses.map(c => ({
       id: c.id,
@@ -169,6 +173,7 @@ async function listMyCourses(req, res) {
       lessonCount:   lc[String(c.id)] || 0,
       quizCount:     qc[String(c.id)] || 0,
       enrolledCount: ec[String(c.id)] || 0,
+      codingCount:   cc[String(c.id)] || 0,
       createdAt: c.created_at,
       updatedAt: c.updated_at,
     }));
@@ -231,11 +236,23 @@ async function getCourseDetail(req, res) {
     const course = await loadOwnedCourse(req, res, req.params.courseId);
     if (!course) return;
 
-    const [program, lessonCount, quizCount, enrolledCount] = await Promise.all([
+    const courseWhere = course.trainingProgramId
+      ? { [Op.or]: [{ courseId: course.id }, { trainingId: course.trainingProgramId }] }
+      : { courseId: course.id };
+
+    const [program, lessonCount, quizCount, enrolledCount, codingCount] = await Promise.all([
       Training.findByPk(course.trainingProgramId, { attributes: ['id', 'title'] }),
-      Lesson.count({ where: { courseId: course.id } }),
-      AIQuiz.count({ where: { courseId: course.id } }),
-      Enrollment.count({ where: { courseId: course.id, status: 'ENROLLED' } }),
+      Lesson.count({ where: courseWhere }),
+      AIQuiz.count({ where: courseWhere }),
+      Enrollment.count({
+        where: {
+          status: 'ENROLLED',
+          ...(course.trainingProgramId
+            ? { [Op.or]: [{ courseId: course.id }, { trainingId: course.trainingProgramId }] }
+            : { courseId: course.id })
+        }
+      }),
+      CodingAssessment.count({ where: courseWhere }),
     ]);
 
     res.json({
@@ -249,9 +266,10 @@ async function getCourseDetail(req, res) {
         description: course.description,
         status: course.status,
         thumbnailUrl: course.thumbnailUrl,
-        lessonCount,
-        quizCount,
-        enrolledCount,
+        lessonCount: Number(lessonCount || 0),
+        quizCount: Number(quizCount || 0),
+        enrolledCount: Number(enrolledCount || 0),
+        codingCount: Number(codingCount || 0),
         createdAt: course.created_at,
         updatedAt: course.updated_at,
       },

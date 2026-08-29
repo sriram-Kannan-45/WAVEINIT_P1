@@ -62,6 +62,7 @@ const MAT_ICON = {
 // MY COURSES LIST
 // ════════════════════════════════════════════════════════════════════════════
 function MyCoursesList({ user, onOpen }) {
+  const navigate = useNavigate()
   const { error: showError } = useToast()
   const [courses, setCourses] = useState([])
   const [loading, setLoading] = useState(true)
@@ -70,6 +71,7 @@ function MyCoursesList({ user, onOpen }) {
   const [sortBy, setSortBy] = useState('newest')
   const [quickJumpOpen, setQuickJumpOpen] = useState(false)
   const [quickJumpSearch, setQuickJumpSearch] = useState('')
+  const [actionMenuOpen, setActionMenuOpen] = useState(null)
   const [currentPage, setCurrentPage] = useState(1)
   const PAGE_SIZE = 4
 
@@ -156,12 +158,6 @@ function MyCoursesList({ user, onOpen }) {
           </div>
         </div>
 
-        <button
-          className="tmt-create-btn"
-          onClick={() => {}}
-        >
-          <Plus size={15} strokeWidth={2.5} /> Create Course
-        </button>
       </div>
 
       {/* ── 2. Statistics Cards Row (4 Cards) ── */}
@@ -419,7 +415,7 @@ function MyCoursesList({ user, onOpen }) {
                       {/* LESSONS COLUMN */}
                       <td className="tmt-td">
                         <div className="tmt-metric-cell">
-                          <span className="tmt-metric-val">{course.totalLessons || course.lessonCount || 0}</span>
+                          <span className="tmt-metric-val">{course.totalLessons ?? course.lessonCount ?? 0}</span>
                           <span className="tmt-metric-sub">Lessons</span>
                         </div>
                       </td>
@@ -427,7 +423,7 @@ function MyCoursesList({ user, onOpen }) {
                       {/* STUDENTS COLUMN */}
                       <td className="tmt-td">
                         <div className="tmt-metric-cell">
-                          <span className="tmt-metric-val">{course.enrolledCount || 1}</span>
+                          <span className="tmt-metric-val">{course.enrolledCount ?? 0}</span>
                           <span className="tmt-metric-sub">Students</span>
                         </div>
                       </td>
@@ -444,12 +440,87 @@ function MyCoursesList({ user, onOpen }) {
                       <td className="tmt-td" style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
                         <div style={{ position: 'relative', display: 'inline-block' }}>
                           <button
-                            className="tmt-more-btn"
-                            onClick={() => onOpen(course.courseId || course.id)}
+                            className="tmt-table-action-btn"
+                            aria-label="Course actions"
                             title="Actions"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              const cId = course.courseId || course.id
+                              setActionMenuOpen(actionMenuOpen === cId ? null : cId)
+                            }}
                           >
-                            <MoreHorizontal size={15} />
+                            <MoreHorizontal size={16} />
                           </button>
+
+                          <AnimatePresence>
+                            {actionMenuOpen === (course.courseId || course.id) && (
+                              <>
+                                <div
+                                  style={{ position: 'fixed', inset: 0, zIndex: 40 }}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setActionMenuOpen(null)
+                                  }}
+                                />
+                                <motion.div
+                                  className="tmt-action-dropdown"
+                                  style={{ minWidth: 200 }}
+                                  initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                                  exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                                  transition={{ duration: 0.12 }}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <button
+                                    className="tmt-action-dropdown-item"
+                                    onClick={() => {
+                                      setActionMenuOpen(null)
+                                      onOpen(course.courseId || course.id, 'overview')
+                                    }}
+                                  >
+                                    <BookOpen size={14} color="#16A34A" /> View Structure
+                                  </button>
+                                  <button
+                                    className="tmt-action-dropdown-item"
+                                    onClick={() => {
+                                      setActionMenuOpen(null)
+                                      onOpen(course.courseId || course.id, 'lessons')
+                                    }}
+                                  >
+                                    <FileText size={14} color="#2563EB" /> Lessons & Content
+                                  </button>
+                                  <button
+                                    className="tmt-action-dropdown-item"
+                                    onClick={() => {
+                                      setActionMenuOpen(null)
+                                      onOpen(course.courseId || course.id, 'quizzes')
+                                    }}
+                                  >
+                                    <Sparkles size={14} color="#D97706" /> AI Quizzes
+                                  </button>
+                                  <button
+                                    className="tmt-action-dropdown-item"
+                                    onClick={() => {
+                                      setActionMenuOpen(null)
+                                      onOpen(course.courseId || course.id, 'coding')
+                                    }}
+                                  >
+                                    <Code size={14} color="#7C3AED" /> Coding Assessments
+                                  </button>
+                                  <button
+                                    className="tmt-action-dropdown-item"
+                                    onClick={() => {
+                                      setActionMenuOpen(null)
+                                      const programId = course.trainingProgramId || course.trainingId || course.courseId || course.id
+                                      navigate(`/trainings/${programId}/leaderboard`)
+                                    }}
+                                  >
+                                    <Trophy size={14} color="#EA580C" /> Leaderboard
+                                  </button>
+                                </motion.div>
+                              </>
+                            )}
+                          </AnimatePresence>
                         </div>
                       </td>
                     </tr>
@@ -576,10 +647,10 @@ function CourseView({ user, courseId, onBack, onOpenLesson }) {
   ]
 
   const heroStats = [
-    { icon: FileText, label: 'Lessons', value: overview.stats.totalLessons || 103, bg: '#EAF8F0', color: '#16A34A' },
-    { icon: Sparkles, label: 'Quizzes', value: overview.stats.totalQuizzes !== undefined ? overview.stats.totalQuizzes : 1, bg: '#FFFBEB', color: '#D97706' },
-    { icon: Users, label: 'Students', value: overview.stats.enrolledCount || 1, bg: '#FAF5FF', color: '#8B5CF6' },
-    { icon: Code, label: 'Coding', value: overview.stats.codingCount || 0, bg: '#EFF6FF', color: '#2563EB' },
+    { icon: FileText, label: 'Lessons', value: overview?.stats?.totalLessons ?? 0, bg: '#EAF8F0', color: '#16A34A' },
+    { icon: Sparkles, label: 'Quizzes', value: overview?.stats?.totalQuizzes ?? 0, bg: '#FFFBEB', color: '#D97706' },
+    { icon: Users, label: 'Students', value: overview?.stats?.enrolledCount ?? 0, bg: '#FAF5FF', color: '#8B5CF6' },
+    { icon: Code, label: 'Coding', value: overview?.stats?.codingCount ?? 0, bg: '#EFF6FF', color: '#2563EB' },
   ]
 
   return (
@@ -1123,8 +1194,14 @@ function QuizzesView({ user, courseId, trainingId }) {
       const res = await fetch(startUrl, { method: 'POST', headers: auth(token) })
       const response = await res.json()
       if (!res.ok) { showError(response.error || 'Failed to start quiz'); return }
-      // Navigate to Mobile Camera Verification Step
-      navigate(`/trainings/${trainingId}/quizzes/${quizId}/verification?attemptId=${response.attemptId}&sessionToken=${response.sessionToken}`)
+      // Navigate directly to Quiz Attempt (Mobile QR verification paused)
+      // navigate(`/trainings/${trainingId}/quizzes/${quizId}/verification?attemptId=${response.attemptId}&sessionToken=${response.sessionToken}`)
+      const params = new URLSearchParams({
+        attemptId: String(response.attemptId),
+        sessionToken: response.sessionToken || '',
+        monitoringSessionId: response.monitoringSessionId || '',
+      })
+      navigate(`/trainings/${trainingId}/quizzes/${quizId}/attempt?${params.toString()}`)
     } catch (err) { showError(err.message) }
   }
 
@@ -1201,20 +1278,18 @@ function QuizzesView({ user, courseId, trainingId }) {
               )}
               <button
                 onClick={() => {
-                  if (q.myStatus === 'IN_PROGRESS') handleStart(q.quizId)
-                  else if (q.myStatus !== 'NOT_STARTED' && q.resultStatus === 'PUBLISHED') navigate(`/trainings/${trainingId}/quizzes/${q.quizId}/result`)
-                  else handleStart(q.quizId)
+                  if (q.myStatus === 'IN_PROGRESS' || q.myStatus === 'NOT_STARTED') handleStart(q.quizId)
                 }}
-                disabled={q.myStatus !== 'NOT_STARTED' && q.myStatus !== 'IN_PROGRESS' && q.resultStatus !== 'PUBLISHED'}
+                disabled={q.myStatus !== 'NOT_STARTED' && q.myStatus !== 'IN_PROGRESS'}
                 className="wl-btn-primary"
                 style={{
                   height: 32, padding: '0 14px', fontSize: 11,
-                  opacity: (q.myStatus !== 'NOT_STARTED' && q.myStatus !== 'IN_PROGRESS' && q.resultStatus !== 'PUBLISHED') ? 0.5 : 1,
-                  cursor: (q.myStatus !== 'NOT_STARTED' && q.myStatus !== 'IN_PROGRESS' && q.resultStatus !== 'PUBLISHED') ? 'not-allowed' : 'pointer',
+                  opacity: (q.myStatus !== 'NOT_STARTED' && q.myStatus !== 'IN_PROGRESS') ? 0.6 : 1,
+                  cursor: (q.myStatus !== 'NOT_STARTED' && q.myStatus !== 'IN_PROGRESS') ? 'default' : 'pointer',
                 }}
               >
                 {q.myStatus === 'IN_PROGRESS' ? <><PlayCircle size={11} /> Resume</>
-                  : q.myStatus !== 'NOT_STARTED' ? (q.resultStatus === 'PUBLISHED' ? <><Eye size={11} /> View Result</> : 'Attempted')
+                  : q.myStatus !== 'NOT_STARTED' ? 'Submitted'
                   : <><PlayCircle size={11} /> Start</>}
               </button>
             </div>
@@ -1354,21 +1429,19 @@ function CodingAssessmentsView({ user, courseId, trainingId }) {
               )}
               <button
                 onClick={() => {
-                  if (a.myStatus === 'IN_PROGRESS') handleStart(a.assessmentId)
-                  else if (a.myStatus !== 'NOT_STARTED' && a.resultStatus === 'PUBLISHED') navigate(`/trainings/${trainingId}/coding/${a.assessmentId}/result`)
-                  else handleStart(a.assessmentId)
+                  if (a.myStatus === 'IN_PROGRESS' || a.myStatus === 'NOT_STARTED') handleStart(a.assessmentId)
                 }}
-                disabled={a.myStatus !== 'NOT_STARTED' && a.myStatus !== 'IN_PROGRESS' && a.resultStatus !== 'PUBLISHED'}
+                disabled={a.myStatus !== 'NOT_STARTED' && a.myStatus !== 'IN_PROGRESS'}
                 className="wl-btn-primary"
                 style={{
                   height: 32, padding: '0 14px', fontSize: 11,
                   background: '#2563eb',
-                  opacity: (a.myStatus !== 'NOT_STARTED' && a.myStatus !== 'IN_PROGRESS' && a.resultStatus !== 'PUBLISHED') ? 0.5 : 1,
-                  cursor: (a.myStatus !== 'NOT_STARTED' && a.myStatus !== 'IN_PROGRESS' && a.resultStatus !== 'PUBLISHED') ? 'not-allowed' : 'pointer',
+                  opacity: (a.myStatus !== 'NOT_STARTED' && a.myStatus !== 'IN_PROGRESS') ? 0.6 : 1,
+                  cursor: (a.myStatus !== 'NOT_STARTED' && a.myStatus !== 'IN_PROGRESS') ? 'default' : 'pointer',
                 }}
               >
                 {a.myStatus === 'IN_PROGRESS' ? <><PlayCircle size={11} /> Resume</>
-                  : a.myStatus !== 'NOT_STARTED' ? (a.resultStatus === 'PUBLISHED' ? <><Eye size={11} /> View Result</> : 'Attempted')
+                  : a.myStatus !== 'NOT_STARTED' ? 'Submitted'
                   : <><PlayCircle size={11} /> Start</>}
               </button>
             </div>
@@ -2252,9 +2325,15 @@ export default function ParticipantCourses({ user, initialCourseId }) {
   const location = useLocation()
   const navigate = useNavigate()
 
-  const paramCourseId = searchParams.get('courseId') ? Number(searchParams.get('courseId')) : null
-  const paramLessonId = searchParams.get('lessonId') ? Number(searchParams.get('lessonId')) : null
-  const activeCourseId = paramCourseId || initialCourseId || location.state?.courseId || null
+  const parseValidId = (val) => {
+    if (!val || val === 'undefined' || val === 'null') return null;
+    const num = Number(val);
+    return isNaN(num) || num <= 0 ? null : num;
+  };
+
+  const paramCourseId = parseValidId(searchParams.get('courseId'));
+  const paramLessonId = parseValidId(searchParams.get('lessonId'));
+  const activeCourseId = paramCourseId || parseValidId(initialCourseId) || parseValidId(location.state?.courseId) || null;
 
   const getInitialView = () => {
     if (paramLessonId && activeCourseId) {
@@ -2270,8 +2349,8 @@ export default function ParticipantCourses({ user, initialCourseId }) {
 
   // Sync state with URL search params whenever browser Back/Forward/Navigation happens
   useEffect(() => {
-    const cId = searchParams.get('courseId') ? Number(searchParams.get('courseId')) : (initialCourseId || location.state?.courseId || null)
-    const lId = searchParams.get('lessonId') ? Number(searchParams.get('lessonId')) : null
+    const cId = parseValidId(searchParams.get('courseId')) || parseValidId(initialCourseId) || parseValidId(location.state?.courseId) || null;
+    const lId = parseValidId(searchParams.get('lessonId'));
     if (lId && cId) {
       setView({ mode: 'lesson', courseId: cId, lessonId: lId })
     } else if (cId) {
@@ -2281,10 +2360,15 @@ export default function ParticipantCourses({ user, initialCourseId }) {
     }
   }, [searchParams, location.state?.courseId, initialCourseId])
 
-  const navigateToCourse = (courseId) => {
+  const navigateToCourse = (courseId, targetSubtab) => {
     const newParams = new URLSearchParams(location.search)
     newParams.set('tab', 'myEnrollments')
     newParams.set('courseId', courseId)
+    if (targetSubtab) {
+      newParams.set('subtab', targetSubtab)
+    } else {
+      newParams.delete('subtab')
+    }
     newParams.delete('lessonId')
     navigate({ pathname: location.pathname, search: newParams.toString() })
   }

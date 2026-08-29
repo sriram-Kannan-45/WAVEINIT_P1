@@ -4,7 +4,7 @@ import {
   ArrowLeft, Settings, Users, BarChart3, Trophy, FileText,
   Plus, Pencil, Trash2, Save, X, Send, Loader2, AlertTriangle, Eye, Star,
   Search, Clock, HelpCircle, CheckCircle2, AlertCircle, RefreshCw, Monitor, Ban, XCircle,
-  Shield, ShieldCheck, ShieldAlert,
+  Shield, ShieldCheck, ShieldAlert, Download,
 } from 'lucide-react'
 import { API, API_BASE } from '../api/api'
 import { useToast } from '../components/Toast'
@@ -623,6 +623,45 @@ function ResultsTab({ quiz, onRefresh, auth, toast }) {
           {results.length} Participant Submissions
         </h3>
         <div style={{ display: 'flex', gap: 8 }}>
+          {results.length > 0 && (
+            <button
+              className="reg-admin-btn"
+              onClick={async () => {
+                const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
+                const token = storedUser?.token || localStorage.getItem('token') || sessionStorage.getItem('token');
+                const downloadUrl = `${API_BASE}/monitoring/reports/assessment/${quiz.id}/excel?contextType=QUIZ&token=${encodeURIComponent(token || '')}`;
+                try {
+                  const res = await fetch(downloadUrl, {
+                    headers: token ? { Authorization: `Bearer ${token}` } : {}
+                  });
+                  if (!res.ok) throw new Error('Download failed');
+                  const blob = await res.blob();
+                  const url = window.URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `assessment_marks_${quiz.id}.xlsx`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  window.URL.revokeObjectURL(url);
+                } catch (e) {
+                  window.open(downloadUrl, '_blank');
+                }
+              }}
+              style={{
+                cursor: 'pointer',
+                background: '#ecfdf5',
+                border: '1px solid #10b981',
+                color: '#047857',
+                fontWeight: 700,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6
+              }}
+            >
+              <Download size={14} /> Download Excel Marks
+            </button>
+          )}
           {quiz.resultStatus === 'HIDDEN' && results.length > 0 && (
             <button
               className="reg-admin-btn reg-admin-btn--primary"
@@ -717,7 +756,20 @@ function ResultsTab({ quiz, onRefresh, auth, toast }) {
                       {entry.evaluatedAt || entry.submittedAt ? new Date(entry.evaluatedAt || entry.submittedAt).toLocaleDateString() : '—'}
                     </td>
                     <td style={{ textAlign: 'right', paddingRight: 20 }}>
-                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center' }}>
+                        {entry.riskScore != null && (
+                          <span style={{
+                            padding: '3px 8px',
+                            borderRadius: 6,
+                            fontSize: 11,
+                            fontWeight: 700,
+                            background: entry.riskLevel === 'CRITICAL' ? '#fee2e2' : entry.riskLevel === 'HIGH' ? '#ffedd5' : entry.riskLevel === 'MEDIUM' ? '#fef3c7' : '#ecfdf5',
+                            color: entry.riskLevel === 'CRITICAL' ? '#dc2626' : entry.riskLevel === 'HIGH' ? '#ea580c' : entry.riskLevel === 'MEDIUM' ? '#d97706' : '#059669',
+                            border: `1px solid ${entry.riskLevel === 'CRITICAL' ? '#fca5a5' : entry.riskLevel === 'HIGH' ? '#fed7aa' : entry.riskLevel === 'MEDIUM' ? '#fde68a' : '#a7f3d0'}`,
+                          }}>
+                            {entry.riskScore.toFixed(1)} / 100 ({entry.riskLevel})
+                          </span>
+                        )}
                         {entry.attemptId && (
                           <button
                             onClick={() => setSelectedProctorAttempt(entry.attemptId)}

@@ -56,6 +56,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
   const [courseDetails, setCourseDetails] = useState(null)
   const [activeAttemptId, setActiveAttemptId] = useState(attemptId ? parseInt(attemptId, 10) : null)
   const [activeSessionToken, setActiveSessionToken] = useState(sessionToken || null)
+  const [activeMonitoringSessionId, setActiveMonitoringSessionId] = useState(searchParams.get('monitoringSessionId') || null)
 
   // Verification Session States
   const [sessionData, setSessionData] = useState(null)
@@ -127,6 +128,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
           curSessionToken = startData.sessionToken
           setActiveAttemptId(curAttemptId)
           setActiveSessionToken(curSessionToken)
+          setActiveMonitoringSessionId(startData.monitoringSessionId || null)
           if (startData.quiz) {
             setQuizDetails(startData.quiz)
           }
@@ -503,50 +505,29 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
     }
   }
 
-  // 10. Start / Resume Quiz after Verification
+  // 10. Start / Resume Quiz after Verification (Mobile QR Paused)
   const handleStartQuiz = async () => {
-    if (!isFullyVerified && !mobileCameraReady) {
-      showError('Please complete all verification steps before proceeding.')
-      return
-    }
-
     try {
       setVerifyingStart(true)
-      const res = await fetch(`${API_BASE}/assessment-verification/verify-start`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(activeToken ? { Authorization: `Bearer ${activeToken}` } : {}),
-        },
-        body: JSON.stringify({
-          assessmentType: 'QUIZ',
-          assessmentId: parseInt(quizId, 10),
-          attemptId: activeAttemptId,
-          sessionId: sessionData?.sessionId,
-          token: sessionData?.token,
-        }),
-      })
-
-      const data = await res.json()
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Verification check failed on server')
-      }
 
       // Persist verification in session storage
       try {
         sessionStorage.setItem(
           `assessment_verif_QUIZ_${quizId}_${activeAttemptId}`,
-          JSON.stringify({ sessionId: sessionData?.sessionId, token: sessionData?.token })
+          JSON.stringify({ sessionId: sessionData?.sessionId || `bypassed_${Date.now()}`, token: sessionData?.token || 'bypassed' })
         )
       } catch (e) {}
 
       // Navigate to the actual quiz attempt screen
       const coursePath = trainingId ? `/trainings/${trainingId}` : ''
-      navigate(
-        `${coursePath}/quizzes/${quizId}/attempt?attemptId=${activeAttemptId}&sessionToken=${activeSessionToken || ''}`
-      )
+      const params = new URLSearchParams({
+        attemptId: String(activeAttemptId),
+        sessionToken: activeSessionToken || '',
+        monitoringSessionId: activeMonitoringSessionId || '',
+      })
+      navigate(`${coursePath}/quizzes/${quizId}/attempt?${params.toString()}`)
     } catch (err) {
-      showError(err.message || 'Verification could not be confirmed')
+      showError(err.message || 'Unable to start quiz')
       setVerifyingStart(false)
     }
   }
@@ -942,31 +923,20 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
 
           <div className="wi-verif-lock-action-row">
             <div
-              className={`wi-verif-lock-state ${
-                isFullyVerified || mobileCameraReady ? 'wi-verif-lock-state--unlocked' : ''
-              }`}
+              className="wi-verif-lock-state wi-verif-lock-state--unlocked"
             >
-              {isFullyVerified || mobileCameraReady ? (
-                <>
-                  <Unlock size={16} />
-                  <span>UNLOCKED</span>
-                </>
-              ) : (
-                <>
-                  <Lock size={16} />
-                  <span>LOCKED</span>
-                </>
-              )}
+              <Unlock size={16} />
+              <span>READY (MOBILE PAUSED)</span>
             </div>
 
             <button
               onClick={handleStartQuiz}
-              disabled={(!isFullyVerified && !mobileCameraReady) || verifyingStart}
+              disabled={verifyingStart}
               className="wi-verif-start-btn"
             >
               {verifyingStart ? (
                 <>
-                  <Loader2 size={16} className="animate-spin" /> Verifying...
+                  <Loader2 size={16} className="animate-spin" /> Starting...
                 </>
               ) : (
                 <>
@@ -977,9 +947,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
           </div>
 
           <p className="wi-verif-footer-help">
-            {isFullyVerified || mobileCameraReady
-              ? 'All verification checks passed. Click Start / Resume Quiz to enter the assessment.'
-              : 'Complete all verification steps to unlock the assessment.'}
+            Mobile QR verification is temporarily paused. Click Start / Resume Quiz to enter the assessment.
           </p>
         </div>
       </div>

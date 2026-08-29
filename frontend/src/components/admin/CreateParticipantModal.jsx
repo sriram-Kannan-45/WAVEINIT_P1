@@ -5,15 +5,11 @@ import {
 } from 'lucide-react'
 import { API } from '../../api/api'
 import { useToast } from '../Toast'
-
-function generateSecurePassword() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$'
-  let pwd = ''
-  for (let i = 0; i < 10; i++) {
-    pwd += chars.charAt(Math.floor(Math.random() * chars.length))
-  }
-  return pwd
-}
+import {
+  validateEmail,
+  validatePassword,
+  generateCompliantPassword,
+} from '../../utils/validators'
 
 export default function CreateParticipantModal({
   open,
@@ -37,7 +33,7 @@ export default function CreateParticipantModal({
   if (!open) return null
 
   const handleGeneratePassword = () => {
-    const gen = generateSecurePassword()
+    const gen = generateCompliantPassword(10)
     setForm(prev => ({ ...prev, password: gen }))
     setShowPassword(true)
   }
@@ -54,8 +50,16 @@ export default function CreateParticipantModal({
       setErrorMsg('Email address is required')
       return
     }
-    if (!form.password || form.password.length < 6) {
-      setErrorMsg('Password must be at least 6 characters')
+    if (!validateEmail(form.email)) {
+      setErrorMsg('Please enter a valid email address (e.g. user@example.com)')
+      return
+    }
+    if (!form.password) {
+      setErrorMsg('Password is required')
+      return
+    }
+    if (!validatePassword(form.password)) {
+      setErrorMsg('Password must be at least 8 characters long and contain uppercase, lowercase, a number, and a special character')
       return
     }
 
@@ -229,7 +233,7 @@ export default function CreateParticipantModal({
                   <input
                     type={showPassword ? 'text' : 'password'}
                     className="reg-input"
-                    placeholder="Enter password (min 6 chars)"
+                    placeholder="Enter password (min 8 chars, mixed case, symbol)"
                     value={form.password}
                     onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
                     style={{ paddingLeft: 36, paddingRight: 36, width: '100%', height: 40, borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 13 }}

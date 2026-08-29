@@ -2903,6 +2903,41 @@ except Exception as e:
     PROCTORING_ENGINE_AVAILABLE = False
 
 
+# ── Person-presence fallback for the MediaPipe laptop pipeline ──────────
+# Face landmarks are the primary "occupant present" signal. When the face is
+# not resolvable (full body visible but small/turned/blurred face), the YOLO
+# person class proves the occupant is nevertheless present so the session is
+# never misreported as "No Person".
+if PROCTORING_ENGINE_AVAILABLE and YOLO_ENGINE_AVAILABLE:
+    def _yolo_person_presence(frame):
+        try:
+            import cv2
+            probe = frame
+            h, w = probe.shape[:2]
+            if max(h, w) > 640:
+                scale = 640.0 / max(h, w)
+                probe = cv2.resize(
+                    probe,
+                    (int(w * scale), int(h * scale)),
+                    interpolation=cv2.INTER_AREA,
+                )
+            results = yolo_engine.model(probe, conf=0.35, verbose=False)
+            persons = 0
+            for box in results[0].boxes:
+                if int(box.cls[0].item()) == int(yolo_engine.person_class_id):
+                    persons += 1
+            return (persons > 0, persons)
+        except Exception as exc:
+            log.warning(f"YOLO person-presence fallback error: {exc}")
+            return None
+
+    try:
+        proctor_engine.set_person_detector(_yolo_person_presence)
+        log.info("YOLO person-presence fallback wired into MediaPipe proctoring engine")
+    except Exception as exc:
+        log.warning(f"Could not wire YOLO person-presence fallback: {exc}")
+
+
 class AnalyzeFrameRequest(BaseModel):
     frame: str  # Base64 data URL or raw base64 JPEG/PNG
     sessionId: Optional[str] = "default"
@@ -3033,8 +3068,8 @@ async def get_proctoring_status():
             "yolo": yolo_status,
             "mediapipe": {
                 "status": "UP" if PROCTORING_ENGINE_AVAILABLE else "DOWN",
-                "face_landmarker": os.path.exists(FACE_MODEL_PATH) if PROCTORING_ENGINE_AVAILABLE else False,
-                "pose_landmarker": os.path.exists(POSE_MODEL_PATH) if PROCTORING_ENGINE_AVAILABLE else False,
+                "face_landmarker": bool(FACE_MODEL_PATH and os.path.exists(FACE_MODEL_PATH)) if PROCTORING_ENGINE_AVAILABLE else False,
+                "pose_landmarker": bool(POSE_MODEL_PATH and os.path.exists(POSE_MODEL_PATH)) if PROCTORING_ENGINE_AVAILABLE else False,
             }
         }
     }
@@ -3052,8 +3087,11 @@ async def generate_proctoring_report_endpoint(req: GenerateReportRequest):
         raise HTTPException(status_code=503, detail="MediaPipe proctoring engine is unavailable")
     try:
         out_path = req.outputPath or str(Path(__file__).resolve().parent / "reports" / f"session_{req.sessionId}_report.xlsx")
-        saved_path = proctor_engine.generate_session_report(req.sessionId, out_path)
-        return {"success": True, "sessionId": req.sessionId, "excelPath": saved_path}
+        payload = proctor_engine.finalize_session(
+            session_id=req.sessionId,
+            output_excel=out_path,
+        )
+        return {"success": True, "sessionId": req.sessionId, "excelPath": payload.get("excel_path", out_path)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

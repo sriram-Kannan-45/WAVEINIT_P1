@@ -13,6 +13,17 @@
 
 import { API_BASE, BACKEND_ORIGIN } from '../../api/api';
 
+// Webcam monitoring video is recorded purely for post-test human review. It is
+// NOT consumed by the MediaPipe/YOLO inference pipeline, so by default it is
+// disabled to avoid unbounded storage growth. Opt back in per-deployment with
+// VITE_RECORD_MONITORING_VIDEO=true.
+let RECORD_MONITORING_VIDEO = false;
+try {
+  if (typeof process !== 'undefined' && process.env?.VITE_RECORD_MONITORING_VIDEO === 'true') {
+    RECORD_MONITORING_VIDEO = true;
+  }
+} catch (_) {}
+
 class MonitoringEngineClient {
   constructor() {
     this.sessionId = null;
@@ -29,71 +40,63 @@ class MonitoringEngineClient {
     this.laptopInterval = null;
     this.laptopFps = 6;
     this.isMonitoringActive = false;
+    this.isProcessingLaptop = false;
+    this.gazeCalibrationSessionId = null;
+    this.gazeCalibrationPromise = null;
+    this.testStartedAt = null;
+    this.onLaptopDetection = null;
+    this.onMobileDetection = null;
+    this.onEventReported = null;
     this.lastReportedEventTimes = {};
-    this.multiPersonStartTime = null;
-
-    // Laptop Rolling State Machine
-    this.currentGaze = 'ON_SCREEN';
-    this.gazeStartTime = null;
-    this.lastGazeEventTime = 0;
-    this.gazeDeviationsWindow = []; // timestamps of sustained deviations
-
-    this.currentHeadPose = 'CENTER';
-    this.headPoseStartTime = null;
-    this.lastHeadPoseEventTime = 0;
-    this.headPoseDeviationsWindow = []; // timestamps of sustained deviations
-
-    this.personCountZeroStartTime = null;
-    this.lastPersonCountZeroEventTime = 0;
-    this.lastMultiPersonEventTime = 0;
-
-    // Grace model: track whether grace threshold has been exceeded this window
-    this.gazeGraceExceeded = false;
-    this.headPoseGraceExceeded = false;
 
     // Mobile Pipeline State
     this.mobileStream = null;
     this.mobileVideo = null;
     this.mobileCanvas = null;
     this.mobileInterval = null;
-    this.mobileFps = 3;
+    this.mobileFps = 5;
     this.isProcessingMobile = false;
-    this.mobileCompositionState = 'DISABLED';
-    this.mobileUserMessage = '';
-    this.lastMobileHeartbeat = Date.now();
-    this.pendingMobileFrame = null; // Latest-frame-only buffer for latency optimization
-
-    // Callbacks
-    this.onStatusUpdate = null;
-    this.onLaptopDetection = null;
-    this.onMobileDetection = null;
-    this.onEventReported = null;
 
     // Browser event listener references
     this.handleVisibilityChange = null;
     this.handleFullscreenChange = null;
     this.handleWindowBlur = null;
+    this.handleWindowFocus = null;
 
-    // Config thresholds (Robust real-world values preventing false positives)
+    // Intervals tracking state
+    this.gazeIntervalStart = null;
+    this.gazeIntervalDirection = null;
+    this.gazeRecoveryStartTime = null;
+    this.headIntervalStart = null;
+    this.headIntervalDirection = null;
+    this.headRecoveryStartTime = null;
+    this.personCountZeroStartTime = null;
+    this.personCountRecoveryStartTime = null;
+    this.multiPersonStartTime = null;
+
+    // Config thresholds (Accurate, real-time proctoring metrics)
     this.config = {
-      gazeDurationThresholdMs: 3500, // Require 3.5s continuous lookaway before counting
-      headPoseDurationThresholdMs: 3500, // Require 3.5s continuous head turn before counting
-      faceAbsentGraceMs: 4000, // Require 4s continuous absence before alert
-      multiPersonDurationThresholdMs: 3500, // Require 3.5s continuous multi-face before alert
-      gazeCooldownMs: 15000, // 15s cooldown between consecutive gaze alerts
-      headPoseCooldownMs: 15000, // 15s cooldown between consecutive head pose alerts
-      faceAbsentCooldownMs: 15000, // 15s cooldown between face absent alerts
-      multiPersonCooldownMs: 20000, // 20s cooldown between multi-person alerts
-      browserEventCooldownMs: 15000, // 15s cooldown for browser events (Addendum #7)
-      // Grace model config (Bug 18 / Addendum #8)
-      gazeGraceCount: 5, // Allow 5 sustained deviations before flagging
-      gazeGraceWindowMs: 300000, // 5-minute rolling window
-      headPoseGraceCount: 5, // Allow 5 sustained deviations before flagging
-      headPoseGraceWindowMs: 300000, // 5-minute rolling window
+      gazeDurationThresholdMs: 1500, // 1.5s continuous lookaway
+      headPoseDurationThresholdMs: 1500, // 1.5s continuous head turn
+      faceAbsentGraceMs: 1200, // 1.2s absence
+      multiPersonDurationThresholdMs: 1500, // 1.5s multi-face
+      gazeCooldownMs: 1000,
+      headPoseCooldownMs: 1000,
+      faceAbsentCooldownMs: 3000,
+      multiPersonCooldownMs: 4000,
+      browserEventCooldownMs: 3000,
+      gazeGraceCount: 3,
+      gazeGraceWindowMs: 300000,
+      headPoseGraceCount: 3,
+      headPoseGraceWindowMs: 300000,
     };
   }
 
   init({ sessionId, attemptId = null, participantId, contextType = 'QUIZ', token, socket, config = {} }) {
+    if (this.sessionId !== sessionId) {
+      this.gazeCalibrationSessionId = null;
+      this.gazeCalibrationPromise = null;
+    }
     this.sessionId = sessionId;
     this.attemptId = attemptId;
     this.participantId = participantId;
@@ -106,6 +109,27 @@ class MonitoringEngineClient {
 
     this.setupSocketListeners();
     this.setupBrowserEventListeners();
+    this._syncActiveTestTimer();
+  }
+
+  startActiveTestTimer(attemptId) {
+    this.testStartedAt = Date.now();
+    if (attemptId) this.attemptId = attemptId;
+    this._syncActiveTestTimer();
+  }
+
+  _syncActiveTestTimer() {
+    if (!this.sessionId || !this.testStartedAt) return;
+    const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
+    const token = this.token || storedUser?.token || localStorage.getItem('token') || sessionStorage.getItem('token');
+    fetch(`${API_BASE}/monitoring/sessions/${this.sessionId}/start-test`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({ attemptId: this.attemptId, testStartedAt: new Date(this.testStartedAt).toISOString() })
+    }).catch(() => {});
   }
 
   setupSocketListeners() {
@@ -382,12 +406,119 @@ class MonitoringEngineClient {
 
   // ── Laptop Camera Pipeline ────────────────────────────────────────────────
 
+  startWebcamRecording(stream) {
+    try {
+      if (typeof MediaRecorder === 'undefined') return;
+      if (!RECORD_MONITORING_VIDEO) return; // video storage disabled
+      this.recordedChunks = [];
+
+      let recordStream = stream;
+      if (this.laptopCanvas && typeof this.laptopCanvas.captureStream === 'function') {
+        try {
+          recordStream = this.laptopCanvas.captureStream(15);
+          const audioTrack = stream?.getAudioTracks()?.[0];
+          if (audioTrack) recordStream.addTrack(audioTrack);
+        } catch (_) {
+          recordStream = stream;
+        }
+      }
+
+      if (!recordStream) return;
+
+      const mimeTypes = [
+        'video/webm;codecs=vp8,opus',
+        'video/webm;codecs=vp9,opus',
+        'video/webm',
+        'video/mp4',
+      ];
+      let selectedMime = mimeTypes.find(t => MediaRecorder.isTypeSupported?.(t)) || '';
+      const recorder = selectedMime ? new MediaRecorder(recordStream, { mimeType: selectedMime }) : new MediaRecorder(recordStream);
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          this.recordedChunks.push(e.data);
+        }
+      };
+
+      recorder.start(1000); // Record in 1s timeslices
+      this.mediaRecorder = recorder;
+      console.log('[MonitoringEngine] Started webcam session recording with posture overlays');
+    } catch (err) {
+      console.warn('[MonitoringEngine] Could not start MediaRecorder:', err.message);
+    }
+  }
+
+  async stopAndUploadRecording() {
+    if (!RECORD_MONITORING_VIDEO) {
+      this.recordedChunks = [];
+      this.mediaRecorder = null;
+      return null;
+    }
+    if (!this.mediaRecorder) {
+      return null;
+    }
+
+    const sid = this.sessionId || sessionStorage.getItem('monitoring_session_id') || sessionStorage.getItem('quiz_session_token') || this.attemptId || 'active_session';
+
+    return new Promise((resolve) => {
+      try {
+        if (this.mediaRecorder.state === 'inactive') {
+          // Already stopped, upload what we have if chunks exist
+          if (!this.recordedChunks || this.recordedChunks.length === 0) {
+            return resolve(null);
+          }
+          this._uploadChunks(sid, resolve);
+          return;
+        }
+
+        this.mediaRecorder.onstop = async () => {
+          await this._uploadChunks(sid, resolve);
+        };
+
+        this.mediaRecorder.stop();
+      } catch (err) {
+        console.warn('[MonitoringEngine] Stop recording error:', err.message);
+        resolve(null);
+      }
+    });
+  }
+
+  async _uploadChunks(sid, resolve) {
+    try {
+      if (!this.recordedChunks || this.recordedChunks.length === 0) {
+        return resolve(null);
+      }
+      const blob = new Blob(this.recordedChunks, { type: this.mediaRecorder?.mimeType || 'video/webm' });
+      const formData = new FormData();
+      formData.append('video', blob, `monitoring_${sid}.webm`);
+      if (this.attemptId) formData.append('attemptId', String(this.attemptId));
+      if (this.participantId) formData.append('participantId', String(this.participantId));
+
+      const res = await fetch(`${API_BASE}/monitoring/sessions/${sid}/video`, {
+        method: 'POST',
+        headers: {
+          ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+        },
+        body: formData,
+      });
+      const result = await res.json();
+      console.log('[MonitoringEngine] Uploaded session video successfully:', result);
+      resolve(result?.data?.videoUrl || null);
+    } catch (uploadErr) {
+      console.warn('[MonitoringEngine] Video upload error:', uploadErr.message);
+      resolve(null);
+    }
+  }
+
   startLaptopMonitoring(stream, videoElement, onDetection) {
-    this.stopLaptopMonitoring();
+    this.stopLaptopMonitoring({ stopTracks: false });
     this.laptopStream = stream;
     this.laptopVideo = videoElement;
     this.onLaptopDetection = onDetection;
     this.isMonitoringActive = true;
+
+    // Begin background stream recording for post-test review
+    this.startWebcamRecording(stream);
 
     if (!this.laptopCanvas) {
       this.laptopCanvas = document.createElement('canvas');
@@ -400,95 +531,74 @@ class MonitoringEngineClient {
     console.log(`[MonitoringEngine] Laptop monitoring active (${this.laptopFps} FPS)`);
   }
 
-  stopLaptopMonitoring() {
+  stopLaptopMonitoring({ stopTracks = true } = {}) {
     if (this.laptopInterval) {
       clearInterval(this.laptopInterval);
       this.laptopInterval = null;
     }
+    // Flush any in-progress Eye/Head deviation interval so the final seconds
+    // of a lookaway that runs up to submission are still counted.
+    this._flushOpenIntervals(Date.now());
+    this.stopAndUploadRecording();
+    if (stopTracks && this.laptopStream) {
+      try {
+        this.laptopStream.getTracks().forEach((t) => t.stop());
+      } catch (_) {}
+      this.laptopStream = null;
+    }
+    if (this.laptopVideo) {
+      try {
+        this.laptopVideo.srcObject = null;
+      } catch (_) {}
+      this.laptopVideo = null;
+    }
   }
 
-  analyzeCanvasMetrics(ctx, width, height) {
-    const imgData = ctx.getImageData(0, 0, width, height);
-    const data = imgData.data;
-    const w = width;
-    const h = height;
+  async calibrateGazeBaseline(videoEl) {
+    if (!this.sessionId || !videoEl) return false;
+    if (this.gazeCalibrationSessionId === this.sessionId) return true;
+    if (this.gazeCalibrationPromise) return this.gazeCalibrationPromise;
 
-    let headSkinPixels = 0;
-    let totalSkinPixels = 0;
-    let skinCentroidX = 0;
-    let skinCentroidY = 0;
-
-    const step = 4;
-    for (let y = 0; y < h; y += step) {
-      for (let x = 0; x < w; x += step) {
-        const idx = (y * w + x) * 4;
-        const r = data[idx];
-        const g = data[idx + 1];
-        const b = data[idx + 2];
-
-        // YCbCr Skin Tone Segmentation
-        const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
-        const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
-        const isSkin =
-          r > 45 &&
-          g > 30 &&
-          b > 25 &&
-          r > g &&
-          r > b &&
-          Math.abs(r - g) > 15 &&
-          cb >= 80 &&
-          cb <= 130 &&
-          cr >= 135 &&
-          cr <= 175;
-
-        if (isSkin) {
-          totalSkinPixels++;
-          skinCentroidX += x;
-          skinCentroidY += y;
-
-          // Head zone (central 60% of frame)
-          if (x >= w * 0.20 && x <= w * 0.80 && y >= h * 0.08 && y <= h * 0.85) {
-            headSkinPixels++;
-          }
+    this.gazeCalibrationPromise = (async () => {
+      // The MediaPipe detector needs ten centered frames to establish the
+      // iris baseline. Without this handshake it learns the first exam frames
+      // as neutral, which can hide a genuine eye-only look-away.
+      for (let attempt = 0; attempt < 16; attempt += 1) {
+        const response = await this.validateCalibration(videoEl);
+        const result = response?.data || response || {};
+        if (result.ready === true) {
+          this.gazeCalibrationSessionId = this.sessionId;
+          return true;
         }
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
+      return false;
+    })();
+
+    try {
+      return await this.gazeCalibrationPromise;
+    } finally {
+      this.gazeCalibrationPromise = null;
     }
+  }
 
-    const faceDetected = headSkinPixels >= 40 || totalSkinPixels >= 70;
-    // Client-side heuristic detects 1 candidate face; multi-person detection is handled strictly via AI model
-    const faceCount = faceDetected ? 1 : 0;
-
-    let gazeClassification = 'ON_SCREEN';
-    let gazeConfidence = 0.9;
-    let headPose = { yaw: 0, pitch: 0, roll: 0 };
-
-    if (faceDetected && totalSkinPixels > 0) {
-      const avgX = (skinCentroidX / totalSkinPixels) / w;
-      const avgY = (skinCentroidY / totalSkinPixels) / h;
-
-      const yaw = Math.round((avgX - 0.5) * 80);
-      const pitch = Math.round((avgY - 0.45) * 70);
-      headPose = { yaw, pitch, roll: 0 };
-
-      // Conservative thresholds to prevent false positives when reading wide questions
-      if (avgX < 0.20) {
-        gazeClassification = 'OFF_SCREEN_LEFT';
-      } else if (avgX > 0.80) {
-        gazeClassification = 'OFF_SCREEN_RIGHT';
-      } else if (avgY > 0.82) {
-        gazeClassification = 'OFF_SCREEN_DOWN';
-      } else if (avgY < 0.15) {
-        gazeClassification = 'OFF_SCREEN_UP';
-      }
+  async finishSession() {
+    if (!this.sessionId) return null;
+    await this._flushOpenIntervals(Date.now());
+    try {
+      const response = await fetch(`${API_BASE}/monitoring/sessions/${this.sessionId}/end`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+        },
+      });
+      if (!response.ok) console.warn(`Monitoring session finalization notice (${response.status})`);
+      return response.json();
+    } catch (e) {
+      console.warn('[MonitoringEngine] finishSession error:', e.message);
+      return null;
     }
-
-    return {
-      face_detected: faceDetected,
-      face_count: faceCount,
-      gaze_classification: gazeClassification,
-      gaze_confidence: gazeConfidence,
-      head_pose: headPose,
-    };
   }
 
   async tickLaptopFrame() {
@@ -499,13 +609,37 @@ class MonitoringEngineClient {
       const ctx = this.laptopCanvas.getContext('2d', { willReadFrequently: true });
       ctx.drawImage(this.laptopVideo, 0, 0, this.laptopCanvas.width, this.laptopCanvas.height);
 
-      // 1. Instant local Computer Vision analysis (guaranteed real-time detection without network dependency)
-      const localMetrics = this.analyzeCanvasMetrics(ctx, this.laptopCanvas.width, this.laptopCanvas.height);
-      this.processLaptopMetrics(localMetrics);
+      // Draw the latest authoritative MediaPipe state onto the recording.
+      const w = this.laptopCanvas.width;
+      const h = this.laptopCanvas.height;
+      const hudGaze = this.gazeIntervalDirection ? `OFF-${this.gazeIntervalDirection}` : 'ON_SCREEN';
+      const hudHead = this.headIntervalDirection ? `${this.headIntervalDirection}` : 'CENTER';
+      const isDeviation = this.gazeIntervalDirection != null || this.headIntervalDirection != null;
+      const badgeBg = isDeviation ? 'rgba(220, 38, 38, 0.85)' : 'rgba(22, 163, 74, 0.85)';
+      const badgeColor = isDeviation ? '#dc2626' : '#16a34a';
 
-      // 2. Asynchronous backend AI validation (optimized 0.4 quality for fast transport)
+      // Face tracking box guide
+      ctx.strokeStyle = badgeColor;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(w * 0.22, h * 0.12, w * 0.56, h * 0.72);
+
+      // Top Gaze & Posture Badge
+      ctx.fillStyle = badgeBg;
+      ctx.fillRect(8, 8, w - 16, 22);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(`GAZE: ${hudGaze}  |  HEAD: ${hudHead}`, 14, 23);
+
+      // Bottom Timestamp Watermark
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+      ctx.fillRect(8, h - 20, w - 16, 16);
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = '9px monospace';
+      ctx.fillText(`PROCTORING • ${new Date().toLocaleTimeString()}`, 14, h - 8);
+
       const b64Frame = this.laptopCanvas.toDataURL('image/jpeg', 0.4);
-      fetch(`${API_BASE}/monitoring/sessions/${this.sessionId}/laptop/validate`, {
+      const res = await fetch(`${API_BASE}/monitoring/sessions/${this.sessionId}/laptop/validate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -515,14 +649,12 @@ class MonitoringEngineClient {
           sessionId: this.sessionId,
           frame: b64Frame,
         }),
-      })
-        .then((res) => res.json())
-        .then((data) => {
-          if (data?.success && data?.data) {
-            this.processLaptopMetrics(data.data);
-          }
-        })
-        .catch(() => {});
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.success && data?.data) {
+        this.processLaptopMetrics(data.data);
+      }
     } catch (err) {
       // Non-blocking frame tick error
     } finally {
@@ -533,177 +665,269 @@ class MonitoringEngineClient {
   processLaptopMetrics(metrics) {
     if (!this.isMonitoringActive) return;
     const now = Date.now();
-    const {
-      face_detected = false,
-      face_count = 0,
-      gaze_classification = 'ON_SCREEN',
-      gaze_confidence = 1.0,
-      head_pose = { yaw: 0, pitch: 0, roll: 0 },
-    } = metrics;
+    const faceCount = Number(metrics.face_count ?? (metrics.faceDetected ? 1 : (metrics.faceCount || 0))) || 0;
+    const faceDetected = Boolean(metrics.face_detected ?? metrics.faceDetected ?? (faceCount > 0));
+    // Occupant presence can be proven even without facial landmarks (body/person
+    // fallback from the AI service). Only a frame with NO face AND NO person is
+    // an actual "no person" state.
+    const personDetected = metrics.person_detected !== undefined && metrics.person_detected !== null
+      ? Boolean(metrics.person_detected)
+      : (metrics.personDetected !== undefined && metrics.personDetected !== null
+          ? Boolean(metrics.personDetected)
+          : faceDetected);
+
+    let gazeClassification = metrics.gaze_classification || metrics.gaze || 'ON_SCREEN';
+    if (!metrics.gaze_classification && metrics.gaze_direction) {
+      const gd = String(metrics.gaze_direction).toUpperCase();
+      gazeClassification = ['STRAIGHT', 'CENTER', 'UNKNOWN', 'ON_SCREEN', 'NOT DETECTED'].includes(gd) ? 'ON_SCREEN' : `OFF_SCREEN_${gd}`;
+    }
+
+    const gazeConfidence = Number(metrics.gaze_confidence ?? metrics.gazeConfidence ?? 1.0);
+
+    let headPose = metrics.head_pose || metrics.headPose;
+    if (!headPose && (metrics.yaw !== undefined || metrics.pitch !== undefined)) {
+      headPose = { yaw: Number(metrics.yaw) || 0, pitch: Number(metrics.pitch) || 0, roll: 0 };
+    }
+    headPose = headPose || { yaw: 0, pitch: 0, roll: 0 };
+
+    const headDirection = metrics.head_direction || metrics.head_pose_classification;
 
     this.onLaptopDetection?.({
-      faceDetected: face_detected,
-      faceCount: face_count,
-      gaze: gaze_classification,
-      gazeConfidence: gaze_confidence,
-      headPose: head_pose,
+      faceDetected,
+      faceCount,
+      personDetected,
+      gaze: gazeClassification,
+      gazeConfidence,
+      gazeAudit: metrics.gaze_audit || null,
+      headPose,
     });
 
     // ── 1. Person Count State Machine ───────────────────────────────────────
-    if (!face_detected || face_count === 0) {
+    const noPerson = (!faceDetected || faceCount === 0) && !personDetected;
+    if (noPerson) {
       if (!this.personCountZeroStartTime) {
         this.personCountZeroStartTime = now;
-      } else if (now - this.personCountZeroStartTime >= this.config.faceAbsentGraceMs) {
-        if (now - this.lastPersonCountZeroEventTime >= this.config.faceAbsentCooldownMs) {
-          this.reportEvent({
-            source: 'LAPTOP',
-            eventType: 'FACE_ABSENT',
-            severity: 'WARNING',
-            durationMs: now - this.personCountZeroStartTime,
-            confidence: 0.9,
-            metadata: { detail: 'Candidate face absent from camera view' },
-          });
-          this.lastPersonCountZeroEventTime = now;
-        }
       }
     } else {
-      this.personCountZeroStartTime = null;
+      this._closeAndReportFaceAbsentInterval(now);
     }
 
-    // Multi-Person: Requires sustained presence across consecutive frames (min 3.5s) and cooldown
-    if (face_count > 1) {
+    // Multi-person is a single interval, closed when the frame returns to one person.
+    if (faceCount > 1) {
       if (!this.multiPersonStartTime) {
         this.multiPersonStartTime = now;
-      } else if (now - this.multiPersonStartTime >= (this.config.multiPersonDurationThresholdMs || 3500)) {
-        if (now - this.lastMultiPersonEventTime >= (this.config.multiPersonCooldownMs || 20000)) {
-          this.reportEvent({
-            source: 'LAPTOP',
-            eventType: 'MULTIPLE_FACES',
-            severity: 'HIGH',
-            durationMs: now - this.multiPersonStartTime,
-            confidence: 0.92,
-            metadata: { face_count, detail: 'Multiple persons detected in camera view' },
-          });
-          this.lastMultiPersonEventTime = now;
-        }
       }
     } else {
-      this.multiPersonStartTime = null;
+      this._closeAndReportMultiPersonInterval(now);
     }
 
-    // ── 2. Eye Gaze Rolling State Machine with Grace Model ────────────────
-    if (gaze_classification !== 'ON_SCREEN' && gaze_confidence > 0.70) {
-      if (this.currentGaze === gaze_classification) {
-        const duration = now - this.gazeStartTime;
-        if (duration >= this.config.gazeDurationThresholdMs) {
-          if (now - this.lastGazeEventTime >= this.config.gazeCooldownMs) {
-            this.lastGazeEventTime = now;
+    // ── 2. Eye Gaze: Continuous per-direction interval scoring ─────────────
+    const gazeDir = this._classifyGazeDirection(gazeClassification);
+    this._closeAndReportGazeInterval(now, gazeDir, gazeConfidence);
 
-            // Record this sustained deviation in the rolling window
-            const windowMs = this.config.gazeGraceWindowMs || 300000;
-            this.gazeDeviationsWindow.push(now);
-            this.gazeDeviationsWindow = this.gazeDeviationsWindow.filter(t => now - t <= windowMs);
-
-            const graceCount = this.config.gazeGraceCount || 5;
-            const count = this.gazeDeviationsWindow.length;
-
-            if (count > graceCount) {
-              // Grace exceeded — log ONE escalation event summarizing the pattern
-              this.reportEvent({
-                source: 'LAPTOP',
-                eventType: 'REPEATED_GAZE_DEVIATION',
-                severity: 'WARNING',
-                durationMs: windowMs,
-                confidence: gaze_confidence,
-                metadata: {
-                  gaze_classification,
-                  deviationsInWindow: count,
-                  graceCount,
-                  windowMinutes: Math.round(windowMs / 60000),
-                  detail: `Repeated gaze deviation: ${count} occurrences in ${Math.round(windowMs / 60000)} minutes (grace: ${graceCount})`,
-                },
-              });
-              // Reset window after escalation
-              this.gazeDeviationsWindow = [];
-              this.gazeGraceExceeded = false;
-            }
-            // Within grace count: NO event logged, no score impact
-          }
-          // Reset start so the same continuous deviation isn't re-counted
-          this.gazeStartTime = now;
-        }
-      } else {
-        this.currentGaze = gaze_classification;
-        this.gazeStartTime = now;
+    if (gazeDir !== null) {
+      if (this.gazeIntervalStart === null) {
+        this.gazeIntervalStart = now;
+        this.gazeIntervalDirection = gazeDir;
+      } else if (this.gazeIntervalDirection !== gazeDir) {
+        this.gazeIntervalStart = now;
+        this.gazeIntervalDirection = gazeDir;
       }
-    } else {
-      this.currentGaze = 'ON_SCREEN';
-      this.gazeStartTime = null;
     }
 
-    // ── 3. Head Pose Rolling State Machine with Grace Model ──────────────
-    let activeHeadPose = 'CENTER';
-    if (Math.abs(head_pose?.yaw || 0) > 35.0) {
-      activeHeadPose = 'HEAD_LOOKING_SIDEWAYS';
-    } else if ((head_pose?.pitch || 0) > 30.0) {
-      activeHeadPose = 'HEAD_LOOKING_DOWN';
-    }
+    // ── 3. Head Pose: Continuous per-direction interval scoring ───────────
+    const headDir = this._classifyHeadDirection(headPose, headDirection);
+    this._closeAndReportHeadInterval(now, headDir);
 
-    if (activeHeadPose !== 'CENTER') {
-      if (this.currentHeadPose === activeHeadPose) {
-        const duration = now - this.headPoseStartTime;
-        if (duration >= this.config.headPoseDurationThresholdMs) {
-          if (now - this.lastHeadPoseEventTime >= this.config.headPoseCooldownMs) {
-            this.lastHeadPoseEventTime = now;
-
-            // Record this sustained deviation in the rolling window
-            const windowMs = this.config.headPoseGraceWindowMs || 300000;
-            this.headPoseDeviationsWindow.push(now);
-            this.headPoseDeviationsWindow = this.headPoseDeviationsWindow.filter(t => now - t <= windowMs);
-
-            const graceCount = this.config.headPoseGraceCount || 5;
-            const count = this.headPoseDeviationsWindow.length;
-
-            if (count > graceCount) {
-              // Grace exceeded — log ONE escalation event
-              this.reportEvent({
-                source: 'LAPTOP',
-                eventType: 'REPEATED_HEAD_POSE_DEVIATION',
-                severity: 'WARNING',
-                durationMs: windowMs,
-                confidence: 0.85,
-                metadata: {
-                  head_pose,
-                  activeHeadPose,
-                  deviationsInWindow: count,
-                  graceCount,
-                  windowMinutes: Math.round(windowMs / 60000),
-                  detail: `Repeated head pose deviation: ${count} occurrences in ${Math.round(windowMs / 60000)} minutes (grace: ${graceCount})`,
-                },
-              });
-              // Reset window after escalation
-              this.headPoseDeviationsWindow = [];
-              this.headPoseGraceExceeded = false;
-            }
-            // Within grace count: NO event logged, no score impact
-          }
-          // Reset start so the same continuous deviation isn't re-counted
-          this.headPoseStartTime = now;
-        }
-      } else {
-        this.currentHeadPose = activeHeadPose;
-        this.headPoseStartTime = now;
+    if (headDir !== null) {
+      if (this.headIntervalStart === null) {
+        this.headIntervalStart = now;
+        this.headIntervalDirection = headDir;
+      } else if (this.headIntervalDirection !== headDir) {
+        this.headIntervalStart = now;
+        this.headIntervalDirection = headDir;
       }
-    } else {
-      this.currentHeadPose = 'CENTER';
-      this.headPoseStartTime = null;
+    }
+  }
+
+  // Map gaze classification to a scored direction (Down is ignored/permitted).
+  _classifyGazeDirection(gaze_classification) {
+    const g = (gaze_classification || '').toUpperCase();
+    if (g.includes('LEFT')) return 'LEFT';
+    if (g.includes('RIGHT')) return 'RIGHT';
+    if (g.includes('UP')) return 'UP';
+    if (g.includes('DOWN')) return 'DOWN'; // ignored downstream (reading)
+    return null; // ON_SCREEN / CENTER / unknown
+  }
+
+  // Map head pose to a scored direction (Down / pitch-down is ignored).
+  _classifyHeadDirection(head_pose, head_direction) {
+    if (head_direction) {
+      const h = String(head_direction).toUpperCase();
+      if (h.includes('LEFT')) return 'LEFT';
+      if (h.includes('RIGHT')) return 'RIGHT';
+      if (h.includes('UP')) return 'UP';
+      if (h.includes('DOWN')) return 'DOWN';
+    }
+    const yaw = Number(head_pose?.yaw || 0);
+    const pitch = Number(head_pose?.pitch || 0);
+    if (Math.abs(yaw) >= 14.0) {
+      return yaw > 0 ? 'RIGHT' : 'LEFT';
+    }
+    if (pitch < -15.0) return 'UP'; // looking up (scored)
+    if (pitch > 22.0) return 'DOWN'; // looking down (ignored downstream)
+    return null; // CENTER
+  }
+
+  async _closeAndReportGazeInterval(now, currentDir, gaze_confidence, forceClose = false) {
+    if (this.gazeIntervalStart === null) return null;
+    const start = this.gazeIntervalStart;
+    const dir = this.gazeIntervalDirection;
+
+    if (!forceClose && currentDir === dir) {
+      return null;
+    }
+
+    const endTimestamp = now;
+    const durationMs = Math.max(50, endTimestamp - start);
+    this.gazeIntervalStart = null;
+    this.gazeIntervalDirection = null;
+    this.gazeRecoveryStartTime = null;
+
+    if (durationMs < 50 || dir === null || dir === 'DOWN') return null;
+
+    const eventType = `GAZE_OFF_SCREEN_${dir}`;
+    return this.reportEvent({
+      source: 'LAPTOP',
+      eventType,
+      severity: 'WARNING',
+      durationMs,
+      startedAt: new Date(start).toISOString(),
+      endedAt: new Date(endTimestamp).toISOString(),
+      occurredAt: new Date(endTimestamp).toISOString(),
+      confidence: gaze_confidence || 0.9,
+      metadata: {
+        direction: dir,
+        durationMs,
+        detail: `Gaze deviated ${dir} for ${(durationMs / 1000).toFixed(2)}s`,
+        violationEndTime: new Date(endTimestamp).toISOString(),
+      },
+    });
+  }
+
+  async _closeAndReportHeadInterval(now, currentDir, forceClose = false) {
+    if (this.headIntervalStart === null) return null;
+    const start = this.headIntervalStart;
+    const dir = this.headIntervalDirection;
+
+    if (!forceClose && currentDir === dir) {
+      this.headRecoveryStartTime = null;
+      return null;
+    }
+
+    if (!forceClose && currentDir !== dir) {
+      if (this.headRecoveryStartTime === null) {
+        this.headRecoveryStartTime = now;
+        return null;
+      }
+      if (now - this.headRecoveryStartTime < 350) {
+        return null; // Within noise tolerance
+      }
+    }
+
+    const endTimestamp = forceClose ? now : (this.headRecoveryStartTime || now);
+    const durationMs = Math.max(50, endTimestamp - start);
+    this.headIntervalStart = null;
+    this.headIntervalDirection = null;
+    this.headRecoveryStartTime = null;
+
+    if (durationMs < 50 || dir === null || dir === 'DOWN') return null;
+
+    const eventType = `HEAD_LOOKING_${dir === 'UP' ? 'UP' : dir === 'LEFT' ? 'LEFT' : 'RIGHT'}`;
+    return this.reportEvent({
+      source: 'LAPTOP',
+      eventType,
+      severity: 'WARNING',
+      durationMs,
+      startedAt: new Date(start).toISOString(),
+      endedAt: new Date(endTimestamp).toISOString(),
+      occurredAt: new Date(endTimestamp).toISOString(),
+      confidence: 0.85,
+      metadata: {
+        direction: dir,
+        durationMs,
+        detail: `Head turned ${dir} for ${(durationMs / 1000).toFixed(2)}s`,
+      },
+    });
+  }
+
+  async _closeAndReportFaceAbsentInterval(now, forceClose = false) {
+    if (this.personCountZeroStartTime === null) return null;
+    const start = this.personCountZeroStartTime;
+
+    if (!forceClose) {
+      if (this.personCountRecoveryStartTime === null) {
+        this.personCountRecoveryStartTime = now;
+        return null;
+      }
+      if (now - this.personCountRecoveryStartTime < 300) {
+        return null;
+      }
+    }
+
+    const endTimestamp = forceClose ? now : (this.personCountRecoveryStartTime || now);
+    const durationMs = Math.max(0, endTimestamp - start);
+    this.personCountZeroStartTime = null;
+    this.personCountRecoveryStartTime = null;
+
+    if (durationMs < this.config.faceAbsentGraceMs) return null;
+    return this.reportEvent({
+      source: 'LAPTOP',
+      eventType: 'FACE_ABSENT',
+      severity: 'WARNING',
+      durationMs,
+      confidence: 0.9,
+      startedAt: new Date(start).toISOString(),
+      endedAt: new Date(endTimestamp).toISOString(),
+      occurredAt: new Date(endTimestamp).toISOString(),
+      metadata: { detail: 'Candidate face absent from camera view' },
+    });
+  }
+
+  async _closeAndReportMultiPersonInterval(now) {
+    if (this.multiPersonStartTime === null) return null;
+    const start = this.multiPersonStartTime;
+    this.multiPersonStartTime = null;
+    const durationMs = Math.max(0, now - start);
+    if (durationMs < (this.config.multiPersonDurationThresholdMs || 1500)) return null;
+    return this.reportEvent({
+      source: 'LAPTOP',
+      eventType: 'MULTIPLE_FACES',
+      severity: 'HIGH',
+      durationMs,
+      confidence: 0.92,
+      startedAt: new Date(start).toISOString(),
+      endedAt: new Date(now).toISOString(),
+      occurredAt: new Date(now).toISOString(),
+      metadata: { detail: 'Multiple persons detected in camera view' },
+    });
+  }
+
+  async _flushOpenIntervals(now) {
+    if (this.sessionId && this.isMonitoringActive) {
+      await Promise.all([
+        this._closeAndReportGazeInterval(now, null, 0.9, true),
+        this._closeAndReportHeadInterval(now, null, true),
+        this._closeAndReportFaceAbsentInterval(now, true),
+        this._closeAndReportMultiPersonInterval(now),
+      ]);
     }
   }
 
   // ── Mobile Camera Pipeline ────────────────────────────────────────────────
 
   startMobileMonitoring(stream, videoElement, onDetection) {
-    this.stopMobileMonitoring();
+    this.stopMobileMonitoring({ stopTracks: false });
     this.mobileStream = stream;
     this.mobileVideo = videoElement;
     this.onMobileDetection = onDetection;
@@ -715,15 +939,27 @@ class MonitoringEngineClient {
       this.mobileCanvas.height = 240;
     }
 
-    const intervalMs = Math.floor(1000 / this.mobileFps);
+    const intervalMs = Math.floor(1000 / (this.mobileFps || 5));
     this.mobileInterval = setInterval(() => this.tickMobileFrame(), intervalMs);
-    console.log(`[MonitoringEngine] Mobile monitoring active (${this.mobileFps} FPS)`);
+    console.log(`[MonitoringEngine] Mobile monitoring active (${this.mobileFps || 5} FPS)`);
   }
 
-  stopMobileMonitoring() {
+  stopMobileMonitoring({ stopTracks = true } = {}) {
     if (this.mobileInterval) {
       clearInterval(this.mobileInterval);
       this.mobileInterval = null;
+    }
+    if (stopTracks && this.mobileStream) {
+      try {
+        this.mobileStream.getTracks().forEach((t) => t.stop());
+      } catch (_) {}
+      this.mobileStream = null;
+    }
+    if (this.mobileVideo) {
+      try {
+        this.mobileVideo.srcObject = null;
+      } catch (_) {}
+      this.mobileVideo = null;
     }
   }
 
@@ -779,77 +1015,84 @@ class MonitoringEngineClient {
 
   // ── Authoritative Event Reporting ─────────────────────────────────────────
 
-  async reportEvent({ source = 'LAPTOP', eventType, severity = 'INFO', durationMs = 0, confidence = 1.0, metadata = {} }) {
-    if (!this.isMonitoringActive || !this.sessionId || !eventType) return;
+  async reportEvent({ source = 'LAPTOP', eventType, severity = 'INFO', durationMs = 0, confidence = 1.0, metadata = {}, startedAt = null, endedAt = null, occurredAt = null }) {
+    if (!this.isMonitoringActive || !eventType) return;
 
     const now = Date.now();
+    const resolvedDurationMs = Math.max(0, Number(durationMs) || 0);
+    const resolvedEnd = occurredAt || endedAt || new Date(now).toISOString();
+    const resolvedStart = startedAt || metadata.violationStartTime || new Date(new Date(resolvedEnd).getTime() - resolvedDurationMs).toISOString();
+    if (!this.lastReportedEventTimes) this.lastReportedEventTimes = {};
     const lastReportTime = this.lastReportedEventTimes[eventType] || 0;
-    const cooldown = this.config[`${eventType}_cooldown`] || 12000;
+    const isGranularEyeHead = /^GAZE_OFF_SCREEN_(LEFT|RIGHT|UP)$/.test(eventType) || /^HEAD_LOOKING_(LEFT|RIGHT|UP)$/.test(eventType);
+    const cooldown = this.config[`${eventType}_cooldown`] || (isGranularEyeHead ? 800 : 12000);
     if (now - lastReportTime < cooldown) {
       return; // Skip duplicate burst
     }
     this.lastReportedEventTimes[eventType] = now;
 
-    const idempotencyKey = `${this.sessionId}_${source}_${eventType}_${Math.floor(now / 15000)}`;
+    const idempotencyKey = this.sessionId
+      ? `${this.sessionId}_${source}_${eventType}_${new Date(resolvedStart).getTime()}_${new Date(resolvedEnd).getTime()}`
+      : null;
+    const payload = {
+      sessionId: this.sessionId,
+      monitoringSessionId: this.sessionId,
+      attemptId: this.attemptId,
+      participantId: this.participantId,
+      source,
+      eventType,
+      severity,
+      durationMs: resolvedDurationMs,
+      duration: Math.round(resolvedDurationMs / 100) / 10,
+      confidence,
+      occurredAt: resolvedEnd,
+      timestamp: resolvedEnd,
+      metadata: {
+        ...metadata,
+        violationStartTime: resolvedStart,
+        violationEndTime: endedAt || metadata.violationEndTime || resolvedEnd,
+      },
+      idempotencyKey,
+    };
 
     try {
-      const res = await fetch(`${API_BASE}/monitoring/sessions/${this.sessionId}/events`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
-        },
-        body: JSON.stringify({
-          sessionId: this.sessionId,
-          participantId: this.participantId,
-          source,
-          eventType,
-          severity,
-          durationMs,
-          confidence,
-          metadata,
-          idempotencyKey,
-        }),
-      });
-
-      // Also post to legacy proctoring events endpoint if attemptId exists
-      if (this.attemptId || this.sessionId) {
-        fetch(`${API_BASE}/proctoring/events`, {
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+      };
+      const endpoint = this.sessionId
+        ? `${API_BASE}/monitoring/sessions/${this.sessionId}/events`
+        : (this.attemptId ? `${API_BASE}/proctoring/events` : null);
+      if (!endpoint) return;
+      const res = await fetch(endpoint, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
-          },
-          body: JSON.stringify({
-            monitoringSessionId: this.sessionId,
-            attemptId: this.attemptId,
-            participantId: this.participantId,
-            eventType,
-            severity,
-            confidence,
-            duration: Math.round(Number(durationMs) / 100) / 10,
-            timestamp: new Date(),
-            metadata,
-            idempotencyKey,
-          }),
-        }).catch(() => {});
-      }
-
+          headers,
+          body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`Monitoring event ingestion failed (${res.status})`);
       const data = await res.json();
       if (data?.success && data?.data) {
         this.onEventReported?.(data.data);
       }
       return data;
     } catch (err) {
-      console.warn('[MonitoringEngine] Failed to submit proctoring event:', err);
+      console.warn('[MonitoringEngine] Failed to submit monitoring event:', err);
     }
   }
 
   destroy() {
     this.isMonitoringActive = false;
-    this.stopLaptopMonitoring();
-    this.stopMobileMonitoring();
+    this.stopLaptopMonitoring({ stopTracks: true });
+    this.stopMobileMonitoring({ stopTracks: true });
     this.cleanupBrowserEventListeners();
+    if (this.laptopStream) {
+      try { this.laptopStream.getTracks().forEach(t => t.stop()); } catch (_) {}
+      this.laptopStream = null;
+    }
+    if (this.mobileStream) {
+      try { this.mobileStream.getTracks().forEach(t => t.stop()); } catch (_) {}
+      this.mobileStream = null;
+    }
     if (this.socket) {
       this.socket.off('monitoring:mobile_composition');
       this.socket.off('monitoring:event');

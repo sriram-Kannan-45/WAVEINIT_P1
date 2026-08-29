@@ -12,6 +12,7 @@ import { Loader2, AlertCircle, Play, Check, Clock, Send, Save, Terminal, Bug, Tr
 import CodeEditor from '../components/CodeEditor'
 import ProblemPanel from '../components/ProblemPanel'
 import ExamProctorShell from '../proctoring/components/ExamProctorShell'
+import monitoringClient from '../proctoring/engine/MonitoringEngineClient'
 import { io as socketIO } from 'socket.io-client'
 
 const STORAGE_PREFIX = 'coding_attempt_'
@@ -217,7 +218,9 @@ function ParticipantCodingAttemptInner({ user }) {
   const formatTime = (s) => { const m = Math.floor(s / 60); const sec = s % 60; return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}` }
 
   const handleConsented = useCallback(() => setConsented(true), [])
-  const handleCancel = useCallback(() => { navigate(`/trainings/${trainingId}`) }, [navigate, trainingId])
+  const handleCancel = useCallback(() => {
+    navigate(trainingId ? `/participant?tab=myEnrollments&courseId=${trainingId}` : '/participant?tab=myEnrollments')
+  }, [navigate, trainingId])
 
   const currentProblem = problems[currentProblemIndex]
   const handleCodeChange = (value) => { if (!currentProblem) return; setCodeByProblem(prev => ({ ...prev, [currentProblem.id]: value || '' })) }
@@ -271,7 +274,7 @@ function ParticipantCodingAttemptInner({ user }) {
       if (!res.ok) {
         if (res.status === 404 || res.status === 409) {
           showError?.('Attempt already submitted. Redirecting...')
-          setTimeout(() => navigate(`/trainings/${trainingId}/coding/${assessmentId}/result?attemptId=${attemptId}`), 1500)
+          setTimeout(() => navigate(trainingId ? `/participant?tab=myEnrollments&courseId=${trainingId}` : '/participant?tab=myEnrollments'), 1500)
           return
         }
         throw new Error(data.error || 'Submit failed')
@@ -318,11 +321,28 @@ function ParticipantCodingAttemptInner({ user }) {
 
   // ── Exit fullscreen & cleanup ──
   const handleRecordingCleanup = useCallback(async () => {
+    try {
+      await monitoringClient.finishSession();
+    } catch (_) {}
+    try {
+      await monitoringClient.stopAndUploadRecording();
+    } catch (_) {}
+    try {
+      monitoringClient.destroy();
+    } catch (_) {}
     endVerificationSession();
     if (fsApi.element()) {
       try { await fsApi.exit() } catch {}
     }
-  }, [endVerificationSession])
+  }, [endVerificationSession]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        monitoringClient.destroy();
+      } catch (_) {}
+    };
+  }, []);
 
   // ── SUBMIT ASSESSMENT ──
   const handleSubmit = async (isTimeout) => {
@@ -360,7 +380,7 @@ function ParticipantCodingAttemptInner({ user }) {
       await handleRecordingCleanup()
 
       localStorage.removeItem(getStorageKey(attemptId)); sessionStorage.removeItem(storageKey)
-      navigate(`/trainings/${trainingId}/coding/${assessmentId}/result?attemptId=${attemptId}`)
+      navigate(trainingId ? `/participant?tab=myEnrollments&courseId=${trainingId}` : '/participant?tab=myEnrollments')
     } catch (err) { showError?.(err.message || 'Submit failed') }
     finally { setSubmitting(false); submittingRef.current = false }
   }
@@ -368,26 +388,26 @@ function ParticipantCodingAttemptInner({ user }) {
   const currentLanguage = languageByProblem[currentProblem?.id] || currentProblem?.programmingLanguage || 'javascript'
 
   if (loading || restoring) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: '#94a3b8' }}><Loader2 size={24} className="animate-spin" /></div>
-  if (errorMsg) return <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', padding: 20, textAlign: 'center' }}><AlertCircle size={32} color="#dc2626" style={{ marginBottom: 12 }} /><div style={{ fontSize: 16, fontWeight: 600, color: '#dc2626', marginBottom: 8 }}>{errorMsg}</div><button onClick={() => navigate(`/trainings/${trainingId}`)} style={{ padding: '8px 20px', background: '#0D9488', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Go Back</button></div>
+  if (errorMsg) return <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', padding: 20, textAlign: 'center' }}><AlertCircle size={32} color="#dc2626" style={{ marginBottom: 12 }} /><div style={{ fontSize: 16, fontWeight: 600, color: '#dc2626', marginBottom: 8 }}>{errorMsg}</div><button onClick={() => navigate(trainingId ? `/participant?tab=myEnrollments&courseId=${trainingId}` : '/participant?tab=myEnrollments')} style={{ padding: '8px 20px', background: '#0D9488', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Go Back</button></div>
 
-  // Pre-test Step 1: Mobile Camera Pairing via QR Code
-  if (!qrVerified && assessment) {
-    return (
-      <AssessmentQRPairingModal
-        assessmentType="CODING"
-        assessmentId={Number(assessmentId)}
-        attemptId={Number(attemptId)}
-        assessmentTitle={assessment.title || 'Coding Assessment'}
-        participantName={user?.name || 'Participant'}
-        userToken={user?.token}
-        onVerified={(data) => {
-          setVerifSessionInfo(data);
-          setQrVerified(true);
-        }}
-        onCancel={() => navigate(`/trainings/${trainingId}`)}
-      />
-    )
-  }
+  // Pre-test Step 1: Mobile Camera Pairing via QR Code (PAUSED - COMMENTED OUT)
+  // if (!qrVerified && assessment) {
+  //   return (
+  //     <AssessmentQRPairingModal
+  //       assessmentType="CODING"
+  //       assessmentId={Number(assessmentId)}
+  //       attemptId={Number(attemptId)}
+  //       assessmentTitle={assessment.title || 'Coding Assessment'}
+  //       participantName={user?.name || 'Participant'}
+  //       userToken={user?.token}
+  //       onVerified={(data) => {
+  //         setVerifSessionInfo(data);
+  //         setQrVerified(true);
+  //       }}
+  //       onCancel={() => navigate(`/trainings/${trainingId}`)}
+  //     />
+  //   )
+  // }
 
   // Pre-test Step 2: Assessment Consent, Camera Calibration & Fullscreen Gate
   if (!consented) return (

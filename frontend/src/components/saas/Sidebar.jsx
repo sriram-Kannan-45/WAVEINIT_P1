@@ -160,7 +160,12 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
         })
         const data = await res.json()
         if (!aborted && data.success && Array.isArray(data.courses)) {
-          setCourses(data.courses)
+          const normalized = data.courses.map(c => ({
+            ...c,
+            id: c.id ?? c.courseId,
+            courseId: c.courseId ?? c.id
+          }))
+          setCourses(normalized)
         }
       } catch (err) {
         console.error('Sidebar failed to fetch assigned courses:', err.message)
@@ -198,23 +203,27 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
         )}
       </AnimatePresence>
 
-      <aside
-        className={`wl-sidebar ${sidebarOpen ? 'wl-sidebar--open' : ''}`}
-        style={{ transform: sidebarOpen ? 'translateX(0)' : undefined }}
-      >
+      <aside className={`wl-sidebar ${sidebarOpen ? 'wl-sidebar--open' : ''}`} id="main-sidebar">
         <div className="wl-sidebar-inner">
           {/* Logo Header */}
           <div className="wl-sidebar-logo">
-            <div className="wl-sidebar-logo-mark">
+            <div className="wl-sidebar-logo-mark" onClick={() => navigate(ROLE_HOME[user.role] || '/')}>
               <WaveInitLogoIcon size={24} color="#16A34A" />
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => navigate(ROLE_HOME[user.role] || '/')}>
               <div className="wl-sidebar-brand">WAVE INIT LMS</div>
               <div className="wl-sidebar-tagline">{roleLabel} Portal</div>
             </div>
-            <button onClick={onCloseSidebar} className="wl-sidebar-close">
-              <X size={14} />
-            </button>
+            {onCloseSidebar && (
+              <button
+                type="button"
+                className="wl-sidebar-close"
+                onClick={onCloseSidebar}
+                aria-label="Close menu"
+              >
+                <X size={16} />
+              </button>
+            )}
           </div>
 
           {/* Navigation */}
@@ -301,11 +310,15 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
                             )}
                             <div className="wl-sidebar-submenu-scroll">
                               {filteredCourses.map((c) => {
+                                const targetCourseId = c.id ?? c.courseId
                                 const activeCourseId = searchParams.get('courseId')
-                                const isSelected = activeCourseId && Number(activeCourseId) === c.id
+                                const isSelected = activeCourseId && (
+                                  Number(activeCourseId) === targetCourseId ||
+                                  activeCourseId === String(targetCourseId)
+                                )
                                 return (
                                   <button
-                                    key={c.id}
+                                    key={targetCourseId || c.title}
                                     type="button"
                                     className={`wl-sidebar-course-item ${isSelected ? 'wl-sidebar-course-item--active' : ''}`}
                                     title={c.title}
@@ -313,7 +326,9 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
                                       const home = ROLE_HOME[user?.role] || '/admin'
                                       const params = new URLSearchParams()
                                       params.set('tab', item.key)
-                                      params.set('courseId', String(c.id))
+                                      if (targetCourseId) {
+                                        params.set('courseId', String(targetCourseId))
+                                      }
                                       navigate({ pathname: home, search: params.toString() })
                                       onCloseSidebar && onCloseSidebar()
                                     }}

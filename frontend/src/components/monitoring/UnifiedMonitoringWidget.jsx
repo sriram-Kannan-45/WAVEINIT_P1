@@ -118,6 +118,42 @@ export default function UnifiedMonitoringWidget({
   const candidateQueueRef = useRef([]);
   const lastMobileActivityRef = useRef(Date.now());
 
+  const webcamStreamRef = useRef(null);
+  const remoteMobileStreamRef = useRef(null);
+
+  useEffect(() => {
+    webcamStreamRef.current = webcamStream;
+  }, [webcamStream]);
+
+  useEffect(() => {
+    remoteMobileStreamRef.current = remoteMobileStream;
+  }, [remoteMobileStream]);
+
+  // Global unmount cleanup: ensure camera tracks are released immediately
+  useEffect(() => {
+    return () => {
+      if (webcamStreamRef.current) {
+        try {
+          webcamStreamRef.current.getTracks().forEach((t) => t.stop());
+        } catch (_) {}
+      }
+      if (remoteMobileStreamRef.current) {
+        try {
+          remoteMobileStreamRef.current.getTracks().forEach((t) => t.stop());
+        } catch (_) {}
+      }
+      if (webcamVideoRef.current) {
+        webcamVideoRef.current.srcObject = null;
+      }
+      if (mobileVideoRef.current) {
+        mobileVideoRef.current.srcObject = null;
+      }
+      try {
+        monitoringClient.destroy();
+      } catch (_) {}
+    };
+  }, []);
+
   const activeToken =
     userToken ||
     (typeof window !== 'undefined'
@@ -135,6 +171,8 @@ export default function UnifiedMonitoringWidget({
 
   // 1. Initialize Monitoring Session
   useEffect(() => {
+    if (activeSessionId) return;
+
     let cancelled = false;
 
     const initSession = async () => {
@@ -157,30 +195,29 @@ export default function UnifiedMonitoringWidget({
         if (cancelled) return;
 
         if (data?.success && data?.data) {
-          const sId = sessionId || storedSessionId || data.data.sessionId;
-          setActiveSessionId(sId);
-          setCalibrationPassed(true);
+          const sId = sessionId || storedSessionId || data.data?.session?.sessionId || data.data?.sessionId;
+          if (sId) {
+            setActiveSessionId(sId);
+            setCalibrationPassed(true);
+          } else {
+            console.error('[UnifiedMonitoringWidget] Monitoring start did not return a session ID');
+          }
         }
       } catch (err) {
-        console.warn('[UnifiedMonitoringWidget] Session init fallback:', err);
-        if (sessionId) setActiveSessionId(sessionId);
+        console.warn('[UnifiedMonitoringWidget] Failed to initialize monitoring session:', err);
       }
     };
 
-    if (!activeSessionId) {
-      initSession();
-    } else {
-      setCalibrationPassed(true);
-    }
+    initSession();
 
     return () => {
       cancelled = true;
     };
-  }, [contextType, contextId, attemptId, mobileEnabled, activeToken, sessionId, storedSessionId, activeSessionId]);
+  }, [activeSessionId, activeToken, contextType, contextId, attemptId, mobileEnabled, sessionId, storedSessionId]);
 
-  // 2. Authoritative Server-side Verification Status Polling
+  // 2. Poll Mobile Verification Status
   useEffect(() => {
-    if (!activeSessionId || !mobileEnabled) return;
+    if (!activeSessionId || !mobileEnabled || mobileConnected) return;
 
     let cancelled = false;
 
@@ -216,7 +253,7 @@ export default function UnifiedMonitoringWidget({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [activeSessionId, activeToken, mobileEnabled]);
+  }, [activeSessionId, activeToken, mobileEnabled, mobileConnected]);
 
   // 3. Acquire Local Webcam Stream for Laptop Feed
   useEffect(() => {
@@ -230,6 +267,8 @@ export default function UnifiedMonitoringWidget({
     }
 
     let localStream = null;
+    let cancelled = false;
+
     const startWebcam = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -241,6 +280,12 @@ export default function UnifiedMonitoringWidget({
           },
           audio: false,
         });
+
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
         localStream = stream;
         setWebcamStream(stream);
         onWebcamStreamReady?.(stream);
@@ -257,6 +302,7 @@ export default function UnifiedMonitoringWidget({
     startWebcam();
 
     return () => {
+      cancelled = true;
       if (localStream) {
         localStream.getTracks().forEach((t) => t.stop());
       }
@@ -580,11 +626,21 @@ export default function UnifiedMonitoringWidget({
   useEffect(() => {
     if (!webcamStream || !activeSessionId || !calibrationPassed) return;
 
-    monitoringClient.startLaptopMonitoring(webcamStream, webcamVideoRef.current, (metrics) => {
-      setLaptopMetrics(metrics);
-    });
+    let cancelled = false;
+
+    const startMonitoring = async () => {
+      await monitoringClient.calibrateGazeBaseline(webcamVideoRef.current);
+      if (cancelled) return;
+
+      monitoringClient.startLaptopMonitoring(webcamStream, webcamVideoRef.current, (metrics) => {
+        setLaptopMetrics(metrics);
+      });
+    };
+
+    startMonitoring();
 
     return () => {
+      cancelled = true;
       monitoringClient.stopLaptopMonitoring();
     };
   }, [webcamStream, activeSessionId, calibrationPassed]);
@@ -616,9 +672,9 @@ export default function UnifiedMonitoringWidget({
     }
   };
 
-  if (isMinimized) {
-    return (
-      <div className="dual-proctor-container">
+  return (
+    <div className="dual-proctor-container">
+      {isMinimized && (
         <div
           onClick={() => setIsMinimized(false)}
           className="dual-proctor-minimized-pill"
@@ -628,13 +684,12 @@ export default function UnifiedMonitoringWidget({
           <span className="text-xs font-bold text-slate-200">Monitoring Active</span>
           <Maximize2 size={12} className="text-slate-400" />
         </div>
-      </div>
-    );
-  }
+      )}
 
-  return (
-    <div className="dual-proctor-container">
-      <div className="dual-proctor-card">
+      <div
+        className="dual-proctor-card"
+        style={{ display: isMinimized ? 'none' : 'flex' }}
+      >
         {/* Header */}
         <div className="dual-proctor-header">
           <div className="dual-proctor-title">

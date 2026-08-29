@@ -132,13 +132,6 @@ export default function OverviewSection({
             <p className="tdb-header-subtitle">Here's an overview of your training activities.</p>
           </div>
         </div>
-
-        <button
-          className="tdb-create-btn"
-          onClick={onGoToCourses}
-        >
-          <Plus size={15} strokeWidth={2.5} /> Explore Courses
-        </button>
       </div>
 
       {/* ── 2. Statistics Cards Row (4 Cards) ── */}
@@ -366,20 +359,6 @@ export default function OverviewSection({
         </div>
 
         <div className="tdb-quick-actions-grid" style={{ gap: 12 }}>
-          <div
-            className="tdb-action-card"
-            style={{ padding: '8px 12px' }}
-            onClick={onGoToCourses}
-          >
-            <div className="tdb-action-icon tdb-action-icon--green">
-              <BookOpen size={16} strokeWidth={2.4} />
-            </div>
-            <div>
-              <h4 className="tdb-action-title">Browse Courses</h4>
-              <div className="tdb-action-sub">Explore new courses</div>
-            </div>
-          </div>
-
           <div
             className="tdb-action-card"
             style={{ padding: '8px 12px' }}

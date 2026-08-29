@@ -177,7 +177,7 @@ class YOLOProctoringService {
             const qa = await QuizAttempt.findOne({
               where: {
                 participantId: pId,
-                status: { [Op.in]: ['IN_PROGRESS', 'STARTED', 'in_progress', 'started'] },
+                status: 'IN_PROGRESS',
               },
               order: [['id', 'DESC']],
             });
@@ -187,7 +187,7 @@ class YOLOProctoringService {
               const ca = await CodingAttempt.findOne({
                 where: {
                   participantId: pId,
-                  status: { [Op.in]: ['IN_PROGRESS', 'STARTED', 'in_progress', 'started'] },
+                  status: 'IN_PROGRESS',
                 },
                 order: [['id', 'DESC']],
               });

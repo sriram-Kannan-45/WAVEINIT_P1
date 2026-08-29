@@ -5,7 +5,11 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 sys.path.insert(0, os.path.join(SCRIPT_DIR, "inference"))
 
-from proctoring_detector import calculateEyeHeadScore, calculate_unique_violation_seconds
+from proctoring_detector import (
+    calculateEyeHeadScore,
+    calculate_unique_violation_seconds,
+    iris_gaze_is_observable,
+)
 
 print("================================================================")
 print("PYTHON AI-SERVICE EXACT USER REQUIREMENT VERIFICATION")
@@ -48,6 +52,11 @@ print(f"Actual Test Duration : {early_actual_duration:.1f} seconds (Participant 
 print(f"Violation Duration   : {early_violation:.1f} seconds")
 print(f"Denominator Used     : {early_actual_duration:.1f} (MUST be actual test duration, NOT 600)")
 print(f"Calculation: ({early_violation:.1f} / {early_actual_duration:.1f}) * 60 = {early_score:.2f} / 60")
+
+assert iris_gaze_is_observable("Straight")
+assert not iris_gaze_is_observable("Left")
+assert not iris_gaze_is_observable("Right")
+assert not iris_gaze_is_observable("Up")
 
 print("\n================================================================")
 print("VERIFICATION COMPLETE: 36 / 60 PROVEN CORRECT")

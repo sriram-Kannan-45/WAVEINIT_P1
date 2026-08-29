@@ -166,6 +166,12 @@ const MonitoringSession = sequelize.define('MonitoringSession', {
     allowNull: true,
     field: 'last_mobile_heartbeat_at',
   },
+  videoUrl: {
+    type: DataTypes.STRING(512),
+    allowNull: true,
+    field: 'video_url',
+    comment: 'URL/path to recorded proctoring/monitoring session video',
+  },
 }, {
   tableName: 'monitoring_sessions',
   timestamps: true,

@@ -119,64 +119,39 @@ export default function CertificateCard({ certificate, studentName, index = 0 })
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, delay: Math.min(index * 0.05, 0.3) }}
-      whileHover={{ y: -3 }}
-      className="ac-card"
-      style={{
-        position: 'relative',
-        overflow: 'hidden',
-        background:
-          'linear-gradient(135deg, var(--academic-primary-50) 0%, var(--academic-secondary-50) 100%)',
-        border: '1px solid var(--academic-primary-100)',
-      }}
+      className="ach-cert-card"
     >
-      <div className="flex items-start justify-between mb-3">
-        <div style={{
-          width: 48, height: 48, borderRadius: 12,
-          background: 'var(--academic-gradient-primary)', color: '#fff',
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          boxShadow: '0 8px 18px rgba(13,148,136,0.25)',
-        }}>
+      <div className="ach-cert-top">
+        <div className="ach-cert-icon-wrap">
           <Award size={22} />
         </div>
-        <span className="ac-chip ac-chip-success">
+        <span className="ach-cert-badge">
           <Sparkles size={11} /> Certified
         </span>
       </div>
 
-      <h4 style={{
-        fontFamily: "'Poppins', sans-serif",
-        fontSize: 16, fontWeight: 700,
-        color: 'var(--academic-text)',
-        marginBottom: 6, lineHeight: 1.3,
-      }}>
+      <h4 className="ach-cert-title">
         {certificate.title}
       </h4>
-      <p style={{ fontSize: 12, color: 'var(--academic-text-muted)', marginBottom: 14 }}>
+      <p className="ach-cert-subtitle">
         Issued for completing this assessment with distinction
       </p>
 
-      <div className="flex items-center justify-between mb-4">
+      <div className="ach-cert-metrics">
         <div>
-          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--academic-text-muted)' }}>
-            Best score
+          <div className="ach-cert-metric-label">
+            Best Score
           </div>
-          <div style={{
-            fontFamily: "'Poppins', sans-serif",
-            fontSize: 28, fontWeight: 800, color: 'var(--academic-primary-700)',
-            letterSpacing: '-0.02em',
-          }}>
+          <div className="ach-cert-score-val">
             {certificate.bestScore?.toFixed(1)}%
           </div>
         </div>
         {certificate.rank != null && (
           <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--academic-text-muted)' }}>
+            <div className="ach-cert-metric-label">
               Rank
             </div>
-            <div style={{
-              fontFamily: "'Poppins', sans-serif",
-              fontSize: 22, fontWeight: 800, color: 'var(--academic-secondary-600)',
-            }}>
+            <div className="ach-cert-rank-val">
               #{certificate.rank}
             </div>
           </div>
@@ -186,10 +161,9 @@ export default function CertificateCard({ certificate, studentName, index = 0 })
       <button
         type="button"
         onClick={handleDownload}
-        className="ac-btn ac-btn-primary ac-focus-ring"
-        style={{ width: '100%' }}
+        className="ach-cert-btn"
       >
-        <Download size={14} /> Download certificate
+        <Download size={14} /> Download Certificate
       </button>
     </motion.article>
   )

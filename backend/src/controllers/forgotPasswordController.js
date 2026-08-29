@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const BCRYPT_COST = 12;
 const { Op } = require('sequelize');
 const { User, PasswordResetOtp } = require('../models');
+const { validateEmail, validatePassword } = require('../utils/validators');
 const {
   sendOtpEmail,
   sendTestEmail,
@@ -67,7 +68,7 @@ function dispatchOtpEmail(email, otp) {
 const sendOtp = async (req, res) => {
   try {
     const { email } = req.body;
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!email || !validateEmail(email)) {
       return res.status(422).json({ error: 'Valid email is required' });
     }
 
@@ -194,8 +195,10 @@ const resetPassword = async (req, res) => {
     if (!email || !resetToken || !newPassword) {
       return res.status(422).json({ error: 'Email, reset token, and new password are required' });
     }
-    if (newPassword.length < 8) {
-      return res.status(422).json({ error: 'Password must be at least 8 characters' });
+    if (!validatePassword(newPassword)) {
+      return res.status(422).json({
+        error: 'Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one number, and one special character'
+      });
     }
 
     const record = await PasswordResetOtp.findOne({

@@ -7,7 +7,6 @@ import {
 import toast from 'react-hot-toast';
 
 const QUICK_ACTIONS = [
-  { key: 'course', label: 'Create Course', icon: BookOpen, gradient: 'linear-gradient(135deg, #16A34A, #22C55E)', color: '#fff' },
   { key: 'assessment', label: 'Create Assessment', icon: ClipboardCheck, gradient: 'linear-gradient(135deg, #2563EB, #3B82F6)', color: '#fff' },
   { key: 'resume', label: 'Upload Resume', icon: Upload, gradient: 'linear-gradient(135deg, #7C3AED, #A78BFA)', color: '#fff' },
   { key: 'share', label: 'Share Profile', icon: Share2, gradient: 'linear-gradient(135deg, #D97706, #F59E0B)', color: '#fff' },

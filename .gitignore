@@ -72,6 +72,9 @@ shots.js
 backend/findpass.js
 backend/resetpass.js
 
+# Vite timestamp files
+*.timestamp-*.mjs
+*.timestamp-*.js
 
-
-
+# Test outputs
+ai-service/test_output/

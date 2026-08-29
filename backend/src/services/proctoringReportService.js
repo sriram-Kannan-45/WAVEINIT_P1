@@ -614,6 +614,84 @@ function formatDuration(start, end) {
 }
 
 /**
+ * Ingest and record an objective monitoring event into database.
+ * Creates ProctoringEvent and also routes into MonitoringEvent / MonitoringSession.
+ */
+async function recordMonitoringEvent({
+  monitoringSessionId,
+  attemptId,
+  participantId,
+  quizId,
+  eventType,
+  severity = 'INFO',
+  confidence = 1.0,
+  duration = 0.0,
+  timestamp = new Date(),
+  metadata = {},
+  idempotencyKey,
+}) {
+  const normSeverity = (severity || 'INFO').toUpperCase();
+  const durSec = Math.max(0, Number(duration) || 0);
+
+  // 1. Create ProctoringEvent
+  const event = await ProctoringEvent.create({
+    monitoringSessionId,
+    attemptId,
+    participantId,
+    quizId,
+    eventType,
+    severity: normSeverity,
+    confidence: Number(confidence) || 1.0,
+    duration: durSec,
+    timestamp: timestamp || new Date(),
+    metadata,
+    idempotencyKey,
+  });
+
+  // 2. Also ensure MonitoringEvent is created in monitoring_events table if session exists
+  try {
+    const { MonitoringEvent, MonitoringSession } = require('../models');
+    if (MonitoringEvent) {
+      let targetSession = null;
+      if (monitoringSessionId) {
+        targetSession = await MonitoringSession.findOne({ where: { sessionId: monitoringSessionId } });
+      }
+      if (!targetSession && attemptId) {
+        targetSession = await MonitoringSession.findOne({ where: { attemptId } });
+      }
+
+      await MonitoringEvent.create({
+        monitoringSessionId: targetSession?.sessionId || monitoringSessionId || `session_${attemptId}`,
+        attemptId: attemptId ? Number(attemptId) : (targetSession?.attemptId || null),
+        participantId: participantId ? Number(participantId) : (targetSession?.participantId || null),
+        contextType: 'QUIZ',
+        source: 'LAPTOP',
+        eventType,
+        severity: normSeverity,
+        scoreDelta: normSeverity === 'CRITICAL' ? 25 : normSeverity === 'HIGH' ? 12 : (normSeverity === 'WARNING' || normSeverity === 'MEDIUM') ? 5 : 0,
+        durationMs: Math.round(durSec * 1000),
+        occurredAt: timestamp || new Date(),
+        confidence: Number(confidence) || 1.0,
+        metadata,
+        idempotencyKey,
+      });
+
+      if (targetSession) {
+        targetSession.totalEvents = (targetSession.totalEvents || 0) + 1;
+        if (normSeverity === 'WARNING' || normSeverity === 'MEDIUM') targetSession.warningEvents = (targetSession.warningEvents || 0) + 1;
+        if (normSeverity === 'HIGH') targetSession.highEvents = (targetSession.highEvents || 0) + 1;
+        if (normSeverity === 'CRITICAL') targetSession.criticalEvents = (targetSession.criticalEvents || 0) + 1;
+        await targetSession.save();
+      }
+    }
+  } catch (mErr) {
+    logger.warn(`[ProctoringReportService] Dual event recording note: ${mErr.message}`);
+  }
+
+  return event;
+}
+
+/**
  * Generate and save final Proctoring Report for a completed QuizAttempt or CodingAttempt.
  * Fault-tolerant: errors are caught, logged, and marked as GENERATION_FAILED.
  */
@@ -768,8 +846,10 @@ async function generateFinalProctoringReport(attemptId) {
           eventType: me.eventType,
           severity: me.severity,
           confidence: me.confidence,
-          duration: me.durationMs ? Math.round(me.durationMs / 100) / 10 : 1.0,
+          duration: me.durationMs ? Math.round(me.durationMs / 100) / 10 : (Number(me.duration) || 0),
+          durationMs: me.durationMs || (Number(me.duration) ? Math.round(Number(me.duration) * 1000) : 0),
           timestamp: me.occurredAt,
+          occurredAt: me.occurredAt,
           metadata: me.metadata,
         });
       }
@@ -777,8 +857,19 @@ async function generateFinalProctoringReport(attemptId) {
 
     events.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-    // Calculate risk score and level
-    const { score: riskScore, level: riskLevel } = calculateMonitoringRisk(events);
+    // Calculate authoritative 5-component monitoring report
+    let fullReport = null;
+    try {
+      const monitoringService = require('./monitoringService');
+      fullReport = await monitoringService.getReport({ attemptId: attempt.id });
+    } catch (monErr) {
+      logger.warn(`[ProctoringReportService] monitoringService.getReport note: ${monErr.message}`);
+    }
+
+    // Fallback risk score and level
+    const { score: rawRiskScore, level: rawRiskLevel } = calculateMonitoringRisk(events);
+    const finalRiskScore = fullReport?.finalScore != null ? fullReport.finalScore : rawRiskScore;
+    const finalRiskLevel = fullReport?.riskLevel || rawRiskLevel;
 
     // Build category summary and event timeline
     const { summary, timeline } = buildSummaryAndTimeline(events, startTime, endTime);
@@ -797,19 +888,55 @@ async function generateFinalProctoringReport(attemptId) {
     summary.startTime = startTime;
     summary.endTime = endTime;
     summary.monitoringDuration = formatDuration(startTime, endTime);
-    summary.monitoringDurationSeconds = Math.max(0, Math.round((new Date(endTime) - new Date(startTime)) / 1000));
+    summary.monitoringDurationSeconds = fullReport?.actualTestDurationSeconds || Math.max(0, Math.round((new Date(endTime) - new Date(startTime)) / 1000));
+
+    summary.scoringBreakdown = fullReport?.scoringBreakdown || {
+      eyeHead: { score: 0, max: 60 },
+      mobile: { score: 0, max: 10 },
+      multiPerson: { score: 0, max: 10 },
+      noPerson: { score: 0, max: 10 },
+      tabSwitch: { score: 0, max: 10 },
+      total: finalRiskScore,
+    };
+    summary.eyeHeadScore = fullReport?.eyeHeadScore || 0;
+    summary.mobileScore = fullReport?.mobileScore || 0;
+    summary.multiFaceScore = fullReport?.multiFaceScore || 0;
+    summary.noPersonScore = fullReport?.noPersonScore || 0;
+    summary.tabSwitchScore = fullReport?.tabSwitchScore || 0;
+    summary.finalScore = finalRiskScore;
+
+    // Update or create MonitoringSession directly in database
+    if (monSession) {
+      await monSession.update({
+        status: 'COMPLETED',
+        laptopStatus: 'COMPLETED',
+        score: finalRiskScore,
+        riskLevel: finalRiskLevel,
+        endedAt: endTime,
+        totalEvents: fullReport?.totalEvents ?? events.length,
+        warningEvents: fullReport?.warningEvents ?? summary.counts.warning,
+        highEvents: fullReport?.highEvents ?? summary.counts.high,
+        criticalEvents: fullReport?.criticalEvents ?? summary.counts.critical,
+        integrityFlags: fullReport?.integrityFlags ?? [],
+        metadata: {
+          scoringBreakdown: summary.scoringBreakdown,
+          actualTestDurationSeconds: summary.monitoringDurationSeconds,
+          configuredDurationSeconds: fullReport?.configuredDurationSeconds || 0,
+        },
+      });
+    }
 
     // Update or create ProctoringSession
     if (session) {
       await session.update({
         endedAt: endTime,
         status: 'COMPLETED',
-        finalRiskScore: riskScore,
-        finalRiskLevel: riskLevel,
-        totalEvents: events.length,
-        warningEvents: summary.counts.warning,
-        highEvents: summary.counts.high,
-        criticalEvents: summary.counts.critical,
+        finalRiskScore: finalRiskScore,
+        finalRiskLevel: finalRiskLevel,
+        totalEvents: fullReport?.totalEvents ?? events.length,
+        warningEvents: fullReport?.warningEvents ?? summary.counts.warning,
+        highEvents: fullReport?.highEvents ?? summary.counts.high,
+        criticalEvents: fullReport?.criticalEvents ?? summary.counts.critical,
       });
     } else {
       session = await ProctoringSession.create({
@@ -820,26 +947,26 @@ async function generateFinalProctoringReport(attemptId) {
         startedAt: startTime,
         endedAt: endTime,
         status: 'COMPLETED',
-        finalRiskScore: riskScore,
-        finalRiskLevel: riskLevel,
-        totalEvents: events.length,
-        warningEvents: summary.counts.warning,
-        highEvents: summary.counts.high,
-        criticalEvents: summary.counts.critical,
+        finalRiskScore: finalRiskScore,
+        finalRiskLevel: finalRiskLevel,
+        totalEvents: fullReport?.totalEvents ?? events.length,
+        warningEvents: fullReport?.warningEvents ?? summary.counts.warning,
+        highEvents: fullReport?.highEvents ?? summary.counts.high,
+        criticalEvents: fullReport?.criticalEvents ?? summary.counts.critical,
       });
     }
 
-    // Save ProctoringReport
+    // Save ProctoringReport directly in database
     let [report, created] = await ProctoringReport.findOrCreate({
       where: { attemptId: attempt.id },
       defaults: {
         attemptId: attempt.id,
         monitoringSessionId: sessionId,
         status: 'COMPLETED',
-        riskScore,
-        riskLevel,
-        summary,
-        timeline,
+        riskScore: finalRiskScore,
+        riskLevel: finalRiskLevel,
+        summary: fullReport?.summary || summary,
+        timeline: fullReport?.timeline || timeline,
         generatedAt: new Date(),
       }
     });
@@ -848,15 +975,15 @@ async function generateFinalProctoringReport(attemptId) {
       await report.update({
         monitoringSessionId: sessionId,
         status: 'COMPLETED',
-        riskScore,
-        riskLevel,
-        summary,
-        timeline,
+        riskScore: finalRiskScore,
+        riskLevel: finalRiskLevel,
+        summary: fullReport?.summary || summary,
+        timeline: fullReport?.timeline || timeline,
         generatedAt: new Date(),
       });
     }
 
-    logger.info(`[ProctoringReportService] Generated report for ${isCoding ? 'coding' : 'quiz'} attempt #${attemptId} with risk score: ${riskScore} (${riskLevel})`);
+    logger.info(`[ProctoringReportService] Stored final test results directly in database for ${isCoding ? 'coding' : 'quiz'} attempt #${attemptId} with risk score: ${finalRiskScore} (${finalRiskLevel})`);
     return report;
   } catch (error) {
     logger.error(`[ProctoringReportService] Failed to generate proctoring report for attempt #${attemptId}: ${error.message}`);

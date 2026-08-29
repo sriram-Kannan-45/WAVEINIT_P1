@@ -26,34 +26,113 @@ router.post(
   (req, res) => authController.createTrainer(req, res)
 );
 
-// GET /api/admin/trainers - list all trainers with profile summary
+// GET /api/admin/trainers - list trainers with profile summary, search, status, and pagination
 router.get(
   '/trainers',
   authenticateToken,
   roleMiddleware('ADMIN'),
   async (req, res) => {
     try {
-      const trainers = await User.findAll({
-        where: { role: 'TRAINER', isDeleted: false },
+      const { Op } = require('sequelize');
+      const { search = '', status = '', page, limit, offset } = req.query;
+
+      const where = { role: 'TRAINER', isDeleted: false };
+
+      if (search && search.trim()) {
+        const q = search.trim();
+        where[Op.or] = [
+          { name: { [Op.like]: `%${q}%` } },
+          { email: { [Op.like]: `%${q}%` } },
+          { phone: { [Op.like]: `%${q}%` } },
+          { username: { [Op.like]: `%${q}%` } },
+          { employeeId: { [Op.like]: `%${q}%` } }
+        ];
+      }
+
+      if (status && status !== 'ALL') {
+        where.status = status.toUpperCase();
+      }
+
+      const total = await User.count({ where });
+
+      let findOptions = {
+        where,
         attributes: ['id', 'name', 'email', 'username', 'phone', 'employeeId', 'department', 'designation', 'status'],
         include: [{
           model: TrainerProfile,
           as: 'profile',
           attributes: ['phone', 'dob', 'qualification', 'experience', 'imagePath'],
           required: false
-        }]
-      });
-      res.json({ trainers: trainers.map(t => ({
+        }],
+        order: [['created_at', 'DESC']]
+      };
+
+      let currentPage = 1;
+      let parsedLimit = 10;
+      const isPaginated = !!(page || limit || offset !== undefined);
+
+      if (isPaginated) {
+        parsedLimit = limit ? Math.max(1, Math.min(parseInt(limit, 10), 500)) : 10;
+        let parsedOffset = 0;
+        if (page) {
+          currentPage = Math.max(1, parseInt(page, 10));
+          parsedOffset = (currentPage - 1) * parsedLimit;
+        } else if (offset !== undefined) {
+          parsedOffset = Math.max(0, parseInt(offset, 10));
+          currentPage = Math.floor(parsedOffset / parsedLimit) + 1;
+        }
+        findOptions.limit = parsedLimit;
+        findOptions.offset = parsedOffset;
+      }
+
+      const trainers = await User.findAll(findOptions);
+
+      const formattedTrainers = trainers.map(t => ({
         id: t.id, name: t.name, email: t.email, username: t.username,
         phone: t.phone, employeeId: t.employeeId, department: t.department,
         designation: t.designation, status: t.status,
         profile: t.profile || null
-      })) });
+      }));
+
+      const totalPages = Math.ceil(total / parsedLimit) || 1;
+
+      res.json({
+        success: true,
+        trainers: formattedTrainers,
+        total,
+        page: currentPage,
+        limit: parsedLimit,
+        totalPages
+      });
     } catch (error) {
       logger.error('Get trainers error:', { error: error.message });
-      res.status(500).json({ error: 'Server error fetching trainers' });
+      res.status(500).json({ success: false, error: 'Server error fetching trainers' });
     }
   }
+);
+
+// POST /api/admin/trainers/bulk-delete
+router.post(
+  '/trainers/bulk-delete',
+  authenticateToken,
+  roleMiddleware('ADMIN'),
+  (req, res) => adminController.bulkDeleteTrainers(req, res)
+);
+
+// POST /api/admin/participants/bulk-delete
+router.post(
+  '/participants/bulk-delete',
+  authenticateToken,
+  roleMiddleware('ADMIN'),
+  (req, res) => adminController.bulkDeleteParticipants(req, res)
+);
+
+// POST /api/admin/trainings/bulk-delete
+router.post(
+  '/trainings/bulk-delete',
+  authenticateToken,
+  roleMiddleware('ADMIN'),
+  (req, res) => adminController.bulkDeleteTrainings(req, res)
 );
 
 // GET /api/admin/trainer/:id - get single trainer with full profile
@@ -371,6 +450,9 @@ router.put(   '/training-programs/:id',                   adminAuth, (req, res) 
 router.delete('/training-programs/:id',                   adminAuth, (req, res) =>
   adminCourseController.deleteProgram(req, res));
 
+router.post(  '/training-programs/bulk-delete',           adminAuth, (req, res) =>
+  adminCourseController.bulkDeletePrograms(req, res));
+
 router.post(  '/training-programs/:id/courses',           adminAuth, [
   body('title').notEmpty().withMessage('Title is required'),
   body('trainerId').notEmpty().withMessage('trainerId is required'),
@@ -387,6 +469,9 @@ router.put(   '/courses/:id',                             adminAuth, (req, res) 
 
 router.delete('/courses/:id',                             adminAuth, (req, res) =>
   adminCourseController.deleteCourse(req, res));
+
+router.post(  '/courses/bulk-delete',                     adminAuth, (req, res) =>
+  adminCourseController.bulkDeleteCourses(req, res));
 
 // ── Bulk Participant Import ────────────────────────────────────────────────
 const bulkImportDir = path.join(process.cwd(), 'uploads', 'bulk-import');

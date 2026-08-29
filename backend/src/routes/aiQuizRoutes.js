@@ -138,8 +138,8 @@ const router = express.Router();
         }
 
         const count = parseInt(questionCount, 10);
-        if (isNaN(count) || count < 1 || count > 50) {
-          return res.status(422).json({ error: 'Number of questions must be between 1 and 50.' });
+        if (isNaN(count) || count < 1 || count > 100) {
+          return res.status(422).json({ error: 'Number of questions must be between 1 and 100.' });
         }
 
         // ── Resolve courseId and trainingId ──
@@ -252,12 +252,14 @@ const router = express.Router();
         console.log(`[aiQuizRoutes] Resolved trainingId=${resolvedTrainingId}, courseId=${resolvedCourseId} for quiz creation`);
 
         // Save Quiz to database
+        const timeLimit = parseInt(req.body.timeLimit || req.body.time_limit, 10) || 30;
         const quiz = await AIQuiz.create({
           trainerId,
           trainingId: resolvedTrainingId,
           courseId: resolvedCourseId,
           title: `Quiz: ${prompt.trim()}`,
           numQuestions: questions.length,
+          timeLimit,
           difficulty: ['EASY', 'MEDIUM', 'HARD', 'MIXED'].includes(diffUpper) ? diffUpper : 'MIXED',
           status: 'DRAFT',
           isPublished: false,
@@ -1250,7 +1252,7 @@ router.post('/participant/submit/:attemptId',
         }, { transaction: t });
         console.log(`[ATTEMPT_STATUS_CHANGE] Attempt #${attempt.id} status changed to SUBMITTED at ${submittedAt.toISOString()}`);
 
-        await QuizResult.create({
+        await QuizResult.upsert({
           attemptId: attempt.id,
           quizId: quiz.id,
           participantId: req.user.id,

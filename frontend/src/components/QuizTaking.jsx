@@ -37,6 +37,7 @@ import { API_BASE } from '../api/api'
 import { getAuthHeaders } from '../api/request'
 import { useQuizProtection } from '../hooks/useQuizProtection.jsx'
 import QuizWatermark from './ai-quizzes/QuizWatermark'
+import monitoringClient from '../proctoring/engine/MonitoringEngineClient'
 import '../styles/quiz-taking.css'
 
 const MAX_WARNINGS = 3
@@ -74,6 +75,7 @@ function ProgressRing({ percent, size = 132 }) {
           fill="none"
           stroke="#e6edf7"
           strokeWidth={stroke}
+
         />
         <motion.circle
           cx={size / 2}
@@ -100,7 +102,7 @@ function ProgressRing({ percent, size = 132 }) {
 /* ──────────────────────────────────────────────────────────────────────────
    MAIN COMPONENT
    ────────────────────────────────────────────────────────────────────────── */
-function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isStandardQuiz = false, screenStream, examSession, onScreenShareResumed, onRecordingStop }) {
+function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isStandardQuiz = false, screenStream, examSession, onScreenShareResumed, onRecordingStop, webcamStream }) {
   const { error: showError, success: showSuccess } = useToast()
 
   /* ── Question / answer state ─────────────────────────────────────────── */
@@ -187,6 +189,11 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
         const headers = { ...getAuthHeaders(), 'Content-Type': 'application/json' }
         if (token) headers['X-Assessment-Session'] = token
 
+        // Flush all open gaze, head, and absence intervals before final submission
+        try {
+          await flushOpenProctoringIntervals();
+        } catch (_) {}
+
         const submitUrl = isStandardQuiz
           ? `${API_BASE}/participant/quizzes/${quizId}/submit`
           : `${API_BASE}/ai-quiz/participant/submit/${attemptId}`
@@ -203,7 +210,37 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
         const d = await r.json()
         if (!r.ok) throw new Error(d.error || 'Submit failed')
         
-        // Stop recording immediately after submit (camera, mic, screen)
+        // The attempt is now persisted, so finalize monitoring with the same
+        // authoritative end time used by the report and Excel export.
+        try {
+          await monitoringClient.finishSession()
+        } catch (finishErr) {
+          console.warn('[QuizTaking] Monitoring finalization notice:', finishErr.message)
+        }
+
+        // Stop recording immediately after submit and upload session video
+        try {
+          await monitoringClient.stopAndUploadRecording()
+        } catch (uploadErr) {
+          console.warn('[QuizTaking] Video upload notice:', uploadErr.message)
+        }
+
+        // Explicitly destroy monitoring and stop all camera/screen tracks immediately!
+        try {
+          monitoringClient.destroy()
+        } catch (_) {}
+
+        if (webcamStream) {
+          try {
+            webcamStream.getTracks().forEach(t => t.stop())
+          } catch (_) {}
+        }
+        if (screenStream) {
+          try {
+            screenStream.getTracks().forEach(t => t.stop())
+          } catch (_) {}
+        }
+
         await onRecordingStop?.()
         
         // Best-effort exit fullscreen so result summary renders normally.
@@ -221,16 +258,20 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [answers, attemptId, isStandardQuiz, quizId, onSubmit, submitting, showError, showSuccess, onRecordingStop]
+    [answers, attemptId, isStandardQuiz, quizId, onSubmit, submitting, showError, showSuccess, onRecordingStop, webcamStream, screenStream]
   )
 
-  /* ── Auto-fullscreen on mount ────────────────────────────────────────── */
+  /* ── Auto-fullscreen on mount & lock active test start time ───────────── */
   useEffect(() => {
+    // Lock exact active test start timestamp at second 1 of question rendering
+    if (attemptId) {
+      monitoringClient.startActiveTestTimer(attemptId);
+    }
     // Try once on mount. Browser may block without user gesture; the
     // fullscreenchange listener below is forgiving — it never punishes the
     // user for the initial state, only for EXITING after they're in.
     Promise.resolve(fsApi.request()).catch(() => { /* user gesture missing */ })
-  }, [])
+  }, [attemptId])
 
   /* ── Hide LMS chrome (sidebar + top header) while exam is mounted ───── */
   useEffect(() => {
@@ -238,6 +279,54 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
     return () => {
       document.body.classList.remove('qt-fullscreen-active')
     }
+  }, [])
+
+  /* ── Clean up media streams and monitoring client on unmount ────────── */
+  useEffect(() => {
+    return () => {
+      if (webcamStream) {
+        try {
+          webcamStream.getTracks().forEach((t) => t.stop())
+        } catch (_) {}
+      }
+      if (screenStream) {
+        try {
+          screenStream.getTracks().forEach((t) => t.stop())
+        } catch (_) {}
+      }
+      try {
+        monitoringClient.destroy()
+      } catch (_) {}
+    }
+  }, [webcamStream, screenStream])
+
+  /* ── Monitoring event bridge ───────────────────────────────────────── */
+  const reportMonitoringEvent = useCallback(async (eventType, severity = 'WARNING', metadata = {}) => {
+    if (!attemptId) return
+    try {
+      const endedAt = metadata.violationEndTime || new Date().toISOString()
+      const durationMs = Math.max(0, Number(metadata.durationMs ?? (Number(metadata.duration) || 0) * 1000) || 0)
+      const startedAt = metadata.violationStartTime || new Date(new Date(endedAt).getTime() - durationMs).toISOString()
+      await monitoringClient.reportEvent({
+        source: 'LAPTOP',
+        eventType,
+        severity,
+        durationMs,
+        confidence: metadata.confidence || 0.95,
+        startedAt,
+        endedAt,
+        occurredAt: endedAt,
+        metadata: { ...metadata, violationStartTime: startedAt, violationEndTime: endedAt },
+      })
+    } catch (e) {
+      console.warn('[QuizTaking] Monitoring event dispatch failed:', e)
+    }
+  }, [attemptId])
+
+  const flushOpenProctoringIntervals = useCallback(async () => {
+    try {
+      await monitoringClient._flushOpenIntervals(Date.now())
+    } catch (_) {}
   }, [])
 
   const fsExitTimerRef = useRef(null)
@@ -300,18 +389,7 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
 
             setWarnings((prev) => {
               const next = prev + 1
-              if (next >= MAX_WARNINGS) {
-                // 3rd strike — auto-submit silently and show termination overlay.
-                setTerminated(true)
-                setWarningOpen(false)
-                setTimeout(() => {
-                  handleSubmit({ silent: true }).finally(() => {
-                    setTimeout(() => onSubmit?.(null), 1800)
-                  })
-                }, 50)
-              } else {
-                setWarningOpen(true)
-              }
+              setWarningOpen(true)
               return next
             })
           }
@@ -334,233 +412,7 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
         document.removeEventListener(evt, onChange)
       )
     }
-  }, [terminated, handleSubmit, onSubmit, warnings])
-
-  /* ── Objective Monitoring Event Dispatcher (Backend Ingestion) ────── */
-  const lastReportedEventTime = useRef({})
-
-  const reportMonitoringEvent = useCallback(async (eventType, severity = 'WARNING', metadata = {}) => {
-    if (!attemptId) return
-    const now = Date.now()
-    // Throttle duplicate event types to avoid flooding
-    const lastTime = lastReportedEventTime.current[eventType] || 0
-    if (now - lastTime < 4000 && !metadata.force) return
-    lastReportedEventTime.current[eventType] = now
-
-    try {
-      await fetch(`${API_BASE}/proctoring/events`, {
-        method: 'POST',
-        headers: {
-          ...getAuthHeaders(),
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          attemptId,
-          quizId,
-          eventType,
-          severity,
-          confidence: 0.95,
-          duration: metadata.duration || 2.0,
-          timestamp: new Date().toISOString(),
-          metadata,
-        }),
-      })
-    } catch (e) {
-      console.warn('[QuizTaking] Monitoring event dispatch failed:', e)
-    }
-  }, [attemptId, quizId])
-
-  /* ── Real-time Active Webcam & Face Absence Detection ──────────────── */
-  const [proctorCamStream, setProctorCamStream] = useState(null)
-  const [faceMissing, setFaceMissing] = useState(false)
-  const proctorVideoRef = useRef(null)
-  const proctorCanvasRef = useRef(null)
-  const missingCountRef = useRef(0)
-
-  // Initialize camera for proctoring
-  useEffect(() => {
-    let activeStream = null
-    let isCancelled = false
-
-    const initCam = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: 'user' },
-          audio: false
-        })
-        if (isCancelled) {
-          stream.getTracks().forEach(t => t.stop())
-          return
-        }
-        activeStream = stream
-        setProctorCamStream(stream)
-      } catch (err) {
-        console.warn('[QuizTaking] Proctor camera acquisition warning:', err.message)
-      }
-    }
-
-    initCam()
-
-    return () => {
-      isCancelled = true
-      if (activeStream) {
-        activeStream.getTracks().forEach(t => t.stop())
-      }
-    }
-  }, [])
-
-  // Attach stream to hidden/widget video
-  useEffect(() => {
-    if (proctorVideoRef.current && proctorCamStream && proctorVideoRef.current.srcObject !== proctorCamStream) {
-      proctorVideoRef.current.srcObject = proctorCamStream
-      proctorVideoRef.current.play().catch(() => {})
-    }
-  }, [proctorCamStream])
-
-  // Continuous 2-second face presence / absence inspection
-  useEffect(() => {
-    if (!attemptId || submittedRef.current || terminated) return
-
-    const interval = setInterval(() => {
-      const video = proctorVideoRef.current
-      if (!video || video.readyState < 2 || video.videoWidth === 0) return
-
-      const w = 160
-      const h = 120
-      let canvas = proctorCanvasRef.current
-      if (!canvas) {
-        canvas = document.createElement('canvas')
-        proctorCanvasRef.current = canvas
-      }
-      canvas.width = w
-      canvas.height = h
-      const ctx = canvas.getContext('2d', { willReadFrequently: true })
-      if (!ctx) return
-
-      try {
-        ctx.drawImage(video, 0, 0, w, h)
-        const frame = ctx.getImageData(0, 0, w, h)
-        const d = frame.data
-
-        let skinPixels = 0
-        let totalSampled = 0
-        let sumX = 0
-        let sumY = 0
-        for (let i = 0; i < d.length; i += 16) {
-          const r = d[i]
-          const g = d[i + 1]
-          const b = d[i + 2]
-          totalSampled++
-          if (r > 60 && g > 40 && b > 20 && r > b && (r - g) >= 10 && Math.abs(r - g) < 140) {
-            skinPixels++
-            const pixelIdx = i / 4
-            sumX += pixelIdx % w
-            sumY += Math.floor(pixelIdx / w)
-          }
-        }
-
-        const skinRatio = skinPixels / Math.max(1, totalSampled)
-        const isPresent = skinRatio > 0.018
-
-        if (!isPresent) {
-          missingCountRef.current++
-          if (missingCountRef.current >= 2) {
-            setFaceMissing(true)
-            reportMonitoringEvent('FACE_ABSENT', missingCountRef.current > 4 ? 'HIGH' : 'WARNING', {
-              duration: missingCountRef.current * 2,
-              message: 'Participant absent or not visible in camera view'
-            })
-          }
-        } else {
-          if (missingCountRef.current >= 2) {
-            setFaceMissing(false)
-            reportMonitoringEvent('FACE_RETURNED', 'INFO', { message: 'Participant returned to camera view' })
-          }
-          missingCountRef.current = 0
-
-          // NOTE: Gaze, Head Pose, Eye Direction, and Body Framing tracking
-          // is handled exclusively by MonitoringEngineClient.js which uses
-          // proper sustained-deviation thresholds (3.5s+), rolling-window
-          // grace models (5 allowed in 5min), and per-event-type cooldowns.
-          // Duplicate reporting here was removed (Bug 18 / Addendum #8)
-          // because it logged events on every frame without sustained
-          // confirmation, producing 8+ "Eyes looking left" events in <1min.
-        }
-      } catch (_) {
-        // Frame analysis fallback
-      }
-    }, 1800)
-
-    // Tab visibility & Window blur listeners with confirmation timers
-    let tabTimer = null
-    let blurTimer = null
-
-    const handleVisibilityChange = () => {
-      if (document.hidden || document.visibilityState === 'hidden') {
-        if (!tabTimer) {
-          tabTimer = setTimeout(() => {
-            if (document.hidden || document.visibilityState === 'hidden') {
-              reportMonitoringEvent('TAB_SWITCH', 'WARNING', {
-                type: 'PAGE_VISIBILITY_HIDDEN',
-                duration: 2.0,
-                metadata: {
-                  hasFocus: document.hasFocus(),
-                  visibilityState: document.visibilityState,
-                  isFullscreen: !!fsApi.element(),
-                }
-              })
-            }
-            tabTimer = null
-          }, 2000) // 2.0s confirmation window
-        }
-      } else {
-        if (tabTimer) {
-          clearTimeout(tabTimer)
-          tabTimer = null
-        }
-      }
-    }
-
-    const handleWindowBlur = () => {
-      if (document.hidden || document.visibilityState === 'hidden') return
-      if (!blurTimer) {
-        blurTimer = setTimeout(() => {
-          if (!document.hasFocus() && !(document.hidden || document.visibilityState === 'hidden')) {
-            reportMonitoringEvent('WINDOW_BLUR', 'INFO', {
-              type: 'WINDOW_BLUR',
-              duration: 2.0,
-              metadata: {
-                hasFocus: document.hasFocus(),
-                visibilityState: document.visibilityState,
-                isFullscreen: !!fsApi.element(),
-              }
-            })
-          }
-          blurTimer = null
-        }, 2000) // 2.0s confirmation window
-      }
-    }
-
-    const handleWindowFocus = () => {
-      if (blurTimer) {
-        clearTimeout(blurTimer)
-        blurTimer = null
-      }
-    }
-
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    window.addEventListener('blur', handleWindowBlur)
-    window.addEventListener('focus', handleWindowFocus)
-
-    return () => {
-      clearInterval(interval)
-      if (tabTimer) clearTimeout(tabTimer)
-      if (blurTimer) clearTimeout(blurTimer)
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-      window.removeEventListener('blur', handleWindowBlur)
-      window.removeEventListener('focus', handleWindowFocus)
-    }
-  }, [attemptId, reportMonitoringEvent, terminated])
+  }, [terminated, handleSubmit, onSubmit, warnings, reportMonitoringEvent])
 
   /* ── Screen share violation reporting ──────────────────────────────── */
   const reportViolation = useCallback(async (type, message) => {
@@ -1209,12 +1061,20 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
                 <AlertTriangle size={32} />
               </div>
               <h2 id="qt-warn-title" className="qt-modal__title">
-                Warning {warnings} of {MAX_WARNINGS}
+                {warnings <= MAX_WARNINGS ? `Security Warning (${warnings} of ${MAX_WARNINGS})` : `Security Alert (${warnings} Attempts)`}
               </h2>
               <p className="qt-modal__desc">
-                You exited fullscreen mode. Return to fullscreen immediately. After
-                <strong> {MAX_WARNINGS} violations</strong>, your exam will be
-                <strong> automatically terminated</strong>.
+                {warnings <= MAX_WARNINGS ? (
+                  <>
+                    You switched tabs or exited fullscreen mode. Please return to fullscreen immediately. You are allowed
+                    <strong> up to {MAX_WARNINGS} attempts</strong> before a 10-mark penalty is added to your proctoring audit score.
+                  </>
+                ) : (
+                  <>
+                    You have exceeded the <strong>3 allowed tab switch / exit attempts</strong>. A
+                    <strong style={{ color: '#dc2626' }}> 10-mark malpractice penalty</strong> has been added to your proctoring audit report. Please return to fullscreen to continue your test.
+                  </>
+                )}
               </p>
               <button
                 type="button"
@@ -1396,39 +1256,6 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
         )}
       </AnimatePresence>
 
-      {/* Proctoring Hidden Camera Feed */}
-      <video
-        ref={proctorVideoRef}
-        playsInline
-        autoPlay
-        muted
-        style={{ position: 'fixed', width: 1, height: 1, opacity: 0.01, pointerEvents: 'none' }}
-      />
-
-      {/* Real-time Face Absence Warning Banner */}
-      {faceMissing && !terminated && !submitting && (
-        <div style={{
-          position: 'fixed',
-          top: 16,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 9999,
-          background: '#dc2626',
-          color: '#ffffff',
-          padding: '10px 24px',
-          borderRadius: 999,
-          boxShadow: '0 10px 25px rgba(220, 38, 38, 0.4)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          fontSize: 13,
-          fontWeight: 700,
-          fontFamily: 'var(--font-primary)'
-        }}>
-          <AlertTriangle size={18} color="#fff" />
-          <span>⚠️ Face Not Detected! Please return to camera view.</span>
-        </div>
-      )}
     </div>
   )
 }

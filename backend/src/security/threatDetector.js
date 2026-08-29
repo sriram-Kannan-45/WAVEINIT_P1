@@ -107,10 +107,22 @@ function recordThreat(ip, type, details = {}) {
 
 const SENSITIVE_AUTH_FIELDS = new Set(['password', 'newPassword', 'oldPassword', 'confirmPassword', 'currentPassword']);
 
+// Base64-encoded media payloads (webcam frames, recordings, uploads) are treated
+// as opaque binary blobs. Their byte sequences can legitimately contain substrings
+// that resemble SQL markers (e.g. "0x" followed by hex from JPEG pixels), so they
+// are skipped by the SQL scanner while normal text fields remain guarded.
+function isBinaryPayload(str) {
+  if (typeof str !== 'string' || str.length < 512) return false;
+  const body = str.replace(/^data:[^,]+;base64,/i, '');
+  if (/^[A-Za-z0-9+/]+={0,2}$/.test(body)) return true;
+  return /^(?:\/9j\/|iVBOR|UklGR|GkXfo|R0lGOD|AAAA)/.test(body);
+}
+
 // ── Middleware: SQL injection detection ─────────────────────────────────────
 function detectSqlInjection(req, res, next) {
   const checkString = (str) => {
     if (typeof str !== 'string') return false;
+    if (isBinaryPayload(str)) return false;
     return SQL_INJECTION_PATTERNS.some(p => p.test(str));
   };
 

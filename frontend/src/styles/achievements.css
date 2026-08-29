@@ -1,0 +1,434 @@
+/* ═══════════════════════════════════════════════════════════════════
+   ACHIEVEMENTS, BADGES & CERTIFICATES STYLES
+   ═══════════════════════════════════════════════════════════════════ */
+
+.ach-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  font-family: 'Poppins', sans-serif;
+  color: #0F172A;
+}
+
+/* ── Progress Overview Card ── */
+.ach-progress-card {
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 16px;
+  padding: 20px 24px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ach-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.ach-progress-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.ach-count-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #0F172A;
+}
+
+.ach-count-earned {
+  color: #16A34A;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.ach-count-total {
+  color: #64748B;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ach-next-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.ach-next-pill strong {
+  color: #0F172A;
+  font-weight: 600;
+}
+
+.ach-next-pill-req {
+  color: #64748B;
+}
+
+.ach-progress-pct {
+  font-size: 22px;
+  font-weight: 800;
+  color: #16A34A;
+  letter-spacing: -0.02em;
+}
+
+.ach-bar-track {
+  width: 100%;
+  height: 8px;
+  background: #F1F5F9;
+  border-radius: 999px;
+  overflow: hidden;
+  position: relative;
+}
+
+.ach-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #16A34A 0%, #10B981 100%);
+  border-radius: 999px;
+  transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ── Section Header ── */
+.ach-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ach-section-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #0F172A;
+  margin: 0;
+}
+
+.ach-section-sub {
+  font-size: 12.5px;
+  color: #64748B;
+  margin: 2px 0 0 0;
+}
+
+/* ── Badges Grid ── */
+.ach-badges-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
+  gap: 16px;
+}
+
+.ach-badge-card {
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 16px;
+  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ach-badge-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 24px -6px rgba(0, 0, 0, 0.06);
+  border-color: #CBD5E1;
+}
+
+.ach-badge-card--earned {
+  border-color: #DCFCE7;
+  background: #FFFFFF;
+}
+
+.ach-badge-card--earned:hover {
+  border-color: #86EFAC;
+  box-shadow: 0 10px 24px -6px rgba(22, 163, 74, 0.12);
+}
+
+.ach-badge-card--locked {
+  background: #FAFAFA;
+  opacity: 0.85;
+}
+
+.ach-badge-glow {
+  position: absolute;
+  top: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.ach-badge-icon-box {
+  position: relative;
+  z-index: 1;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+  transition: transform 0.2s ease;
+}
+
+.ach-badge-card:hover .ach-badge-icon-box {
+  transform: scale(1.06);
+}
+
+.ach-badge-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #0F172A;
+  margin: 0 0 4px 0;
+  line-height: 1.3;
+}
+
+.ach-badge-card--locked .ach-badge-name {
+  color: #475569;
+}
+
+.ach-badge-desc {
+  font-size: 11.5px;
+  color: #64748B;
+  margin: 0 0 14px 0;
+  min-height: 32px;
+  line-height: 1.4;
+}
+
+.ach-badge-footer {
+  width: 100%;
+  margin-top: auto;
+}
+
+.ach-earned-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  background: #EAF8F0;
+  border: 1px solid #DCFCE7;
+  color: #15803D;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ach-req-bar {
+  width: 100%;
+  height: 5px;
+  background: #E2E8F0;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.ach-req-fill {
+  height: 100%;
+  background: #94A3B8;
+  border-radius: 999px;
+}
+
+.ach-req-text {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #64748B;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Certificate Cards ── */
+.ach-cert-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.ach-cert-card {
+  background: linear-gradient(135deg, #F0FDF4 0%, #FFFFFF 60%, #F8FAFC 100%);
+  border: 1px solid #DCFCE7;
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ach-cert-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 28px -6px rgba(22, 163, 74, 0.12);
+  border-color: #86EFAC;
+}
+
+.ach-cert-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.ach-cert-icon-wrap {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: #16A34A;
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.25);
+}
+
+.ach-cert-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: #DCFCE7;
+  color: #15803D;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ach-cert-title {
+  font-size: 15.5px;
+  font-weight: 700;
+  color: #0F172A;
+  margin: 0 0 4px 0;
+  line-height: 1.35;
+}
+
+.ach-cert-subtitle {
+  font-size: 11.5px;
+  color: #64748B;
+  margin: 0 0 16px 0;
+}
+
+.ach-cert-metrics {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-top: auto;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 12px;
+}
+
+.ach-cert-metric-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #94A3B8;
+  margin-bottom: 2px;
+}
+
+.ach-cert-score-val {
+  font-size: 22px;
+  font-weight: 800;
+  color: #16A34A;
+  line-height: 1;
+}
+
+.ach-cert-rank-val {
+  font-size: 18px;
+  font-weight: 800;
+  color: #D97706;
+  line-height: 1;
+}
+
+.ach-cert-btn {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: #16A34A;
+  color: #FFFFFF;
+  font-family: 'Poppins', sans-serif;
+  font-size: 12.5px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ach-cert-btn:hover {
+  background: #15803D;
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.25);
+  transform: translateY(-1px);
+}
+
+.ach-cert-btn:active {
+  transform: translateY(0);
+}
+
+/* ── Empty Certificate Card ── */
+.ach-empty-card {
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 16px;
+  padding: 36px 20px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.ach-empty-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: #EAF8F0;
+  color: #16A34A;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+
+.ach-empty-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0F172A;
+  margin: 0;
+}
+
+.ach-empty-desc {
+  font-size: 12.5px;
+  color: #64748B;
+  max-width: 420px;
+  margin: 0;
+  line-height: 1.5;
+}

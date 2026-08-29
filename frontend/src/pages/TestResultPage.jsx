@@ -1,26 +1,113 @@
-import { useParams, Link } from 'react-router-dom';
+import React from 'react';
+import { useNavigate } from 'react-router-dom';
+import { CheckCircle2, ArrowLeft } from 'lucide-react';
 
 export default function TestResultPage() {
-  const { testId, attemptId } = useParams();
+  const navigate = useNavigate();
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6 text-center">
-      <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-lg">
-        <div className="mb-4 text-5xl">✅</div>
-        <h1 className="mb-2 text-2xl font-bold text-slate-900">Test Submitted</h1>
-        <p className="mb-6 text-slate-600">
-          Thank you for completing the test. Your responses have been recorded.
-        </p>
-        <div className="mb-6 rounded-lg bg-slate-50 p-4 text-left text-sm text-slate-700">
-          <p><span className="font-semibold">Attempt ID:</span> {attemptId}</p>
-          <p><span className="font-semibold">Test ID:</span> {testId}</p>
-        </div>
-        <Link
-          to="/participant"
-          className="inline-block rounded-lg bg-primary-600 px-6 py-2.5 font-semibold text-white hover:bg-primary-700"
+    <div
+      style={{
+        padding: '60px 20px',
+        maxWidth: 580,
+        margin: '40px auto',
+        fontFamily: "'Poppins', sans-serif",
+        textAlign: 'center',
+      }}
+    >
+      <div
+        style={{
+          background: '#ffffff',
+          borderRadius: '16px',
+          border: '1px solid #e2e8f0',
+          padding: '48px 32px',
+          boxShadow: '0 4px 16px rgba(0, 0, 0, 0.05)',
+        }}
+      >
+        <div
+          style={{
+            width: 68,
+            height: 68,
+            borderRadius: '50%',
+            background: '#ecfdf5',
+            color: '#16a34a',
+            margin: '0 auto 20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
         >
-          Back to Dashboard
-        </Link>
+          <CheckCircle2 size={36} />
+        </div>
+
+        <h2
+          style={{
+            margin: '0 0 10px',
+            fontSize: '22px',
+            fontWeight: 700,
+            color: '#0f172a',
+          }}
+        >
+          Test Submitted Successfully
+        </h2>
+
+        <p
+          style={{
+            margin: '0 0 24px',
+            color: '#64748b',
+            fontSize: '14px',
+            lineHeight: 1.6,
+            maxWidth: 440,
+            marginLeft: 'auto',
+            marginRight: 'auto',
+          }}
+        >
+          Your test submission has been recorded and stored directly in the database.
+          Detailed reports and evaluations are available in the trainer module.
+        </p>
+
+        <div
+          style={{
+            background: '#f8fafc',
+            border: '1px solid #e2e8f0',
+            borderRadius: '10px',
+            padding: '12px 18px',
+            marginBottom: '28px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px',
+            fontSize: '13px',
+            fontWeight: 600,
+            color: '#334155',
+          }}
+        >
+          <span>✓</span> Results Stored in Database
+        </div>
+
+        <div>
+          <button
+            type="button"
+            onClick={() => navigate('/participant')}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              padding: '12px 28px',
+              background: '#2563eb',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '10px',
+              fontSize: '14px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              boxShadow: '0 2px 6px rgba(37, 99, 235, 0.25)',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <ArrowLeft size={16} /> Return to Dashboard
+          </button>
+        </div>
       </div>
     </div>
   );

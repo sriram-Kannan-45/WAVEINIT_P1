@@ -301,10 +301,12 @@ User.hasMany(ProctoringEvent, { foreignKey: 'participantId', as: 'proctoringEven
 
 ProctoringReport.belongsTo(QuizAttempt, { foreignKey: 'attemptId', as: 'attempt', constraints: false });
 QuizAttempt.hasOne(ProctoringReport, { foreignKey: 'attemptId', as: 'proctoringReport', constraints: false });
+QuizAttempt.hasOne(MonitoringSession, { foreignKey: 'attemptId', as: 'monitoringSession', constraints: false });
 
 CodingAttempt.hasOne(ProctoringSession, { foreignKey: 'attemptId', as: 'proctoringSession', constraints: false });
 CodingAttempt.hasMany(ProctoringEvent, { foreignKey: 'attemptId', as: 'proctoringEvents', constraints: false });
 CodingAttempt.hasOne(ProctoringReport, { foreignKey: 'attemptId', as: 'proctoringReport', constraints: false });
+CodingAttempt.hasOne(MonitoringSession, { foreignKey: 'attemptId', as: 'monitoringSession', constraints: false });
 
 // --- Secure Assessment Session lock (separate from proctoring module) ---
 AssessmentSession.belongsTo(QuizAttempt, { foreignKey: 'attemptId', as: 'attempt', constraints: false });

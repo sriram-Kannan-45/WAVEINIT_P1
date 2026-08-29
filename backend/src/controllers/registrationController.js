@@ -14,6 +14,7 @@ const { Op } = require('sequelize');
 const { User, Training, RegistrationApplication, TrainingTrainerAssignment, Notification } = require('../models');
 const { sequelize } = require('../config/db');
 const { sendCredentialsEmail, isEmailConfigured, explainSmtpError, rebuildTransporter } = require('../config/mailer');
+const { validateEmail } = require('../utils/validators');
 
 const BCRYPT_COST = 12;
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
@@ -42,7 +43,7 @@ function generateApplicationNumber(seq) {
 }
 
 function localValidateEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  return validateEmail(email);
 }
 
 function localValidatePhone(phone) {

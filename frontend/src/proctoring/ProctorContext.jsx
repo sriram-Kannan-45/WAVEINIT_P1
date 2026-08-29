@@ -448,10 +448,16 @@ export function ProctorProvider({ children }) {
 
   const reset = useCallback(() => {
     cleanupScreenShare();
+    if (proctorStream) {
+      try {
+        proctorStream.getTracks().forEach((t) => t.stop());
+      } catch (_) {}
+      setProctorStream(null);
+    }
     setSession(null); setLastWarning(null); setError(null);
     setCameraGranted(false); setMicGranted(false); setViolationLog([]);
     lastReportRef.current.clear();
-  }, [cleanupScreenShare]);
+  }, [cleanupScreenShare, proctorStream]);
 
   const value = useMemo(() => ({
     session,

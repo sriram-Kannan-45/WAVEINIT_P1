@@ -56,18 +56,21 @@ export const API = {
   },
 
   ADMIN: {
-    CREATE_TRAINER:      `${API_BASE}/admin/create-trainer`,
-    TRAININGS:           `${API_BASE}/admin/trainings`,
-    TRAINERS:            `${API_BASE}/admin/trainers`,
-    PARTICIPANTS:        `${API_BASE}/admin/participants`,
-    PENDING_PARTICIPANTS:`${API_BASE}/admin/pending-participants`,
-    APPROVE_PARTICIPANT: (id) => `${API_BASE}/admin/participants/${id}/approve`,
-    REJECT_PARTICIPANT:  (id) => `${API_BASE}/admin/participants/${id}/reject`,
-    DELETE_TRAINING:     (id) => `${API_BASE}/admin/trainings/${id}`,
-    NOTES:               `${API_BASE}/notes/admin/notes`,
-    BULK_TEMPLATE:   `${API_BASE}/admin/participants/bulk-template`,
-    BULK_VALIDATE:   `${API_BASE}/admin/participants/bulk-validate`,
-    BULK_IMPORT:     `${API_BASE}/admin/participants/bulk-import`,
+    CREATE_TRAINER:          `${API_BASE}/admin/create-trainer`,
+    TRAININGS:               `${API_BASE}/admin/trainings`,
+    TRAINERS:                `${API_BASE}/admin/trainers`,
+    PARTICIPANTS:            `${API_BASE}/admin/participants`,
+    PENDING_PARTICIPANTS:    `${API_BASE}/admin/pending-participants`,
+    APPROVE_PARTICIPANT:     (id) => `${API_BASE}/admin/participants/${id}/approve`,
+    REJECT_PARTICIPANT:      (id) => `${API_BASE}/admin/participants/${id}/reject`,
+    DELETE_TRAINING:         (id) => `${API_BASE}/admin/trainings/${id}`,
+    BULK_DELETE_PARTICIPANTS:`${API_BASE}/admin/participants/bulk-delete`,
+    BULK_DELETE_TRAINERS:    `${API_BASE}/admin/trainers/bulk-delete`,
+    BULK_DELETE_TRAININGS:   `${API_BASE}/admin/trainings/bulk-delete`,
+    NOTES:                   `${API_BASE}/notes/admin/notes`,
+    BULK_TEMPLATE:           `${API_BASE}/admin/participants/bulk-template`,
+    BULK_VALIDATE:           `${API_BASE}/admin/participants/bulk-validate`,
+    BULK_IMPORT:             `${API_BASE}/admin/participants/bulk-import`,
   },
 
   REGISTRATION: {
@@ -150,6 +153,8 @@ export const API = {
     PROGRAM_COURSES:(id) => `${API_BASE}/admin/training-programs/${id}/courses`,
     COURSES:                `${API_BASE}/admin/courses`,
     COURSE:         (id) => `${API_BASE}/admin/courses/${id}`,
+    BULK_DELETE_PROGRAMS:   `${API_BASE}/admin/training-programs/bulk-delete`,
+    BULK_DELETE_COURSES:    `${API_BASE}/admin/courses/bulk-delete`,
   },
 
   TRAINER_COURSES: {

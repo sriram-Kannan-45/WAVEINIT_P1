@@ -8,6 +8,7 @@
  */
 
 const { body, param, query, validationResult } = require('express-validator');
+const { EMAIL_REGEX, PASSWORD_REGEX } = require('../utils/validators');
 
 // ── Handle validation results ──────────────────────────────────────────────
 function handleValidation(req, res, next) {
@@ -62,11 +63,12 @@ const validateRegister = [
     .isLength({ min: 2, max: 100 }).withMessage('Name must be 2-100 characters')
     .matches(/^[a-zA-Z\s'-]+$/).withMessage('Name contains invalid characters'),
   body('email')
-    .isEmail().withMessage('Invalid email format')
+    .notEmpty().withMessage('Email is required')
+    .matches(EMAIL_REGEX).withMessage('Invalid email format')
     .normalizeEmail()
     .isLength({ max: 255 }),
   body('password')
-    .isLength({ min: 6, max: 128 }).withMessage('Password must be 6-128 characters'),
+    .matches(PASSWORD_REGEX).withMessage('Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one number, and one special character'),
   body('phone')
     .optional()
     .matches(/^[\d\s+\-().]+$/).withMessage('Invalid phone format')

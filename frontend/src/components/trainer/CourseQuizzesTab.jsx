@@ -7,10 +7,10 @@ import {
   X, Save, Check, AlertTriangle, ChevronDown, ChevronUp, BookOpen, Trophy,
   BarChart3, FileText, Upload, Clock, HelpCircle, Users, Star, Settings,
   Shield, CheckCircle2, RefreshCw, MoreVertical, ArrowLeft, ArrowRight, Loader2, AlertCircle,
-  Calendar, Award, Activity, CheckSquare, Code, BarChart2, Info
+  Calendar, Award, Activity, CheckSquare, Code, BarChart2, Info, Download
 } from 'lucide-react'
 import { SingleAttemptProctoringModal } from '../../proctoring/components/TrainerMonitoringReport'
-import { API } from '../../api/api'
+import { API, API_BASE } from '../../api/api'
 import { useToast } from '../Toast'
 import { useConfirm } from '../ui/AlertModal'
 import {
@@ -1127,9 +1127,52 @@ function QuizDetailModal({ quizId, user, courseId, onClose }) {
                 {/* 4. RESULTS TAB */}
                 {activeTab === 'results' && (
                   <div style={{ background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 16, padding: 22 }}>
-                    <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: '#0F172A' }}>
-                      {results.length} Results
-                    </h3>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0F172A' }}>
+                        {results.length} Results
+                      </h3>
+                      {results.length > 0 && (
+                        <button
+                          onClick={async () => {
+                            const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
+                            const token = storedUser?.token || localStorage.getItem('token') || sessionStorage.getItem('token');
+                            const downloadUrl = `${API_BASE}/monitoring/reports/assessment/${quiz.id}/excel?contextType=QUIZ&token=${encodeURIComponent(token || '')}`;
+                            try {
+                              const res = await fetch(downloadUrl, {
+                                headers: token ? { Authorization: `Bearer ${token}` } : {}
+                              });
+                              if (!res.ok) throw new Error('Download failed');
+                              const blob = await res.blob();
+                              const url = window.URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = `assessment_marks_${quiz.id}.xlsx`;
+                              document.body.appendChild(a);
+                              a.click();
+                              document.body.removeChild(a);
+                              window.URL.revokeObjectURL(url);
+                            } catch (e) {
+                              window.open(downloadUrl, '_blank');
+                            }
+                          }}
+                          style={{
+                            padding: '6px 14px',
+                            borderRadius: 8,
+                            border: '1px solid #10b981',
+                            background: '#ecfdf5',
+                            color: '#047857',
+                            fontSize: 12,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 6
+                          }}
+                        >
+                          <Download size={14} /> Download Excel Marks
+                        </button>
+                      )}
+                    </div>
                     {results.length === 0 ? (
                       <div style={{ padding: 40, textAlign: 'center', color: '#94A3B8' }}>No submissions yet.</div>
                     ) : (
@@ -1444,6 +1487,7 @@ function QuizBuilder({ user, courseId, lessons, existingQuiz, onClose, onSaved }
   const [title, setTitle] = useState(existingQuiz?.title || '')
   const [lessonId, setLessonId] = useState(existingQuiz?.lessonId || '')
   const [isMandatory, setIsMandatory] = useState(existingQuiz?.isMandatory ?? true)
+  const [timeLimit, setTimeLimit] = useState(existingQuiz?.timeLimit || 30)
   const [status, setStatus] = useState(existingQuiz?.status || 'DRAFT')
   const [questions, setQuestions] = useState(() => {
     if (!existingQuiz?.questions?.length) return [blankQuestion()]
@@ -1492,6 +1536,7 @@ function QuizBuilder({ user, courseId, lessons, existingQuiz, onClose, onSaved }
         title: title.trim(),
         lessonId: lessonId || null,
         isMandatory,
+        timeLimit: parseInt(timeLimit, 10) || 30,
         questions,
       }
       if (existingQuiz) body.status = status
@@ -1547,7 +1592,7 @@ function QuizBuilder({ user, courseId, lessons, existingQuiz, onClose, onSaved }
           <label style={lblStyle}>Quiz title <span style={{ color: colors.danger[600] }}>*</span></label>
           <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Module 2 Knowledge Check" style={inputStyle} />
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 4 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginTop: 4 }}>
             <div>
               <label style={lblStyle}>Link to lesson (optional)</label>
               <select value={lessonId || ''} onChange={(e) => setLessonId(e.target.value || '')} style={inputStyle}>
@@ -1556,6 +1601,18 @@ function QuizBuilder({ user, courseId, lessons, existingQuiz, onClose, onSaved }
                   <option key={l.id} value={l.id}>{l.title}</option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label style={lblStyle}>Time Limit (minutes)</label>
+              <input
+                type="number"
+                min="1"
+                max="360"
+                value={timeLimit}
+                onChange={(e) => setTimeLimit(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
+                placeholder="e.g. 30"
+                style={inputStyle}
+              />
             </div>
             <div>
               <label style={lblStyle}>Settings</label>
@@ -1905,17 +1962,18 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
               <div>
                 <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                  Questions
+                  Questions (1 to N)
                 </label>
-                <select
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
                   value={questionCount}
-                  onChange={(e) => setQuestionCount(e.target.value)}
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5 }}
-                >
-                  {[5, 10, 15, 20, 25, 30].map(n => (
-                    <option key={n} value={n}>{n} Questions</option>
-                  ))}
-                </select>
+                  onChange={(e) => setQuestionCount(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  placeholder="e.g. 10"
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5, boxSizing: 'border-box' }}
+                  required
+                />
               </div>
 
               <div>
@@ -1936,19 +1994,18 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
 
               <div>
                 <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                  Time Limit
+                  Time Limit (mins)
                 </label>
-                <select
+                <input
+                  type="number"
+                  min="1"
+                  max="360"
                   value={timeLimit}
-                  onChange={(e) => setTimeLimit(e.target.value)}
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5 }}
-                >
-                  <option value={15}>15 minutes</option>
-                  <option value={30}>30 minutes</option>
-                  <option value={45}>45 minutes</option>
-                  <option value={60}>60 minutes</option>
-                  <option value={90}>90 minutes</option>
-                </select>
+                  onChange={(e) => setTimeLimit(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  placeholder="e.g. 30"
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5, boxSizing: 'border-box' }}
+                  required
+                />
               </div>
             </div>
 
@@ -2019,20 +2076,21 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
               <div>
                 <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                  Questions
+                  Questions (1 to N)
                 </label>
-                <select
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
                   value={questionCount}
-                  onChange={(e) => setQuestionCount(e.target.value)}
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5 }}
-                >
-                  {[5, 10, 15, 20].map(n => (
-                    <option key={n} value={n}>{n} Questions</option>
-                  ))}
-                </select>
+                  onChange={(e) => setQuestionCount(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  placeholder="e.g. 10"
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5, boxSizing: 'border-box' }}
+                  required
+                />
               </div>
 
               <div>
@@ -2049,6 +2107,22 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
                   <option value="Hard">Hard</option>
                   <option value="Mixed">Mixed</option>
                 </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
+                  Time Limit (mins)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="360"
+                  value={timeLimit}
+                  onChange={(e) => setTimeLimit(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  placeholder="e.g. 30"
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5, boxSizing: 'border-box' }}
+                  required
+                />
               </div>
             </div>
 

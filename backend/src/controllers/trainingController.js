@@ -105,10 +105,35 @@ const getAllTrainings = async (req, res) => {
   try {
     const userId = req.user?.id;
     const userRole = req.user?.role;
+    const { search = '', status = '', page, limit, offset } = req.query;
 
-    console.log('📋 getAllTrainings called, user:', userId, 'role:', userRole);
+    console.log('📋 getAllTrainings called, user:', userId, 'role:', userRole, 'query:', req.query);
 
-    const trainings = await Training.findAll({
+    const where = {};
+    if (search && search.trim()) {
+      const q = search.trim();
+      where[Op.or] = [
+        { title: { [Op.like]: `%${q}%` } },
+        { description: { [Op.like]: `%${q}%` } }
+      ];
+    }
+
+    if (status && status !== 'ALL') {
+      const now = new Date();
+      if (status.toUpperCase() === 'UPCOMING') {
+        where.startDate = { [Op.gt]: now };
+      } else if (status.toUpperCase() === 'COMPLETED') {
+        where.endDate = { [Op.lt]: now };
+      } else if (status.toUpperCase() === 'ACTIVE') {
+        where.startDate = { [Op.lte]: now };
+        where.endDate = { [Op.gte]: now };
+      }
+    }
+
+    const total = await Training.count({ where });
+
+    let findOptions = {
+      where,
       include: [
         {
           model: User,
@@ -123,7 +148,27 @@ const getAllTrainings = async (req, res) => {
         }
       ],
       order: [['id', 'DESC']]
-    });
+    };
+
+    let currentPage = 1;
+    let parsedLimit = 10;
+    const isPaginated = !!(page || limit || offset !== undefined);
+
+    if (isPaginated) {
+      parsedLimit = limit ? Math.max(1, Math.min(parseInt(limit, 10), 500)) : 10;
+      let parsedOffset = 0;
+      if (page) {
+        currentPage = Math.max(1, parseInt(page, 10));
+        parsedOffset = (currentPage - 1) * parsedLimit;
+      } else if (offset !== undefined) {
+        parsedOffset = Math.max(0, parseInt(offset, 10));
+        currentPage = Math.floor(parsedOffset / parsedLimit) + 1;
+      }
+      findOptions.limit = parsedLimit;
+      findOptions.offset = parsedOffset;
+    }
+
+    const trainings = await Training.findAll(findOptions);
 
     console.log('📋 Raw trainings from DB:', trainings.length);
 
@@ -172,8 +217,20 @@ const getAllTrainings = async (req, res) => {
       };
     }));
 
-    console.log('📋 Returning', formattedTrainings.length, 'trainings');
-    res.json(formattedTrainings);
+    const totalPages = Math.ceil(total / parsedLimit) || 1;
+
+    if (isPaginated) {
+      return res.json({
+        success: true,
+        trainings: formattedTrainings,
+        total,
+        page: currentPage,
+        limit: parsedLimit,
+        totalPages
+      });
+    }
+
+    return res.json(formattedTrainings);
   } catch (error) {
     console.error('Get trainings error:', error.message, error.stack);
     res.status(500).json({ error: 'Server error fetching trainings' });

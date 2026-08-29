@@ -64,14 +64,8 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
   const [countdownSeconds, setCountdownSeconds] = useState(2);
   const [validationResult, setValidationResult] = useState({
     valid: false,
-    faceDetected: false,
-    faceCentered: false,
-    eyesVisible: false,
-    leftShoulderVisible: false,
-    rightShoulderVisible: false,
-    chestVisible: false,
-    belowChestVisible: false,
-    bodyCentered: false,
+    cameraActive: false,
+    bodyInsideBox: false,
     lightingGood: false,
     message: 'Initializing camera...',
   });
@@ -94,21 +88,57 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
     };
   }, []);
 
+  const detectorRef = useRef(null);
+  const faceStateRef = useRef({ faceCount: 0, faceInBox: false, lastCheck: 0 });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'FaceDetector' in window) {
+      try {
+        detectorRef.current = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 3 });
+      } catch (e) {
+        console.warn('[AssessmentConsentGate] FaceDetector init:', e.message);
+      }
+    }
+  }, []);
+
+  const triggerFaceDetection = useCallback(async (video) => {
+    if (!detectorRef.current || !video || video.readyState < 2) return;
+    try {
+      const faces = await detectorRef.current.detect(video);
+      const now = Date.now();
+      if (!faces || faces.length === 0) {
+        faceStateRef.current = { faceCount: 0, faceInBox: false, lastCheck: now };
+        return;
+      }
+      if (faces.length > 1) {
+        faceStateRef.current = { faceCount: faces.length, faceInBox: false, lastCheck: now };
+        return;
+      }
+      const face = faces[0];
+      const box = face.boundingBox;
+      const scaleX = 320 / (video.videoWidth || 320);
+      const scaleY = 240 / (video.videoHeight || 240);
+      const fx = (box.x + box.width / 2) * scaleX;
+      const fy = (box.y + box.height / 2) * scaleY;
+      const fw = box.width * scaleX;
+      const fh = box.height * scaleY;
+
+      // Face center must be in upper box: x in [80, 240], y in [20, 140], min size 30px
+      const faceInBox = fx >= 80 && fx <= 240 && fy >= 20 && fy <= 140 && fw >= 30 && fh >= 30;
+
+      faceStateRef.current = { faceCount: 1, faceInBox, lastCheck: now };
+    } catch (_) {}
+  }, []);
+
   /**
-   * Evaluates camera frame against strict biometric landmarks & framing geometry
+   * Accurate framing verification: checks that candidate's face and upper-body are truly present inside the guide box
    */
   const validateCalibrationFrame = useCallback((video) => {
     if (!video || video.readyState < 2 || video.videoWidth === 0) {
       return {
         valid: false,
-        faceDetected: false,
-        faceCentered: false,
-        eyesVisible: false,
-        leftShoulderVisible: false,
-        rightShoulderVisible: false,
-        chestVisible: false,
-        belowChestVisible: false,
-        bodyCentered: false,
+        cameraActive: false,
+        bodyInsideBox: false,
         lightingGood: false,
         message: 'Camera feed initializing. Please wait...',
       };
@@ -130,17 +160,22 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
     const data = imgData.data;
 
     let totalLuma = 0;
-    let totalLumaSq = 0;
     let sampleCount = 0;
 
+    // Head zone: x: 80..240, y: 20..140 (Target for candidate's face)
     let headSkinPixels = 0;
-    let headSampleCount = 0;
-    let leftEyeSkin = 0;
-    let rightEyeSkin = 0;
-    let leftShoulderPixels = 0;
-    let rightShoulderPixels = 0;
-    let chestPixels = 0;
-    let belowChestPixels = 0;
+    let headSkinSumX = 0;
+    let headSkinSumY = 0;
+    let headMinLuma = 255;
+    let headMaxLuma = 0;
+
+    // Torso zone: x: 50..270, y: 135..230 (Target for candidate's upper-body / shoulders)
+    let torsoForegroundPixels = 0;
+    let torsoSampleCount = 0;
+
+    // Outer margins to detect if user is shifted outside the box
+    let leftMarginSkin = 0;
+    let rightMarginSkin = 0;
 
     const stepSize = 4;
 
@@ -151,149 +186,113 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
         const g = data[idx + 1];
         const b = data[idx + 2];
 
-        // ITU-R BT.601 Luma
+        // Luma
         const luma = 0.299 * r + 0.587 * g + 0.114 * b;
         totalLuma += luma;
-        totalLumaSq += luma * luma;
         sampleCount++;
 
-        // YCbCr Skin Tone Segmentation
+        // YCbCr skin tone detection with strict chromaticity bounds
         const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
         const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
         const isSkin =
-          r > 40 &&
-          g > 25 &&
-          b > 20 &&
-          r > g &&
-          r > b &&
-          Math.abs(r - g) > 12 &&
-          cb >= 75 &&
-          cb <= 135 &&
-          cr >= 130 &&
-          cr <= 180;
+          luma >= 35 && luma <= 235 &&
+          r > 40 && g > 25 && b > 15 &&
+          r > g && (r - g) >= 8 && (r - b) >= 12 &&
+          cb >= 75 && cb <= 135 &&
+          cr >= 128 && cr <= 180;
 
-        // Foreground / Body edge contrast
-        const isBodyPixel = isSkin || (luma > 20 && luma < 235 && (Math.abs(r - g) > 8 || Math.abs(g - b) > 8));
+        // Head zone statistics
+        if (x >= 80 && x <= 240 && y >= 20 && y <= 140) {
+          if (luma < headMinLuma) headMinLuma = luma;
+          if (luma > headMaxLuma) headMaxLuma = luma;
 
-        // Head zone (x: 100..220, y: 15..110)
-        if (x >= 100 && x <= 220 && y >= 15 && y <= 110) {
-          headSampleCount++;
-          if (isSkin) headSkinPixels++;
-
-          // Eye sub-zones (y: 35..75)
-          if (y >= 35 && y <= 75) {
-            if (x >= 110 && x <= 155 && isSkin) leftEyeSkin++;
-            if (x >= 165 && x <= 210 && isSkin) rightEyeSkin++;
+          if (isSkin) {
+            headSkinPixels++;
+            headSkinSumX += x;
+            headSkinSumY += y;
           }
         }
 
-        // Left Shoulder Zone (x: 20..110, y: 95..165)
-        if (x >= 20 && x <= 110 && y >= 95 && y <= 165 && isBodyPixel) {
-          leftShoulderPixels++;
+        // Torso / Shoulder zone statistics
+        if (x >= 50 && x <= 270 && y >= 135 && y <= 230) {
+          torsoSampleCount++;
+          if (isSkin || (luma > 25 && luma < 235 && (Math.abs(r - g) > 12 || Math.abs(g - b) > 12 || Math.abs(r - b) > 12))) {
+            torsoForegroundPixels++;
+          }
         }
 
-        // Right Shoulder Zone (x: 210..300, y: 95..165)
-        if (x >= 210 && x <= 300 && y >= 95 && y <= 165 && isBodyPixel) {
-          rightShoulderPixels++;
-        }
-
-        // Chest Zone (x: 90..230, y: 110..180)
-        if (x >= 90 && x <= 230 && y >= 110 && y <= 180 && isBodyPixel) {
-          chestPixels++;
-        }
-
-        // Below-Chest Zone (x: 80..240, y: 180..235)
-        if (x >= 80 && x <= 240 && y >= 180 && y <= 235 && isBodyPixel) {
-          belowChestPixels++;
-        }
+        // Outside margin checks
+        if (x < 45 && isSkin) leftMarginSkin++;
+        if (x > 275 && isSkin) rightMarginSkin++;
       }
     }
 
     const avgLuma = totalLuma / Math.max(1, sampleCount);
-    const variance = Math.max(0, totalLumaSq / Math.max(1, sampleCount) - avgLuma * avgLuma);
-    const contrast = Math.sqrt(variance);
+    const lightingGood = avgLuma >= 30.0 && avgLuma <= 240.0;
 
-    // Strict Lighting Boundaries
-    const lightingGood = avgLuma >= 45.0 && avgLuma <= 220.0 && contrast >= 22.0;
+    // Biometric checks
+    const headContrast = headMaxLuma - headMinLuma;
+    const avgHeadSkinX = headSkinPixels > 0 ? headSkinSumX / headSkinPixels : 0;
+    const avgHeadSkinY = headSkinPixels > 0 ? headSkinSumY / headSkinPixels : 0;
 
-    // Face Detection & Centering
-    const faceDetected = headSkinPixels >= 28 && headSampleCount > 0;
-    const faceCentered = faceDetected;
+    // Face must be present in the head area with minimum skin density, centered, and have facial contrast
+    const facePresentBiometric =
+      headSkinPixels >= 35 &&
+      headContrast >= 28 &&
+      avgHeadSkinX >= 90 && avgHeadSkinX <= 230 &&
+      avgHeadSkinY >= 25 && avgHeadSkinY <= 135 &&
+      headSkinPixels > leftMarginSkin * 1.5 &&
+      headSkinPixels > rightMarginSkin * 1.5;
 
-    // Anatomical Sub-Checks
-    const eyesVisible = faceDetected && (leftEyeSkin >= 2 || rightEyeSkin >= 2);
-    const leftShoulderVisible = faceDetected && leftShoulderPixels >= 16;
-    const rightShoulderVisible = faceDetected && rightShoulderPixels >= 16;
-    const chestVisible = faceDetected && chestPixels >= 22;
-    const belowChestVisible = faceDetected && belowChestPixels >= 12;
-    const bodyCentered =
-      faceCentered &&
-      leftShoulderVisible &&
-      rightShoulderVisible &&
-      Math.abs(leftShoulderPixels - rightShoulderPixels) <= 28;
+    const torsoDensity = torsoForegroundPixels / Math.max(1, torsoSampleCount);
+    const torsoPresent = torsoDensity >= 0.25;
 
-    // Strict ALL-OR-NOTHING validity (Bug 7 fix)
-    const valid = Boolean(
-      lightingGood &&
-      faceDetected &&
-      faceCentered &&
-      eyesVisible &&
-      leftShoulderVisible &&
-      rightShoulderVisible &&
-      chestVisible &&
-      belowChestVisible &&
-      bodyCentered
-    );
+    // FaceDetector (if available in modern browser)
+    const faceState = faceStateRef.current;
+    let bodyInsideBox = false;
+    let message = 'Position your face & body inside the box.';
 
-    let message = 'Align your head, eyes, shoulders, and upper body in the camera guide.';
+    if (faceState.lastCheck > 0 && Date.now() - faceState.lastCheck < 800) {
+      if (faceState.faceCount === 0) {
+        bodyInsideBox = false;
+        message = '✗ No face detected. Please face the camera.';
+      } else if (faceState.faceCount > 1) {
+        bodyInsideBox = false;
+        message = '✗ Multiple faces detected. Only one candidate allowed.';
+      } else if (!faceState.faceInBox) {
+        bodyInsideBox = false;
+        message = '✗ Center your face inside the green guide box.';
+      } else {
+        bodyInsideBox = true;
+      }
+    } else {
+      bodyInsideBox = Boolean(facePresentBiometric && torsoPresent);
+      if (!facePresentBiometric) {
+        message = '✗ Position your face inside the upper guide box.';
+      } else if (!torsoPresent) {
+        message = '✗ Position your upper body/shoulders inside the box.';
+      }
+    }
+
+    const valid = Boolean(lightingGood && bodyInsideBox);
+
     if (!lightingGood) {
-      message =
-        avgLuma < 45.0
-          ? '✗ Lighting is too dark — please turn on a room light.'
-          : avgLuma > 220.0
-          ? '✗ Lighting is too bright or washed out — avoid direct glare.'
-          : '✗ Camera contrast is too low — ensure your face is well-lit.';
-    } else if (!faceDetected) {
-      message = '✗ No Face Detected — center yourself directly in front of the camera.';
-    } else if (!faceCentered) {
-      message = '✗ Face Not Centered — move to the horizontal center of the frame.';
-    } else if (!eyesVisible) {
-      message = '✗ Both Eyes Not Clearly Visible — look directly at the camera.';
-    } else if (!leftShoulderVisible || !rightShoulderVisible) {
-      const missing =
-        !leftShoulderVisible && !rightShoulderVisible
-          ? 'Both shoulders'
-          : !leftShoulderVisible
-          ? 'Left shoulder'
-          : 'Right shoulder';
-      message = `✗ ${missing} not visible — step back slightly to frame both shoulders.`;
-    } else if (!chestVisible) {
-      message = '✗ Upper body / chest not framed — tilt camera down slightly.';
-    } else if (!belowChestVisible) {
-      message = '✗ Move back slightly so your upper body and lower chest are visible.';
-    } else if (!bodyCentered) {
-      message = '✗ Body Not Centered — move slightly left/right to center your body in frame.';
+      message = avgLuma < 30.0 ? '✗ Room lighting is too dark — please turn on a light.' : '✗ Lighting is too bright — avoid direct glare.';
     } else if (valid) {
-      message = '✓ Good framing. Hold position to complete calibration.';
+      message = '✓ Body inside box. Hold position to complete.';
     }
 
     return {
       valid,
-      faceDetected,
-      faceCentered,
-      eyesVisible,
-      leftShoulderVisible,
-      rightShoulderVisible,
-      chestVisible,
-      belowChestVisible,
-      bodyCentered,
+      cameraActive: true,
+      bodyInsideBox,
       lightingGood,
       message,
     };
   }, []);
 
   /**
-   * Continuous Processing Loop with 1.5s Stability Countdown
+   * Continuous Processing Loop with 1.2s Stability Countdown
    */
   const startContinuousCalibrationLoop = useCallback(
     (stream) => {
@@ -302,9 +301,10 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
       }
       stableStartRef.current = null;
 
-      const HOLD_DURATION_MS = 1500;
+      let lastDetectTime = 0;
+      const HOLD_DURATION_MS = 1200;
 
-      const processFrame = () => {
+      const processFrame = (now) => {
         if (!isComponentMounted.current) return;
 
         const video = videoRef.current;
@@ -322,6 +322,11 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
           setCalibState(CALIB_STATE.CALIBRATION_WAITING);
           animFrameRef.current = requestAnimationFrame(processFrame);
           return;
+        }
+
+        if (detectorRef.current && (!lastDetectTime || now - lastDetectTime >= 200)) {
+          lastDetectTime = now;
+          triggerFaceDetection(video);
         }
 
         const result = validateCalibrationFrame(video);
@@ -361,7 +366,7 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
 
       animFrameRef.current = requestAnimationFrame(processFrame);
     },
-    [validateCalibrationFrame]
+    [validateCalibrationFrame, triggerFaceDetection]
   );
 
   const initCameraCalibration = useCallback(async () => {
@@ -443,6 +448,19 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
       await new Promise((r) => setTimeout(r, 60));
       if (!fsApi.element()) {
         throw new Error('Fullscreen permission was denied');
+      }
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      if (streamRef.current) {
+        try {
+          streamRef.current.getTracks().forEach((t) => t.stop());
+        } catch (_) {}
+        streamRef.current = null;
+      }
+      if (camStream) {
+        try {
+          camStream.getTracks().forEach((t) => t.stop());
+        } catch (_) {}
+        setCamStream(null);
       }
       onConsented?.(attemptId, quiz);
     } catch (e) {
@@ -630,11 +648,10 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
                   <Camera size={26} />
                 </div>
                 <h2 id="ac-title" className="ac-step__title">
-                  Camera &amp; Upper-Body Calibration
+                  Camera Calibration
                 </h2>
                 <p className="ac-step__lead">
-                  Position your camera so your head, eyes, both shoulders, and upper body are clearly visible in the
-                  guide below.
+                  Position your face and body inside the box below to begin.
                 </p>
 
                 {error && (
@@ -644,7 +661,7 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
                   </div>
                 )}
 
-                {/* Camera Viewport with Framing Guide */}
+                {/* Camera Viewport with Single Framing Box */}
                 <div
                   style={{
                     position: 'relative',
@@ -686,7 +703,7 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
                     }}
                   />
 
-                  {/* SVG Framing Overlay Guide */}
+                  {/* SVG Single Guide Box Overlay */}
                   <svg
                     viewBox="0 0 320 240"
                     preserveAspectRatio="none"
@@ -698,49 +715,72 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
                       pointerEvents: 'none',
                     }}
                   >
-                    <line x1="160" y1="10" x2="160" y2="230" stroke="rgba(255,255,255,0.18)" strokeDasharray="3 3" strokeWidth="1" />
-                    <ellipse
-                      cx="160"
-                      cy="54"
-                      rx="42"
-                      ry="46"
-                      fill="rgba(13,148,136,0.06)"
-                      stroke={validationResult.faceDetected && validationResult.faceCentered ? 'rgba(34,197,94,0.8)' : 'rgba(255,255,255,0.4)'}
-                      strokeWidth="1.5"
-                      strokeDasharray="4 3"
-                    />
-                    <text x="160" y="24" textAnchor="middle" fill="#ffffff" fontSize="9" fontWeight="700">
-                      HEAD &amp; EYES
-                    </text>
-
-                    {/* Shoulder Line */}
-                    <line
-                      x1="50"
-                      y1="106"
-                      x2="270"
-                      y2="106"
-                      stroke={validationResult.leftShoulderVisible && validationResult.rightShoulderVisible ? 'rgba(34,197,94,0.85)' : 'rgba(255,255,255,0.4)'}
-                      strokeWidth="1.5"
-                      strokeDasharray="5 3"
-                    />
-                    <text x="160" y="102" textAnchor="middle" fill="#ffffff" fontSize="8" fontWeight="600">
-                      SHOULDER LINE
-                    </text>
-
-                    {/* Chest Zone */}
+                    {/* Centered Framing Box */}
                     <rect
-                      x="75"
-                      y="112"
-                      width="170"
-                      height="60"
-                      rx="6"
-                      fill="rgba(255,255,255,0.04)"
-                      stroke={validationResult.chestVisible ? 'rgba(34,197,94,0.8)' : 'rgba(255,255,255,0.35)'}
-                      strokeWidth="1.2"
-                      strokeDasharray="4 3"
+                      x="45"
+                      y="15"
+                      width="230"
+                      height="210"
+                      rx="14"
+                      fill={validationResult.bodyInsideBox ? 'rgba(34,197,94,0.06)' : 'rgba(255,255,255,0.02)'}
+                      stroke={validationResult.bodyInsideBox ? 'rgba(34,197,94,0.85)' : 'rgba(255,255,255,0.45)'}
+                      strokeWidth="2"
+                      strokeDasharray={validationResult.bodyInsideBox ? 'none' : '6 4'}
                     />
-                    <text x="160" y="146" textAnchor="middle" fill="#ffffff" fontSize="9" fontWeight="600">
-                      CHEST ZONE
+
+                    {/* Corner Accent Brackets */}
+                    {/* Top-Left */}
+                    <path
+                      d="M45,40 L45,25 A10,10 0 0,1 55,15 L70,15"
+                      fill="none"
+                      stroke={validationResult.bodyInsideBox ? '#22c55e' : '#ffffff'}
+                      strokeWidth="3.5"
+                      strokeLinecap="round"
+                    />
+                    {/* Top-Right */}
+                    <path
+                      d="M250,15 L265,15 A10,10 0 0,1 275,25 L275,40"
+                      fill="none"
+                      stroke={validationResult.bodyInsideBox ? '#22c55e' : '#ffffff'}
+                      strokeWidth="3.5"
+                      strokeLinecap="round"
+                    />
+                    {/* Bottom-Left */}
+                    <path
+                      d="M45,200 L45,215 A10,10 0 0,0 55,225 L70,225"
+                      fill="none"
+                      stroke={validationResult.bodyInsideBox ? '#22c55e' : '#ffffff'}
+                      strokeWidth="3.5"
+                      strokeLinecap="round"
+                    />
+                    {/* Bottom-Right */}
+                    <path
+                      d="M250,225 L265,225 A10,10 0 0,0 275,215 L275,200"
+                      fill="none"
+                      stroke={validationResult.bodyInsideBox ? '#22c55e' : '#ffffff'}
+                      strokeWidth="3.5"
+                      strokeLinecap="round"
+                    />
+
+                    {/* Center Top Badge */}
+                    <rect
+                      x="95"
+                      y="18"
+                      width="130"
+                      height="18"
+                      rx="4"
+                      fill={validationResult.bodyInsideBox ? 'rgba(34,197,94,0.9)' : 'rgba(0,0,0,0.65)'}
+                    />
+                    <text
+                      x="160"
+                      y="31"
+                      textAnchor="middle"
+                      fill="#ffffff"
+                      fontSize="9"
+                      fontWeight="700"
+                      letterSpacing="0.5"
+                    >
+                      {validationResult.bodyInsideBox ? '✓ BODY INSIDE BOX' : 'FIT BODY INSIDE BOX'}
                     </text>
                   </svg>
 
@@ -772,68 +812,48 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
                       }}
                     >
                       {calibState === CALIB_STATE.CALIBRATION_PASSED && validationResult.valid
-                        ? '✓ Baseline Framing Accepted'
+                        ? '✓ Body Inside Box — Accepted'
                         : calibState === CALIB_STATE.CALIBRATION_COUNTDOWN && validationResult.valid
                         ? `● Hold position (${countdownSeconds}s)`
-                        : '● Align head, eyes, shoulders & center body'}
+                        : '● Position your body inside the box'}
                     </span>
                   </div>
                 </div>
 
-                {/* Real-time Checklist Grid */}
+                {/* Simplified Real-time Checklist Grid */}
                 <div
                   style={{
                     display: 'grid',
                     gridTemplateColumns: 'repeat(3, 1fr)',
-                    gap: '6px',
+                    gap: '8px',
                     background: '#f8fafc',
-                    padding: '10px',
+                    padding: '10px 14px',
                     borderRadius: '8px',
                     border: '1px solid #e2e8f0',
                     marginBottom: '12px',
-                    fontSize: '11px',
+                    fontSize: '12px',
                     color: '#334155',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    {camStream ? <CheckCircle2 size={13} color="#16a34a" /> : <XCircle size={13} color="#dc2626" />}
-                    <span>Camera Active</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {camStream ? <CheckCircle2 size={15} color="#16a34a" /> : <XCircle size={15} color="#dc2626" />}
+                    <span style={{ fontWeight: 500 }}>Camera Active</span>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    {validationResult.faceDetected && validationResult.faceCentered ? (
-                      <CheckCircle2 size={13} color="#16a34a" />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {validationResult.bodyInsideBox ? (
+                      <CheckCircle2 size={15} color="#16a34a" />
                     ) : (
-                      <AlertTriangle size={13} color="#f59e0b" />
+                      <AlertTriangle size={15} color="#f59e0b" />
                     )}
-                    <span>Face Visible &amp; Centered</span>
+                    <span style={{ fontWeight: 500 }}>Body Inside Box</span>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    {validationResult.eyesVisible ? <CheckCircle2 size={13} color="#16a34a" /> : <AlertTriangle size={13} color="#f59e0b" />}
-                    <span>Both Eyes Visible</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    {validationResult.leftShoulderVisible ? <CheckCircle2 size={13} color="#16a34a" /> : <AlertTriangle size={13} color="#f59e0b" />}
-                    <span>Left Shoulder Visible</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    {validationResult.rightShoulderVisible ? <CheckCircle2 size={13} color="#16a34a" /> : <AlertTriangle size={13} color="#f59e0b" />}
-                    <span>Right Shoulder Visible</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    {validationResult.chestVisible ? <CheckCircle2 size={13} color="#16a34a" /> : <AlertTriangle size={13} color="#f59e0b" />}
-                    <span>Chest Visible</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    {validationResult.belowChestVisible ? <CheckCircle2 size={13} color="#16a34a" /> : <AlertTriangle size={13} color="#f59e0b" />}
-                    <span>Below-Chest Area</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    {validationResult.bodyCentered ? <CheckCircle2 size={13} color="#16a34a" /> : <AlertTriangle size={13} color="#f59e0b" />}
-                    <span>Body Centered</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    {validationResult.lightingGood ? <CheckCircle2 size={13} color="#16a34a" /> : <AlertTriangle size={13} color="#f59e0b" />}
-                    <span>Lighting Acceptable</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {validationResult.lightingGood ? (
+                      <CheckCircle2 size={15} color="#16a34a" />
+                    ) : (
+                      <AlertTriangle size={15} color="#f59e0b" />
+                    )}
+                    <span style={{ fontWeight: 500 }}>Lighting Ready</span>
                   </div>
                 </div>
 

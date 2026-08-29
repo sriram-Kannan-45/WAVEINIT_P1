@@ -19,6 +19,7 @@ const {
   CourseTrainerAssignment,
   Lesson,
   AIQuiz,
+  CodingAssessment,
   Enrollment,
   User,
 } = require('../models');
@@ -54,6 +55,7 @@ function courseDto(c, counts = {}) {
     lessonCount: counts.lessonCount ?? 0,
     quizCount: counts.quizCount ?? 0,
     enrolledCount: counts.enrolledCount ?? 0,
+    codingCount: counts.codingCount ?? 0,
     createdAt: c.createdAt || c.dataValues?.created_at,
     updatedAt: c.updatedAt || c.dataValues?.updated_at,
   };
@@ -62,7 +64,7 @@ function courseDto(c, counts = {}) {
 async function attachCourseCounts(courses) {
   if (courses.length === 0) return [];
   const ids = courses.map(c => c.id);
-  const [lessons, quizzes, enrolled] = await Promise.all([
+  const [lessons, quizzes, enrolled, coding] = await Promise.all([
     Lesson.findAll({
       where: { courseId: { [Op.in]: ids } },
       attributes: ['courseId', [Lesson.sequelize.fn('COUNT', '*'), 'cnt']],
@@ -81,15 +83,23 @@ async function attachCourseCounts(courses) {
       group: ['courseId'],
       raw: true,
     }),
+    CodingAssessment.findAll({
+      where: { courseId: { [Op.in]: ids } },
+      attributes: ['courseId', [CodingAssessment.sequelize.fn('COUNT', '*'), 'cnt']],
+      group: ['courseId'],
+      raw: true,
+    }),
   ]);
   const lookup = (rows) => Object.fromEntries(rows.map(r => [String(r.courseId), Number(r.cnt)]));
   const lc = lookup(lessons);
   const qc = lookup(quizzes);
   const ec = lookup(enrolled);
+  const cc = lookup(coding);
   return courses.map(c => courseDto(c, {
     lessonCount: lc[String(c.id)] || 0,
     quizCount:   qc[String(c.id)] || 0,
     enrolledCount: ec[String(c.id)] || 0,
+    codingCount: cc[String(c.id)] || 0,
   }));
 }
 
@@ -124,18 +134,41 @@ async function createProgram(req, res) {
 // GET /api/admin/training-programs
 async function listPrograms(req, res) {
   try {
-    const { search = '' } = req.query;
+    const { search = '', page, limit, offset } = req.query;
     const where = {};
-    if (search) {
+    if (search && search.trim()) {
+      const q = search.trim();
       where[Op.or] = [
-        { title:       { [Op.like]: `%${search}%` } },
-        { description: { [Op.like]: `%${search}%` } },
+        { title:       { [Op.like]: `%${q}%` } },
+        { description: { [Op.like]: `%${q}%` } },
       ];
     }
-    const programs = await Training.findAll({
+
+    const total = await Training.count({ where });
+
+    let findOptions = {
       where,
       order: [['id', 'DESC']],
-    });
+    };
+
+    let currentPage = 1;
+    let parsedLimit = 10;
+
+    if (page || limit || offset !== undefined) {
+      parsedLimit = limit ? Math.max(1, Math.min(parseInt(limit, 10), 500)) : 10;
+      let parsedOffset = 0;
+      if (page) {
+        currentPage = Math.max(1, parseInt(page, 10));
+        parsedOffset = (currentPage - 1) * parsedLimit;
+      } else if (offset !== undefined) {
+        parsedOffset = Math.max(0, parseInt(offset, 10));
+        currentPage = Math.floor(parsedOffset / parsedLimit) + 1;
+      }
+      findOptions.limit = parsedLimit;
+      findOptions.offset = parsedOffset;
+    }
+
+    const programs = await Training.findAll(findOptions);
 
     // Single grouped count to avoid N+1
     const programIds = programs.map(p => p.id);
@@ -150,9 +183,15 @@ async function listPrograms(req, res) {
       countMap = Object.fromEntries(counts.map(r => [String(r.trainingProgramId), Number(r.cnt)]));
     }
 
+    const totalPages = Math.ceil(total / parsedLimit) || 1;
+
     return res.json({
       success: true,
       programs: programs.map(p => programDto(p, { coursesCount: countMap[String(p.id)] || 0 })),
+      total,
+      page: currentPage,
+      limit: parsedLimit,
+      totalPages
     });
   } catch (e) {
     console.error('listPrograms error:', e.message);
@@ -386,28 +425,59 @@ async function createCourse(req, res) {
 // GET /api/admin/courses
 async function listCourses(req, res) {
   try {
-    const { search = '', status = '', programId = '', trainerId = '' } = req.query;
+    const { search = '', status = '', programId = '', trainerId = '', page, limit, offset } = req.query;
     const where = {};
-    if (search) {
+    if (search && search.trim()) {
+      const q = search.trim();
       where[Op.or] = [
-        { title:       { [Op.like]: `%${search}%` } },
-        { description: { [Op.like]: `%${search}%` } },
+        { title:       { [Op.like]: `%${q}%` } },
+        { description: { [Op.like]: `%${q}%` } },
       ];
     }
-    if (status)    where.status            = status;
+    if (status && status !== 'ALL') where.status = status;
     if (programId) where.trainingProgramId = programId;
     if (trainerId) where.trainerId         = trainerId;
 
-    const courses = await Course.findAll({
+    const total = await Course.count({ where });
+
+    let findOptions = {
       where,
       include: [
         { model: User,     as: 'trainer', attributes: ['id', 'name'] },
         { model: Training, as: 'program', attributes: ['id', 'title'] },
       ],
       order: [['id', 'DESC']],
-    });
+    };
+
+    let currentPage = 1;
+    let parsedLimit = 10;
+
+    if (page || limit || offset !== undefined) {
+      parsedLimit = limit ? Math.max(1, Math.min(parseInt(limit, 10), 500)) : 10;
+      let parsedOffset = 0;
+      if (page) {
+        currentPage = Math.max(1, parseInt(page, 10));
+        parsedOffset = (currentPage - 1) * parsedLimit;
+      } else if (offset !== undefined) {
+        parsedOffset = Math.max(0, parseInt(offset, 10));
+        currentPage = Math.floor(parsedOffset / parsedLimit) + 1;
+      }
+      findOptions.limit = parsedLimit;
+      findOptions.offset = parsedOffset;
+    }
+
+    const courses = await Course.findAll(findOptions);
     const dtos = await attachCourseCounts(courses);
-    return res.json({ success: true, courses: dtos });
+    const totalPages = Math.ceil(total / parsedLimit) || 1;
+
+    return res.json({
+      success: true,
+      courses: dtos,
+      total,
+      page: currentPage,
+      limit: parsedLimit,
+      totalPages
+    });
   } catch (e) {
     console.error('listCourses error:', e.message);
     return res.status(500).json({ success: false, error: 'Failed to list courses' });
@@ -611,6 +681,266 @@ async function deleteCourse(req, res) {
   }
 }
 
+// POST /api/admin/training-programs/bulk-delete
+async function bulkDeletePrograms(req, res) {
+  try {
+    const { ids, force = false } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, error: 'Please provide an array of program IDs to delete.' });
+    }
+
+    const validIds = ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id) && id > 0);
+    if (validIds.length === 0) {
+      return res.status(400).json({ success: false, error: 'No valid program IDs provided.' });
+    }
+
+    const programs = await Training.findAll({ where: { id: { [Op.in]: validIds } } });
+    if (programs.length === 0) {
+      return res.status(404).json({ success: false, error: 'No matching training programs found.' });
+    }
+
+    const failed = [];
+    const eligibleIds = [];
+
+    for (const program of programs) {
+      const pId = program.id;
+      if (!force) {
+        // Check active enrollments in courses under this program
+        const courses = await Course.findAll({ where: { trainingProgramId: pId }, attributes: ['id', 'title'] });
+        const cIds = courses.map(c => c.id);
+        let enrolledCount = 0;
+        let quizAttemptsCount = 0;
+        if (cIds.length > 0) {
+          enrolledCount = await Enrollment.count({ where: { courseId: { [Op.in]: cIds }, status: 'ENROLLED' } }).catch(() => 0);
+          const quizzes = await AIQuiz.findAll({ where: { courseId: { [Op.in]: cIds } }, attributes: ['id'] });
+          const qIds = quizzes.map(q => q.id);
+          if (qIds.length > 0) {
+            const { QuizAttempt } = require('../models');
+            if (QuizAttempt) quizAttemptsCount = await QuizAttempt.count({ where: { quizId: { [Op.in]: qIds } } }).catch(() => 0);
+          }
+        }
+
+        const legacyEnrolled = await Enrollment.count({ where: { trainingId: pId, status: 'ENROLLED' } }).catch(() => 0);
+        const totalEnrolled = enrolledCount + legacyEnrolled;
+
+        if (totalEnrolled > 0 || quizAttemptsCount > 0) {
+          const reasons = [];
+          if (totalEnrolled > 0) reasons.push(`${totalEnrolled} enrolled participant(s)`);
+          if (quizAttemptsCount > 0) reasons.push(`${quizAttemptsCount} quiz attempt(s)`);
+          failed.push({
+            id: pId,
+            title: program.title,
+            reason: `Program has active records: ${reasons.join(', ')}`
+          });
+          continue;
+        }
+      }
+      eligibleIds.push(pId);
+    }
+
+    if (eligibleIds.length === 0) {
+      return res.json({
+        success: false,
+        message: 'None of the selected programs could be deleted due to active enrollments or submissions.',
+        summary: { total: validIds.length, deleted: 0, failed: failed.length },
+        deletedIds: [],
+        failed
+      });
+    }
+
+    // Call delete on eligible programs
+    for (const pId of eligibleIds) {
+      const p = programs.find(item => item.id === pId);
+      if (p) {
+        const courses = await Course.findAll({ where: { trainingProgramId: p.id }, attributes: ['id'] });
+        const courseIds = courses.map(c => c.id);
+        if (courseIds.length > 0) {
+          const { Lesson, LessonMaterial, LessonQuiz, LessonAssessment, AssessmentSubmission, LessonProgress, QuizProgress, AIQuestion, QuizAttempt, QuizResult, QuizAnswer, QuizResultsAudit, AssessmentSession, ExamSession, Violation, ProctorActivity, Screenshot } = require('../models');
+          const lessons = await Lesson.findAll({ where: { courseId: { [Op.in]: courseIds } }, attributes: ['id'] });
+          const lessonIds = lessons.map(l => l.id);
+          const quizzes = await AIQuiz.findAll({ where: { courseId: { [Op.in]: courseIds } }, attributes: ['id'] });
+          const quizIds = quizzes.map(q => q.id);
+          const assessments = lessonIds.length === 0 ? [] : await LessonAssessment.findAll({ where: { lessonId: { [Op.in]: lessonIds } }, attributes: ['id'] });
+          const assessmentIds = assessments.map(a => a.id);
+
+          if (assessmentIds.length > 0 && AssessmentSubmission) await AssessmentSubmission.destroy({ where: { assessmentId: { [Op.in]: assessmentIds } } }).catch(() => {});
+          if (lessonIds.length > 0) {
+            const lessonQuizzes = await LessonQuiz.findAll({ where: { lessonId: { [Op.in]: lessonIds } }, attributes: ['id'] });
+            const lessonQuizIds = lessonQuizzes.map(lq => lq.id);
+            if (lessonQuizIds.length > 0 && QuizProgress) await QuizProgress.destroy({ where: { lessonQuizId: { [Op.in]: lessonQuizIds } } }).catch(() => {});
+            if (LessonMaterial) await LessonMaterial.destroy({ where: { lessonId: { [Op.in]: lessonIds } } }).catch(() => {});
+            if (LessonAssessment) await LessonAssessment.destroy({ where: { lessonId: { [Op.in]: lessonIds } } }).catch(() => {});
+            if (LessonProgress) await LessonProgress.destroy({ where: { lessonId: { [Op.in]: lessonIds } } }).catch(() => {});
+            if (LessonQuiz) await LessonQuiz.destroy({ where: { lessonId: { [Op.in]: lessonIds } } }).catch(() => {});
+          }
+          if (quizIds.length > 0) {
+            const attempts = await QuizAttempt.findAll({ where: { quizId: { [Op.in]: quizIds } }, attributes: ['id'] });
+            const attemptIds = attempts.map(a => a.id);
+            if (QuizResultsAudit) await QuizResultsAudit.destroy({ where: { quizId: { [Op.in]: quizIds } } }).catch(() => {});
+            if (AssessmentSession) await AssessmentSession.destroy({ where: { [Op.or]: [attemptIds.length > 0 ? { attemptId: { [Op.in]: attemptIds } } : null, { quizId: { [Op.in]: quizIds } }].filter(Boolean) } }).catch(() => {});
+            if (ExamSession) {
+              const examSessions = await ExamSession.findAll({ where: { [Op.or]: [attemptIds.length > 0 ? { attemptId: { [Op.in]: attemptIds } } : null, { quizId: { [Op.in]: quizIds } }].filter(Boolean) }, attributes: ['id'] });
+              const sessionIds = examSessions.map(s => s.id);
+              if (sessionIds.length > 0) {
+                if (Violation) await Violation.destroy({ where: { sessionId: { [Op.in]: sessionIds } } }).catch(() => {});
+                if (ProctorActivity) await ProctorActivity.destroy({ where: { sessionId: { [Op.in]: sessionIds } } }).catch(() => {});
+                if (Screenshot) await Screenshot.destroy({ where: { sessionId: { [Op.in]: sessionIds } } }).catch(() => {});
+                await ExamSession.destroy({ where: { id: { [Op.in]: sessionIds } } }).catch(() => {});
+              }
+            }
+            if (attemptIds.length > 0) {
+              if (QuizAnswer) await QuizAnswer.destroy({ where: { attemptId: { [Op.in]: attemptIds } } }).catch(() => {});
+              if (QuizResult) await QuizResult.destroy({ where: { attemptId: { [Op.in]: attemptIds } } }).catch(() => {});
+            }
+            if (QuizAttempt) await QuizAttempt.destroy({ where: { quizId: { [Op.in]: quizIds } } }).catch(() => {});
+            if (AIQuestion) await AIQuestion.destroy({ where: { quizId: { [Op.in]: quizIds } } }).catch(() => {});
+            if (LessonQuiz) await LessonQuiz.destroy({ where: { quizId: { [Op.in]: quizIds } } }).catch(() => {});
+          }
+          if (Lesson) await Lesson.destroy({ where: { courseId: { [Op.in]: courseIds } } }).catch(() => {});
+          if (AIQuiz) await AIQuiz.destroy({ where: { courseId: { [Op.in]: courseIds } } }).catch(() => {});
+          if (Enrollment) await Enrollment.destroy({ where: { courseId: { [Op.in]: courseIds } } }).catch(() => {});
+          if (CourseTrainerAssignment) await CourseTrainerAssignment.destroy({ where: { courseId: { [Op.in]: courseIds } } }).catch(() => {});
+          await Course.destroy({ where: { id: { [Op.in]: courseIds } } });
+        }
+        await p.destroy();
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: `Successfully deleted ${eligibleIds.length} training program(s).${failed.length > 0 ? ` ${failed.length} program(s) were protected due to dependencies.` : ''}`,
+      summary: { total: validIds.length, deleted: eligibleIds.length, failed: failed.length },
+      deletedIds: eligibleIds,
+      failed
+    });
+
+  } catch (e) {
+    console.error('bulkDeletePrograms error:', e.message);
+    return res.status(500).json({ success: false, error: 'Failed to bulk delete training programs' });
+  }
+}
+
+// POST /api/admin/courses/bulk-delete
+async function bulkDeleteCourses(req, res) {
+  try {
+    const { ids, force = false } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, error: 'Please provide an array of course IDs to delete.' });
+    }
+
+    const validIds = ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id) && id > 0);
+    if (validIds.length === 0) {
+      return res.status(400).json({ success: false, error: 'No valid course IDs provided.' });
+    }
+
+    const courses = await Course.findAll({ where: { id: { [Op.in]: validIds } } });
+    if (courses.length === 0) {
+      return res.status(404).json({ success: false, error: 'No matching courses found.' });
+    }
+
+    const failed = [];
+    const eligibleIds = [];
+
+    for (const course of courses) {
+      const cId = course.id;
+      if (!force) {
+        const enrolledCount = await Enrollment.count({ where: { courseId: cId, status: 'ENROLLED' } }).catch(() => 0);
+        const quizzes = await AIQuiz.findAll({ where: { courseId: cId }, attributes: ['id'] });
+        const qIds = quizzes.map(q => q.id);
+        let quizAttemptsCount = 0;
+        if (qIds.length > 0) {
+          const { QuizAttempt } = require('../models');
+          if (QuizAttempt) quizAttemptsCount = await QuizAttempt.count({ where: { quizId: { [Op.in]: qIds } } }).catch(() => 0);
+        }
+
+        if (enrolledCount > 0 || quizAttemptsCount > 0) {
+          const reasons = [];
+          if (enrolledCount > 0) reasons.push(`${enrolledCount} enrolled participant(s)`);
+          if (quizAttemptsCount > 0) reasons.push(`${quizAttemptsCount} quiz attempt(s)`);
+          failed.push({
+            id: cId,
+            title: course.title,
+            reason: `Course has active records: ${reasons.join(', ')}`
+          });
+          continue;
+        }
+      }
+      eligibleIds.push(cId);
+    }
+
+    if (eligibleIds.length === 0) {
+      return res.json({
+        success: false,
+        message: 'None of the selected courses could be deleted due to active enrollments or submissions.',
+        summary: { total: validIds.length, deleted: 0, failed: failed.length },
+        deletedIds: [],
+        failed
+      });
+    }
+
+    // Cascade delete eligible courses
+    const { Lesson, LessonMaterial, LessonQuiz, LessonAssessment, AssessmentSubmission, LessonProgress, QuizProgress, AIQuestion, QuizAttempt, QuizResult, QuizAnswer, QuizResultsAudit, AssessmentSession, ExamSession, Violation, ProctorActivity, Screenshot } = require('../models');
+
+    const lessons = await Lesson.findAll({ where: { courseId: { [Op.in]: eligibleIds } }, attributes: ['id'] });
+    const lessonIds = lessons.map(l => l.id);
+    const quizzes = await AIQuiz.findAll({ where: { courseId: { [Op.in]: eligibleIds } }, attributes: ['id'] });
+    const quizIds = quizzes.map(q => q.id);
+    const assessments = lessonIds.length === 0 ? [] : await LessonAssessment.findAll({ where: { lessonId: { [Op.in]: lessonIds } }, attributes: ['id'] });
+    const assessmentIds = assessments.map(a => a.id);
+
+    if (assessmentIds.length > 0 && AssessmentSubmission) await AssessmentSubmission.destroy({ where: { assessmentId: { [Op.in]: assessmentIds } } }).catch(() => {});
+    if (lessonIds.length > 0) {
+      const lessonQuizzes = await LessonQuiz.findAll({ where: { lessonId: { [Op.in]: lessonIds } }, attributes: ['id'] });
+      const lessonQuizIds = lessonQuizzes.map(lq => lq.id);
+      if (lessonQuizIds.length > 0 && QuizProgress) await QuizProgress.destroy({ where: { lessonQuizId: { [Op.in]: lessonQuizIds } } }).catch(() => {});
+      if (LessonMaterial) await LessonMaterial.destroy({ where: { lessonId: { [Op.in]: lessonIds } } }).catch(() => {});
+      if (LessonAssessment) await LessonAssessment.destroy({ where: { lessonId: { [Op.in]: lessonIds } } }).catch(() => {});
+      if (LessonProgress) await LessonProgress.destroy({ where: { lessonId: { [Op.in]: lessonIds } } }).catch(() => {});
+      if (LessonQuiz) await LessonQuiz.destroy({ where: { lessonId: { [Op.in]: lessonIds } } }).catch(() => {});
+    }
+    if (quizIds.length > 0) {
+      const attempts = await QuizAttempt.findAll({ where: { quizId: { [Op.in]: quizIds } }, attributes: ['id'] });
+      const attemptIds = attempts.map(a => a.id);
+      if (QuizResultsAudit) await QuizResultsAudit.destroy({ where: { quizId: { [Op.in]: quizIds } } }).catch(() => {});
+      if (AssessmentSession) await AssessmentSession.destroy({ where: { [Op.or]: [attemptIds.length > 0 ? { attemptId: { [Op.in]: attemptIds } } : null, { quizId: { [Op.in]: quizIds } }].filter(Boolean) } }).catch(() => {});
+      if (ExamSession) {
+        const examSessions = await ExamSession.findAll({ where: { [Op.or]: [attemptIds.length > 0 ? { attemptId: { [Op.in]: attemptIds } } : null, { quizId: { [Op.in]: quizIds } }].filter(Boolean) }, attributes: ['id'] });
+        const sessionIds = examSessions.map(s => s.id);
+        if (sessionIds.length > 0) {
+          if (Violation) await Violation.destroy({ where: { sessionId: { [Op.in]: sessionIds } } }).catch(() => {});
+          if (ProctorActivity) await ProctorActivity.destroy({ where: { sessionId: { [Op.in]: sessionIds } } }).catch(() => {});
+          if (Screenshot) await Screenshot.destroy({ where: { sessionId: { [Op.in]: sessionIds } } }).catch(() => {});
+          await ExamSession.destroy({ where: { id: { [Op.in]: sessionIds } } }).catch(() => {});
+        }
+      }
+      if (attemptIds.length > 0) {
+        if (QuizAnswer) await QuizAnswer.destroy({ where: { attemptId: { [Op.in]: attemptIds } } }).catch(() => {});
+        if (QuizResult) await QuizResult.destroy({ where: { attemptId: { [Op.in]: attemptIds } } }).catch(() => {});
+      }
+      if (QuizAttempt) await QuizAttempt.destroy({ where: { quizId: { [Op.in]: quizIds } } }).catch(() => {});
+      if (AIQuestion) await AIQuestion.destroy({ where: { quizId: { [Op.in]: quizIds } } }).catch(() => {});
+      if (LessonQuiz) await LessonQuiz.destroy({ where: { quizId: { [Op.in]: quizIds } } }).catch(() => {});
+    }
+    if (Lesson) await Lesson.destroy({ where: { courseId: { [Op.in]: eligibleIds } } }).catch(() => {});
+    if (AIQuiz) await AIQuiz.destroy({ where: { courseId: { [Op.in]: eligibleIds } } }).catch(() => {});
+    if (Enrollment) await Enrollment.destroy({ where: { courseId: { [Op.in]: eligibleIds } } }).catch(() => {});
+    if (CourseTrainerAssignment) await CourseTrainerAssignment.destroy({ where: { courseId: { [Op.in]: eligibleIds } } }).catch(() => {});
+    await Course.destroy({ where: { id: { [Op.in]: eligibleIds } } });
+
+    return res.json({
+      success: true,
+      message: `Successfully deleted ${eligibleIds.length} course(s).${failed.length > 0 ? ` ${failed.length} course(s) were protected due to dependencies.` : ''}`,
+      summary: { total: validIds.length, deleted: eligibleIds.length, failed: failed.length },
+      deletedIds: eligibleIds,
+      failed
+    });
+
+  } catch (e) {
+    console.error('bulkDeleteCourses error:', e.message);
+    return res.status(500).json({ success: false, error: 'Failed to bulk delete courses' });
+  }
+}
+
 module.exports = {
   // Programs
   createProgram,
@@ -618,10 +948,12 @@ module.exports = {
   getProgram,
   updateProgram,
   deleteProgram,
+  bulkDeletePrograms,
   // Courses
   createCourse,
   listCourses,
   getCourse,
   updateCourse,
   deleteCourse,
+  bulkDeleteCourses,
 };

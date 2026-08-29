@@ -21,6 +21,7 @@ const sessionManager = require('../security/sessionManager');
 const { logAudit, ACTIONS } = require('../security/auditLogger');
 const { resetLockout } = require('../middleware/loginRateLimiter');
 const logger = require('../utils/logger');
+const { validateEmail, validatePassword } = require('../utils/validators');
 require('dotenv').config();
 
 const BCRYPT_COST = 12;
@@ -421,8 +422,14 @@ const register = async (req, res) => {
       return res.status(422).json({ error: 'Name, email, password, and phone number are required' });
     }
 
-    if (password.length < 6) {
-      return res.status(422).json({ error: 'Password must be at least 6 characters' });
+    if (!validateEmail(email)) {
+      return res.status(422).json({ error: 'Please provide a valid email address (e.g. user@example.com)' });
+    }
+
+    if (!validatePassword(password)) {
+      return res.status(422).json({
+        error: 'Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one number, and one special character'
+      });
     }
 
     const trimmedEmail = email.trim().toLowerCase();
@@ -640,8 +647,10 @@ const changePassword = async (req, res) => {
       return res.status(422).json({ error: 'Old and new password are required' });
     }
 
-    if (newPassword.length < 8) {
-      return res.status(422).json({ error: 'Password must be at least 8 characters' });
+    if (!validatePassword(newPassword)) {
+      return res.status(422).json({
+        error: 'New password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one number, and one special character'
+      });
     }
 
     // Prevent password reuse

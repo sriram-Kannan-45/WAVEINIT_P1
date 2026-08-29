@@ -14,6 +14,8 @@ import ParticipantProfileView from '../components/shared/ParticipantProfileView'
 import { useToast } from '../components/Toast'
 import TrainerProfileModal from '../components/admin/TrainerProfileModal'
 import UserAvatar, { getTwoLetterInitials } from '../components/common/UserAvatar'
+import AdminPagination from '../components/common/AdminPagination'
+import BulkDeleteConfirmModal from '../components/admin/BulkDeleteConfirmModal'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'
@@ -69,25 +71,76 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
   const [editForm, setEditForm] = useState({})
   const [adminReport, setAdminReport] = useState(null)
 
+  // Trainers pagination & filters & selection
   const [trainerSearch, setTrainerSearch] = useState('')
+  const [trainerPage, setTrainerPage] = useState(1)
+  const [trainerLimit, setTrainerLimit] = useState(10)
+  const [trainerTotal, setTrainerTotal] = useState(0)
+  const [trainerTotalPages, setTrainerTotalPages] = useState(1)
+  const [selectedTrainerIds, setSelectedTrainerIds] = useState(new Set())
+  const [trainersLoading, setTrainersLoading] = useState(false)
   const [trainerDetailModal, setTrainerDetailModal] = useState(null)
+
+  // Participants pagination & filters & selection
   const [participantSearch, setParticipantSearch] = useState('')
   const [participantStatusFilter, setParticipantStatusFilter] = useState('ALL')
+  const [participantPage, setParticipantPage] = useState(1)
+  const [participantLimit, setParticipantLimit] = useState(10)
+  const [participantTotal, setParticipantTotal] = useState(0)
+  const [participantTotalPages, setParticipantTotalPages] = useState(1)
+  const [selectedParticipantIds, setSelectedParticipantIds] = useState(new Set())
+  const [participantsLoading, setParticipantsLoading] = useState(false)
   const [participantDetailModal, setParticipantDetailModal] = useState(null)
+
+  // Trainings pagination & filters & selection
   const [trainingSearch, setTrainingSearch] = useState('')
   const [trainingStatusFilter, setTrainingStatusFilter] = useState('ALL')
+  const [trainingPage, setTrainingPage] = useState(1)
+  const [trainingLimit, setTrainingLimit] = useState(10)
+  const [trainingTotal, setTrainingTotal] = useState(0)
+  const [trainingTotalPages, setTrainingTotalPages] = useState(1)
+  const [selectedTrainingIds, setSelectedTrainingIds] = useState(new Set())
+  const [trainingsLoading, setTrainingsLoading] = useState(false)
   const [trainingDetailModal, setTrainingDetailModal] = useState(null)
 
   const [trainingForm, setTrainingForm] = useState({ title: '', description: '', trainerId: '', trainerIds: [], startDate: '', endDate: '', capacity: '', sequentialLearning: false })
   const [questionForm, setQuestionForm] = useState({ trainingId: '', questionText: '', questionType: 'TEXT', options: '' })
 
+  // Programs pagination & filters & selection
   const [programs, setPrograms] = useState([])
-  const [courses, setCourses] = useState([])
+  const [programSearch, setProgramSearch] = useState('')
+  const [programPage, setProgramPage] = useState(1)
+  const [programLimit, setProgramLimit] = useState(10)
+  const [programTotal, setProgramTotal] = useState(0)
+  const [programTotalPages, setProgramTotalPages] = useState(1)
+  const [selectedProgramIds, setSelectedProgramIds] = useState(new Set())
+  const [programsLoading, setProgramsLoading] = useState(false)
   const [programForm, setProgramForm] = useState({ title: '', description: '' })
+
+  // Courses pagination & filters & selection
+  const [courses, setCourses] = useState([])
+  const [courseSearch, setCourseSearch] = useState('')
+  const [courseStatusFilter, setCourseStatusFilter] = useState('ALL')
+  const [coursePage, setCoursePage] = useState(1)
+  const [courseLimit, setCourseLimit] = useState(10)
+  const [courseTotal, setCourseTotal] = useState(0)
+  const [courseTotalPages, setCourseTotalPages] = useState(1)
+  const [selectedCourseIds, setSelectedCourseIds] = useState(new Set())
+  const [coursesLoading, setCoursesLoading] = useState(false)
   const [courseForm, setCourseForm] = useState({ title: '', description: '', trainerId: '', programId: '', status: 'ACTIVE' })
 
   const [initialLoading, setInitialLoading] = useState(true)
   const [confirmModal, setConfirmModal] = useState(null)
+
+  // Bulk Delete Modal State
+  const [bulkDeleteModal, setBulkDeleteModal] = useState({
+    open: false,
+    itemType: '',
+    count: 0,
+    ids: [],
+    loading: false,
+    failedItems: null,
+  })
 
   const auth = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${user.token}` })
 
@@ -124,15 +177,15 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
   const fetchAll = async () => {
     await Promise.all([
       fetchStats(),
-      fetchTrainers(),
-      fetchTrainings(),
+      fetchTrainers(1, trainerLimit, ''),
+      fetchTrainings(1, trainingLimit, '', 'ALL'),
       fetchFeedbacks(),
-      fetchParticipants(),
+      fetchParticipants(1, participantLimit, '', 'ALL'),
       fetchQuestions(),
       fetchPendingParticipants(),
       fetchNotes(),
-      fetchPrograms(),
-      fetchCourses(),
+      fetchPrograms(1, programLimit, ''),
+      fetchCourses(1, courseLimit, '', 'ALL'),
       fetchAdminReport()
     ])
   }
@@ -203,21 +256,47 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
     }
   }
 
-  const fetchTrainers = async () => {
+  const fetchTrainers = async (page = trainerPage, limit = trainerLimit, search = trainerSearch) => {
+    setTrainersLoading(true)
     try {
-      const r = await fetchWithTimeout(`${API_BASE}/admin/trainers`, { headers: auth() }, 10000)
+      const params = new URLSearchParams()
+      params.append('page', page)
+      params.append('limit', limit)
+      if (search && search.trim()) params.append('search', search.trim())
+
+      const r = await fetchWithTimeout(`${API_BASE}/admin/trainers?${params.toString()}`, { headers: auth() }, 10000)
       const d = await r.json().catch(() => ({}))
-      const trainers = d.trainers || (d.data && d.data.trainers) || []
-      setTrainers(trainers)
-    } catch (e) { console.error('fetchTrainers error:', e.message) }
+      const list = d.trainers || (d.data && d.data.trainers) || []
+      setTrainers(list)
+      setTrainerTotal(d.total !== undefined ? d.total : list.length)
+      setTrainerTotalPages(d.totalPages || Math.ceil((d.total || list.length) / limit) || 1)
+    } catch (e) {
+      console.error('fetchTrainers error:', e.message)
+    } finally {
+      setTrainersLoading(false)
+    }
   }
 
-  const fetchTrainings = async () => {
+  const fetchTrainings = async (page = trainingPage, limit = trainingLimit, search = trainingSearch, status = trainingStatusFilter) => {
+    setTrainingsLoading(true)
     try {
-      const r = await fetchWithTimeout(`${API_BASE}/trainings`, { headers: auth() }, 10000)
+      const params = new URLSearchParams()
+      params.append('page', page)
+      params.append('limit', limit)
+      if (search && search.trim()) params.append('search', search.trim())
+      if (status && status !== 'ALL') params.append('status', status)
+
+      const r = await fetchWithTimeout(`${API_BASE}/trainings?${params.toString()}`, { headers: auth() }, 10000)
       const d = await r.json().catch(() => ({}))
-      setTrainings(Array.isArray(d) ? d : (d.trainings || []))
-    } catch {}
+      const list = Array.isArray(d) ? d : (d.trainings || [])
+      setTrainings(list)
+      setTrainingTotal(d.total !== undefined ? d.total : list.length)
+      setTrainingTotalPages(d.totalPages || Math.ceil((d.total || list.length) / limit) || 1)
+    } catch (e) {
+      console.error('fetchTrainings error:', e.message)
+    } finally {
+      setTrainingsLoading(false)
+    }
   }
 
   const fetchFeedbacks = async () => {
@@ -228,13 +307,26 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
     } catch {}
   }
 
-  const fetchParticipants = async () => {
+  const fetchParticipants = async (page = participantPage, limit = participantLimit, search = participantSearch, status = participantStatusFilter) => {
+    setParticipantsLoading(true)
     try {
-      const r = await fetchWithTimeout(API.ADMIN.PARTICIPANTS, { headers: auth() }, 10000)
+      const params = new URLSearchParams()
+      params.append('page', page)
+      params.append('limit', limit)
+      if (search && search.trim()) params.append('search', search.trim())
+      if (status && status !== 'ALL') params.append('status', status)
+
+      const r = await fetchWithTimeout(`${API.ADMIN.PARTICIPANTS}?${params.toString()}`, { headers: auth() }, 10000)
       const d = await r.json().catch(() => ({}))
-      const participants = d.participants || (d.data && d.data.participants) || []
-      setParticipants(participants)
-    } catch (e) { console.error('fetchParticipants error:', e.message) }
+      const list = d.participants || (d.data && d.data.participants) || []
+      setParticipants(list)
+      setParticipantTotal(d.total !== undefined ? d.total : list.length)
+      setParticipantTotalPages(d.totalPages || Math.ceil((d.total || list.length) / limit) || 1)
+    } catch (e) {
+      console.error('fetchParticipants error:', e.message)
+    } finally {
+      setParticipantsLoading(false)
+    }
   }
 
   const fetchQuestions = async () => {
@@ -256,21 +348,183 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
     } catch {}
   }
 
-  const fetchPrograms = async () => {
+  const fetchPrograms = async (page = programPage, limit = programLimit, search = programSearch) => {
+    setProgramsLoading(true)
     try {
-      const r = await fetchWithTimeout(`${API_BASE}/admin/training-programs`, { headers: auth() }, 10000)
+      const params = new URLSearchParams()
+      params.append('page', page)
+      params.append('limit', limit)
+      if (search && search.trim()) params.append('search', search.trim())
+
+      const r = await fetchWithTimeout(`${API_BASE}/admin/training-programs?${params.toString()}`, { headers: auth() }, 10000)
       const d = await r.json().catch(() => ({}))
-      setPrograms(d.programs || (d.data && d.data.programs) || [])
-    } catch {}
+      const list = d.programs || (d.data && d.data.programs) || []
+      setPrograms(list)
+      setProgramTotal(d.total !== undefined ? d.total : list.length)
+      setProgramTotalPages(d.totalPages || Math.ceil((d.total || list.length) / limit) || 1)
+    } catch (e) {
+      console.error('fetchPrograms error:', e.message)
+    } finally {
+      setProgramsLoading(false)
+    }
   }
 
-  const fetchCourses = async () => {
+  const fetchCourses = async (page = coursePage, limit = courseLimit, search = courseSearch, status = courseStatusFilter) => {
+    setCoursesLoading(true)
     try {
-      const r = await fetchWithTimeout(`${API_BASE}/admin/courses`, { headers: auth() }, 10000)
+      const params = new URLSearchParams()
+      params.append('page', page)
+      params.append('limit', limit)
+      if (search && search.trim()) params.append('search', search.trim())
+      if (status && status !== 'ALL') params.append('status', status)
+
+      const r = await fetchWithTimeout(`${API_BASE}/admin/courses?${params.toString()}`, { headers: auth() }, 10000)
       const d = await r.json().catch(() => ({}))
-      setCourses(d.courses || (d.data && d.data.courses) || [])
-    } catch {}
+      const list = d.courses || (d.data && d.data.courses) || []
+      setCourses(list)
+      setCourseTotal(d.total !== undefined ? d.total : list.length)
+      setCourseTotalPages(d.totalPages || Math.ceil((d.total || list.length) / limit) || 1)
+    } catch (e) {
+      console.error('fetchCourses error:', e.message)
+    } finally {
+      setCoursesLoading(false)
+    }
   }
+
+  // Multi-select helpers
+  const handleToggleSelect = (id, setSelectedSet) => {
+    setSelectedSet(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const handleSelectAllCurrentPage = (currentItems, selectedSet, setSelectedSet) => {
+    const currentIds = currentItems.map(item => item.id)
+    const allSelected = currentIds.length > 0 && currentIds.every(id => selectedSet.has(id))
+    setSelectedSet(prev => {
+      const next = new Set(prev)
+      if (allSelected) {
+        currentIds.forEach(id => next.delete(id))
+      } else {
+        currentIds.forEach(id => next.add(id))
+      }
+      return next
+    })
+  }
+
+  const openBulkDelete = (itemType, ids) => {
+    if (!ids || ids.length === 0) return
+    setBulkDeleteModal({
+      open: true,
+      itemType,
+      count: ids.length,
+      ids,
+      loading: false,
+      failedItems: null,
+    })
+  }
+
+  const handleExecuteBulkDelete = async () => {
+    const { itemType, ids } = bulkDeleteModal
+    if (!ids || ids.length === 0) return
+
+    setBulkDeleteModal(prev => ({ ...prev, loading: true }))
+    try {
+      let endpoint = ''
+      if (itemType === 'participant') endpoint = API.ADMIN.BULK_DELETE_PARTICIPANTS
+      else if (itemType === 'trainer') endpoint = API.ADMIN.BULK_DELETE_TRAINERS
+      else if (itemType === 'training') endpoint = API.ADMIN.BULK_DELETE_TRAININGS
+      else if (itemType === 'program') endpoint = API.ADMIN_COURSES.BULK_DELETE_PROGRAMS
+      else if (itemType === 'course') endpoint = API.ADMIN_COURSES.BULK_DELETE_COURSES
+
+      const r = await fetch(endpoint, {
+        method: 'POST',
+        headers: auth(),
+        body: JSON.stringify({ ids, force: false })
+      })
+
+      const d = await r.json().catch(() => ({}))
+
+      if (d.success) {
+        if (d.failed && d.failed.length > 0) {
+          success(`Deleted ${d.summary?.deleted || 0} ${itemType}(s).`)
+          setBulkDeleteModal(prev => ({ ...prev, loading: false, failedItems: d.failed }))
+        } else {
+          success(`Successfully deleted ${d.summary?.deleted || ids.length} ${itemType}(s).`)
+          setBulkDeleteModal({ open: false, itemType: '', count: 0, ids: [], loading: false, failedItems: null })
+        }
+
+        if (itemType === 'participant') {
+          setSelectedParticipantIds(new Set())
+          fetchParticipants(participantPage, participantLimit, participantSearch, participantStatusFilter)
+        } else if (itemType === 'trainer') {
+          setSelectedTrainerIds(new Set())
+          fetchTrainers(trainerPage, trainerLimit, trainerSearch)
+        } else if (itemType === 'training') {
+          setSelectedTrainingIds(new Set())
+          fetchTrainings(trainingPage, trainingLimit, trainingSearch, trainingStatusFilter)
+        } else if (itemType === 'program') {
+          setSelectedProgramIds(new Set())
+          fetchPrograms(programPage, programLimit, programSearch)
+        } else if (itemType === 'course') {
+          setSelectedCourseIds(new Set())
+          fetchCourses(coursePage, courseLimit, courseSearch, courseStatusFilter)
+        }
+        fetchStats()
+      } else {
+        if (d.failed && d.failed.length > 0) {
+          setBulkDeleteModal(prev => ({ ...prev, loading: false, failedItems: d.failed }))
+        } else {
+          showError(d.error || d.message || `Failed to delete ${itemType}s`)
+          setBulkDeleteModal(prev => ({ ...prev, loading: false }))
+        }
+      }
+    } catch (e) {
+      showError(e.message || 'Server error bulk deleting records')
+      setBulkDeleteModal(prev => ({ ...prev, loading: false }))
+    }
+  }
+
+  // Debounced search effects for each tab
+  useEffect(() => {
+    if (tab === 'trainers') {
+      const timer = setTimeout(() => {
+        fetchTrainers(trainerPage, trainerLimit, trainerSearch)
+      }, 300)
+      return () => clearTimeout(timer)
+    }
+  }, [trainerSearch, trainerPage, trainerLimit, tab])
+
+  useEffect(() => {
+    if (tab === 'participants') {
+      const timer = setTimeout(() => {
+        fetchParticipants(participantPage, participantLimit, participantSearch, participantStatusFilter)
+      }, 300)
+      return () => clearTimeout(timer)
+    }
+  }, [participantSearch, participantStatusFilter, participantPage, participantLimit, tab])
+
+  useEffect(() => {
+    if (tab === 'trainings') {
+      const timer = setTimeout(() => {
+        fetchTrainings(trainingPage, trainingLimit, trainingSearch, trainingStatusFilter)
+      }, 300)
+      return () => clearTimeout(timer)
+    }
+  }, [trainingSearch, trainingStatusFilter, trainingPage, trainingLimit, tab])
+
+  useEffect(() => {
+    if (tab === 'programs') {
+      const timer = setTimeout(() => {
+        fetchPrograms(programPage, programLimit, programSearch)
+        fetchCourses(coursePage, courseLimit, courseSearch, courseStatusFilter)
+      }, 300)
+      return () => clearTimeout(timer)
+    }
+  }, [programSearch, programPage, programLimit, courseSearch, courseStatusFilter, coursePage, courseLimit, tab])
 
   const handleApproveNote = async (noteId) => {
     setLoading(true)
@@ -642,70 +896,165 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                 })}
               </div>
             </div>
+            {/* Bulk Action Bar */}
+            {selectedTrainingIds.size > 0 && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '10px 16px',
+                background: '#f0fdf4',
+                border: '1.5px solid #86efac',
+                borderRadius: '10px',
+                marginBottom: '14px',
+                animation: 'fadeIn 0.2s ease-in-out'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '24px',
+                    height: '24px',
+                    borderRadius: '50%',
+                    background: '#16a34a',
+                    color: '#fff',
+                    fontSize: '12px',
+                    fontWeight: 700
+                  }}>
+                    {selectedTrainingIds.size}
+                  </span>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#166534' }}>
+                    {selectedTrainingIds.size} training session{selectedTrainingIds.size > 1 ? 's' : ''} selected
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="reg-admin-btn reg-admin-btn--secondary"
+                    onClick={() => setSelectedTrainingIds(new Set())}
+                    style={{ padding: '6px 12px', fontSize: '12px', height: '32px' }}
+                  >
+                    Deselect All
+                  </button>
+                  <button
+                    type="button"
+                    className="reg-admin-btn reg-admin-btn--danger"
+                    onClick={() => openBulkDelete('training', Array.from(selectedTrainingIds))}
+                    style={{ padding: '6px 14px', fontSize: '12px', height: '32px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Trash2 size={14} /> Bulk Delete ({selectedTrainingIds.size})
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Trainings Table */}
-            {initialLoading ? (
+            {trainingsLoading ? (
               <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading trainings...</p></div>
-            ) : filtered.length === 0 ? (
+            ) : trainings.length === 0 ? (
               <div className="reg-admin-empty"><BookOpen size={40} /><h3>No Trainings Found</h3><p>{trainingSearch || trainingStatusFilter !== 'ALL' ? 'No trainings match your current filter.' : 'Create your first training session to get started.'}</p>
                 {!trainingSearch && trainingStatusFilter === 'ALL' && (
                   <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => handleTabChange('createTraining')}>+ Create Training</button>
                 )}
               </div>
-            ) : (
-              <div className="reg-admin-table-wrap">
-                <table className="reg-admin-table">
-                  <thead>
-                    <tr>
-                      <th>Title</th>
-                      <th>Trainer</th>
-                      <th>Start Date</th>
-                      <th>End Date</th>
-                      <th>Capacity</th>
-                      <th>Enrolled</th>
-                      <th>Status</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filtered.map(t => {
-                      const status = getTrainingStatus(t)
-                      const sc = { ACTIVE: { bg: '#d1fae5', text: '#065f46', border: '#6ee7b7' }, UPCOMING: { bg: '#fef3c7', text: '#92400e', border: '#fcd34d' }, COMPLETED: { bg: '#f1f5f9', text: '#64748b', border: '#e2e8f0' } }[status]
-                      return (
-                        <tr key={t.id}>
-                          <td>
-                            <span className="reg-admin-name" style={{ fontWeight: 600 }}>{t.title}</span>
-                          </td>
-                          <td>
-                            {t.trainerName ? (
-                              <span className="reg-admin-status" style={{ background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd' }}>{t.trainerName}</span>
-                            ) : (
-                              <span className="reg-admin-status" style={{ background: '#f1f5f9', color: '#64748b', border: '1px solid #e2e8f0' }}>Unassigned</span>
-                            )}
-                          </td>
-                          <td className="reg-admin-date">{fmtDate(t.startDate)}</td>
-                          <td className="reg-admin-date">{fmtDate(t.endDate)}</td>
-                          <td style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>
-                            {t.capacity || <span style={{ color: '#94a3b8', fontWeight: 400 }}>Unlimited</span>}
-                          </td>
-                          <td style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>{t.enrolledCount ?? 0}</td>
-                          <td>
-                            <span className="reg-admin-status" style={{ background: sc.bg, color: sc.text, borderColor: sc.border }}>{status}</span>
-                          </td>
-                          <td>
-                            <div className="reg-admin-actions">
-                              <button className="reg-admin-action" title="View Details" onClick={() => setTrainingDetailModal(t)}><Eye size={14} /></button>
-                              <button className="reg-admin-action" title="Edit Training" onClick={() => openEdit(t)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button>
-                              <button className="reg-admin-action" title="Leaderboard" style={{ color: '#16A34A' }} onClick={() => navigate(`/admin/trainings/${t.id}/leaderboard`)}><Trophy size={14} color="#16A34A" /></button>
-                              <button className="reg-admin-action reg-admin-action--reject" title="Delete Training" onClick={() => handleDeleteTraining(t.id, t.title)}><Trash2 size={14} /></button>
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            ) : (() => {
+              const displayTrainings = trainings.length > trainingLimit
+                ? trainings.slice((trainingPage - 1) * trainingLimit, trainingPage * trainingLimit)
+                : trainings;
+              return (
+                <div className="reg-admin-table-wrap">
+                  <table className="reg-admin-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: 44, textAlign: 'center', padding: '12px 8px' }}>
+                          <input
+                            type="checkbox"
+                            aria-label="Select all trainings on this page"
+                            checked={displayTrainings.length > 0 && displayTrainings.every(t => selectedTrainingIds.has(t.id))}
+                            ref={el => {
+                              if (el) {
+                                const someSelected = displayTrainings.some(t => selectedTrainingIds.has(t.id));
+                                const allSelected = displayTrainings.length > 0 && displayTrainings.every(t => selectedTrainingIds.has(t.id));
+                                el.indeterminate = someSelected && !allSelected;
+                              }
+                            }}
+                            onChange={() => handleSelectAllCurrentPage(displayTrainings, selectedTrainingIds, setSelectedTrainingIds)}
+                            style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#16a34a', verticalAlign: 'middle' }}
+                          />
+                        </th>
+                        <th>Title</th>
+                        <th>Trainer</th>
+                        <th>Start Date</th>
+                        <th>End Date</th>
+                        <th>Capacity</th>
+                        <th>Enrolled</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {displayTrainings.map(t => {
+                        const status = getTrainingStatus(t)
+                        const sc = { ACTIVE: { bg: '#d1fae5', text: '#065f46', border: '#6ee7b7' }, UPCOMING: { bg: '#fef3c7', text: '#92400e', border: '#fcd34d' }, COMPLETED: { bg: '#f1f5f9', text: '#64748b', border: '#e2e8f0' } }[status]
+                        const isChecked = selectedTrainingIds.has(t.id)
+                        return (
+                          <tr key={t.id} style={{ background: isChecked ? '#f0fdf4' : undefined }}>
+                            <td style={{ width: 44, textAlign: 'center', padding: '12px 8px' }}>
+                              <input
+                                type="checkbox"
+                                aria-label={`Select training ${t.title}`}
+                                checked={isChecked}
+                                onChange={() => handleToggleSelect(t.id, setSelectedTrainingIds)}
+                                style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#16a34a', verticalAlign: 'middle' }}
+                              />
+                            </td>
+                            <td>
+                              <span className="reg-admin-name" style={{ fontWeight: 600 }}>{t.title}</span>
+                            </td>
+                            <td>
+                              {t.trainerName ? (
+                                <span className="reg-admin-status" style={{ background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd' }}>{t.trainerName}</span>
+                              ) : (
+                                <span className="reg-admin-status" style={{ background: '#f1f5f9', color: '#64748b', border: '1px solid #e2e8f0' }}>Unassigned</span>
+                              )}
+                            </td>
+                            <td className="reg-admin-date">{fmtDate(t.startDate)}</td>
+                            <td className="reg-admin-date">{fmtDate(t.endDate)}</td>
+                            <td style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>
+                              {t.capacity || <span style={{ color: '#94a3b8', fontWeight: 400 }}>Unlimited</span>}
+                            </td>
+                            <td style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>{t.enrolledCount ?? 0}</td>
+                            <td>
+                              <span className="reg-admin-status" style={{ background: sc.bg, color: sc.text, borderColor: sc.border }}>{status}</span>
+                            </td>
+                            <td>
+                              <div className="reg-admin-actions">
+                                <button className="reg-admin-action" title="View Details" onClick={() => setTrainingDetailModal(t)}><Eye size={14} /></button>
+                                <button className="reg-admin-action" title="Edit Training" onClick={() => openEdit(t)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button>
+                                <button className="reg-admin-action" title="Leaderboard" style={{ color: '#16A34A' }} onClick={() => navigate(`/admin/trainings/${t.id}/leaderboard`)}><Trophy size={14} color="#16A34A" /></button>
+                                <button className="reg-admin-action reg-admin-action--reject" title="Delete Training" onClick={() => handleDeleteTraining(t.id, t.title)}><Trash2 size={14} /></button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+
+                  {/* Pagination */}
+                  <AdminPagination
+                    page={trainingPage}
+                    totalPages={trainingTotalPages}
+                    totalItems={trainingTotal}
+                    itemsPerPage={trainingLimit}
+                    onPageChange={(p) => setTrainingPage(p)}
+                    onLimitChange={(l) => { setTrainingLimit(l); setTrainingPage(1); }}
+                    disabled={trainingsLoading}
+                  />
+                </div>
+              );
+            })()}
             {/* Training Detail Modal */}
             {trainingDetailModal && (() => {
               const status = getTrainingStatus(trainingDetailModal)
@@ -806,80 +1155,159 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
               <input value={trainerSearch} onChange={e => setTrainerSearch(e.target.value)} placeholder="Search trainers..." />
             </div>
           </div>
-          {/* Trainers Table */}
-          {initialLoading ? (
-            <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading trainers...</p></div>
-          ) : trainers.filter(t => {
-            if (!trainerSearch) return true
-            const q = trainerSearch.toLowerCase()
-            return (
-              t.name?.toLowerCase().includes(q) ||
-              t.email?.toLowerCase().includes(q) ||
-              (t.employeeId || t.employee_id || '').toLowerCase().includes(q)
-            )
-          }).length === 0 ? (
-            <div className="reg-admin-empty"><User size={40} /><h3>No Trainers Found</h3><p>{trainerSearch ? 'No trainers match your search.' : 'Add your first trainer to get started.'}</p></div>
-          ) : (
-            <div className="reg-admin-table-wrap">
-              <table className="reg-admin-table">
-                <thead>
-                  <tr>
-                    <th>Trainer</th>
-                    <th>Employee ID</th>
-                    <th>Email</th>
-                    <th>Phone</th>
-                    <th>Experience</th>
-                    <th>Profile</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {trainers.filter(t => {
-                    if (!trainerSearch) return true
-                    const q = trainerSearch.toLowerCase()
-                    return (
-                      t.name?.toLowerCase().includes(q) ||
-                      t.email?.toLowerCase().includes(q) ||
-                      (t.employeeId || t.employee_id || '').toLowerCase().includes(q)
-                    )
-                  }).map(trainer => {
-                    const empId = trainer.employeeId || trainer.employee_id || trainer.profile?.employeeId || trainer.profile?.employee_id || ''
-                    const exp = trainer.experience || trainer.profile?.experience || ''
-                    const phone = trainer.profile?.phone || trainer.phone || ''
-                    const hasProfile = trainer.profile && (phone || trainer.profile.dob || trainer.profile.qualification || exp)
-
-                    return (
-                      <tr key={trainer.id}>
-                        <td>
-                          <div className="reg-admin-participant">
-                            <UserAvatar name={trainer.name} size={32} fontSize={11} />
-                            <span className="reg-admin-name">{trainer.name}</span>
-                          </div>
-                        </td>
-                        <td className="reg-admin-date" style={{ fontWeight: 600, color: '#334155' }}>{empId || '—'}</td>
-                        <td className="reg-admin-email">{trainer.email}</td>
-                        <td className="reg-admin-date">{phone || '—'}</td>
-                        <td className="reg-admin-date">{exp || '—'}</td>
-                        <td>
-                          <span className={`reg-admin-status`} style={{
-                            background: hasProfile ? '#d1fae5' : '#f1f5f9',
-                            color: hasProfile ? '#065f46' : '#64748b',
-                            borderColor: hasProfile ? '#6ee7b7' : '#e2e8f0',
-                          }}>{hasProfile ? 'Profile Set' : 'No Profile'}</span>
-                        </td>
-                        <td>
-                          <div className="reg-admin-actions">
-                            <button className="reg-admin-action" title="View Details" onClick={() => setTrainerDetailModal(trainer)}><Eye size={14} /></button>
-                            <button className="reg-admin-action reg-admin-action--reject" title="Delete Trainer" onClick={() => handleDeleteTrainer(trainer.id, trainer.name)}><Trash2 size={14} /></button>
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+          {/* Bulk Action Bar */}
+          {selectedTrainerIds.size > 0 && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '10px 16px',
+              background: '#f0fdf4',
+              border: '1.5px solid #86efac',
+              borderRadius: '10px',
+              marginBottom: '14px',
+              animation: 'fadeIn 0.2s ease-in-out'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '24px',
+                  height: '24px',
+                  borderRadius: '50%',
+                  background: '#16a34a',
+                  color: '#fff',
+                  fontSize: '12px',
+                  fontWeight: 700
+                }}>
+                  {selectedTrainerIds.size}
+                </span>
+                <span style={{ fontSize: '13px', fontWeight: 600, color: '#166534' }}>
+                  {selectedTrainerIds.size} trainer{selectedTrainerIds.size > 1 ? 's' : ''} selected
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="reg-admin-btn reg-admin-btn--secondary"
+                  onClick={() => setSelectedTrainerIds(new Set())}
+                  style={{ padding: '6px 12px', fontSize: '12px', height: '32px' }}
+                >
+                  Deselect All
+                </button>
+                <button
+                  type="button"
+                  className="reg-admin-btn reg-admin-btn--danger"
+                  onClick={() => openBulkDelete('trainer', Array.from(selectedTrainerIds))}
+                  style={{ padding: '6px 14px', fontSize: '12px', height: '32px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <Trash2 size={14} /> Bulk Delete ({selectedTrainerIds.size})
+                </button>
+              </div>
             </div>
           )}
+
+          {/* Trainers Table */}
+          {trainersLoading ? (
+            <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading trainers...</p></div>
+          ) : trainers.length === 0 ? (
+            <div className="reg-admin-empty"><User size={40} /><h3>No Trainers Found</h3><p>{trainerSearch ? 'No trainers match your search.' : 'Add your first trainer to get started.'}</p></div>
+          ) : (() => {
+            const displayTrainers = trainers.length > trainerLimit
+              ? trainers.slice((trainerPage - 1) * trainerLimit, trainerPage * trainerLimit)
+              : trainers;
+            return (
+              <div className="reg-admin-table-wrap">
+                <table className="reg-admin-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 44, textAlign: 'center', padding: '12px 8px' }}>
+                        <input
+                          type="checkbox"
+                          aria-label="Select all trainers on this page"
+                          checked={displayTrainers.length > 0 && displayTrainers.every(t => selectedTrainerIds.has(t.id))}
+                          ref={el => {
+                            if (el) {
+                              const someSelected = displayTrainers.some(t => selectedTrainerIds.has(t.id));
+                              const allSelected = displayTrainers.length > 0 && displayTrainers.every(t => selectedTrainerIds.has(t.id));
+                              el.indeterminate = someSelected && !allSelected;
+                            }
+                          }}
+                          onChange={() => handleSelectAllCurrentPage(displayTrainers, selectedTrainerIds, setSelectedTrainerIds)}
+                          style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#16a34a', verticalAlign: 'middle' }}
+                        />
+                      </th>
+                      <th>Trainer</th>
+                      <th>Employee ID</th>
+                      <th>Email</th>
+                      <th>Phone</th>
+                      <th>Experience</th>
+                      <th>Profile</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {displayTrainers.map(trainer => {
+                      const empId = trainer.employeeId || trainer.employee_id || trainer.profile?.employeeId || trainer.profile?.employee_id || ''
+                      const exp = trainer.experience || trainer.profile?.experience || ''
+                      const phone = trainer.profile?.phone || trainer.phone || ''
+                      const hasProfile = trainer.profile && (phone || trainer.profile.dob || trainer.profile.qualification || exp)
+                      const isChecked = selectedTrainerIds.has(trainer.id)
+
+                      return (
+                        <tr key={trainer.id} style={{ background: isChecked ? '#f0fdf4' : undefined }}>
+                          <td style={{ width: 44, textAlign: 'center', padding: '12px 8px' }}>
+                            <input
+                              type="checkbox"
+                              aria-label={`Select trainer ${trainer.name}`}
+                              checked={isChecked}
+                              onChange={() => handleToggleSelect(trainer.id, setSelectedTrainerIds)}
+                              style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#16a34a', verticalAlign: 'middle' }}
+                            />
+                          </td>
+                          <td>
+                            <div className="reg-admin-participant">
+                              <UserAvatar name={trainer.name} size={32} fontSize={11} />
+                              <span className="reg-admin-name">{trainer.name}</span>
+                            </div>
+                          </td>
+                          <td className="reg-admin-date" style={{ fontWeight: 600, color: '#334155' }}>{empId || '—'}</td>
+                          <td className="reg-admin-email">{trainer.email}</td>
+                          <td className="reg-admin-date">{phone || '—'}</td>
+                          <td className="reg-admin-date">{exp || '—'}</td>
+                          <td>
+                            <span className={`reg-admin-status`} style={{
+                              background: hasProfile ? '#d1fae5' : '#f1f5f9',
+                              color: hasProfile ? '#065f46' : '#64748b',
+                              borderColor: hasProfile ? '#6ee7b7' : '#e2e8f0',
+                            }}>{hasProfile ? 'Profile Set' : 'No Profile'}</span>
+                          </td>
+                          <td>
+                            <div className="reg-admin-actions">
+                              <button className="reg-admin-action" title="View Details" onClick={() => setTrainerDetailModal(trainer)}><Eye size={14} /></button>
+                              <button className="reg-admin-action reg-admin-action--reject" title="Delete Trainer" onClick={() => handleDeleteTrainer(trainer.id, trainer.name)}><Trash2 size={14} /></button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+
+                {/* Pagination */}
+                <AdminPagination
+                  page={trainerPage}
+                  totalPages={trainerTotalPages}
+                  totalItems={trainerTotal}
+                  itemsPerPage={trainerLimit}
+                  onPageChange={(p) => setTrainerPage(p)}
+                  onLimitChange={(l) => { setTrainerLimit(l); setTrainerPage(1); }}
+                  disabled={trainersLoading}
+                />
+              </div>
+            );
+          })()}
         </motion.div>
       )}
 
@@ -903,10 +1331,10 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
           {/* Stats */}
           <div className="reg-admin-stats">
             {[
-              { label: 'Total', value: participants.length, icon: Users, color: '#6366f1' },
-              { label: 'Approved', value: participants.filter(p => (p.status || '').toUpperCase() === 'APPROVED').length, icon: CheckCircle2, color: '#16A34A' },
-              { label: 'Pending', value: participants.filter(p => (p.status || '').toUpperCase() === 'PENDING').length, icon: Clock, color: '#F59E0B' },
-              { label: 'Rejected', value: participants.filter(p => (p.status || '').toUpperCase() === 'REJECTED').length, icon: XCircle, color: '#dc2626' },
+              { label: 'Total', value: stats.totalParticipants ?? participantTotal, icon: Users, color: '#6366f1' },
+              { label: 'Approved', value: stats.approvedParticipants ?? participants.filter(p => (p.status || '').toUpperCase() === 'APPROVED').length, icon: CheckCircle2, color: '#16A34A' },
+              { label: 'Pending', value: stats.pendingParticipants ?? participants.filter(p => (p.status || '').toUpperCase() === 'PENDING').length, icon: Clock, color: '#F59E0B' },
+              { label: 'Rejected', value: stats.rejectedParticipants ?? participants.filter(p => (p.status || '').toUpperCase() === 'REJECTED').length, icon: XCircle, color: '#dc2626' },
             ].map(s => (
               <div key={s.label} className="reg-admin-stat">
                 <s.icon size={20} style={{ color: s.color }} />
@@ -928,7 +1356,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                 const count = f === 'ALL' ? participants.length : participants.filter(p => (p.status || '').toUpperCase() === f).length
                 return (
                   <button key={f} className={`reg-admin-filter-tab ${participantStatusFilter === f ? 'reg-admin-filter-tab--active' : ''}`}
-                    onClick={() => setParticipantStatusFilter(f)}>
+                    onClick={() => { setParticipantStatusFilter(f); setParticipantPage(1); }}>
                     {f === 'ALL' ? 'All' : f.charAt(0) + f.slice(1).toLowerCase()}
                     {count > 0 && <span className="reg-admin-badge">{count}</span>}
                   </button>
@@ -936,117 +1364,204 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
               })}
             </div>
           </div>
-          {/* Participants Table */}
-          {initialLoading ? (
-            <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading participants...</p></div>
-          ) : participants.filter(p => {
-            const matchesSearch = !participantSearch || p.name?.toLowerCase().includes(participantSearch.toLowerCase()) || p.email?.toLowerCase().includes(participantSearch.toLowerCase()) || p.phone?.includes(participantSearch)
-            const matchesStatus = participantStatusFilter === 'ALL' || (p.status || '').toUpperCase() === participantStatusFilter
-            return matchesSearch && matchesStatus
-          }).length === 0 ? (
-            <div className="reg-admin-empty"><Users size={40} /><h3>No Participants Found</h3><p>{participantSearch || participantStatusFilter !== 'ALL' ? 'No participants match your current filter.' : 'Invite your first learner to get started.'}</p></div>
-          ) : (
-            <div className="reg-admin-table-wrap">
-              <table className="reg-admin-table">
-                <thead>
-                  <tr>
-                    <th>Participant</th>
-                    <th>Status</th>
-                    <th>Enrolled</th>
-                    <th>Progress</th>
-                    <th>Quiz</th>
-                    <th style={{ minWidth: 190, textAlign: 'left' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {participants.filter(p => {
-                    const matchesSearch = !participantSearch || p.name?.toLowerCase().includes(participantSearch.toLowerCase()) || p.email?.toLowerCase().includes(participantSearch.toLowerCase()) || p.phone?.includes(participantSearch)
-                    const matchesStatus = participantStatusFilter === 'ALL' || (p.status || '').toUpperCase() === participantStatusFilter
-                    return matchesSearch && matchesStatus
-                  }).map(p => {
-                    const sc = { PENDING: { bg: '#fef3c7', text: '#92400e', border: '#fcd34d' }, APPROVED: { bg: '#d1fae5', text: '#065f46', border: '#6ee7b7' }, REJECTED: { bg: '#fee2e2', text: '#991b1b', border: '#fca5a5' } }[(p.status || 'PENDING').toUpperCase()] || { bg: '#f1f5f9', text: '#64748b', border: '#e2e8f0' }
-                    return (
-                      <tr key={p.id}>
-                        <td>
-                          <div className="reg-admin-participant">
-                            <UserAvatar name={p.name} size={32} fontSize={11} />
-                            <div>
-                              <span className="reg-admin-name">{p.name || '-'}</span>
-                              <span className="reg-admin-email">{p.email}</span>
-                            </div>
-                          </div>
-                        </td>
-                        <td>
-                          <span className="reg-admin-status" style={{ background: sc.bg, color: sc.text, borderColor: sc.border }}>
-                            {(p.status || 'PENDING').toUpperCase()}
-                          </span>
-                        </td>
-                        <td className="reg-admin-date">{fmtDate(p.created_at || p.joinedAt)}</td>
-                        <td style={{ minWidth: 90 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <div style={{ flex: 1, height: 5, background: '#e2e8f0', borderRadius: 3, overflow: 'hidden' }}>
-                              <div style={{ width: `${Math.min(100, p.progress || 0)}%`, height: '100%', background: '#16A34A', borderRadius: 3 }} />
-                            </div>
-                            <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600, minWidth: 28 }}>{p.progress || 0}%</span>
-                          </div>
-                        </td>
-                        <td style={{ fontSize: 12, fontWeight: 600, color: '#334155' }}>{p.quizScore || p.quiz_score || 0}%</td>
-                        <td style={{ minWidth: 190 }}>
-                          <div className="reg-admin-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap' }}>
-                            {/* 1. View Participant Profile */}
-                            <button
-                              type="button"
-                              className="reg-admin-action reg-admin-action--view"
-                              title="View participant profile"
-                              aria-label="View participant profile"
-                              onClick={() => setViewingParticipant(p)}
-                            >
-                              <Eye size={16} />
-                            </button>
-
-                            {/* 3. Direct Approve & Reject Actions (Only for PENDING status) */}
-                            {String(p.status || 'PENDING').toUpperCase() === 'PENDING' && (
-                              <>
-                                <button
-                                  type="button"
-                                  className="reg-admin-action reg-admin-action--approve-direct"
-                                  title="Approve participant"
-                                  aria-label="Approve participant"
-                                  onClick={() => handleApproveParticipant(p.id)}
-                                >
-                                  <Check size={18} strokeWidth={2.6} />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="reg-admin-action reg-admin-action--reject"
-                                  title="Reject participant"
-                                  aria-label="Reject participant"
-                                  onClick={() => handleRejectParticipant(p.id)}
-                                >
-                                  <X size={16} />
-                                </button>
-                              </>
-                            )}
-
-                            {/* 4. Delete Participant */}
-                            <button
-                              type="button"
-                              className="reg-admin-action reg-admin-action--reject"
-                              title="Delete participant"
-                              aria-label="Delete participant"
-                              onClick={() => handleDeleteParticipant(p.id, p.name)}
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+          {/* Bulk Action Bar */}
+          {selectedParticipantIds.size > 0 && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '10px 16px',
+              background: '#f0fdf4',
+              border: '1.5px solid #86efac',
+              borderRadius: '10px',
+              marginBottom: '14px',
+              animation: 'fadeIn 0.2s ease-in-out'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '24px',
+                  height: '24px',
+                  borderRadius: '50%',
+                  background: '#16a34a',
+                  color: '#fff',
+                  fontSize: '12px',
+                  fontWeight: 700
+                }}>
+                  {selectedParticipantIds.size}
+                </span>
+                <span style={{ fontSize: '13px', fontWeight: 600, color: '#166534' }}>
+                  {selectedParticipantIds.size} participant{selectedParticipantIds.size > 1 ? 's' : ''} selected
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="reg-admin-btn reg-admin-btn--secondary"
+                  onClick={() => setSelectedParticipantIds(new Set())}
+                  style={{ padding: '6px 12px', fontSize: '12px', height: '32px' }}
+                >
+                  Deselect All
+                </button>
+                <button
+                  type="button"
+                  className="reg-admin-btn reg-admin-btn--danger"
+                  onClick={() => openBulkDelete('participant', Array.from(selectedParticipantIds))}
+                  style={{ padding: '6px 14px', fontSize: '12px', height: '32px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <Trash2 size={14} /> Bulk Delete ({selectedParticipantIds.size})
+                </button>
+              </div>
             </div>
           )}
+
+          {/* Participants Table */}
+          {participantsLoading ? (
+            <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading participants...</p></div>
+          ) : participants.length === 0 ? (
+            <div className="reg-admin-empty"><Users size={40} /><h3>No Participants Found</h3><p>{participantSearch || participantStatusFilter !== 'ALL' ? 'No participants match your current filter.' : 'Invite your first learner to get started.'}</p></div>
+          ) : (() => {
+            const displayParticipants = participants.length > participantLimit
+              ? participants.slice((participantPage - 1) * participantLimit, participantPage * participantLimit)
+              : participants;
+            return (
+              <div className="reg-admin-table-wrap">
+                <table className="reg-admin-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 44, textAlign: 'center', padding: '12px 8px' }}>
+                        <input
+                          type="checkbox"
+                          aria-label="Select all participants on this page"
+                          checked={displayParticipants.length > 0 && displayParticipants.every(p => selectedParticipantIds.has(p.id))}
+                          ref={el => {
+                            if (el) {
+                              const someSelected = displayParticipants.some(p => selectedParticipantIds.has(p.id));
+                              const allSelected = displayParticipants.length > 0 && displayParticipants.every(p => selectedParticipantIds.has(p.id));
+                              el.indeterminate = someSelected && !allSelected;
+                            }
+                          }}
+                          onChange={() => handleSelectAllCurrentPage(displayParticipants, selectedParticipantIds, setSelectedParticipantIds)}
+                          style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#16a34a', verticalAlign: 'middle' }}
+                        />
+                      </th>
+                      <th>Participant</th>
+                      <th>Status</th>
+                      <th>Enrolled</th>
+                      <th>Progress</th>
+                      <th>Quiz</th>
+                      <th style={{ minWidth: 190, textAlign: 'left' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {displayParticipants.map(p => {
+                      const sc = { PENDING: { bg: '#fef3c7', text: '#92400e', border: '#fcd34d' }, APPROVED: { bg: '#d1fae5', text: '#065f46', border: '#6ee7b7' }, REJECTED: { bg: '#fee2e2', text: '#991b1b', border: '#fca5a5' } }[(p.status || 'PENDING').toUpperCase()] || { bg: '#f1f5f9', text: '#64748b', border: '#e2e8f0' }
+                      const isChecked = selectedParticipantIds.has(p.id)
+                      return (
+                        <tr key={p.id} style={{ background: isChecked ? '#f0fdf4' : undefined }}>
+                          <td style={{ width: 44, textAlign: 'center', padding: '12px 8px' }}>
+                            <input
+                              type="checkbox"
+                              aria-label={`Select participant ${p.name}`}
+                              checked={isChecked}
+                              onChange={() => handleToggleSelect(p.id, setSelectedParticipantIds)}
+                              style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#16a34a', verticalAlign: 'middle' }}
+                            />
+                          </td>
+                          <td>
+                            <div className="reg-admin-participant">
+                              <UserAvatar name={p.name} size={32} fontSize={11} />
+                              <div>
+                                <span className="reg-admin-name">{p.name || '-'}</span>
+                                <span className="reg-admin-email">{p.email}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td>
+                            <span className="reg-admin-status" style={{ background: sc.bg, color: sc.text, borderColor: sc.border }}>
+                              {(p.status || 'PENDING').toUpperCase()}
+                            </span>
+                          </td>
+                          <td className="reg-admin-date">{fmtDate(p.created_at || p.joinedAt)}</td>
+                          <td style={{ minWidth: 90 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <div style={{ flex: 1, height: 5, background: '#e2e8f0', borderRadius: 3, overflow: 'hidden' }}>
+                                <div style={{ width: `${Math.min(100, p.progress || 0)}%`, height: '100%', background: '#16A34A', borderRadius: 3 }} />
+                              </div>
+                              <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600, minWidth: 28 }}>{p.progress || 0}%</span>
+                            </div>
+                          </td>
+                          <td style={{ fontSize: 12, fontWeight: 600, color: '#334155' }}>{p.quizScore || p.quiz_score || 0}%</td>
+                          <td style={{ minWidth: 190 }}>
+                            <div className="reg-admin-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap' }}>
+                              {/* 1. View Participant Profile */}
+                              <button
+                                type="button"
+                                className="reg-admin-action reg-admin-action--view"
+                                title="View participant profile"
+                                aria-label="View participant profile"
+                                onClick={() => setViewingParticipant(p)}
+                              >
+                                <Eye size={16} />
+                              </button>
+
+                              {/* 3. Direct Approve & Reject Actions (Only for PENDING status) */}
+                              {String(p.status || 'PENDING').toUpperCase() === 'PENDING' && (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="reg-admin-action reg-admin-action--approve-direct"
+                                    title="Approve participant"
+                                    aria-label="Approve participant"
+                                    onClick={() => handleApproveParticipant(p.id)}
+                                  >
+                                    <Check size={18} strokeWidth={2.6} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="reg-admin-action reg-admin-action--reject"
+                                    title="Reject participant"
+                                    aria-label="Reject participant"
+                                    onClick={() => handleRejectParticipant(p.id)}
+                                  >
+                                    <X size={16} />
+                                  </button>
+                                </>
+                              )}
+
+                              {/* 4. Delete Participant */}
+                              <button
+                                type="button"
+                                className="reg-admin-action reg-admin-action--reject"
+                                title="Delete participant"
+                                aria-label="Delete participant"
+                                onClick={() => handleDeleteParticipant(p.id, p.name)}
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+
+                {/* Pagination */}
+                <AdminPagination
+                  page={participantPage}
+                  totalPages={participantTotalPages}
+                  totalItems={participantTotal}
+                  itemsPerPage={participantLimit}
+                  onPageChange={(p) => setParticipantPage(p)}
+                  onLimitChange={(l) => { setParticipantLimit(l); setParticipantPage(1); }}
+                  disabled={participantsLoading}
+                />
+              </div>
+            );
+          })()}
         </motion.div>
       )}
 
@@ -1368,72 +1883,319 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
               </div>
             ))}
           </div>
-          {/* Programs Table */}
+          {/* Programs Section */}
           <div className="reg-admin-table-wrap" style={{ marginBottom: 24 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderBottom: '1px solid #e2e8f0' }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>Programs ({programs.length})</span>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid #e2e8f0', flexWrap: 'wrap', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 260 }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>Training Programs ({programTotal || programs.length})</span>
+                <div className="reg-admin-search" style={{ maxWidth: 280, margin: 0 }}>
+                  <Search size={15} />
+                  <input
+                    value={programSearch}
+                    onChange={e => setProgramSearch(e.target.value)}
+                    placeholder="Search programs..."
+                    style={{ fontSize: 13, padding: '6px 10px 6px 30px' }}
+                  />
+                </div>
+              </div>
               <button className="reg-admin-btn reg-admin-btn--primary" style={{ fontSize: 12 }} onClick={() => document.getElementById('create-program-form')?.scrollIntoView({ behavior: 'smooth' })}>+ New Program</button>
             </div>
-            {programs.length === 0 ? (
-              <div className="reg-admin-empty" style={{ padding: 32 }}><ClipboardList size={32} /><p>No programs created yet.</p></div>
-            ) : (
-              <table className="reg-admin-table">
-                <thead>
-                  <tr><th>Title</th><th>Description</th><th>Courses</th><th>Actions</th></tr>
-                </thead>
-                <tbody>
-                  {programs.map(p => (
-                    <tr key={p.id}>
-                      <td><span className="reg-admin-name">{p.title}</span></td>
-                      <td className="reg-admin-date" style={{ maxWidth: 260 }}>{(p.description || '—').slice(0, 80)}</td>
-                      <td style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>{p.courseCount ?? 0}</td>
-                      <td>
-                        <div className="reg-admin-actions">
-                          <button className="reg-admin-action reg-admin-action--reject" title="Delete Program" onClick={() => handleDeleteProgram(p.id, p.title)}><Trash2 size={14} /></button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+            {/* Bulk Action Bar for Programs */}
+            {selectedProgramIds.size > 0 && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '10px 16px',
+                background: '#f0fdf4',
+                borderBottom: '1.5px solid #86efac',
+                animation: 'fadeIn 0.2s ease-in-out'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '24px',
+                    height: '24px',
+                    borderRadius: '50%',
+                    background: '#16a34a',
+                    color: '#fff',
+                    fontSize: '12px',
+                    fontWeight: 700
+                  }}>
+                    {selectedProgramIds.size}
+                  </span>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#166534' }}>
+                    {selectedProgramIds.size} program{selectedProgramIds.size > 1 ? 's' : ''} selected
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="reg-admin-btn reg-admin-btn--secondary"
+                    onClick={() => setSelectedProgramIds(new Set())}
+                    style={{ padding: '6px 12px', fontSize: '12px', height: '32px' }}
+                  >
+                    Deselect All
+                  </button>
+                  <button
+                    type="button"
+                    className="reg-admin-btn reg-admin-btn--danger"
+                    onClick={() => openBulkDelete('program', Array.from(selectedProgramIds))}
+                    style={{ padding: '6px 14px', fontSize: '12px', height: '32px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Trash2 size={14} /> Bulk Delete ({selectedProgramIds.size})
+                  </button>
+                </div>
+              </div>
             )}
+
+            {programsLoading ? (
+              <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading programs...</p></div>
+            ) : programs.length === 0 ? (
+              <div className="reg-admin-empty" style={{ padding: 32 }}><ClipboardList size={32} /><p>{programSearch ? 'No programs match your search.' : 'No programs created yet.'}</p></div>
+            ) : (() => {
+              const displayPrograms = programs.length > programLimit
+                ? programs.slice((programPage - 1) * programLimit, programPage * programLimit)
+                : programs;
+              return (
+                <>
+                  <table className="reg-admin-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: 44, textAlign: 'center', padding: '12px 8px' }}>
+                          <input
+                            type="checkbox"
+                            aria-label="Select all programs on this page"
+                            checked={displayPrograms.length > 0 && displayPrograms.every(p => selectedProgramIds.has(p.id))}
+                            ref={el => {
+                              if (el) {
+                                const someSelected = displayPrograms.some(p => selectedProgramIds.has(p.id));
+                                const allSelected = displayPrograms.length > 0 && displayPrograms.every(p => selectedProgramIds.has(p.id));
+                                el.indeterminate = someSelected && !allSelected;
+                              }
+                            }}
+                            onChange={() => handleSelectAllCurrentPage(displayPrograms, selectedProgramIds, setSelectedProgramIds)}
+                            style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#16a34a', verticalAlign: 'middle' }}
+                          />
+                        </th>
+                        <th>Title</th>
+                        <th>Description</th>
+                        <th>Courses</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {displayPrograms.map(p => {
+                        const isChecked = selectedProgramIds.has(p.id);
+                        return (
+                          <tr key={p.id} style={{ background: isChecked ? '#f0fdf4' : undefined }}>
+                            <td style={{ width: 44, textAlign: 'center', padding: '12px 8px' }}>
+                              <input
+                                type="checkbox"
+                                aria-label={`Select program ${p.title}`}
+                                checked={isChecked}
+                                onChange={() => handleToggleSelect(p.id, setSelectedProgramIds)}
+                                style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#16a34a', verticalAlign: 'middle' }}
+                              />
+                            </td>
+                            <td><span className="reg-admin-name">{p.title}</span></td>
+                            <td className="reg-admin-date" style={{ maxWidth: 260 }}>{(p.description || '—').slice(0, 80)}</td>
+                            <td style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>{p.courseCount ?? p.coursesCount ?? 0}</td>
+                            <td>
+                              <div className="reg-admin-actions">
+                                <button className="reg-admin-action reg-admin-action--reject" title="Delete Program" onClick={() => handleDeleteProgram(p.id, p.title)}><Trash2 size={14} /></button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+
+                  {/* Programs Pagination */}
+                  <AdminPagination
+                    page={programPage}
+                    totalPages={programTotalPages}
+                    totalItems={programTotal}
+                    itemsPerPage={programLimit}
+                    onPageChange={(p) => setProgramPage(p)}
+                    onLimitChange={(l) => { setProgramLimit(l); setProgramPage(1); }}
+                    disabled={programsLoading}
+                  />
+                </>
+              );
+            })()}
           </div>
-          {/* Courses Table */}
+
+          {/* Courses Section */}
           <div className="reg-admin-table-wrap" style={{ marginBottom: 24 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderBottom: '1px solid #e2e8f0' }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>Courses ({courses.length})</span>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid #e2e8f0', flexWrap: 'wrap', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 260, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>Courses ({courseTotal || courses.length})</span>
+                <div className="reg-admin-search" style={{ maxWidth: 260, margin: 0 }}>
+                  <Search size={15} />
+                  <input
+                    value={courseSearch}
+                    onChange={e => setCourseSearch(e.target.value)}
+                    placeholder="Search courses..."
+                    style={{ fontSize: 13, padding: '6px 10px 6px 30px' }}
+                  />
+                </div>
+                <div className="reg-admin-filter-tabs" style={{ margin: 0 }}>
+                  {['ALL', 'ACTIVE', 'INACTIVE'].map(st => (
+                    <button
+                      key={st}
+                      type="button"
+                      className={`reg-admin-filter-tab ${courseStatusFilter === st ? 'reg-admin-filter-tab--active' : ''}`}
+                      onClick={() => { setCourseStatusFilter(st); setCoursePage(1); }}
+                      style={{ padding: '4px 10px', fontSize: 12 }}
+                    >
+                      {st === 'ALL' ? 'All Status' : st.charAt(0) + st.slice(1).toLowerCase()}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <button className="reg-admin-btn reg-admin-btn--primary" style={{ fontSize: 12 }} onClick={() => document.getElementById('create-course-form')?.scrollIntoView({ behavior: 'smooth' })}>+ New Course</button>
             </div>
-            {courses.length === 0 ? (
-              <div className="reg-admin-empty" style={{ padding: 32 }}><Users size={32} /><p>No courses created yet.</p></div>
-            ) : (
-              <table className="reg-admin-table">
-                <thead>
-                  <tr><th>Title</th><th>Program</th><th>Trainer</th><th>Status</th><th>Actions</th></tr>
-                </thead>
-                <tbody>
-                  {courses.map(c => (
-                    <tr key={c.id}>
-                      <td><span className="reg-admin-name">{c.title}</span></td>
-                      <td className="reg-admin-date">{c.programTitle || '—'}</td>
-                      <td className="reg-admin-date">{c.trainerName || 'Unassigned'}</td>
-                      <td>
-                        <span className="reg-admin-status" style={{
-                          background: c.status === 'ACTIVE' ? '#d1fae5' : '#f1f5f9',
-                          color: c.status === 'ACTIVE' ? '#065f46' : '#64748b',
-                          borderColor: c.status === 'ACTIVE' ? '#6ee7b7' : '#e2e8f0',
-                        }}>{c.status || 'ACTIVE'}</span>
-                      </td>
-                      <td>
-                        <div className="reg-admin-actions">
-                          <button className="reg-admin-action reg-admin-action--reject" title="Delete Course" onClick={() => handleDeleteCourse(c.id, c.title)}><Trash2 size={14} /></button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+            {/* Bulk Action Bar for Courses */}
+            {selectedCourseIds.size > 0 && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '10px 16px',
+                background: '#f0fdf4',
+                borderBottom: '1.5px solid #86efac',
+                animation: 'fadeIn 0.2s ease-in-out'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '24px',
+                    height: '24px',
+                    borderRadius: '50%',
+                    background: '#16a34a',
+                    color: '#fff',
+                    fontSize: '12px',
+                    fontWeight: 700
+                  }}>
+                    {selectedCourseIds.size}
+                  </span>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#166534' }}>
+                    {selectedCourseIds.size} course{selectedCourseIds.size > 1 ? 's' : ''} selected
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="reg-admin-btn reg-admin-btn--secondary"
+                    onClick={() => setSelectedCourseIds(new Set())}
+                    style={{ padding: '6px 12px', fontSize: '12px', height: '32px' }}
+                  >
+                    Deselect All
+                  </button>
+                  <button
+                    type="button"
+                    className="reg-admin-btn reg-admin-btn--danger"
+                    onClick={() => openBulkDelete('course', Array.from(selectedCourseIds))}
+                    style={{ padding: '6px 14px', fontSize: '12px', height: '32px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Trash2 size={14} /> Bulk Delete ({selectedCourseIds.size})
+                  </button>
+                </div>
+              </div>
             )}
+
+            {coursesLoading ? (
+              <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading courses...</p></div>
+            ) : courses.length === 0 ? (
+              <div className="reg-admin-empty" style={{ padding: 32 }}><Users size={32} /><p>{courseSearch || courseStatusFilter !== 'ALL' ? 'No courses match your current filter.' : 'No courses created yet.'}</p></div>
+            ) : (() => {
+              const displayCourses = courses.length > courseLimit
+                ? courses.slice((coursePage - 1) * courseLimit, coursePage * courseLimit)
+                : courses;
+              return (
+                <>
+                  <table className="reg-admin-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: 44, textAlign: 'center', padding: '12px 8px' }}>
+                          <input
+                            type="checkbox"
+                            aria-label="Select all courses on this page"
+                            checked={displayCourses.length > 0 && displayCourses.every(c => selectedCourseIds.has(c.id))}
+                            ref={el => {
+                              if (el) {
+                                const someSelected = displayCourses.some(c => selectedCourseIds.has(c.id));
+                                const allSelected = displayCourses.length > 0 && displayCourses.every(c => selectedCourseIds.has(c.id));
+                                el.indeterminate = someSelected && !allSelected;
+                              }
+                            }}
+                            onChange={() => handleSelectAllCurrentPage(displayCourses, selectedCourseIds, setSelectedCourseIds)}
+                            style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#16a34a', verticalAlign: 'middle' }}
+                          />
+                        </th>
+                        <th>Title</th>
+                        <th>Program</th>
+                        <th>Trainer</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {displayCourses.map(c => {
+                        const isChecked = selectedCourseIds.has(c.id);
+                        return (
+                          <tr key={c.id} style={{ background: isChecked ? '#f0fdf4' : undefined }}>
+                            <td style={{ width: 44, textAlign: 'center', padding: '12px 8px' }}>
+                              <input
+                                type="checkbox"
+                                aria-label={`Select course ${c.title}`}
+                                checked={isChecked}
+                                onChange={() => handleToggleSelect(c.id, setSelectedCourseIds)}
+                                style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#16a34a', verticalAlign: 'middle' }}
+                              />
+                            </td>
+                            <td><span className="reg-admin-name">{c.title}</span></td>
+                            <td className="reg-admin-date">{c.programTitle || c.program?.title || '—'}</td>
+                            <td className="reg-admin-date">{c.trainerName || c.trainer?.name || 'Unassigned'}</td>
+                            <td>
+                              <span className="reg-admin-status" style={{
+                                background: c.status === 'ACTIVE' ? '#d1fae5' : '#f1f5f9',
+                                color: c.status === 'ACTIVE' ? '#065f46' : '#64748b',
+                                borderColor: c.status === 'ACTIVE' ? '#6ee7b7' : '#e2e8f0',
+                              }}>{c.status || 'ACTIVE'}</span>
+                            </td>
+                            <td>
+                              <div className="reg-admin-actions">
+                                <button className="reg-admin-action reg-admin-action--reject" title="Delete Course" onClick={() => handleDeleteCourse(c.id, c.title)}><Trash2 size={14} /></button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+
+                  {/* Courses Pagination */}
+                  <AdminPagination
+                    page={coursePage}
+                    totalPages={courseTotalPages}
+                    totalItems={courseTotal}
+                    itemsPerPage={courseLimit}
+                    onPageChange={(p) => setCoursePage(p)}
+                    onLimitChange={(l) => { setCourseLimit(l); setCoursePage(1); }}
+                    disabled={coursesLoading}
+                  />
+                </>
+              );
+            })()}
           </div>
           {/* Create Forms */}
           <div className="reg-form-grid" style={{ alignItems: 'start' }}>
@@ -1787,6 +2549,18 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
         onClose={() => setAddParticipantModalOpen(false)}
         onParticipantCreated={() => fetchAll()}
         token={user?.token}
+      />
+
+      {/* ── BULK DELETE CONFIRM MODAL ── */}
+      <BulkDeleteConfirmModal
+        open={bulkDeleteModal.open}
+        itemType={bulkDeleteModal.itemType}
+        count={bulkDeleteModal.count}
+        loading={bulkDeleteModal.loading}
+        failedItems={bulkDeleteModal.failedItems}
+        onClose={() => setBulkDeleteModal({ open: false, itemType: '', count: 0, ids: [], loading: false, failedItems: null })}
+        onConfirm={handleExecuteBulkDelete}
+        onClearFailed={() => setBulkDeleteModal(prev => ({ ...prev, failedItems: null }))}
       />
     </motion.div>
   )

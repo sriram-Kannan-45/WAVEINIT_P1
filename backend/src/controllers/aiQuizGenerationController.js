@@ -120,8 +120,8 @@ async function resolveScope({ trainingId, courseId, trainerId }) {
 
 function validateQuestionCount(value) {
   const count = parseInt(value, 10);
-  if (!Number.isInteger(count) || count < 1 || count > 50) {
-    const error = new Error('numberOfQuestions must be between 1 and 50.');
+  if (!Number.isInteger(count) || count < 1 || count > 100) {
+    const error = new Error('numberOfQuestions must be between 1 and 100.');
     error.status = 422;
     throw error;
   }
@@ -184,6 +184,7 @@ async function generateAIQuiz(req, res) {
     const difficulty = String(req.body.difficulty || 'MIXED').toUpperCase();
     const numQuestions = validateQuestionCount(req.body.numberOfQuestions ?? req.body.numQuestions ?? req.body.questionCount ?? 10);
     const questionType = req.body.questionType || req.body.question_type || 'MIXED';
+    const timeLimit = parseInt(req.body.timeLimit || req.body.time_limit, 10) || 30;
     const url = cleanNullable(req.body.url ?? req.body.source_url);
 
     if (!req.file && !url) {
@@ -221,6 +222,7 @@ async function generateAIQuiz(req, res) {
       courseId: resolvedCourseId,
       title: `Quiz: ${sourceTitle}`,
       numQuestions,
+      timeLimit,
       difficulty: ['EASY', 'MEDIUM', 'HARD', 'MIXED'].includes(difficulty) ? difficulty : 'MIXED',
       status: 'DRAFT',
       isPublished: false,

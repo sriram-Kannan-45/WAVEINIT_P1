@@ -410,6 +410,7 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
   const [promptText, setPromptText] = useState('')
   const [problemCount, setProblemCount] = useState(3)
   const [difficulty, setDifficulty] = useState('Medium')
+  const [timeLimit, setTimeLimit] = useState(60)
   const [languages, setLanguages] = useState('javascript, python')
   const [generating, setGenerating] = useState(false)
 
@@ -427,8 +428,9 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
         body: JSON.stringify({
           courseId,
           prompt: promptText.trim(),
-          problemCount: parseInt(problemCount, 10),
+          problemCount: parseInt(problemCount, 10) || 3,
           difficulty,
+          timeLimit: parseInt(timeLimit, 10) || 60,
           languages: languages.split(',').map(s => s.trim()).filter(Boolean),
         }),
       })
@@ -455,7 +457,7 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
         exit={{ scale: 0.95, opacity: 0 }}
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: colors.surface.primary, borderRadius: 14, width: '100%', maxWidth: 540,
+          background: colors.surface.primary, borderRadius: 14, width: '100%', maxWidth: 580,
           boxShadow: '0 25px 60px -10px rgba(0,0,0,0.25)', overflow: 'hidden',
         }}
       >
@@ -507,14 +509,19 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
               <div>
-                <label style={{ ...lblStyle, marginTop: 0 }}>Number of Problems</label>
-                <select value={problemCount} onChange={(e) => setProblemCount(e.target.value)} style={inputStyle}>
-                  {[1, 2, 3, 5, 7, 10].map(n => (
-                    <option key={n} value={n}>{n} Problem{n > 1 ? 's' : ''}</option>
-                  ))}
-                </select>
+                <label style={{ ...lblStyle, marginTop: 0 }}>Problems (1 to N)</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={problemCount}
+                  onChange={(e) => setProblemCount(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  placeholder="e.g. 3"
+                  style={inputStyle}
+                  required
+                />
               </div>
               <div>
                 <label style={{ ...lblStyle, marginTop: 0 }}>Difficulty</label>
@@ -523,6 +530,19 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
                   <option value="Medium">Medium</option>
                   <option value="Hard">Hard</option>
                 </select>
+              </div>
+              <div>
+                <label style={{ ...lblStyle, marginTop: 0 }}>Time Limit (mins)</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="360"
+                  value={timeLimit}
+                  onChange={(e) => setTimeLimit(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  placeholder="e.g. 60"
+                  style={inputStyle}
+                  required
+                />
               </div>
             </div>
 

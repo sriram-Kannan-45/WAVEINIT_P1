@@ -145,13 +145,6 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
             <p className="tmt-header-subtitle">Manage your assigned courses efficiently.</p>
           </div>
         </div>
-
-        <button
-          className="tmt-create-btn"
-          onClick={() => setCreateModalOpen(true)}
-        >
-          <Plus size={15} strokeWidth={2.5} /> Create Course
-        </button>
       </div>
 
       {/* ── 2. Statistics Cards Row (4 Cards) ── */}
@@ -531,62 +524,6 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
         </div>
       </div>
 
-      {/* ── Create Course Modal ── */}
-      <AnimatePresence>
-        {createModalOpen && (
-          <motion.div
-            className="wl-modal-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setCreateModalOpen(false)}
-            style={{ zIndex: 1000 }}
-          >
-            <motion.div
-              className="wl-modal-card"
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <h2 className="wl-modal-title">Create Course</h2>
-              <p style={{ fontSize: 13, color: '#64748B', marginBottom: 16 }}>
-                New courses are assigned under Training Programs by administrators. You can create learning modules and lessons inside assigned courses.
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <label className="wl-modal-label">Select Course to Author</label>
-                <select className="wl-modal-input" defaultValue={activeCourses[0]?.id}>
-                  {activeCourses.map(c => (
-                    <option key={c.id} value={c.id}>{c.title} ({c.category || 'General'})</option>
-                  ))}
-                </select>
-              </div>
-              <div className="wl-modal-actions" style={{ marginTop: 24 }}>
-                <button
-                  type="button"
-                  onClick={() => setCreateModalOpen(false)}
-                  className="wl-btn-secondary"
-                  style={{ height: 42 }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCreateModalOpen(false)
-                    if (activeCourses[0]?.id) onOpenCourse(activeCourses[0].id)
-                  }}
-                  className="wl-btn-primary"
-                  style={{ height: 42 }}
-                >
-                  Open Course Editor
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* ── Bulk Import Modal ── */}
       <AnimatePresence>
         {bulkImportOpen && (
@@ -785,10 +722,10 @@ function CourseDetail({ user, courseId, onBack }) {
   const statusClass = (course.status || 'PUBLISHED').toLowerCase()
 
   const heroStats = [
-    { icon: FileText, label: 'Lessons', value: course.lessonCount || 0, bg: '#EAF8F0', color: '#16A34A' },
-    { icon: Sparkles, label: 'Quizzes', value: course.quizCount !== undefined ? course.quizCount : 1, bg: '#FFFBEB', color: '#D97706' },
-    { icon: Users, label: 'Students', value: course.enrolledCount || 1, bg: '#FAF5FF', color: '#8B5CF6' },
-    { icon: Code, label: 'Coding', value: course.codingCount || 0, bg: '#EFF6FF', color: '#2563EB' },
+    { icon: FileText, label: 'Lessons', value: course?.lessonCount ?? 0, bg: '#EAF8F0', color: '#16A34A' },
+    { icon: Sparkles, label: 'Quizzes', value: course?.quizCount ?? 0, bg: '#FFFBEB', color: '#D97706' },
+    { icon: Users, label: 'Students', value: course?.enrolledCount ?? 0, bg: '#FAF5FF', color: '#8B5CF6' },
+    { icon: Code, label: 'Coding', value: course?.codingCount ?? 0, bg: '#EFF6FF', color: '#2563EB' },
   ]
 
   return (
@@ -1155,38 +1092,6 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
                       <div className="wl-module-section-btns">
                         <button onClick={() => setMaterialsFor({ id: l.id, title: l.title })} className="wl-btn-primary" style={{ height: 40, padding: '0 18px', fontSize: 13 }}>
                           <Plus size={14} /> Add/Manage Materials
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* AI Quiz Section */}
-                    <div className="wl-module-section">
-                      <div className="wl-module-section-left">
-                        <Sparkles size={16} style={{ color: '#f59e0b' }} />
-                        <span className="wl-module-section-label">AI Quiz</span>
-                      </div>
-                      <div className="wl-module-section-btns">
-                        <button onClick={() => handleRedirect('quizzes', 'Redirecting to AI Quiz to create quiz...')} className="wl-btn-secondary wl-btn-secondary--teal" style={{ height: 40, padding: '0 18px', fontSize: 13 }}>
-                          <Plus size={14} /> Create Quiz
-                        </button>
-                        <button onClick={() => handleRedirect('quizzes', 'Redirecting to AI Quiz to link quiz...')} className="wl-btn-secondary wl-btn-secondary--teal" style={{ height: 40, padding: '0 18px', fontSize: 13 }}>
-                          Link Quiz
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Coding Section */}
-                    <div className="wl-module-section">
-                      <div className="wl-module-section-left">
-                        <Code size={16} style={{ color: '#0D9488' }} />
-                        <span className="wl-module-section-label">Coding Assessment</span>
-                      </div>
-                      <div className="wl-module-section-btns">
-                        <button onClick={() => handleRedirect('coding', 'Redirecting to Coding tab to create assessment...')} className="wl-btn-secondary wl-btn-secondary--teal" style={{ height: 40, padding: '0 18px', fontSize: 13 }}>
-                          <Plus size={14} /> Create Coding
-                        </button>
-                        <button onClick={() => handleRedirect('coding', 'Redirecting to Coding tab to link assessment...')} className="wl-btn-secondary wl-btn-secondary--teal" style={{ height: 40, padding: '0 18px', fontSize: 13 }}>
-                          Link Coding
                         </button>
                       </div>
                     </div>

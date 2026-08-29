@@ -10,7 +10,7 @@ import {
 import { proctorApi } from '../api'
 import { GlassCard } from './ui'
 import RecordingReplay from './RecordingReplay'
-import { API_BASE } from '../../api/api'
+import { API_BASE, BACKEND_ORIGIN } from '../../api/api'
 
 const STATUS_COLORS = {
   ACTIVE: 'bg-emerald-100 text-emerald-700',
@@ -93,24 +93,9 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
   const handleRegenerate = async () => {
     setRegenerating(true)
     try {
-      let headers = { 'Content-Type': 'application/json' }
-      if (typeof auth === 'function') {
-        headers = { ...headers, ...auth() }
-      } else if (auth && typeof auth === 'object') {
-        headers = { ...headers, ...auth }
-      } else {
-        const storedUser = JSON.parse(localStorage.getItem('user') || '{}')
-        const token = storedUser?.token || localStorage.getItem('token') || sessionStorage.getItem('token')
-        if (token) headers.Authorization = `Bearer ${token}`
-      }
-
-      const res = await fetch(`${API_BASE}/proctoring/reports/${attemptId}/regenerate`, {
-        method: 'POST',
-        headers
-      })
-      if (res.ok) {
-        await fetchReport()
-      }
+      // MonitoringService computes the authoritative report on read. Refreshing
+      // it avoids regenerating a second, legacy score from a separate pipeline.
+      await fetchReport()
     } catch (e) {
       console.error(e)
     } finally {
@@ -141,9 +126,29 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
     critical: data?.criticalEvents || 0,
   }
   const categories = summary.categories || data?.categoryBreakdown || {}
-  const riskLevel = p.riskLevel || data?.riskLevel || 'LOW'
-  const riskScore = p.riskScore != null ? Math.round(p.riskScore) : (data?.score != null ? Math.round(data.score) : 0)
-  const riskStyle = RISK_BADGE[riskLevel] || RISK_BADGE.LOW
+
+  // 5-Part Authoritative Audit Score (out of 100)
+  const eyeHeadScore = Number(data?.eyeHeadScore ?? summary?.eyeHeadScore ?? summary?.scoringBreakdown?.eyeHead?.score ?? p?.summary?.scoringBreakdown?.eyeHead?.score ?? p?.riskScore ?? 0);
+  const noPersonScore = Number(data?.noPersonScore ?? summary?.noPersonScore ?? summary?.scoringBreakdown?.noPerson?.score ?? p?.summary?.scoringBreakdown?.noPerson?.score ?? 0);
+  const multiFaceScore = Number(data?.multiFaceScore ?? summary?.multiFaceScore ?? summary?.scoringBreakdown?.multiPerson?.score ?? p?.summary?.scoringBreakdown?.multiPerson?.score ?? 0);
+  const tabSwitchScore = Number(data?.tabSwitchScore ?? summary?.tabSwitchScore ?? summary?.scoringBreakdown?.tabSwitch?.score ?? p?.summary?.scoringBreakdown?.tabSwitch?.score ?? 0);
+  const mobileScore = Number(data?.mobileScore ?? summary?.mobileScore ?? summary?.scoringBreakdown?.mobile?.score ?? p?.summary?.scoringBreakdown?.mobile?.score ?? 0);
+
+  const rawAuditScore = data?.scoringBreakdown?.total != null
+    ? Number(data.scoringBreakdown.total)
+    : (summary?.scoringBreakdown?.total != null
+      ? Number(summary.scoringBreakdown.total)
+      : (data?.finalScore != null
+        ? Number(data.finalScore)
+        : (p?.riskScore != null
+          ? Number(p.riskScore)
+          : (data?.riskScore != null
+            ? Number(data.riskScore)
+            : 0))));
+  const riskScore = Math.min(100, Math.max(0, Math.round(rawAuditScore * 100) / 100));
+
+  const riskLevel = p?.riskLevel || data?.riskLevel || (riskScore >= 70 ? 'CRITICAL' : (riskScore >= 35 ? 'HIGH' : (riskScore >= 15 ? 'MEDIUM' : 'LOW')));
+  const riskStyle = RISK_BADGE[riskLevel] || RISK_BADGE.LOW;
   const graceWarnings = data?.graceWarnings || summary?.graceWarnings || p?.graceWarnings || []
   const graceWarningsCount = data?.graceWarningsCount != null ? data.graceWarningsCount : (summary?.graceWarningsCount != null ? summary.graceWarningsCount : graceWarnings.length)
 
@@ -153,38 +158,12 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
     return (m ? parseInt(m[1]) * 60 : 0) + (s ? parseInt(s[1]) : 0);
   })() : null) || 60;
 
-  const realCoverage = useMemo(() => {
-    if (summary.coverage && Object.keys(summary.coverage).length > 0 && summary.coverage.faceDetection) {
-      return summary.coverage;
-    }
-    const totalSec = Math.max(1, durationSec);
-    const faceAbsentSec = timeline
-      .filter(e => ['FACE_ABSENT', 'FACE_NOT_DETECTED', 'FACE_NOT_VISIBLE', 'PARTICIPANT_ABSENT'].includes(e.eventType || e.event))
-      .reduce((acc, c) => acc + (Number(c.duration) || (c.durationMs ? c.durationMs / 1000 : 2)), 0);
-    const gazeDeviationSec = timeline
-      .filter(e => (e.eventType || e.event || '').includes('GAZE'))
-      .reduce((acc, c) => acc + (Number(c.duration) || (c.durationMs ? c.durationMs / 1000 : 2)), 0);
-    const headDeviationSec = timeline
-      .filter(e => (e.eventType || e.event || '').includes('HEAD'))
-      .reduce((acc, c) => acc + (Number(c.duration) || (c.durationMs ? c.durationMs / 1000 : 2)), 0);
-    const bodyFramingSec = timeline
-      .filter(e => (e.eventType || e.event || '').includes('BODY'))
-      .reduce((acc, c) => acc + (Number(c.duration) || (c.durationMs ? c.durationMs / 1000 : 2)), 0);
-    const phoneCount = timeline.filter(e => (e.eventType || e.event || '').includes('PHONE')).length;
-    const camDropSec = timeline
-      .filter(e => (e.eventType || e.event || '').includes('DISCONNECTED'))
-      .reduce((acc, c) => acc + (Number(c.duration) || (c.durationMs ? c.durationMs / 1000 : 10)), 0);
+  const rawVideoUrl = data?.videoUrl || data?.session?.videoUrl || p?.videoUrl || null;
+  const videoUrl = rawVideoUrl
+    ? (rawVideoUrl.startsWith('http') ? rawVideoUrl : `${BACKEND_ORIGIN || ''}${rawVideoUrl}`)
+    : null;
 
-    return {
-      faceDetection: `${Math.max(0, Math.min(100, Math.round(100 - (faceAbsentSec / totalSec) * 100)))}%`,
-      eyeTracking: `${Math.max(0, Math.min(100, Math.round(100 - (gazeDeviationSec / totalSec) * 100)))}%`,
-      headPose: `${Math.max(0, Math.min(100, Math.round(100 - (headDeviationSec / totalSec) * 100)))}%`,
-      bodyFraming: `${Math.max(0, Math.min(100, Math.round(100 - (bodyFramingSec / totalSec) * 100)))}%`,
-      audioCheck: `${Math.max(0, Math.min(100, 100 - timeline.filter(e => (e.eventType || e.event || '').includes('SPEAKING')).length * 10))}%`,
-      deviceCheck: phoneCount > 0 ? `FLAGGED (${phoneCount} Phone Incident${phoneCount > 1 ? 's' : ''})` : '100% CLEAN',
-      cameraAvailability: `${Math.max(0, Math.min(100, Math.round(100 - (camDropSec / totalSec) * 100)))}%`,
-    };
-  }, [summary.coverage, timeline, durationSec]);
+  const realCoverage = summary.coverage || {};
 
   return createPortal(
     <div style={{
@@ -234,19 +213,61 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {data?.sessionId && (
+              <button
+                onClick={async () => {
+                  const sId = data?.sessionId || data?.session?.sessionId;
+                  if (!sId) return;
+                  const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
+                  const token = storedUser?.token || localStorage.getItem('token') || sessionStorage.getItem('token');
+                  try {
+                    const res = await fetch(`${API_BASE}/monitoring/sessions/${sId}/excel?token=${encodeURIComponent(token || '')}`, {
+                      headers: token ? { Authorization: `Bearer ${token}` } : {}
+                    });
+                    if (!res.ok) throw new Error('Download failed');
+                    const blob = await res.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `monitoring_report_${sId}.xlsx`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                  } catch (e) {
+                    window.open(`${API_BASE}/monitoring/sessions/${sId}/excel?token=${encodeURIComponent(token || '')}`, '_blank');
+                  }
+                }}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 8,
+                  border: '1px solid #10b981',
+                  background: '#ecfdf5',
+                  color: '#047857',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6
+                }}
+              >
+                <Download size={14} /> Download Excel
+              </button>
+            )}
             <button
               onClick={handleRegenerate}
               disabled={regenerating}
               style={{
                 padding: '6px 12px',
                 borderRadius: 8,
-                border: '1px solid #e2e8f0',
+                border: '1px solid #cbd5e1',
                 background: '#ffffff',
-                color: '#475569',
+                color: '#334155',
                 fontSize: 12,
                 fontWeight: 600,
                 cursor: 'pointer',
-                display: 'inline-flex',
+                display: 'flex',
                 alignItems: 'center',
                 gap: 6
               }}
@@ -306,12 +327,12 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                 </div>
                 <div>
                   <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Monitoring Duration</span>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{summary.monitoringDuration || '—'}</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{data?.actualTestDurationFormatted || summary.monitoringDuration || '—'}</div>
                 </div>
                 <div>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Quiz Score</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Quiz Result</span>
                   <div style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>
-                    {data?.score != null ? `${Math.round(data.score)}%` : '—'}
+                    {data?.quizScore != null ? `${data.quizScore}%` : (data?.quizResult?.percentage != null ? `${data.quizResult.percentage}%` : (data?.attempt?.percentage != null ? `${data.attempt.percentage}%` : (data?.attempt?.totalScore != null ? `${data.attempt.totalScore} pts` : 'Submitted')))}
                   </div>
                 </div>
                 <div>
@@ -363,7 +384,7 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                 borderRadius: 12,
                 background: '#f0fdfa',
                 border: '1px solid #99f6e4',
-                marginBottom: 16,
+                marginBottom: 12,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
@@ -399,6 +420,102 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                     <div style={{ fontSize: 13, fontWeight: 800, color: (data?.eyeHeadViolationSeconds > 0 || summary?.eyeHeadMonitoring?.violationSeconds > 0) ? '#dc2626' : '#0d9488' }}>
                       {`${((data?.eyeHeadViolationSeconds ?? summary?.eyeHeadMonitoring?.violationSeconds) || 0).toFixed(1)}s`}
                     </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 5-Component Malpractice Audit Breakdown Cards */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                gap: 12,
+                marginBottom: 16
+              }}>
+                {/* Card 1: No Person / Face Absent (10 Marks) */}
+                <div style={{
+                  padding: '12px 14px',
+                  borderRadius: 10,
+                  background: (data?.noPersonScore > 0) ? '#fef2f2' : '#f8fafc',
+                  border: (data?.noPersonScore > 0) ? '1px solid #fca5a5' : '1px solid #e2e8f0'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase' }}>Face Absence</span>
+                    <span style={{
+                      fontSize: 12,
+                      fontWeight: 800,
+                      color: (data?.noPersonScore > 0) ? '#dc2626' : '#0d9488'
+                    }}>
+                      {(data?.noPersonScore ?? 0).toFixed(1)} / 10
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                    {data?.noPersonScore > 0 ? 'Participant absent from view' : 'Candidate present throughout'}
+                  </div>
+                </div>
+
+                {/* Card 2: Multiple Persons (10 Marks) */}
+                <div style={{
+                  padding: '12px 14px',
+                  borderRadius: 10,
+                  background: (data?.multiFaceScore > 0 || categories.persons > 0) ? '#fef2f2' : '#f8fafc',
+                  border: (data?.multiFaceScore > 0 || categories.persons > 0) ? '1px solid #fca5a5' : '1px solid #e2e8f0'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase' }}>Multi Persons</span>
+                    <span style={{
+                      fontSize: 12,
+                      fontWeight: 800,
+                      color: (data?.multiFaceScore > 0 || categories.persons > 0) ? '#dc2626' : '#0d9488'
+                    }}>
+                      {(data?.multiFaceScore ?? (categories.persons > 0 ? 10 : 0)).toFixed(1)} / 10
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                    {(data?.multiFaceScore > 0 || categories.persons > 0) ? 'Multiple faces detected' : 'Single person verified'}
+                  </div>
+                </div>
+
+                {/* Card 3: Tab Switch / Fullscreen Exit (> 3 Attempts) (10 Marks) */}
+                <div style={{
+                  padding: '12px 14px',
+                  borderRadius: 10,
+                  background: (data?.tabSwitchScore > 0 || (data?.tabSwitchCount || 0) > 3) ? '#fef2f2' : '#f8fafc',
+                  border: (data?.tabSwitchScore > 0 || (data?.tabSwitchCount || 0) > 3) ? '1px solid #fca5a5' : '1px solid #e2e8f0'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase' }}>Tab Switches</span>
+                    <span style={{
+                      fontSize: 12,
+                      fontWeight: 800,
+                      color: (data?.tabSwitchScore > 0 || (data?.tabSwitchCount || 0) > 3) ? '#dc2626' : '#0d9488'
+                    }}>
+                      {(data?.tabSwitchScore ?? ((data?.tabSwitchCount || 0) > 3 ? 10 : 0)).toFixed(1)} / 10
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                    {`${data?.tabSwitchCount || 0} switch attempt(s) ${((data?.tabSwitchCount || 0) > 3) ? '(Penalty Applied)' : '(Allowed ≤3)'}`}
+                  </div>
+                </div>
+
+                {/* Card 4: Mobile Phone (10 Marks) */}
+                <div style={{
+                  padding: '12px 14px',
+                  borderRadius: 10,
+                  background: (data?.mobileScore > 0 || (summary.objectMonitoring?.phoneEvents > 0) || (categories.objects > 0)) ? '#fef2f2' : '#f8fafc',
+                  border: (data?.mobileScore > 0 || (summary.objectMonitoring?.phoneEvents > 0) || (categories.objects > 0)) ? '1px solid #fca5a5' : '1px solid #e2e8f0'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase' }}>Mobile Phone</span>
+                    <span style={{
+                      fontSize: 12,
+                      fontWeight: 800,
+                      color: (data?.mobileScore > 0 || (summary.objectMonitoring?.phoneEvents > 0) || (categories.objects > 0)) ? '#dc2626' : '#0d9488'
+                    }}>
+                      {(data?.mobileScore ?? ((summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? 10 : 0)).toFixed(1)} / 10
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                    {(data?.mobileScore > 0 || (summary.objectMonitoring?.phoneEvents > 0) || (categories.objects > 0)) ? 'Phone detected in view' : 'No mobile device detected'}
                   </div>
                 </div>
               </div>
@@ -726,8 +843,7 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                           <th style={{ padding: '8px 12px' }}>Event &amp; Incident Detail</th>
                           <th style={{ padding: '8px 12px', width: 95 }}>Severity</th>
                           <th style={{ padding: '8px 10px', width: 80, textAlign: 'right' }}>Confidence</th>
-                          <th style={{ padding: '8px 10px', width: 75, textAlign: 'right' }}>Duration</th>
-                          <th style={{ padding: '8px 12px', width: 80, textAlign: 'right' }}>Risk Delta</th>
+                          <th style={{ padding: '8px 12px', width: 85, textAlign: 'right' }}>Duration</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -739,7 +855,6 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                           const durVal = ev.duration != null ? (typeof ev.duration === 'number' ? `${Math.round(ev.duration * 10) / 10}s` : `${ev.duration}`) : (ev.durationMs != null ? `${Math.round(ev.durationMs / 100) / 10}s` : '—')
                           const sourceName = (ev.source || 'LAPTOP').toUpperCase()
                           const isMobileSource = sourceName.includes('MOBILE') || sourceName.includes('QR')
-                          const delta = ev.scoreDelta != null ? `+${ev.scoreDelta} pts` : (ev.severity === 'HIGH' ? '+15' : ev.severity === 'CRITICAL' ? '+25' : ev.severity === 'WARNING' ? '+8' : '0')
                           const detailText = ev.metadata?.detail || ev.metadata?.reason || ev.metadata?.message || (ev.metadata?.face_count ? `Detected ${ev.metadata.face_count} faces in frame` : null)
 
                           return (
@@ -783,11 +898,8 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                               <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: '#475569' }}>
                                 {confVal != null ? `${confVal}%` : '—'}
                               </td>
-                              <td style={{ padding: '8px 10px', textAlign: 'right', color: '#64748b' }}>
+                              <td style={{ padding: '8px 12px', textAlign: 'right', color: '#64748b', fontWeight: 600 }}>
                                 {durVal}
-                              </td>
-                              <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: sevStyle.fg }}>
-                                {delta}
                               </td>
                             </tr>
                           )
@@ -806,10 +918,53 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
           padding: '14px 24px',
           borderTop: '1px solid #f1f5f9',
           display: 'flex',
-          justifyContent: 'flex-end',
+          justifyContent: 'space-between',
+          alignItems: 'center',
           background: '#f8fafc',
           borderRadius: '0 0 16px 16px'
         }}>
+          {data?.sessionId ? (
+            <button
+              onClick={async () => {
+                const sId = data?.sessionId || data?.session?.sessionId;
+                if (!sId) return;
+                const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
+                const token = storedUser?.token || localStorage.getItem('token') || sessionStorage.getItem('token');
+                try {
+                  const res = await fetch(`${API_BASE}/monitoring/sessions/${sId}/excel?token=${encodeURIComponent(token || '')}`, {
+                    headers: token ? { Authorization: `Bearer ${token}` } : {}
+                  });
+                  if (!res.ok) throw new Error('Download failed');
+                  const blob = await res.blob();
+                  const url = window.URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `monitoring_report_${sId}.xlsx`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  window.URL.revokeObjectURL(url);
+                } catch (e) {
+                  window.open(`${API_BASE}/monitoring/sessions/${sId}/excel?token=${encodeURIComponent(token || '')}`, '_blank');
+                }
+              }}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 8,
+                border: '1px solid #10b981',
+                background: '#10b981',
+                color: '#ffffff',
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6
+              }}
+            >
+              <Download size={15} /> Download Excel Report
+            </button>
+          ) : <div />}
           <button
             onClick={onClose}
             style={{
@@ -872,6 +1027,30 @@ export default function TrainerMonitoringReport({ quizId, quizTitle }) {
     window.open(proctorApi.getQuizReportCSVUrl(quizId), '_blank')
   }, [quizId])
 
+  const handleExportExcel = useCallback(async () => {
+    if (!quizId) return
+    const storedUser = JSON.parse(localStorage.getItem('user') || '{}')
+    const token = storedUser?.token || localStorage.getItem('token') || sessionStorage.getItem('token')
+    const downloadUrl = `${API_BASE}/monitoring/reports/assessment/${quizId}/excel?contextType=QUIZ&token=${encodeURIComponent(token || '')}`
+    try {
+      const res = await fetch(downloadUrl, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      })
+      if (!res.ok) throw new Error('Download failed')
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `assessment_marks_${quizId}.xlsx`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+    } catch (e) {
+      window.open(downloadUrl, '_blank')
+    }
+  }, [quizId])
+
   if (loading) {
     return (
       <div className="flex min-h-[400px] items-center justify-center">
@@ -918,6 +1097,12 @@ export default function TrainerMonitoringReport({ quizId, quizTitle }) {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleExportExcel}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-600 bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700"
+          >
+            <Download className="h-3.5 w-3.5" /> Download Participant Marks (Excel)
+          </button>
           <button
             onClick={handleExportCSV}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"

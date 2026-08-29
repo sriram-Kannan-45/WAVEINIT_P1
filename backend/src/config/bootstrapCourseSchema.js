@@ -289,20 +289,29 @@ async function relaxLegacyTrainingIdColumns(logger = console) {
 }
 
 async function addIndexIfMissing(table, indexName, columns, { unique = false } = {}, logger = console) {
-  // Verify all referenced columns exist first — otherwise CREATE INDEX
-  // throws "Key column ... doesn't exist in table".
-  for (const col of columns) {
-    if (!(await columnExists(table, col))) {
-      logger.warn(`[course-schema] skipping index ${indexName}: column ${table}.${col} missing`);
+  try {
+    const dialect = sequelize.getDialect();
+    if (dialect !== 'postgres' && dialect !== 'mysql') return false;
+
+    const queryInterface = sequelize.getQueryInterface();
+    await queryInterface.addIndex(table, columns, {
+      name: indexName,
+      unique: !!unique,
+    });
+    logger.info(`[course-schema] created index ${indexName} on ${table}`);
+    return true;
+  } catch (e) {
+    if (e.message && (
+      e.message.includes('already exists') ||
+      e.message.includes('Duplicate key name') ||
+      e.message.includes('ER_DUP_KEYNAME') ||
+      e.message.includes('duplicate key')
+    )) {
       return false;
     }
+    logger.debug(`[course-schema] index check note (${indexName}): ${e.message}`);
+    return false;
   }
-  if (await indexExists(table, indexName)) return false;
-  const colList = columns.map(c => `\`${c}\``).join(', ');
-  const sql = `CREATE ${unique ? 'UNIQUE ' : ''}INDEX \`${indexName}\` ON \`${table}\` (${colList})`;
-  await sequelize.query(sql);
-  logger.info(`[course-schema] created index ${indexName} on ${table}`);
-  return true;
 }
 
 /**
@@ -311,28 +320,27 @@ async function addIndexIfMissing(table, indexName, columns, { unique = false } =
  * to avoid the global-sync race.
  */
 async function bootstrapCourseIndexes(logger = console) {
-  if (sequelize.getDialect() !== 'mysql') return;
   try {
-    await addIndexIfMissing('lessons', 'idx_lessons_course_order',
-      ['course_id', 'order_index'], {}, logger);
-    await addIndexIfMissing('lessons', 'idx_lessons_training',
-      ['training_id'], {}, logger);
-    await addIndexIfMissing('lessons', 'idx_lessons_trainer',
-      ['trainer_id'], {}, logger);
+    // Lessons indexes
+    await addIndexIfMissing('lessons', 'idx_lessons_course_order', ['course_id', 'order_index'], {}, logger);
+    await addIndexIfMissing('lessons', 'idx_lessons_training', ['training_id'], {}, logger);
+    await addIndexIfMissing('lessons', 'idx_lessons_trainer', ['trainer_id'], {}, logger);
 
-    await addIndexIfMissing('ai_quizzes', 'idx_ai_quizzes_course',
-      ['course_id'], {}, logger);
-    await addIndexIfMissing('ai_quizzes', 'idx_ai_quizzes_lesson',
-      ['lesson_id'], {}, logger);
-    await addIndexIfMissing('ai_quizzes', 'idx_ai_quizzes_result_status',
-      ['result_status'], {}, logger);
+    // AI Quizzes indexes
+    await addIndexIfMissing('ai_quizzes', 'idx_ai_quizzes_course', ['course_id'], {}, logger);
+    await addIndexIfMissing('ai_quizzes', 'idx_ai_quizzes_training', ['training_id'], {}, logger);
+    await addIndexIfMissing('ai_quizzes', 'idx_ai_quizzes_lesson', ['lesson_id'], {}, logger);
+    await addIndexIfMissing('ai_quizzes', 'idx_ai_quizzes_result_status', ['result_status'], {}, logger);
 
-    await addIndexIfMissing('enrollments', 'idx_enrollments_course',
-      ['course_id'], {}, logger);
-    await addIndexIfMissing('enrollments', 'idx_enrollments_participant',
-      ['participant_id'], {}, logger);
-    await addIndexIfMissing('enrollments', 'enrollments_course_participant_unique',
-      ['course_id', 'participant_id'], { unique: true }, logger);
+    // Coding Assessments indexes
+    await addIndexIfMissing('coding_assessments', 'idx_coding_assessments_course', ['course_id'], {}, logger);
+    await addIndexIfMissing('coding_assessments', 'idx_coding_assessments_training', ['training_id'], {}, logger);
+    await addIndexIfMissing('coding_assessments', 'idx_coding_assessments_status', ['status'], {}, logger);
+
+    // Enrollments indexes
+    await addIndexIfMissing('enrollments', 'idx_enrollments_course_status', ['course_id', 'status'], {}, logger);
+    await addIndexIfMissing('enrollments', 'idx_enrollments_training_status', ['training_id', 'status'], {}, logger);
+    await addIndexIfMissing('enrollments', 'idx_enrollments_participant_status', ['participant_id', 'status'], {}, logger);
   } catch (e) {
     logger.warn(`[course-schema] index bootstrap warning: ${e.message}`);
   }

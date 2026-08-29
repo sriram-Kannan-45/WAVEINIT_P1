@@ -62,7 +62,7 @@ const sequelize = new Sequelize(
     host: dbHost,
     port: dbPort,
     dialect: dbDialect,
-    logging: isProduction ? false : console.log,
+    logging: isProduction ? false : (process.env.DB_LOGGING === 'true' ? console.log : false),
     dialectOptions: (isProduction || isPostgres) ? {
       ssl: {
         require: true,

@@ -63,9 +63,25 @@ class MonitoringController {
       // If a frame was supplied, validate it via MediaPipe calibration engine
       if (frame) {
         const valResult = await monitoringService.validateCalibrationFrame({ sessionId, frame });
-        calibrationPassed = !!valResult.passed;
+        // A usable face frame is not the same thing as a calibrated iris
+        // baseline. MediaPipe needs its full calibration window before live
+        // eye-gaze classifications are trustworthy.
+        calibrationPassed = !!valResult.passed && !!valResult.ready;
         calibrationDetails = valResult.metrics || {};
         failReason = valResult.reason;
+
+        if (valResult.passed && !valResult.ready) {
+          return res.status(202).json({
+            success: true,
+            data: {
+              passed: true,
+              ready: false,
+              reason: valResult.reason,
+              message: valResult.message,
+              metrics: calibrationDetails,
+            },
+          });
+        }
 
         if (!calibrationPassed) {
           await monitoringService.recordCalibration({
@@ -93,9 +109,35 @@ class MonitoringController {
         failureReason: failReason,
       });
 
-      return ok(res, { session, passed: true, message: 'Calibration successful' });
+      return ok(res, {
+        session,
+        passed: true,
+        ready: true,
+        message: 'Calibration successful',
+        metrics: calibrationDetails,
+      });
     } catch (err) {
       logger.error(`[MonitoringController] recordCalibration error: ${err.message}`);
+      return fail(res, 500, err.message);
+    }
+  }
+
+  /**
+   * POST /api/monitoring/sessions/:id/start-test
+   * Lock monitoring start time to the exact second the participant starts answering questions.
+   */
+  async startTestTimer(req, res) {
+    try {
+      const sessionId = req.params.id;
+      const { attemptId, testStartedAt } = req.body;
+      const session = await monitoringService.startTestSession({
+        sessionId,
+        attemptId,
+        testStartedAt,
+      });
+      return ok(res, { session, success: true, message: 'Test active timer locked' });
+    } catch (err) {
+      logger.error(`[MonitoringController] startTestTimer error: ${err.message}`);
       return fail(res, 500, err.message);
     }
   }
@@ -118,21 +160,9 @@ class MonitoringController {
         frame,
       });
 
-      // If violations detected, record them to scoring engine
-      if (result?.violations?.length > 0) {
-        for (const v of result.violations) {
-          await monitoringService.reportEvent({
-            sessionId,
-            participantId,
-            source: 'LAPTOP',
-            eventType: v.type,
-            severity: v.severity,
-            durationMs: 1500,
-            confidence: 0.9,
-            metadata: { detail: v.detail, head_pose: result.head_pose, gaze: result.gaze_classification },
-          });
-        }
-      }
+      // Frame analysis is intentionally detection-only. The browser's interval
+      // state machine owns start/continue/end and posts one completed interval;
+      // persisting here would turn every frame into a fabricated 1500ms event.
 
       return ok(res, result);
     } catch (err) {
@@ -204,23 +234,47 @@ class MonitoringController {
         confidenceThreshold: confidenceThreshold || 0.35,
       });
 
-      // If high/warning severity event, record to scoring engine
-      if (result?.proctoring_event && ['WARNING', 'VIOLATION'].includes(result.composition_state)) {
-        await monitoringService.reportEvent({
-          sessionId,
-          participantId: participantId || req.user?.id,
-          source: 'MOBILE',
-          eventType: result.proctoring_event.eventType,
-          severity: result.proctoring_event.severity,
-          durationMs: 1500,
-          confidence: result.proctoring_event.confidence,
-          metadata: { composition_state: result.composition_state, user_message: result.user_message },
-        });
-      }
+      // validateMobile owns remote-camera interval lifecycle and persists only
+      // completed incidents; this endpoint must not create polling-duration rows.
 
       return ok(res, result);
     } catch (err) {
       logger.error(`[MonitoringController] validateMobile error: ${err.message}`);
+      return fail(res, 500, err.message);
+    }
+  }
+
+  /**
+   * POST /api/monitoring/sessions/:id/video
+   * Upload recorded proctoring webcam video file for a session.
+   */
+  async uploadVideo(req, res) {
+    try {
+      const sessionId = req.params.id;
+      if (!req.file) {
+        return fail(res, 400, 'No video file uploaded');
+      }
+
+      const relativeUrl = `/uploads/monitoring-videos/${req.file.filename}`;
+      const fullPath = req.file.path;
+      const attemptId = req.body?.attemptId;
+      const participantId = req.body?.participantId || req.user?.id;
+
+      const result = await monitoringService.saveSessionVideo({
+        sessionId,
+        attemptId,
+        participantId,
+        videoUrl: relativeUrl,
+        filename: req.file.filename,
+      });
+
+      return ok(res, {
+        message: 'Monitoring video uploaded successfully',
+        videoUrl: relativeUrl,
+        session: result,
+      });
+    } catch (err) {
+      logger.error(`[MonitoringController] uploadVideo error: ${err.message}`);
       return fail(res, 500, err.message);
     }
   }
@@ -238,6 +292,7 @@ class MonitoringController {
         eventType,
         severity = 'INFO',
         durationMs = 0,
+        occurredAt = null,
         confidence = 1.0,
         evidenceRef = null,
         metadata = {},
@@ -253,6 +308,7 @@ class MonitoringController {
         eventType,
         severity,
         durationMs,
+        occurredAt,
         confidence,
         evidenceRef,
         metadata,
@@ -299,6 +355,32 @@ class MonitoringController {
       return ok(res, status);
     } catch (err) {
       return fail(res, 404, err.message);
+    }
+  }
+
+  /**
+   * POST /api/monitoring/sessions/:id/video
+   * Upload recorded proctoring/monitoring session video.
+   */
+  async uploadVideo(req, res) {
+    try {
+      const sessionId = req.params.id;
+      const participantId = req.user?.id;
+
+      if (!req.file) {
+        return fail(res, 400, 'No video file provided');
+      }
+
+      const result = await monitoringService.saveSessionVideo({
+        sessionId,
+        participantId,
+        filename: req.file.filename,
+      });
+
+      return ok(res, result);
+    } catch (err) {
+      logger.error(`[MonitoringController] uploadVideo error: ${err.message}`);
+      return fail(res, 500, err.message);
     }
   }
 
@@ -420,19 +502,28 @@ class MonitoringController {
       const report = await monitoringService.getReport({ sessionId });
       if (!report) return fail(res, 404, 'Monitoring session report not found');
 
-      const events = report.events || [];
+      const events = (report.timeline && report.timeline.length > 0) ? report.timeline : (report.events || []);
       const summaryMetrics = {
-        testDuration: report.session?.durationSeconds || report.durationSeconds || 60.0,
-        violationSeconds: report.uniqueViolationSeconds || 0.0,
-        violationPercentage: report.violationPercentage || 0.0,
-        monitoringScore: report.eyeHeadScore || report.scoreBreakdown?.eyeHead || 0.0,
-        multipleFaceCount: report.multipleFaceCount || 0,
-        multipleFaceScore: report.multipleFaceScore || 0.0,
-        noPersonDetected: report.noPersonDetected || false,
-        noPersonScore: report.noPersonScore || 0.0,
-        mobileCount: report.mobileCount || 0,
-        mobileScore: report.mobileScore || 0.0,
-        finalScore: report.finalScore || report.session?.score || 0.0,
+        participantId: report.participantId || report.participant?.id || report.session?.participantId || 'Candidate',
+        participantName: report.participant?.name || report.session?.participantName || 'Participant',
+        startTime: report.startedAt || report.session?.startedAt || null,
+        endTime: report.endedAt || report.session?.endedAt || null,
+        actualTestDuration: report.actualTestDurationSeconds ?? report.durationSeconds ?? 0,
+        configuredDuration: report.configuredDurationSeconds ?? 0,
+        testDuration: report.actualTestDurationSeconds ?? report.durationSeconds ?? 0,
+        violationSeconds: report.eyeHeadViolationSeconds ?? report.uniqueViolationSeconds ?? 0,
+        violationPercentage: report.violationPercentage ?? 0,
+        monitoringScore: report.eyeHeadScore ?? report.scoringBreakdown?.eyeHead?.score ?? 0,
+        multipleFaceCount: report.multipleFaceCount || (report.multiFaceScore > 0 ? 1 : 0),
+        multipleFaceScore: report.multiFaceScore || report.scoringBreakdown?.multiPerson?.score || 0.0,
+        noPersonDetected: Boolean(report.noPersonDetected || report.noPersonScore > 0),
+        noPersonScore: report.noPersonScore || report.scoringBreakdown?.noPerson?.score || 0.0,
+        mobileCount: report.phoneViolationCount || report.mobileCount || (report.mobileScore > 0 ? 1 : 0),
+        mobileScore: report.mobileScore || report.scoringBreakdown?.mobile?.score || 0.0,
+        tabSwitchCount: report.tabSwitchCount || 0,
+        tabSwitchScore: report.tabSwitchScore || report.scoringBreakdown?.tabSwitch?.score || 0.0,
+        finalScore: report.finalScore ?? report.score ?? 0,
+        videoUrl: report.videoUrl ? (report.videoUrl.startsWith('http') ? report.videoUrl : `${req.protocol}://${req.get('host')}${report.videoUrl}`) : null,
       };
 
       const MonitoringExcelService = require('../services/monitoringExcelService');
@@ -442,6 +533,95 @@ class MonitoringController {
       return res.send(buffer);
     } catch (err) {
       logger.error(`[MonitoringController] downloadExcelReport error: ${err.message}`);
+      return fail(res, 500, err.message);
+    }
+  }
+
+  /**
+   * GET /api/monitoring/reports/assessment/:contextId/excel
+   * Export all participant test attempts and 5-part proctoring marks for a quiz/assessment to Excel.
+   */
+  async downloadAssessmentExcelReport(req, res) {
+    try {
+      const contextId = req.params.contextId;
+      const contextType = (req.query.contextType || 'QUIZ').toUpperCase();
+      const { QuizAttempt, CodingAttempt, AIQuiz, CodingAssessment, User } = require('../models');
+
+      let assessmentTitle = 'Assessment';
+      let configuredDuration = '—';
+      let attempts = [];
+
+      if (contextType === 'CODING') {
+        const ca = await CodingAssessment.findByPk(contextId);
+        if (ca) {
+          assessmentTitle = ca.title;
+          configuredDuration = ca.timeLimit ? `${ca.timeLimit} minutes` : '—';
+        }
+        attempts = await CodingAttempt.findAll({
+          where: { assessmentId: contextId },
+          include: [{ model: User, as: 'participant' }],
+          order: [['id', 'DESC']]
+        });
+      } else {
+        const quiz = await AIQuiz.findByPk(contextId);
+        if (quiz) {
+          assessmentTitle = quiz.title;
+          configuredDuration = quiz.timeLimit ? `${quiz.timeLimit} minutes` : '—';
+        }
+        attempts = await QuizAttempt.findAll({
+          where: { quizId: contextId },
+          include: [{ model: User, as: 'participant' }],
+          order: [['id', 'DESC']]
+        });
+      }
+
+      // Populate each participant row with exact 5-component proctoring metrics
+      const participants = await Promise.all(attempts.map(async (att) => {
+        let rep = null;
+        try {
+          rep = await monitoringService.getReport({ attemptId: att.id });
+        } catch (_) {}
+
+        const userName = att.participant?.name || att.participantName || `Candidate #${att.id}`;
+        const userEmail = att.participant?.email || '—';
+        const quizScore = att.score != null ? att.score : (att.percentage != null ? att.percentage : (att.totalScore != null ? att.totalScore : null));
+        const durSec = rep?.actualTestDurationSeconds || att.timeTaken || (att.submittedAt && att.startedAt ? Math.round((new Date(att.submittedAt) - new Date(att.startedAt)) / 1000) : 0);
+
+        return {
+          id: att.id,
+          attemptId: att.id,
+          name: userName,
+          email: userEmail,
+          status: att.status,
+          submittedAt: att.submittedAt || att.updatedAt,
+          actualDurationSeconds: durSec,
+          actualDuration: durSec > 0 ? `${Math.floor(durSec / 60)}m ${durSec % 60}s` : '—',
+          quizScore: quizScore,
+          eyeHeadScore: rep?.eyeHeadScore || rep?.scoringBreakdown?.eyeHead?.score || 0.0,
+          noPersonScore: rep?.noPersonScore || rep?.scoringBreakdown?.noPerson?.score || 0.0,
+          multiFaceScore: rep?.multiFaceScore || rep?.scoringBreakdown?.multiPerson?.score || 0.0,
+          tabSwitchScore: rep?.tabSwitchScore || rep?.scoringBreakdown?.tabSwitch?.score || 0.0,
+          tabSwitchCount: rep?.tabSwitchCount || 0,
+          mobileScore: rep?.mobileScore || rep?.scoringBreakdown?.mobile?.score || 0.0,
+          mobileCount: rep?.phoneViolationCount || 0,
+          finalScore: rep?.finalScore || rep?.score || 0.0,
+          riskLevel: rep?.riskLevel || 'LOW',
+          videoUrl: rep?.videoUrl ? `${req.protocol}://${req.get('host')}${rep.videoUrl}` : null,
+        };
+      }));
+
+      const MonitoringExcelService = require('../services/monitoringExcelService');
+      const buffer = await MonitoringExcelService.generateAssessmentParticipantsBuffer(participants, {
+        title: assessmentTitle,
+        configuredDuration,
+      });
+
+      const safeTitle = (assessmentTitle || 'Assessment').replace(/[^a-zA-Z0-9_-]/g, '_');
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${safeTitle}_Participant_Marks.xlsx"`);
+      return res.send(buffer);
+    } catch (err) {
+      logger.error(`[MonitoringController] downloadAssessmentExcelReport error: ${err.message}`);
       return fail(res, 500, err.message);
     }
   }
