@@ -6,6 +6,7 @@ const fs = require('fs');
 const authController = require('../controllers/authController');
 const trainingController = require('../controllers/trainingController');
 const adminController = require('../controllers/adminController');
+const adminSummaryController = require('../controllers/adminSummaryController');
 const adminBulkImportController = require('../controllers/adminBulkImportController');
 const authenticateToken = require('../middleware/auth');
 const roleMiddleware = require('../middleware/roles');
@@ -219,6 +220,14 @@ router.delete(
   authenticateToken,
   roleMiddleware('ADMIN'),
   (req, res) => adminController.deleteTraining(req, res)
+);
+
+// GET /api/admin/dashboard/summary - Dedicated fast aggregated dashboard overview endpoint
+router.get(
+  '/dashboard/summary',
+  authenticateToken,
+  roleMiddleware('ADMIN'),
+  (req, res) => adminSummaryController.getDashboardSummary(req, res)
 );
 
 // GET /api/admin/stats

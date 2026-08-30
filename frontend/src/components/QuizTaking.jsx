@@ -194,13 +194,15 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
           await flushOpenProctoringIntervals();
         } catch (_) {}
 
+        const activeDurationSec = monitoringClient.getActiveDurationSeconds();
+
         const submitUrl = isStandardQuiz
           ? `${API_BASE}/participant/quizzes/${quizId}/submit`
           : `${API_BASE}/ai-quiz/participant/submit/${attemptId}`
 
         const body = isStandardQuiz
-          ? JSON.stringify({ attemptId, answers: answerArray })
-          : JSON.stringify({ answers: answerArray })
+          ? JSON.stringify({ attemptId, answers: answerArray, timeTaken: activeDurationSec, actualTestDurationSeconds: activeDurationSec })
+          : JSON.stringify({ answers: answerArray, timeTaken: activeDurationSec, actualTestDurationSeconds: activeDurationSec })
 
         const r = await fetch(submitUrl, {
           method: 'POST',
@@ -213,7 +215,7 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
         // The attempt is now persisted, so finalize monitoring with the same
         // authoritative end time used by the report and Excel export.
         try {
-          await monitoringClient.finishSession()
+          await monitoringClient.finishSession({ actualTestDurationSeconds: activeDurationSec })
         } catch (finishErr) {
           console.warn('[QuizTaking] Monitoring finalization notice:', finishErr.message)
         }
@@ -265,13 +267,22 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
   useEffect(() => {
     // Lock exact active test start timestamp at second 1 of question rendering
     if (attemptId) {
-      monitoringClient.startActiveTestTimer(attemptId);
+      monitoringClient.startActiveTestTimer(attemptId, (quizData?.timeLimit || 30) * 60);
     }
     // Try once on mount. Browser may block without user gesture; the
     // fullscreenchange listener below is forgiving — it never punishes the
     // user for the initial state, only for EXITING after they're in.
     Promise.resolve(fsApi.request()).catch(() => { /* user gesture missing */ })
-  }, [attemptId])
+  }, [attemptId, quizData?.timeLimit])
+
+  /* ── Pause / Resume Monitoring Timer when screen share / break occurs ─── */
+  useEffect(() => {
+    if (isPaused) {
+      monitoringClient.pauseActiveTestTimer('SCREEN_SHARE_PAUSE_OR_BREAK');
+    } else if (attemptId && !submittedRef.current) {
+      monitoringClient.resumeActiveTestTimer('SCREEN_SHARE_RESUMED');
+    }
+  }, [isPaused, attemptId])
 
   /* ── Hide LMS chrome (sidebar + top header) while exam is mounted ───── */
   useEffect(() => {

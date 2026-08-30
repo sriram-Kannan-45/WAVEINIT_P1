@@ -99,8 +99,8 @@ async function bootstrapCourseSchema(logger = console) {
   }
 
   // Only `training_programs` exists, or neither — sync will handle creation.
-  await ensureAiQuizColumns(logger);
   await ensureTrainerAdminColumns(logger);
+  await ensureCodingAttemptColumns(logger);
   return { noop: true };
 }
 
@@ -129,29 +129,18 @@ async function ensureTrainerAdminColumns(logger = console) {
   }
 }
 
-async function ensureAiQuizColumns(logger = console) {
+async function ensureCodingAttemptColumns(logger = console) {
   try {
-    if (!(await tableExists('ai_quizzes'))) {
-      logger.info('[course-schema] ai_quizzes table does not exist yet. Skipping column check.');
+    if (!(await tableExists('coding_attempts'))) {
       return;
     }
-
-    const colsToAdd = [
-      { name: 'quiz_id', type: 'BIGINT UNSIGNED NULL' },
-      { name: 'question_count', type: 'INT NULL' },
-      { name: 'created_by', type: 'BIGINT UNSIGNED NULL' },
-      { name: 'published', type: 'BOOLEAN DEFAULT FALSE' }
-    ];
-
-    for (const col of colsToAdd) {
-      const exists = await columnExists('ai_quizzes', col.name);
-      if (!exists) {
-        logger.info(`[course-schema] Adding missing column ai_quizzes.${col.name}`);
-        await sequelize.query(`ALTER TABLE \`ai_quizzes\` ADD COLUMN \`${col.name}\` ${col.type}`);
-      }
+    const exists = await columnExists('coding_attempts', 'monitoring_session_id');
+    if (!exists) {
+      logger.info(`[course-schema] Adding missing column coding_attempts.monitoring_session_id`);
+      await sequelize.query(`ALTER TABLE \`coding_attempts\` ADD COLUMN \`monitoring_session_id\` VARCHAR(128) NULL`);
     }
   } catch (err) {
-    logger.error(`[course-schema] Error ensuring ai_quizzes columns: ${err.message}`);
+    logger.error(`[course-schema] Error ensuring coding_attempts columns: ${err.message}`);
   }
 }
 
@@ -341,6 +330,21 @@ async function bootstrapCourseIndexes(logger = console) {
     await addIndexIfMissing('enrollments', 'idx_enrollments_course_status', ['course_id', 'status'], {}, logger);
     await addIndexIfMissing('enrollments', 'idx_enrollments_training_status', ['training_id', 'status'], {}, logger);
     await addIndexIfMissing('enrollments', 'idx_enrollments_participant_status', ['participant_id', 'status'], {}, logger);
+
+    // Users lookup index
+    await addIndexIfMissing('users', 'idx_users_role_status_deleted', ['role', 'status', 'isDeleted'], {}, logger).catch(() => {});
+    await addIndexIfMissing('users', 'idx_users_role_status', ['role', 'status'], {}, logger).catch(() => {});
+
+    // Training programs indexes
+    await addIndexIfMissing('training_programs', 'idx_trainings_dates', ['start_date', 'end_date'], {}, logger).catch(() => {});
+    await addIndexIfMissing('training_programs', 'idx_trainings_trainer', ['trainer_id'], {}, logger).catch(() => {});
+
+    // Quiz & Assessment Attempt & Result indexes
+    await addIndexIfMissing('quiz_attempts', 'idx_quiz_attempts_quiz_part_status', ['quiz_id', 'participant_id', 'status'], {}, logger);
+    await addIndexIfMissing('quiz_results', 'idx_quiz_results_quiz_part_pub', ['quiz_id', 'participant_id', 'result_published'], {}, logger);
+    await addIndexIfMissing('lesson_progress', 'idx_lesson_progress_part_status', ['participant_id', 'status'], {}, logger);
+    await addIndexIfMissing('feedbacks', 'idx_feedbacks_training_part', ['training_id', 'participant_id'], {}, logger);
+    await addIndexIfMissing('feedbacks', 'idx_feedbacks_training', ['training_id'], {}, logger);
   } catch (e) {
     logger.warn(`[course-schema] index bootstrap warning: ${e.message}`);
   }

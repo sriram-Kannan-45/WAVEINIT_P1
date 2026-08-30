@@ -545,7 +545,6 @@ function QuizDetailModal({ quizId, user, courseId, onClose }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      onClick={onClose}
       style={{
         position: 'fixed',
         top: 0,
@@ -1373,7 +1372,6 @@ function PublishDialog({ user, courseId, quiz, onClose, onPublished }) {
   return (
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={() => !publishing && onClose()}
       style={{
         position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)',
         zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
@@ -1558,7 +1556,6 @@ function QuizBuilder({ user, courseId, lessons, existingQuiz, onClose, onSaved }
   return (
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={() => !saving && onClose()}
       style={{
         position: 'fixed', inset: 0, background: colors.bg.overlay,
         zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
@@ -1816,7 +1813,6 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      onClick={() => !isWorking && onClose()}
       style={{
         position: 'fixed', inset: 0,
         background: 'rgba(15, 23, 42, 0.50)',

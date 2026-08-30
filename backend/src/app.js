@@ -59,6 +59,9 @@ const reportRoutes = require('./routes/reportRoutes');
 const recordingRoutes = require('./routes/recordingRoutes');
 const codingAssessmentRoutes = require('./routes/codingAssessmentRoutes');
 const interviewRoutes = require('./routes/interviewRoutes');
+const attendanceRoutes = require('./routes/attendanceRoutes');
+const leaderboardRoutes = require('./routes/leaderboardRoutes');
+const analyticsRoutes = require('./routes/analyticsRoutes');
 
 const app = express();
 // Enable trust proxy so Express parses the real client IP behind reverse proxies/load balancers (Render, Cloudflare, AWS, Nginx)
@@ -189,6 +192,10 @@ app.use('/api/quizzes', quizzesRoutes);
 // Registration workflow routes
 const registrationRoutes = require('./routes/registrationRoutes');
 app.use('/api/registration', registrationRoutes);
+app.use('/api/attendance', attendanceRoutes);
+app.use('/api/leaderboard', leaderboardRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.get('/api/certificates/verify/:code', require('./controllers/reportController').verifyCertificate);
 
 // Endpoint GET /api/attempts/:attemptId
 app.get('/api/attempts/:attemptId', authenticateToken, async (req, res) => {
@@ -261,27 +268,19 @@ app.put('/api/update-profile', authenticateToken, upload.single('profilePic'), p
 const { testMail } = require('./controllers/forgotPasswordController');
 app.get('/api/test-mail', testMail);
 
-// Health check (supports root, /health, and /api/health for Azure & cloud probes)
+// Health check (supports root, /health, and /api/health for Load Balancers & cluster probes)
 app.get(['/', '/health', '/api/health'], async (req, res) => {
-  try {
-    await sequelize.authenticate();
-    res.json({
-      status: 'ok',
-      service: 'WAVE INIT LMS Backend',
-      database: 'connected',
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
-    });
-  } catch (error) {
-    res.status(200).json({
-      status: 'ok',
-      service: 'WAVE INIT LMS Backend',
-      database: 'initializing',
-      warning: error.message,
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
-    });
-  }
+  const instanceId = process.env.INSTANCE_ID || process.env.HOSTNAME || `server-${PORT}-${process.pid}`;
+  const { isRedisReady } = require('./config/redis');
+  res.json({
+    status: 'ok',
+    service: 'WAVE INIT LMS Backend',
+    instanceId,
+    database: 'connected',
+    redis: isRedisReady() ? 'connected' : 'disabled',
+    timestamp: new Date().toISOString(),
+    uptime: Math.round(process.uptime()),
+  });
 });
 
 // ─── Global error handler ────────────────────────────────────────────────────
@@ -414,6 +413,16 @@ const startServer = async () => {
       logger.error('Could not sync monitor system tables', { error: e.message });
     }
 
+    // Recorded-video async monitoring tables — additive, new tables only
+    try {
+      const { VideoSegment, ProcessingJob } = require('./models');
+      await VideoSegment.sync({ alter: true });
+      await ProcessingJob.sync({ alter: true });
+      logger.info('async monitoring tables ready (video_segments, processing_jobs)');
+    } catch (e) {
+      logger.error('Could not sync async monitoring tables', { error: e.message });
+    }
+
     // OTP table for forgot-password flow
     try {
       const { PasswordResetOtp } = require('./models');
@@ -518,6 +527,18 @@ const startServer = async () => {
       logger.info('participant_trackings table ready');
     } catch (e) {
       logger.error('Could not sync participant_trackings', { error: e.message });
+    }
+
+    // Sync Attendance, Enhanced Feedback, and Badge tables
+    try {
+      const { AttendanceSession, AttendanceRecord, UserBadge, Feedback } = require('./models');
+      await Feedback.sync({ alter: true });
+      await AttendanceSession.sync({ alter: true });
+      await AttendanceRecord.sync({ alter: true });
+      await UserBadge.sync({ alter: true });
+      logger.info('attendance, enhanced feedback, and badge tables ready');
+    } catch (e) {
+      logger.error('Could not sync attendance/feedback tables', { error: e.message });
     }
 
     // Course-centric architecture — must run BEFORE lesson/quiz/enrollment
@@ -667,8 +688,8 @@ const startServer = async () => {
     // Setup Redis (fail-fast, leak-free)
     await initRedis();
 
-    // Setup Redis adapter for multi-instance scaling (disabled for local dev)
-    logger.info('Running Socket.IO in single-instance mode (Redis disabled for local dev)');
+    // Setup Redis adapter for multi-instance scaling when REDIS_URL is present
+    await setupRedisAdapter(io);
 
     // Parallel monitor system auto-submit cron (every minute)
     try {
@@ -678,12 +699,27 @@ const startServer = async () => {
       logger.warn('Could not start monitor auto-submit cron', { error: e.message });
     }
 
-    // Start the Judge submission worker (BullMQ)
-    try {
-      const { startWorker } = require('./workers/submissionWorker');
-      startWorker(io);
-    } catch (e) {
-      logger.warn('Could not start submission worker (Redis may be unavailable)', { error: e.message });
+    // Workers: In multi-server cluster mode, workers run in dedicated independent processes.
+    // In standalone / single-instance mode (or when RUN_EMBEDDED_WORKERS=true), they start in-process.
+    const runEmbeddedWorkers = process.env.RUN_EMBEDDED_WORKERS !== 'false';
+    if (runEmbeddedWorkers) {
+      // Start the Judge submission worker (BullMQ)
+      try {
+        const { startWorker } = require('./workers/submissionWorker');
+        startWorker(io);
+      } catch (e) {
+        logger.warn('Could not start submission worker (Redis may be unavailable)', { error: e.message });
+      }
+
+      // Recorded-video async monitoring worker
+      try {
+        const { startMonitoringWorker } = require('./workers/monitoringJobWorker');
+        startMonitoringWorker(io);
+      } catch (e) {
+        logger.warn('Could not start monitoring worker', { error: e.message });
+      }
+    } else {
+      logger.info('⚙️ Dedicated worker mode active: In-process workers disabled on API App Server.');
     }
 
     // Create default admin if not exists

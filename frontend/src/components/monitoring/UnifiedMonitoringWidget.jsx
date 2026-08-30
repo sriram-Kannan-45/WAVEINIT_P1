@@ -61,6 +61,9 @@ export default function UnifiedMonitoringWidget({
   mobileEnabled = true,
   preCalibrated = true,
   prePaired = true,
+  isTestActive = true,
+  isPaused = false,
+  testStartedAt = null,
   externalWebcamStream = null,
   onWebcamStreamReady = null,
   onCalibrationPassed = null,
@@ -597,6 +600,8 @@ export default function UnifiedMonitoringWidget({
       contextType,
       token: activeToken,
       socket,
+      isTestActive,
+      testStartedAt,
     });
 
     monitoringClient.onEventReported = (data) => {
@@ -620,7 +625,16 @@ export default function UnifiedMonitoringWidget({
         } catch (e) {}
       }
     };
-  }, [activeSessionId, activeToken, contextType, resolvedParticipantId, getOrCreatePeerConnection]);
+  }, [activeSessionId, activeToken, contextType, resolvedParticipantId, isTestActive, testStartedAt, getOrCreatePeerConnection]);
+
+  // Sync isTestActive and isPaused changes
+  useEffect(() => {
+    monitoringClient.setTestActive(isTestActive, testStartedAt);
+  }, [isTestActive, testStartedAt]);
+
+  useEffect(() => {
+    monitoringClient.setPaused(isPaused);
+  }, [isPaused]);
 
   // 6. Start Laptop & Mobile Monitoring Loops
   useEffect(() => {
@@ -634,7 +648,7 @@ export default function UnifiedMonitoringWidget({
 
       monitoringClient.startLaptopMonitoring(webcamStream, webcamVideoRef.current, (metrics) => {
         setLaptopMetrics(metrics);
-      });
+      }, testStartedAt);
     };
 
     startMonitoring();
@@ -643,7 +657,7 @@ export default function UnifiedMonitoringWidget({
       cancelled = true;
       monitoringClient.stopLaptopMonitoring();
     };
-  }, [webcamStream, activeSessionId, calibrationPassed]);
+  }, [webcamStream, activeSessionId, calibrationPassed, testStartedAt]);
 
   useEffect(() => {
     if (!remoteMobileStream || !activeSessionId || !mobileEnabled) return;

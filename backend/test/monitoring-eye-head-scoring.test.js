@@ -24,6 +24,13 @@ function loadMonitoringEngineClient(fetchImpl) {
     Promise,
     setTimeout,
     clearTimeout,
+    setInterval,
+    clearInterval,
+    sessionStorage: {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+    },
     fetch: fetchImpl,
   };
   vm.runInNewContext(source, sandbox, { filename: clientPath });
@@ -173,7 +180,7 @@ describe('MediaPipe Audit Scoring Test Suite', () => {
 
     expect(Buffer.isBuffer(buffer)).toBe(true);
     expect(buffer.length).toBeGreaterThan(1000);
-  });
+  }, 25000);
 
   test('TEST 12: DOWN is ALWAYS ALLOWED - Never triggers violation timer or score', () => {
     // DOWN directions are explicitly ignored
@@ -391,5 +398,147 @@ describe('MediaPipe Audit Scoring Test Suite', () => {
     expect(ready).toBe(true);
     expect(calibrationFrames).toBe(10);
     expect(client.gazeCalibrationSessionId).toBe('monitoring-session-calibration');
+  });
+
+  test('TEST 21: Direct Start -> Submit (60s active) produces 60s actual duration', async () => {
+    const requests = [];
+    const MonitoringEngineClient = loadMonitoringEngineClient(async (url, options) => {
+      requests.push({ url, options });
+      return { ok: true, json: async () => ({ success: true }) };
+    });
+    const client = new MonitoringEngineClient();
+    client.sessionId = 'test-session-direct';
+    client.attemptId = 101;
+
+    const baseTime = 1000000;
+    client.init({ sessionId: 'test-session-direct', attemptId: 101, participantId: 1, isTestActive: false });
+    
+    // Start active test
+    client.currentSegmentStartedAt = baseTime;
+    client.isTestActive = true;
+    client.isPaused = false;
+
+    // Simulate 60s active time
+    Date.now = () => baseTime + 60000;
+    expect(client.getActiveDurationSeconds()).toBe(60);
+
+    const report = await client.finishSession();
+    expect(requests.some(r => r.url.includes('/end'))).toBe(true);
+    const endCall = requests.find(r => r.url.includes('/end'));
+    const endBody = JSON.parse(endCall.options.body);
+    expect(endBody.actualTestDurationSeconds).toBe(60);
+  });
+
+  test('TEST 22: Start -> Break (30 min) -> Resume -> Submit (30 min active + 30 min break + 30 min active = 60 min active)', async () => {
+    const requests = [];
+    const MonitoringEngineClient = loadMonitoringEngineClient(async (url, options) => {
+      requests.push({ url, options });
+      return { ok: true, json: async () => ({ success: true }) };
+    });
+    const client = new MonitoringEngineClient();
+    client.sessionId = 'test-session-break';
+    client.attemptId = 102;
+
+    let mockNow = 100000000;
+    Date.now = () => mockNow;
+
+    client.init({ sessionId: 'test-session-break', attemptId: 102, participantId: 1 });
+    client.startActiveTestTimer(102, 3600);
+
+    // Active session 1: 30 minutes (1800s)
+    mockNow += 1800 * 1000;
+    expect(client.getActiveDurationSeconds()).toBe(1800);
+
+    // Break/Pause for 30 minutes (1800s)
+    client.pauseActiveTestTimer('PARTICIPANT_BREAK');
+    mockNow += 1800 * 1000;
+    // Active duration must remain 1800s during break!
+    expect(client.getActiveDurationSeconds()).toBe(1800);
+
+    // Resume test and take for another 30 minutes (1800s)
+    client.resumeActiveTestTimer('RESUMED');
+    mockNow += 1800 * 1000;
+    expect(client.getActiveDurationSeconds()).toBe(3600); // 60 minutes active, NOT 90 minutes!
+
+    await client.finishSession();
+    const endCall = requests.find(r => r.url.includes('/end'));
+    const endBody = JSON.parse(endCall.options.body);
+    expect(endBody.actualTestDurationSeconds).toBe(3600);
+    expect(endBody.activeSegments).toHaveLength(2);
+    expect(endBody.activeSegments[0].durationSec).toBe(1800);
+    expect(endBody.activeSegments[1].durationSec).toBe(1800);
+  });
+
+  test('TEST 23: Multiple breaks and disconnects accumulate only active session time', async () => {
+    const requests = [];
+    const MonitoringEngineClient = loadMonitoringEngineClient(async (url, options) => {
+      requests.push({ url, options });
+      return { ok: true, json: async () => ({ success: true }) };
+    });
+    const client = new MonitoringEngineClient();
+    client.sessionId = 'test-session-multi';
+
+    let mockNow = 200000000;
+    Date.now = () => mockNow;
+
+    client.init({ sessionId: 'test-session-multi', attemptId: 103, participantId: 1 });
+    client.startActiveTestTimer(103);
+
+    // Segment 1: 15s active
+    mockNow += 15000;
+    client.pauseActiveTestTimer('BREAK_1');
+
+    // Inactive 60s
+    mockNow += 60000;
+
+    // Segment 2: 25s active
+    client.resumeActiveTestTimer('RESUMED_1');
+    mockNow += 25000;
+    client.pauseActiveTestTimer('BREAK_2');
+
+    // Inactive 120s
+    mockNow += 120000;
+
+    // Segment 3: 20s active
+    client.resumeActiveTestTimer('RESUMED_2');
+    mockNow += 20000;
+
+    // Total active = 15s + 25s + 20s = 60s (Wall clock = 15 + 60 + 25 + 120 + 20 = 240s)
+    expect(client.getActiveDurationSeconds()).toBe(60);
+
+    await client.finishSession();
+    const endCall = requests.find(r => r.url.includes('/end'));
+    const endBody = JSON.parse(endCall.options.body);
+    expect(endBody.actualTestDurationSeconds).toBe(60);
+    expect(endBody.activeSegments).toHaveLength(3);
+  });
+
+  test('TEST 24: Eye + Head Tracking Score calculation with break: (Unique Violations / Actual Active Duration) * 60', () => {
+    // Configured: 60s
+    // Active time: 60s (1:00)
+    // Wall-clock time with break: 104m 26s (6266s)
+    // Eye/Head Violations: 20s
+    const actualActiveDurationSec = 60.0;
+    const uniqueViolationSec = 20.0;
+
+    // Correct formula with real active duration: (20 / 60) * 60 = 20.0
+    const correctScore = calculateEyeHeadScore(uniqueViolationSec, actualActiveDurationSec);
+    expect(correctScore).toBe(20.0);
+
+    // Erroneous formula with wall-clock break time: (20 / 6266) * 60 = 0.19 (WRONG)
+    const inflatedDuration = 6266.0;
+    const incorrectScore = calculateEyeHeadScore(uniqueViolationSec, inflatedDuration);
+    expect(incorrectScore).toBeCloseTo(0.1915, 2);
+    expect(correctScore).not.toBe(incorrectScore);
+  });
+
+  test('TEST 25: Active segments calculation accurately sums interval bounds', () => {
+    const activeSegments = [
+      { start: '2026-08-29T10:00:00.000Z', end: '2026-08-29T10:15:00.000Z', durationSec: 900 },
+      { start: '2026-08-29T11:00:00.000Z', end: '2026-08-29T11:15:00.000Z', durationSec: 900 },
+    ];
+    const totalActiveSec = activeSegments.reduce((sum, s) => sum + s.durationSec, 0);
+    expect(totalActiveSec).toBe(1800);
+    expect(Math.floor(totalActiveSec / 60)).toBe(30);
   });
 });

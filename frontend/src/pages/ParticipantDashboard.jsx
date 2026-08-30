@@ -17,6 +17,11 @@ import AchievementsSection from '../components/student/achievements/Achievements
 import LessonsSection from '../components/student/lessons/LessonsSection'
 import ProfileSection from '../components/student/profile/ProfileSection'
 import ParticipantCourses from './ParticipantCourses'
+import StudentAttendanceView from '../components/student/attendance/StudentAttendanceView'
+import StudentLeaderboardView from '../components/student/leaderboard/StudentLeaderboardView'
+import StudentProgressView from '../components/student/progress/StudentProgressView'
+import StudentFeedbackModal from '../components/student/feedback/StudentFeedbackModal'
+import CertificateModal from '../components/common/CertificateModal'
 import { useContinueLearning } from '../hooks/useContinueLearning'
 import { Button, Badge, Table, PageHeader, EmptyState, StatCard, ProgressBar } from '../components/ui'
 import { useSocketEvent } from '../hooks/useSocket'
@@ -48,12 +53,25 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
     return data
   }, [onLogout])
 
+  const cacheEnrollmentsKey = `participant_enrollments_${user?.id}`
   const [trainings, setTrainings] = useState([])
-  const [enrollments, setEnrollments] = useState([])
+  const [enrollments, setEnrollments] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(cacheEnrollmentsKey)
+      if (cached) {
+        const parsed = JSON.parse(cached)
+        if (Array.isArray(parsed)) return parsed
+      }
+    } catch (_) {}
+    return []
+  })
   const [feedbacks, setFeedbacks] = useState([])
   const [quizzes, setQuizzes] = useState([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [takingQuizId, setTakingQuizId] = useState(null)
   const [participantReport, setParticipantReport] = useState(null)
+  const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false)
+  const [selectedCertForModal, setSelectedCertForModal] = useState(null)
 
   const fetchParticipantReport = useCallback(async () => {
     try {
@@ -82,11 +100,15 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
     try {
       const r = await fetchWithTimeout(`${API}/participant/enrollments`, { headers: auth() }, 10000)
       const d = await handleResponse(r)
-      setEnrollments(d.enrollments || [])
+      const list = d.enrollments || []
+      setEnrollments(list)
+      try {
+        sessionStorage.setItem(cacheEnrollmentsKey, JSON.stringify(list))
+      } catch (_) {}
     } catch (e) {
       console.error('fetchEnrollments error:', e.message)
     }
-  }, [auth, handleResponse])
+  }, [auth, handleResponse, cacheEnrollmentsKey])
 
   const fetchFeedbacks = useCallback(async () => {
     try {
@@ -117,8 +139,8 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
   }, [fetchQuizzes])
 
   const fetchAll = useCallback(() => {
-    fetchTrainings(); fetchEnrollments(); fetchFeedbacks(); fetchQuizzes(); fetchParticipantReport()
-  }, [fetchTrainings, fetchEnrollments, fetchFeedbacks, fetchQuizzes, fetchParticipantReport])
+    fetchTrainings(); fetchEnrollments(); fetchFeedbacks(); fetchQuizzes();
+  }, [fetchTrainings, fetchEnrollments, fetchFeedbacks, fetchQuizzes])
 
   useEffect(() => {
     if (user && user.token) {
@@ -257,6 +279,18 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
         </motion.div>
       )}
 
+      {tab === 'attendance' && (
+        <motion.div key="attendance" {...fadeVariant} transition={{ duration: 0.25 }}>
+          <StudentAttendanceView user={user} />
+        </motion.div>
+      )}
+
+      {tab === 'progress' && (
+        <motion.div key="progress" {...fadeVariant} transition={{ duration: 0.25 }}>
+          <StudentProgressView user={user} />
+        </motion.div>
+      )}
+
       {tab === 'ai-quizzes' && (
         <motion.div key="ai-quizzes" {...fadeVariant} transition={{ duration: 0.25 }}>
           <AIQuizList user={user} onStartQuiz={handleStartQuiz} />
@@ -265,11 +299,7 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
 
       {tab === 'leaderboard' && (
         <motion.div key="leaderboard" {...fadeVariant} transition={{ duration: 0.25 }}>
-          <LeaderboardSection
-            enrollments={enrollments}
-            quizzes={quizzes}
-            currentUserId={user?.id}
-          />
+          <StudentLeaderboardView user={user} enrollments={enrollments} />
         </motion.div>
       )}
 
@@ -470,16 +500,16 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
                     <div
                       key={idx}
                       style={{
-                        border: '2px solid rgba(37, 99, 235, 0.2)',
+                        border: '2px solid rgba(22, 163, 74, 0.25)',
                         borderRadius: 'var(--radius-xl)',
                         padding: '24px',
-                        background: 'linear-gradient(135deg, rgba(37, 99, 235, 0.03) 0%, var(--neutral-0) 100%)',
+                        background: 'linear-gradient(135deg, rgba(22, 163, 74, 0.03) 0%, var(--neutral-0) 100%)',
                         position: 'relative',
                         overflow: 'hidden'
                       }}
                     >
-                      <div style={{ textAlign: 'center', padding: '20px', border: '1px solid rgba(37, 99, 235, 0.15)', borderRadius: 'var(--radius-lg)' }}>
-                        <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--brand-primary)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '8px' }}>
+                      <div style={{ textAlign: 'center', padding: '20px', border: '1px solid rgba(22, 163, 74, 0.2)', borderRadius: 'var(--radius-lg)' }}>
+                        <div style={{ fontSize: '10px', fontWeight: 700, color: '#16A34A', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '8px' }}>
                           Wave Init LMS Certificate
                         </div>
                         <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--neutral-900)', fontFamily: 'var(--font-display)', marginBottom: '8px' }}>
@@ -488,7 +518,7 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
                         <div style={{ fontSize: '12px', color: 'var(--neutral-400)', marginBottom: '12px' }}>
                           This is proudly presented to
                         </div>
-                        <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--neutral-900)', borderBottom: '2px solid var(--brand-primary)', display: 'inline-block', paddingBottom: '4px', marginBottom: '12px' }}>
+                        <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--neutral-900)', borderBottom: '2px solid #16A34A', display: 'inline-block', paddingBottom: '4px', marginBottom: '12px' }}>
                           {user.name}
                         </div>
                         <div style={{ fontSize: '12px', color: 'var(--neutral-400)', marginBottom: '8px' }}>
@@ -510,14 +540,14 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
                                 <title>Certificate - ${cert.title}</title>
                                 <style>
                                   body { font-family: 'Poppins', sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #fff; color: #000; }
-                                  .cert-container { border: 15px double #0D9488; padding: 50px; width: 650px; text-align: center; border-radius: 4px; box-shadow: 0 0 20px rgba(0,0,0,0.05); }
-                                  .title { font-size: 32px; font-weight: 700; color: #1e1b4b; margin-bottom: 10px; }
-                                  .subtitle { font-size: 16px; color: #4b5563; margin-bottom: 30px; text-transform: uppercase; letter-spacing: 2px; }
-                                  .presented { font-size: 14px; font-style: italic; color: #6b7280; margin-bottom: 20px; }
-                                  .name { font-size: 28px; font-weight: 700; color: #0D9488; border-bottom: 2px solid #e5e7eb; display: inline-block; padding-bottom: 5px; margin-bottom: 30px; }
-                                  .reason { font-size: 14px; color: #4b5563; line-height: 1.6; margin-bottom: 40px; }
-                                  .course-title { font-size: 20px; font-weight: 600; color: #1f2937; }
-                                  .footer { display: flex; justify-content: space-between; font-size: 12px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 20px; }
+                                  .cert-container { border: 15px double #16A34A; padding: 50px; width: 650px; text-align: center; border-radius: 4px; box-shadow: 0 0 20px rgba(0,0,0,0.05); }
+                                  .title { font-size: 32px; font-weight: 700; color: #0F172A; margin-bottom: 10px; }
+                                  .subtitle { font-size: 16px; color: #16A34A; margin-bottom: 30px; text-transform: uppercase; letter-spacing: 2px; font-weight: 700; }
+                                  .presented { font-size: 14px; font-style: italic; color: #64748B; margin-bottom: 20px; }
+                                  .name { font-size: 28px; font-weight: 700; color: #16A34A; border-bottom: 2px solid #E2E8F0; display: inline-block; padding-bottom: 5px; margin-bottom: 30px; }
+                                  .reason { font-size: 14px; color: #475569; line-height: 1.6; margin-bottom: 40px; }
+                                  .course-title { font-size: 20px; font-weight: 600; color: #0F172A; }
+                                  .footer { display: flex; justify-content: space-between; font-size: 12px; color: #94A3B8; border-top: 1px solid #E2E8F0; padding-top: 20px; }
                                 </style>
                               </head>
                               <body>
@@ -585,6 +615,25 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
         </motion.div>
       )}
 
+      {/* Certificate Modal */}
+      <CertificateModal
+        isOpen={!!selectedCertForModal}
+        onClose={() => setSelectedCertForModal(null)}
+        certificate={selectedCertForModal}
+        studentName={user?.name}
+      />
+
+      {/* Student Feedback Modal */}
+      <StudentFeedbackModal
+        isOpen={isFeedbackModalOpen}
+        onClose={() => setIsFeedbackModalOpen(false)}
+        enrollments={enrollments}
+        user={user}
+        onSuccess={() => {
+          fetchFeedbacks()
+          success?.('Feedback recorded!')
+        }}
+      />
     </div>
   )
 }

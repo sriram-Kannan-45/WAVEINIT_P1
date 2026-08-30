@@ -14,6 +14,9 @@ const Note = require('./note');
 const ActivityLog = require('./activityLog');
 const LiveSession = require('./liveSession');
 const Attendance = require('./attendance');
+const AttendanceSession = require('./AttendanceSession');
+const AttendanceRecord = require('./AttendanceRecord');
+const UserBadge = require('./UserBadge');
 const ChatMessage = require('./chatMessage');
 const ParticipantProfile = require('./participantProfile');
 
@@ -65,6 +68,10 @@ const ProctoringReport = require('./proctoringReport');
 const MonitoringSession = require('./monitoringSession');
 const MonitoringEvent = require('./monitoringEvent');
 const MonitoringConfig = require('./monitoringConfig');
+
+// Recorded-video async monitoring pipeline
+const VideoSegment = require('./videoSegment');
+const ProcessingJob = require('./processingJob');
 
 // New Enhancements
 const TrainingTrainerAssignment = require('./trainingTrainerAssignment');
@@ -188,11 +195,33 @@ User.hasMany(Enrollment, { foreignKey: 'participantId', as: 'enrollments' });
 Training.hasMany(Enrollment, { foreignKey: 'trainingId', as: 'enrollments' });
 Course.hasMany(Enrollment, { foreignKey: 'courseId', as: 'enrollments' });
 
-// Feedback associations (legacy training-scoped)
+// Feedback associations
 Feedback.belongsTo(Training, { foreignKey: 'trainingId', as: 'training' });
+Feedback.belongsTo(Course, { foreignKey: 'courseId', as: 'course' });
+Feedback.belongsTo(AIQuiz, { foreignKey: 'quizId', as: 'quiz' });
 Feedback.belongsTo(User, { foreignKey: 'participantId', as: 'participant' });
 Training.hasMany(Feedback, { foreignKey: 'trainingId', as: 'feedbacks' });
+Course.hasMany(Feedback, { foreignKey: 'courseId', as: 'feedbacks' });
 User.hasMany(Feedback, { foreignKey: 'participantId', as: 'feedbacks' });
+
+// Attendance System Associations
+AttendanceSession.belongsTo(Course, { foreignKey: 'courseId', as: 'course' });
+Course.hasMany(AttendanceSession, { foreignKey: 'courseId', as: 'attendanceSessions' });
+AttendanceSession.belongsTo(Training, { foreignKey: 'trainingId', as: 'training' });
+Training.hasMany(AttendanceSession, { foreignKey: 'trainingId', as: 'attendanceSessions' });
+AttendanceSession.belongsTo(User, { foreignKey: 'trainerId', as: 'trainer' });
+User.hasMany(AttendanceSession, { foreignKey: 'trainerId', as: 'conductedSessions' });
+
+AttendanceSession.hasMany(AttendanceRecord, { foreignKey: 'sessionId', as: 'records' });
+AttendanceRecord.belongsTo(AttendanceSession, { foreignKey: 'sessionId', as: 'session' });
+AttendanceRecord.belongsTo(User, { foreignKey: 'studentId', as: 'student' });
+User.hasMany(AttendanceRecord, { foreignKey: 'studentId', as: 'attendanceRecords' });
+AttendanceRecord.belongsTo(Course, { foreignKey: 'courseId', as: 'course' });
+AttendanceRecord.belongsTo(User, { foreignKey: 'markedBy', as: 'marker' });
+
+// User Badges / Achievements
+UserBadge.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+User.hasMany(UserBadge, { foreignKey: 'userId', as: 'badges' });
 
 // Notification associations
 Notification.belongsTo(User, { foreignKey: 'userId', as: 'user' });
@@ -241,6 +270,7 @@ QuizAnswer.belongsTo(AIQuestion, { foreignKey: 'questionId', as: 'question' });
 QuizResult.belongsTo(QuizAttempt, { foreignKey: 'attemptId', as: 'attempt' });
 QuizResult.belongsTo(AIQuiz, { foreignKey: 'quizId', as: 'quiz' });
 QuizResult.belongsTo(User, { foreignKey: 'participantId', as: 'participant' });
+AIQuiz.hasMany(QuizResult, { foreignKey: 'quizId', as: 'results' });
 
 QuizAttempt.hasMany(QuizCopyViolation, { foreignKey: 'attemptId', as: 'copyViolations' });
 QuizCopyViolation.belongsTo(QuizAttempt, { foreignKey: 'attemptId', as: 'attempt' });
@@ -372,6 +402,7 @@ CodingAssessment.belongsTo(Training, { foreignKey: 'trainingId', as: 'training',
 CodingAssessment.belongsTo(Course, { foreignKey: 'courseId', as: 'course', constraints: false });
 CodingAssessment.hasMany(CodingProblem, { foreignKey: 'assessmentId', as: 'problems' });
 CodingAssessment.hasMany(CodingAttempt, { foreignKey: 'assessmentId', as: 'attempts' });
+CodingAssessment.hasMany(CodingResult, { foreignKey: 'assessmentId', as: 'results' });
 
 CodingProblem.belongsTo(CodingAssessment, { foreignKey: 'assessmentId', as: 'assessment' });
 CodingProblem.hasMany(CodingTestCase, { foreignKey: 'problemId', as: 'testCases' });
@@ -474,6 +505,16 @@ MonitoringSession.belongsTo(User, { foreignKey: 'participantId', as: 'participan
 MonitoringSession.hasMany(MonitoringEvent, { foreignKey: 'monitoringSessionId', sourceKey: 'sessionId', as: 'events' });
 MonitoringEvent.belongsTo(MonitoringSession, { foreignKey: 'monitoringSessionId', targetKey: 'sessionId', as: 'session' });
 
+// Recorded-video async monitoring pipeline associations
+MonitoringSession.hasMany(VideoSegment, { foreignKey: 'monitoringSessionId', sourceKey: 'sessionId', as: 'videoSegments' });
+VideoSegment.belongsTo(MonitoringSession, { foreignKey: 'monitoringSessionId', targetKey: 'sessionId', as: 'session' });
+
+VideoSegment.hasMany(MonitoringEvent, { foreignKey: 'segmentId', as: 'events' });
+MonitoringEvent.belongsTo(VideoSegment, { foreignKey: 'segmentId', as: 'segment' });
+
+VideoSegment.hasOne(ProcessingJob, { foreignKey: 'segmentId', as: 'job' });
+ProcessingJob.belongsTo(VideoSegment, { foreignKey: 'segmentId', as: 'segment' });
+
 module.exports = {
   sequelize,
   User,
@@ -516,6 +557,9 @@ module.exports = {
   MonitoringSession,
   MonitoringEvent,
   MonitoringConfig,
+  // Recorded-video async monitoring pipeline
+  VideoSegment,
+  ProcessingJob,
   // Parallel monitor system
   MonitorAttempt,
   MonitorViolation,
@@ -571,4 +615,8 @@ module.exports = {
   InterviewFeedback,
   InterviewResult,
   InterviewNotes,
+  // Core Enhancements
+  AttendanceSession,
+  AttendanceRecord,
+  UserBadge,
 };

@@ -218,19 +218,22 @@ const initializeSocket = (server) => {
  */
 const setupRedisAdapter = async (io) => {
   const redisUrl = process.env.REDIS_URL;
-  if (!redisUrl) {
-    logger.info('No REDIS_URL configured; Socket.IO running in single-instance in-memory mode');
+  if (!redisUrl || !redisUrl.trim()) {
+    logger.info('[Socket.IO] No REDIS_URL configured; running in single-instance in-memory mode');
     return;
   }
   try {
     const pubClient = redis.createClient({ url: redisUrl });
     const subClient = pubClient.duplicate();
 
+    pubClient.on('error', (err) => logger.warn('[Socket.IO Redis Adapter Pub Error]', { error: err.message }));
+    subClient.on('error', (err) => logger.warn('[Socket.IO Redis Adapter Sub Error]', { error: err.message }));
+
     await Promise.all([pubClient.connect(), subClient.connect()]);
 
     io.adapter(createAdapter(pubClient, subClient));
     io.redisClients = { pubClient, subClient };
-    logger.info('Socket.IO Redis adapter connected');
+    logger.info('🚀 Socket.IO Redis adapter connected — cluster real-time synchronization active');
   } catch (error) {
     logger.warn('Failed to setup Redis adapter for Socket.IO, falling back to in-memory adapter', { error: error.message });
   }

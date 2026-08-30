@@ -20,6 +20,8 @@ function ensureStorageDir(subPath) {
   return dir;
 }
 
+const storageService = require('../services/storageService');
+
 function ok(res, data) { return res.json({ success: true, data }); }
 function fail(res, status, message) { return res.status(status).json({ success: false, message }); }
 
@@ -50,20 +52,22 @@ exports.upload = async (req, res) => {
       trainerId = quiz.trainerId || req.user.id;
     }
 
-    const subDir = assessment_type === 'coding' ? `coding/${quizId}` : String(quizId);
-    const filePath = path.join(ensureStorageDir(subDir), `${quizId}_${participantId}_${Date.now()}.webm`);
+    const subDir = assessment_type === 'coding' ? `recordings/coding/${quizId}` : `recordings/${quizId}`;
+    const fileName = `${quizId}_${participantId}_${Date.now()}.webm`;
 
-    fs.renameSync(req.file.path, filePath);
-
-    const fileSizeMb = Math.round((fs.statSync(filePath).size / (1024 * 1024)) * 100) / 100;
+    const saved = await storageService.saveRecordingFile({
+      subDir,
+      fileName,
+      sourcePath: req.file.path,
+    });
 
     const recording = await QuizRecording.create({
       quizId,
       participantId,
       trainerId,
       sessionId,
-      filePath,
-      fileSizeMb,
+      filePath: saved.fullPath,
+      fileSizeMb: saved.sizeMb,
       durationSeconds: durationSeconds ? parseInt(durationSeconds, 10) : null,
       assessmentType: assessment_type,
       status: 'ready',

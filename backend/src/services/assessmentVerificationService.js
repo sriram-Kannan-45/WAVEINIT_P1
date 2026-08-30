@@ -423,10 +423,29 @@ class AssessmentVerificationService {
     }
 
     if (monOrClauses.length > 0) {
+      // Snapshot affected sessions BEFORE marking them complete so we can
+      // refresh each one's segment-pipeline status afterwards.
+      const monSessions = await MonitoringSession.findAll({
+        where: { [Op.or]: monOrClauses },
+        attributes: ['sessionId'],
+      }).catch(() => []);
+
       await MonitoringSession.update(
         { status: 'COMPLETED', ended_at: new Date() },
         { where: { [Op.or]: monOrClauses } }
       ).catch(() => {});
+
+      // Surface WAITING_FOR_PROCESSING / COMPLETED / PARTIAL immediately after
+      // submit instead of waiting for the next segment to finish processing.
+      for (const ms of monSessions) {
+        try {
+          const videoService = require('./monitoringVideoService');
+          await videoService.aggregateSession(ms.sessionId);
+        } catch (err) {
+          const logger = require('../utils/logger');
+          logger.warn(`[VerificationService] aggregateSession refresh failed for ${ms.sessionId}: ${err.message}`);
+        }
+      }
     }
 
     // Broadcast session_ended to all session rooms

@@ -380,9 +380,20 @@ class AIQuizService {
 
       const submittedAt = new Date();
       let timeTaken = null;
-      if (attempt.startedAt) {
-        timeTaken = Math.max(0, Math.round((submittedAt.getTime() - new Date(attempt.startedAt).getTime()) / 1000));
-      }
+      try {
+        if (attempt.monitoringSessionId) {
+          const { MonitoringSession } = require('../models');
+          const ms = await MonitoringSession.findOne({ where: { sessionId: attempt.monitoringSessionId } });
+          if (ms?.metadata?.actualTestDurationSeconds) {
+            timeTaken = Number(ms.metadata.actualTestDurationSeconds);
+          } else if (ms?.metadata?.activeDurationSeconds) {
+            timeTaken = Number(ms.metadata.activeDurationSeconds);
+          }
+        }
+        if (timeTaken == null && attempt.startedAt) {
+          timeTaken = Math.max(0, Math.round((submittedAt.getTime() - new Date(attempt.startedAt).getTime()) / 1000));
+        }
+      } catch (e) { /* non-fatal */ }
 
       await attempt.update({
         status: autoSubmit ? 'AUTO_SUBMITTED' : 'EVALUATED',

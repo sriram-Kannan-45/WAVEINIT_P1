@@ -24,6 +24,14 @@ try {
   }
 } catch (_) {}
 
+let SEGMENT_DURATION_MIN = 30;
+try {
+  if (typeof process !== 'undefined' && process.env?.VITE_MONITORING_SEGMENT_DURATION_MIN) {
+    SEGMENT_DURATION_MIN = Number(process.env.VITE_MONITORING_SEGMENT_DURATION_MIN);
+  }
+} catch (_) {}
+const SEGMENT_DURATION_MS = Math.max(0, Number(SEGMENT_DURATION_MIN || 30) * 60_000);
+
 class MonitoringEngineClient {
   constructor() {
     this.sessionId = null;
@@ -40,6 +48,8 @@ class MonitoringEngineClient {
     this.laptopInterval = null;
     this.laptopFps = 6;
     this.isMonitoringActive = false;
+    this.isTestActive = false;
+    this.isPaused = false;
     this.isProcessingLaptop = false;
     this.gazeCalibrationSessionId = null;
     this.gazeCalibrationPromise = null;
@@ -48,6 +58,19 @@ class MonitoringEngineClient {
     this.onMobileDetection = null;
     this.onEventReported = null;
     this.lastReportedEventTimes = {};
+    this._lastEventEmitAt = 0;
+
+    // Recorded-video async segment pipeline state (opt-in, segmented recording)
+    this.segmentSequence = 0;
+    this.segmentStartedAt = null;
+    this.segmentKey = null;
+    this.segmentUploadKey = null;
+    this.segmentTimer = null;
+    this.segmentUploadPromise = null;
+    this.segmentRecordStream = null;
+    this.segmentUploadInFlight = 0;
+    this._visHandler = null;
+    this._storageKey = null;
 
     // Mobile Pipeline State
     this.mobileStream = null;
@@ -90,12 +113,24 @@ class MonitoringEngineClient {
       headPoseGraceCount: 3,
       headPoseGraceWindowMs: 300000,
     };
+
+    // Active timing & session state
+    this.accumulatedActiveDurationMs = 0;
+    this.currentSegmentStartedAt = null;
+    this.activeSegments = [];
+    this.configuredDurationSeconds = 0;
+    this.durationSyncTimer = null;
   }
 
-  init({ sessionId, attemptId = null, participantId, contextType = 'QUIZ', token, socket, config = {} }) {
+  init({ sessionId, attemptId = null, participantId, contextType = 'QUIZ', token, socket, config = {}, isTestActive = false, testStartedAt = null, configuredDurationSeconds = 0 }) {
     if (this.sessionId !== sessionId) {
       this.gazeCalibrationSessionId = null;
       this.gazeCalibrationPromise = null;
+      this.accumulatedActiveDurationMs = 0;
+      this.currentSegmentStartedAt = null;
+      this.activeSegments = [];
+      this.lastReportedEventTimes = {};
+      this._lastEventEmitAt = 0;
     }
     this.sessionId = sessionId;
     this.attemptId = attemptId;
@@ -104,31 +139,234 @@ class MonitoringEngineClient {
     this.token = token;
     this.socket = socket;
     this.config = { ...this.config, ...config };
+    this.configuredDurationSeconds = Number(configuredDurationSeconds || 0);
     this.isMonitoringActive = true;
-    this.lastReportedEventTimes = {};
+    this.isTestActive = !!isTestActive;
+
+    // Hydrate state from sessionStorage if resuming or reloading
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        const saved = sessionStorage.getItem(`monitoring_active_state_${sessionId}`);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && typeof parsed.accumulatedActiveDurationMs === 'number') {
+            this.accumulatedActiveDurationMs = parsed.accumulatedActiveDurationMs;
+            this.activeSegments = Array.isArray(parsed.activeSegments) ? parsed.activeSegments : [];
+            console.log(`[MonitoringEngine] Restored active duration from session cache: ${Math.round(this.accumulatedActiveDurationMs / 1000)}s`);
+          }
+        }
+      }
+    } catch (_) {}
+
+    if (this.isTestActive) {
+      if (!this.currentSegmentStartedAt) {
+        this.currentSegmentStartedAt = Date.now();
+      }
+      this.isPaused = false;
+    } else {
+      this.isPaused = false;
+    }
 
     this.setupSocketListeners();
     this.setupBrowserEventListeners();
-    this._syncActiveTestTimer();
+    this._startDurationSyncLoop();
+
+    // If a previous tab crashed mid-segment, close the orphan segment so the
+    // backend reaper flags the coverage gap.
+    if (RECORD_MONITORING_VIDEO && SEGMENT_DURATION_MS > 0) {
+      this.recoverOrphanSegment().catch(() => {});
+    }
+
+    if (this.isTestActive) {
+      this._syncActiveTestTimer();
+    }
   }
 
-  startActiveTestTimer(attemptId) {
-    this.testStartedAt = Date.now();
+  setTestActive(isActive = true, startedAt = null) {
+    this.isTestActive = !!isActive;
+    if (isActive) {
+      if (!this.currentSegmentStartedAt || startedAt) {
+        this.currentSegmentStartedAt = startedAt ? new Date(startedAt).getTime() : Date.now();
+      }
+      this.testStartedAt = this.currentSegmentStartedAt;
+      this.isPaused = false;
+      this._persistActiveDurationState();
+      this._syncActiveTestTimer();
+    }
+  }
+
+  setPaused(isPaused = true, reason = 'PAUSED') {
+    if (isPaused) {
+      this.pauseActiveTestTimer(reason);
+    } else {
+      this.resumeActiveTestTimer(reason);
+    }
+  }
+
+  startActiveTestTimer(attemptId, configuredDurationSeconds) {
+    this.isTestActive = true;
+    this.isPaused = false;
     if (attemptId) this.attemptId = attemptId;
+    if (configuredDurationSeconds) this.configuredDurationSeconds = Number(configuredDurationSeconds);
+    if (!this.currentSegmentStartedAt) {
+      this.currentSegmentStartedAt = Date.now();
+    }
+    this.testStartedAt = this.currentSegmentStartedAt;
+    this._persistActiveDurationState();
     this._syncActiveTestTimer();
   }
 
-  _syncActiveTestTimer() {
-    if (!this.sessionId || !this.testStartedAt) return;
-    const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
-    const token = this.token || storedUser?.token || localStorage.getItem('token') || sessionStorage.getItem('token');
+  pauseActiveTestTimer(reason = 'PAUSED') {
+    if (!this.isTestActive) return;
+    if (this.isPaused) return;
+
+    const now = Date.now();
+    if (this.currentSegmentStartedAt) {
+      const elapsed = Math.max(0, now - this.currentSegmentStartedAt);
+      this.accumulatedActiveDurationMs += elapsed;
+      this.activeSegments.push({
+        start: new Date(this.currentSegmentStartedAt).toISOString(),
+        end: new Date(now).toISOString(),
+        durationSec: Math.max(0, Math.round(elapsed / 1000)),
+        reason,
+      });
+      this.currentSegmentStartedAt = null;
+    }
+
+    this.isPaused = true;
+    this._flushOpenIntervals(now);
+    this._persistActiveDurationState();
+    this._notifyPause(reason, now);
+    console.log(`[MonitoringEngine] Active test timer PAUSED (${reason}). Total active time: ${this.getActiveDurationSeconds()}s`);
+  }
+
+  resumeActiveTestTimer(reason = 'RESUMED') {
+    if (!this.isTestActive) {
+      this.startActiveTestTimer(this.attemptId, this.configuredDurationSeconds);
+      return;
+    }
+    if (!this.isPaused && this.currentSegmentStartedAt) return;
+
+    const now = Date.now();
+    this.isPaused = false;
+    this.currentSegmentStartedAt = now;
+    this._persistActiveDurationState();
+    this._notifyResume(reason, now);
+    console.log(`[MonitoringEngine] Active test timer RESUMED (${reason}).`);
+  }
+
+  getActiveDurationSeconds() {
+    let totalMs = this.accumulatedActiveDurationMs || 0;
+    if (this.isTestActive && !this.isPaused && this.currentSegmentStartedAt) {
+      totalMs += Math.max(0, Date.now() - this.currentSegmentStartedAt);
+    }
+    return Math.max(0, Math.round(totalMs / 1000));
+  }
+
+  _persistActiveDurationState() {
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage && this.sessionId) {
+        sessionStorage.setItem(
+          `monitoring_active_state_${this.sessionId}`,
+          JSON.stringify({
+            sessionId: this.sessionId,
+            attemptId: this.attemptId,
+            accumulatedActiveDurationMs: this.accumulatedActiveDurationMs,
+            activeSegments: this.activeSegments,
+            lastSavedAt: Date.now(),
+          })
+        );
+      }
+    } catch (_) {}
+  }
+
+  _notifyPause(reason, pausedAt) {
+    if (!this.sessionId) return;
+    const token = this._getToken();
+    fetch(`${API_BASE}/monitoring/sessions/${this.sessionId}/pause-test`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({
+        pausedAt: new Date(pausedAt || Date.now()).toISOString(),
+        reason,
+        activeDurationSeconds: this.getActiveDurationSeconds(),
+      })
+    }).catch(() => {});
+  }
+
+  _notifyResume(reason, resumedAt) {
+    if (!this.sessionId) return;
+    const token = this._getToken();
+    fetch(`${API_BASE}/monitoring/sessions/${this.sessionId}/resume-test`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({
+        resumedAt: new Date(resumedAt || Date.now()).toISOString(),
+        reason,
+      })
+    }).catch(() => {});
+  }
+
+  _startDurationSyncLoop() {
+    if (typeof setInterval === 'undefined') return;
+    if (this.durationSyncTimer) clearInterval(this.durationSyncTimer);
+    this.durationSyncTimer = setInterval(() => {
+      if (this.isMonitoringActive && this.isTestActive && this.sessionId) {
+        this._persistActiveDurationState();
+        const token = this._getToken();
+        const activeSec = this.getActiveDurationSeconds();
+        if (activeSec > 0 && token) {
+          fetch(`${API_BASE}/monitoring/sessions/${this.sessionId}/sync-duration`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              activeDurationSeconds: activeSec,
+              activeSegments: this.activeSegments,
+            })
+          }).catch(() => {});
+        }
+      }
+    }, 5000);
+  }
+
+  _getToken() {
+    let token = this.token;
+    if (!token && typeof window !== 'undefined') {
+      try {
+        const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
+        token = storedUser?.token || localStorage.getItem('token') || sessionStorage.getItem('token');
+      } catch (_) {}
+    }
+    return token;
+  }
+
+  _syncActiveTestTimer(configuredDurationSeconds) {
+    if (!this.sessionId) return;
+    const token = this._getToken();
+    const activeStartIso = this.currentSegmentStartedAt
+      ? new Date(this.currentSegmentStartedAt).toISOString()
+      : (this.testStartedAt ? new Date(this.testStartedAt).toISOString() : new Date().toISOString());
+
     fetch(`${API_BASE}/monitoring/sessions/${this.sessionId}/start-test`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {})
       },
-      body: JSON.stringify({ attemptId: this.attemptId, testStartedAt: new Date(this.testStartedAt).toISOString() })
+      body: JSON.stringify({
+        attemptId: this.attemptId,
+        testStartedAt: activeStartIso,
+        configuredDurationSeconds: configuredDurationSeconds || this.configuredDurationSeconds || undefined,
+      })
     }).catch(() => {});
   }
 
@@ -167,7 +405,7 @@ class MonitoringEngineClient {
     this.fsExitStartTime = null;
 
     this.handleVisibilityChange = () => {
-      if (!this.isMonitoringActive) return;
+      if (!this.isMonitoringActive || !this.isTestActive || this.isPaused) return;
 
       if (document.hidden || document.visibilityState === 'hidden') {
         if (!this.tabHiddenTimer) {
@@ -210,7 +448,7 @@ class MonitoringEngineClient {
     };
 
     this.handleFullscreenChange = () => {
-      if (!this.isMonitoringActive) return;
+      if (!this.isMonitoringActive || !this.isTestActive || this.isPaused) return;
 
       const inFs = !!(
         document.fullscreenElement ||
@@ -278,7 +516,7 @@ class MonitoringEngineClient {
     };
 
     this.handleWindowBlur = () => {
-      if (!this.isMonitoringActive) return;
+      if (!this.isMonitoringActive || !this.isTestActive || this.isPaused) return;
 
       // If document is already hidden, TAB_SWITCH handles it
       if (document.hidden || document.visibilityState === 'hidden') return;
@@ -324,6 +562,8 @@ class MonitoringEngineClient {
       }
     };
 
+    if (typeof document === 'undefined' || typeof window === 'undefined') return;
+
     document.addEventListener('visibilitychange', this.handleVisibilityChange);
     document.addEventListener('fullscreenchange', this.handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', this.handleFullscreenChange);
@@ -347,24 +587,28 @@ class MonitoringEngineClient {
       this.fsExitTimer = null;
     }
 
-    if (this.handleVisibilityChange) {
-      document.removeEventListener('visibilitychange', this.handleVisibilityChange);
-      this.handleVisibilityChange = null;
+    if (typeof document !== 'undefined') {
+      if (this.handleVisibilityChange) {
+        document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+        this.handleVisibilityChange = null;
+      }
+      if (this.handleFullscreenChange) {
+        document.removeEventListener('fullscreenchange', this.handleFullscreenChange);
+        document.removeEventListener('webkitfullscreenchange', this.handleFullscreenChange);
+        document.removeEventListener('mozfullscreenchange', this.handleFullscreenChange);
+        document.removeEventListener('MSFullscreenChange', this.handleFullscreenChange);
+        this.handleFullscreenChange = null;
+      }
     }
-    if (this.handleFullscreenChange) {
-      document.removeEventListener('fullscreenchange', this.handleFullscreenChange);
-      document.removeEventListener('webkitfullscreenchange', this.handleFullscreenChange);
-      document.removeEventListener('mozfullscreenchange', this.handleFullscreenChange);
-      document.removeEventListener('MSFullscreenChange', this.handleFullscreenChange);
-      this.handleFullscreenChange = null;
-    }
-    if (this.handleWindowBlur) {
-      window.removeEventListener('blur', this.handleWindowBlur);
-      this.handleWindowBlur = null;
-    }
-    if (this.handleWindowFocus) {
-      window.removeEventListener('focus', this.handleWindowFocus);
-      this.handleWindowFocus = null;
+    if (typeof window !== 'undefined') {
+      if (this.handleWindowBlur) {
+        window.removeEventListener('blur', this.handleWindowBlur);
+        this.handleWindowBlur = null;
+      }
+      if (this.handleWindowFocus) {
+        window.removeEventListener('focus', this.handleWindowFocus);
+        this.handleWindowFocus = null;
+      }
     }
   }
 
@@ -406,45 +650,282 @@ class MonitoringEngineClient {
 
   // ── Laptop Camera Pipeline ────────────────────────────────────────────────
 
+  // ── Laptop Camera Pipeline ────────────────────────────────────────────────
+
+  _getSessionId() {
+    return this.sessionId
+      || sessionStorage.getItem('monitoring_session_id')
+      || sessionStorage.getItem('quiz_session_token')
+      || this.attemptId
+      || 'active_session';
+  }
+
+  _segAuthHeaders() {
+    return this.token ? { Authorization: `Bearer ${this.token}` } : {};
+  }
+
+  _buildRecordStream(stream) {
+    let recordStream = stream;
+    if (this.laptopCanvas && typeof this.laptopCanvas.captureStream === 'function') {
+      try {
+        recordStream = this.laptopCanvas.captureStream(15);
+        const audioTrack = stream?.getAudioTracks()?.[0];
+        if (audioTrack) recordStream.addTrack(audioTrack);
+      } catch (_) {
+        recordStream = stream;
+      }
+    }
+    return recordStream;
+  }
+
+  _createRecorder(stream) {
+    const mimeTypes = [
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=vp9,opus',
+      'video/webm',
+      'video/mp4',
+    ];
+    const selectedMime = mimeTypes.find(t => MediaRecorder.isTypeSupported?.(t)) || '';
+    return selectedMime ? new MediaRecorder(stream, { mimeType: selectedMime }) : new MediaRecorder(stream);
+  }
+
   startWebcamRecording(stream) {
     try {
       if (typeof MediaRecorder === 'undefined') return;
       if (!RECORD_MONITORING_VIDEO) return; // video storage disabled
+
       this.recordedChunks = [];
-
-      let recordStream = stream;
-      if (this.laptopCanvas && typeof this.laptopCanvas.captureStream === 'function') {
-        try {
-          recordStream = this.laptopCanvas.captureStream(15);
-          const audioTrack = stream?.getAudioTracks()?.[0];
-          if (audioTrack) recordStream.addTrack(audioTrack);
-        } catch (_) {
-          recordStream = stream;
-        }
-      }
-
+      const recordStream = this._buildRecordStream(stream);
       if (!recordStream) return;
 
-      const mimeTypes = [
-        'video/webm;codecs=vp8,opus',
-        'video/webm;codecs=vp9,opus',
-        'video/webm',
-        'video/mp4',
-      ];
-      let selectedMime = mimeTypes.find(t => MediaRecorder.isTypeSupported?.(t)) || '';
-      const recorder = selectedMime ? new MediaRecorder(recordStream, { mimeType: selectedMime }) : new MediaRecorder(recordStream);
+      if (SEGMENT_DURATION_MS > 0) {
+        this._startSegmentRecording(recordStream);
+        return;
+      }
 
+      // Legacy single-video recording (kept for back-compat).
+      const recorder = this._createRecorder(recordStream);
       recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
-          this.recordedChunks.push(e.data);
-        }
+        if (e.data && e.data.size > 0) this.recordedChunks.push(e.data);
       };
-
-      recorder.start(1000); // Record in 1s timeslices
+      recorder.start(1000);
       this.mediaRecorder = recorder;
-      console.log('[MonitoringEngine] Started webcam session recording with posture overlays');
+      console.log('[MonitoringEngine] Started webcam session recording (legacy single-video mode)');
     } catch (err) {
       console.warn('[MonitoringEngine] Could not start MediaRecorder:', err.message);
+    }
+  }
+
+  // ── Zero-gap segmented recording ──────────────────────────────────────────
+  // Rotates the MediaRecorder every SEGMENT_DURATION_MS, finalizes + uploads
+  // each finished segment in the background, and immediately starts the next
+  // segment so no media gap exists.
+
+  _segStorageKey() {
+    const sid = this._getSessionId();
+    return `monitoring_segment:${sid}`;
+  }
+
+  _persistSegmentMarker() {
+    try {
+      sessionStorage.setItem(this._segStorageKey(), JSON.stringify({
+        sequence: this.segmentSequence,
+        startedAt: this.segmentStartedAt,
+      }));
+    } catch (_) {}
+  }
+
+  _clearSegmentMarker() {
+    try {
+      sessionStorage.removeItem(this._segStorageKey());
+    } catch (_) {}
+  }
+
+  _segmentKeyFor(sid, seg) {
+    return `${sid}_seg_${seg?.sequence || this.segmentSequence}`;
+  }
+
+  _drainRecordedChunks() {
+    const chunks = this.recordedChunks || [];
+    this.recordedChunks = [];
+    return chunks;
+  }
+
+  // Idempotent register; safe to call again if the boot-time register failed or
+  // the page reloaded mid-segment.
+  async _ensureSegmentRegisteredFor(seg) {
+    const sid = this._getSessionId();
+    const segmentKey = this._segmentKeyFor(sid, seg);
+    try {
+      const res = await fetch(`${API_BASE}/monitoring/sessions/${sid}/segments/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...this._segAuthHeaders() },
+        body: JSON.stringify({
+          segmentSequence: seg.sequence,
+          startedAt: new Date(seg.startedAt).toISOString(),
+        }),
+      });
+      const result = await res.json();
+      return result?.success ? (result?.data?.segment?.segmentKey || segmentKey) : segmentKey;
+    } catch (err) {
+      console.warn('[MonitoringEngine] Segment register failed (will retry on finalize):', err.message);
+      return segmentKey;
+    }
+  }
+
+  _startSegmentRecording(stream) {
+    this.segmentSequence += 1;
+    this.segmentStartedAt = Date.now();
+    this.segmentKey = null;
+    this.segmentUploadKey = `uk_${this._getSessionId()}_${this.segmentSequence}_${Date.now().toString(36)}`;
+    this.recordedChunks = [];
+    this.segmentRecordStream = stream;
+    this._persistSegmentMarker();
+
+    // Captured per-segment metadata so background finalize/upload never reads
+    // the *next* segment's state after a rotation.
+    const meta = {
+      sequence: this.segmentSequence,
+      startedAt: this.segmentStartedAt,
+      uploadKey: this.segmentUploadKey,
+    };
+    const recorder = this._createRecorder(stream);
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) this.recordedChunks.push(e.data);
+    };
+    recorder.onstop = () => {
+      // Fallback path if the recorder is stopped outside _rotateSegment /
+      // stopAndUploadRecording (both replace this handler first).
+      const chunkCopy = this._drainRecordedChunks();
+      this._finalizeAndUploadSegment(chunkCopy, recorder.mimeType || 'video/webm', meta)
+        .catch((err) => console.warn('[MonitoringEngine] Segment background upload failed:', err.message));
+    };
+    recorder.start(1000);
+    this.mediaRecorder = recorder;
+    console.log(`[MonitoringEngine] Started segment ${this.segmentSequence} recording`);
+
+    clearInterval(this.segmentTimer);
+    this.segmentTimer = setInterval(() => this._rotateSegment(), SEGMENT_DURATION_MS);
+    this.segmentTimer.unref?.();
+
+    // Best-effort: rotate on tab hidden/close so long segments don't span
+    // a page teardown with zero upload progress.
+    if (!this._visHandler) {
+      this._visHandler = () => {
+        if (document.visibilityState === 'hidden' && this.mediaRecorder?.state === 'recording') {
+          this._rotateSegment();
+        }
+      };
+      try {
+        document.addEventListener('visibilitychange', this._visHandler);
+        window.addEventListener('pagehide', this._visHandler);
+      } catch (_) {}
+    }
+  }
+
+  _rotateSegment() {
+    if (!this.mediaRecorder || this.mediaRecorder.state !== 'recording') return;
+    const stream = this.segmentRecordStream;
+    if (!stream) return;
+    try {
+      const recorder = this.mediaRecorder;
+      const meta = {
+        sequence: this.segmentSequence,
+        startedAt: this.segmentStartedAt,
+        uploadKey: this.segmentUploadKey,
+      };
+      this.mediaRecorder.onstop = () => {
+        const chunkCopy = this._drainRecordedChunks();
+        this._finalizeAndUploadSegment(chunkCopy, recorder.mimeType || 'video/webm', meta)
+          .catch((err) => console.warn('[MonitoringEngine] Rotated segment upload failed:', err.message));
+        this._startSegmentRecording(stream); // zero-gap
+      };
+      recorder.stop();
+    } catch (err) {
+      console.warn('[MonitoringEngine] Segment rotation failed:', err.message);
+    }
+  }
+
+  _finalizeAndUploadSegment(chunks, mimeType, meta = null) {
+    return (async () => {
+      const sid = this._getSessionId();
+      // meta is captured at recorder-stop time so background processing always
+      // touches the finished segment, never the one that just started.
+      const seg = meta || {
+        sequence: this.segmentSequence,
+        startedAt: this.segmentStartedAt,
+        uploadKey: this.segmentUploadKey,
+      };
+      const segmentKey = await this._ensureSegmentRegisteredFor(seg);
+
+      const durationSec = chunks.length > 0
+        ? Math.max(0, Math.round((Date.now() - (seg.startedAt || Date.now())) / 1000))
+        : 0;
+      try {
+        await fetch(`${API_BASE}/monitoring/sessions/${sid}/segments/${segmentKey}/finalize`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...this._segAuthHeaders() },
+          body: JSON.stringify({
+            endedAt: new Date().toISOString(),
+            durationSec,
+          }),
+        });
+      } catch (err) {
+        console.warn('[MonitoringEngine] Segment finalize failed:', err.message);
+      }
+
+      if (chunks.length === 0) {
+        this._clearSegmentMarker();
+        return;
+      }
+      await this._uploadSegment({ sid, segmentKey, sequence: seg.sequence, startedAt: seg.startedAt, chunks, mimeType, uploadKey: seg.uploadKey });
+      this._clearSegmentMarker();
+    })();
+  }
+
+  async _uploadSegment(args) {
+    // Serialize segment uploads so parallel rotation bursts never thrash the
+    // connection.
+    const p = (this.segmentUploadPromise || Promise.resolve())
+      .then(() => this._doUploadSegment(args));
+    this.segmentUploadPromise = p.catch(() => {});
+    return p;
+  }
+
+  async _doUploadSegment({ sid, segmentKey, sequence, startedAt, chunks, mimeType, uploadKey }) {
+    this.segmentUploadInFlight += 1;
+    try {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const blob = new Blob(chunks, { type: mimeType });
+        const formData = new FormData();
+        formData.append('video', blob, `${segmentKey}.webm`);
+        formData.append('uploadKey', uploadKey);
+        if (this.attemptId) formData.append('attemptId', String(this.attemptId));
+        if (this.participantId) formData.append('participantId', String(this.participantId));
+        if (startedAt) formData.append('startedAt', String(startedAt));
+        try {
+          const res = await fetch(`${API_BASE}/monitoring/sessions/${sid}/segments/${segmentKey}/video`, {
+            method: 'POST',
+            headers: this._segAuthHeaders(),
+            body: formData,
+          });
+          const result = await res.json();
+          if (!res.ok) throw new Error(result?.error || `HTTP ${res.status}`);
+          console.log(`[MonitoringEngine] Uploaded segment ${sequence} (${(blob.size / 1048576).toFixed(1)} MB)`);
+          return result?.data?.segment?.segmentKey || segmentKey;
+        } catch (err) {
+          if (attempt === 0) {
+            console.warn('[MonitoringEngine] Segment upload error, retrying once:', err.message);
+          } else {
+            // Backend reaper flags the FINALIZING segment after its grace period.
+            console.warn('[MonitoringEngine] Segment upload failed after retry; backend reaper will flag it:', err.message);
+            return null;
+          }
+        }
+      }
+      return null;
+    } finally {
+      this.segmentUploadInFlight = Math.max(0, this.segmentUploadInFlight - 1);
     }
   }
 
@@ -454,33 +935,101 @@ class MonitoringEngineClient {
       this.mediaRecorder = null;
       return null;
     }
-    if (!this.mediaRecorder) {
-      return null;
+    if (!this.mediaRecorder) return null;
+
+    const sid = this._getSessionId();
+
+    if (SEGMENT_DURATION_MS > 0) {
+      // Segmented mode: finalize + upload the current segment, then stop.
+      clearInterval(this.segmentTimer);
+      this.segmentTimer = null;
+      if (this._visHandler) {
+        try {
+          document.removeEventListener('visibilitychange', this._visHandler);
+          window.removeEventListener('pagehide', this._visHandler);
+        } catch (_) {}
+        this._visHandler = null;
+      }
+
+      this._clearSegmentMarker();
+      const recorder = this.mediaRecorder;
+      this.mediaRecorder = null;
+      return new Promise((resolve) => {
+        try {
+          if (!recorder || recorder.state === 'inactive') {
+            resolve(null);
+            return;
+          }
+          const meta = {
+            sequence: this.segmentSequence,
+            startedAt: this.segmentStartedAt,
+            uploadKey: this.segmentUploadKey,
+          };
+          recorder.onstop = async () => {
+            try {
+              const chunks = this._drainRecordedChunks();
+              await this._finalizeAndUploadSegment(chunks, recorder.mimeType || 'video/webm', meta);
+            } finally {
+              // Wait for any rotated segments still uploading so submit-time
+              // teardown doesn't lose them.
+              await (this.segmentUploadPromise?.catch(() => {}) || Promise.resolve());
+              resolve(null);
+            }
+          };
+          recorder.stop();
+        } catch (err) {
+          resolve(null);
+        }
+      });
     }
 
-    const sid = this.sessionId || sessionStorage.getItem('monitoring_session_id') || sessionStorage.getItem('quiz_session_token') || this.attemptId || 'active_session';
-
+    // Legacy mode
     return new Promise((resolve) => {
       try {
         if (this.mediaRecorder.state === 'inactive') {
-          // Already stopped, upload what we have if chunks exist
-          if (!this.recordedChunks || this.recordedChunks.length === 0) {
-            return resolve(null);
-          }
+          if (!this.recordedChunks || this.recordedChunks.length === 0) return resolve(null);
           this._uploadChunks(sid, resolve);
           return;
         }
-
         this.mediaRecorder.onstop = async () => {
           await this._uploadChunks(sid, resolve);
         };
-
         this.mediaRecorder.stop();
       } catch (err) {
         console.warn('[MonitoringEngine] Stop recording error:', err.message);
         resolve(null);
       }
     });
+  }
+
+  // Reconcile state left behind by a crashed tab: if a segment marker is still
+  // pending, finalize it so the backend reaper flags it as a coverage gap.
+  async recoverOrphanSegment() {
+    if (!RECORD_MONITORING_VIDEO || SEGMENT_DURATION_MS <= 0) return;
+    try {
+      const raw = sessionStorage.getItem(this._segStorageKey());
+      if (!raw) return;
+      const marker = JSON.parse(raw);
+      if (!marker?.sequence || !marker?.startedAt) {
+        this._clearSegmentMarker();
+        return;
+      }
+      const ageSec = Math.round((Date.now() - Number(marker.startedAt)) / 1000);
+      if (ageSec < 5) return; // a live segment is still recording
+      const sid = this._getSessionId();
+      const seg = {
+        sequence: Number(marker.sequence) || 1,
+        startedAt: Number(marker.startedAt),
+      };
+      const segmentKey = await this._ensureSegmentRegisteredFor(seg);
+      await fetch(`${API_BASE}/monitoring/sessions/${sid}/segments/${segmentKey}/finalize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...this._segAuthHeaders() },
+        body: JSON.stringify({ endedAt: new Date().toISOString(), durationSec: ageSec }),
+      }).catch(() => {});
+      this._clearSegmentMarker();
+      console.warn(`[MonitoringEngine] Marked orphan segment ${seg.sequence} finalizing (media lost on crash)`);
+    } catch (_) {}
   }
 
   async _uploadChunks(sid, resolve) {
@@ -510,12 +1059,17 @@ class MonitoringEngineClient {
     }
   }
 
-  startLaptopMonitoring(stream, videoElement, onDetection) {
+  startLaptopMonitoring(stream, videoElement, onDetection, testStartedAt = null) {
     this.stopLaptopMonitoring({ stopTracks: false });
     this.laptopStream = stream;
     this.laptopVideo = videoElement;
     this.onLaptopDetection = onDetection;
     this.isMonitoringActive = true;
+    if (testStartedAt) {
+      this.testStartedAt = new Date(testStartedAt).getTime();
+      this.isTestActive = true;
+      this.isPaused = false;
+    }
 
     // Begin background stream recording for post-test review
     this.startWebcamRecording(stream);
@@ -526,9 +1080,16 @@ class MonitoringEngineClient {
       this.laptopCanvas.height = 270;
     }
 
-    const intervalMs = Math.floor(1000 / this.laptopFps);
+    // In async recorded-video mode the live loop only acts as a degraded
+    // safety net: low-FPS occupancy heartbeat (calibration still runs at full
+    // precision on demand). The authoritative score comes from processed
+    // segments, not from this loop.
+    const asyncPipeline = RECORD_MONITORING_VIDEO && SEGMENT_DURATION_MS > 0;
+    const intervalMs = asyncPipeline
+      ? Math.floor(1000 / 0.2) // one occupancy heartbeat every 5s
+      : Math.floor(1000 / this.laptopFps);
     this.laptopInterval = setInterval(() => this.tickLaptopFrame(), intervalMs);
-    console.log(`[MonitoringEngine] Laptop monitoring active (${this.laptopFps} FPS)`);
+    console.log(`[MonitoringEngine] Laptop monitoring active (${asyncPipeline ? '0.2' : this.laptopFps} FPS, testActive=${this.isTestActive}${asyncPipeline ? ', async-recorded priority' : ''})`);
   }
 
   stopLaptopMonitoring({ stopTracks = true } = {}) {
@@ -582,19 +1143,56 @@ class MonitoringEngineClient {
     }
   }
 
-  async finishSession() {
+  async finishSession(options = {}) {
     if (!this.sessionId) return null;
-    await this._flushOpenIntervals(Date.now());
+    const now = Date.now();
+    await this._flushOpenIntervals(now);
+
+    // Finalize any open active segment
+    if (this.isTestActive && !this.isPaused && this.currentSegmentStartedAt) {
+      const elapsed = Math.max(0, now - this.currentSegmentStartedAt);
+      this.accumulatedActiveDurationMs += elapsed;
+      this.activeSegments.push({
+        start: new Date(this.currentSegmentStartedAt).toISOString(),
+        end: new Date(now).toISOString(),
+        durationSec: Math.max(0, Math.round(elapsed / 1000)),
+        reason: 'SESSION_FINISH',
+      });
+      this.currentSegmentStartedAt = null;
+    }
+    this.isTestActive = false;
+    this._persistActiveDurationState();
+
+    if (this.durationSyncTimer) {
+      clearInterval(this.durationSyncTimer);
+      this.durationSyncTimer = null;
+    }
+
+    const finalActiveDurationSec = options.actualTestDurationSeconds != null
+      ? Number(options.actualTestDurationSeconds)
+      : this.getActiveDurationSeconds();
+
     try {
+      const token = this._getToken();
       const response = await fetch(`${API_BASE}/monitoring/sessions/${this.sessionId}/end`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
+        body: JSON.stringify({
+          actualTestDurationSeconds: finalActiveDurationSec,
+          activeSegments: this.activeSegments,
+        }),
       });
       if (!response.ok) console.warn(`Monitoring session finalization notice (${response.status})`);
-      return response.json();
+      const data = await response.json();
+      try {
+        if (typeof window !== 'undefined' && window.sessionStorage) {
+          sessionStorage.removeItem(`monitoring_active_state_${this.sessionId}`);
+        }
+      } catch (_) {}
+      return data;
     } catch (e) {
       console.warn('[MonitoringEngine] finishSession error:', e.message);
       return null;
@@ -602,7 +1200,8 @@ class MonitoringEngineClient {
   }
 
   async tickLaptopFrame() {
-    if (!this.isMonitoringActive || this.isProcessingLaptop || !this.laptopVideo || this.laptopVideo.readyState < 2) return;
+    if (!this.isMonitoringActive || !this.isTestActive || this.isPaused || this.isProcessingLaptop || !this.laptopVideo || this.laptopVideo.readyState < 2) return;
+    if (this.testStartedAt && Date.now() < this.testStartedAt) return;
 
     this.isProcessingLaptop = true;
     try {
@@ -663,7 +1262,8 @@ class MonitoringEngineClient {
   }
 
   processLaptopMetrics(metrics) {
-    if (!this.isMonitoringActive) return;
+    if (!this.isMonitoringActive || !this.isTestActive || this.isPaused) return;
+    if (this.testStartedAt && Date.now() < this.testStartedAt) return;
     const now = Date.now();
     const faceCount = Number(metrics.face_count ?? (metrics.faceDetected ? 1 : (metrics.faceCount || 0))) || 0;
     const faceDetected = Boolean(metrics.face_detected ?? metrics.faceDetected ?? (faceCount > 0));
@@ -1016,7 +1616,8 @@ class MonitoringEngineClient {
   // ── Authoritative Event Reporting ─────────────────────────────────────────
 
   async reportEvent({ source = 'LAPTOP', eventType, severity = 'INFO', durationMs = 0, confidence = 1.0, metadata = {}, startedAt = null, endedAt = null, occurredAt = null }) {
-    if (!this.isMonitoringActive || !eventType) return;
+    if (!this.isMonitoringActive || this.isPaused || !eventType) return;
+    if (this.isTestActive && this.testStartedAt && Date.now() < this.testStartedAt) return;
 
     const now = Date.now();
     const resolvedDurationMs = Math.max(0, Number(durationMs) || 0);
@@ -1024,12 +1625,16 @@ class MonitoringEngineClient {
     const resolvedStart = startedAt || metadata.violationStartTime || new Date(new Date(resolvedEnd).getTime() - resolvedDurationMs).toISOString();
     if (!this.lastReportedEventTimes) this.lastReportedEventTimes = {};
     const lastReportTime = this.lastReportedEventTimes[eventType] || 0;
+    // Global 1 event/sec emit cap so detection bursts never flood the socket.
+    this._lastEventEmitAt = this._lastEventEmitAt || 0;
+    if (now - this._lastEventEmitAt < 1000) return;
     const isGranularEyeHead = /^GAZE_OFF_SCREEN_(LEFT|RIGHT|UP)$/.test(eventType) || /^HEAD_LOOKING_(LEFT|RIGHT|UP)$/.test(eventType);
-    const cooldown = this.config[`${eventType}_cooldown`] || (isGranularEyeHead ? 800 : 12000);
+    const cooldown = this.config[`${eventType}_cooldown`] || (isGranularEyeHead ? 3000 : 12000);
     if (now - lastReportTime < cooldown) {
       return; // Skip duplicate burst
     }
     this.lastReportedEventTimes[eventType] = now;
+    this._lastEventEmitAt = now;
 
     const idempotencyKey = this.sessionId
       ? `${this.sessionId}_${source}_${eventType}_${new Date(resolvedStart).getTime()}_${new Date(resolvedEnd).getTime()}`
@@ -1082,6 +1687,10 @@ class MonitoringEngineClient {
 
   destroy() {
     this.isMonitoringActive = false;
+    if (this.durationSyncTimer) {
+      clearInterval(this.durationSyncTimer);
+      this.durationSyncTimer = null;
+    }
     this.stopLaptopMonitoring({ stopTracks: true });
     this.stopMobileMonitoring({ stopTracks: true });
     this.cleanupBrowserEventListeners();

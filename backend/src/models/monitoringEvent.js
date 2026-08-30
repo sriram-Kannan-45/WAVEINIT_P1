@@ -100,6 +100,12 @@ const MonitoringEvent = sequelize.define('MonitoringEvent', {
     field: 'idempotency_key',
     comment: 'Unique hash of session + eventType + time-bucket to prevent duplicate scoring',
   },
+  segmentId: {
+    type: DataTypes.BIGINT,
+    allowNull: true,
+    field: 'segment_id',
+    comment: 'Owning VideoSegment.id for events produced by the async pipeline (null for live events)',
+  },
 }, {
   tableName: 'monitoring_events',
   timestamps: true,
@@ -113,6 +119,7 @@ const MonitoringEvent = sequelize.define('MonitoringEvent', {
     { fields: ['event_type'] },
     { fields: ['severity'] },
     { fields: ['occurred_at'] },
+    { fields: ['segment_id'] },
     { fields: ['idempotency_key'], unique: true },
   ],
 });

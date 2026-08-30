@@ -143,6 +143,16 @@ module.exports = function registerMonitoringEvents(io, socket) {
     const targetSession = sessionId || socket.monitoringSessionId;
     if (!targetSession || !frame) return;
 
+    // Coalesce the live frame relay (~2fps) so dashboards aren't flooded with
+    // full-res base64 frames at camera framerate.
+    const now = Date.now();
+    const lastRelay = socket._lastMobileFrameRelayAt || 0;
+    if (now - lastRelay < 500) {
+      if (ack) ack({ ok: true, coalesced: true });
+      return;
+    }
+    socket._lastMobileFrameRelayAt = now;
+
     // Relay frame to laptop client for live preview
     socket.to(`monitoring_room_${targetSession}`).emit('monitoring:mobile_frame', {
       sessionId: targetSession,

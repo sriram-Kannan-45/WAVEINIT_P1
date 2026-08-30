@@ -56,13 +56,16 @@ export const API = {
   },
 
   ADMIN: {
+    DASHBOARD_SUMMARY:       `${API_BASE}/admin/dashboard/summary`,
     CREATE_TRAINER:          `${API_BASE}/admin/create-trainer`,
     TRAININGS:               `${API_BASE}/admin/trainings`,
     TRAINERS:                `${API_BASE}/admin/trainers`,
     PARTICIPANTS:            `${API_BASE}/admin/participants`,
+    DELETE_PARTICIPANT:      (id) => `${API_BASE}/admin/participants/${id}`,
     PENDING_PARTICIPANTS:    `${API_BASE}/admin/pending-participants`,
     APPROVE_PARTICIPANT:     (id) => `${API_BASE}/admin/participants/${id}/approve`,
     REJECT_PARTICIPANT:      (id) => `${API_BASE}/admin/participants/${id}/reject`,
+    DELETE_TRAINER:          (id) => `${API_BASE}/admin/trainers/${id}`,
     DELETE_TRAINING:         (id) => `${API_BASE}/admin/trainings/${id}`,
     BULK_DELETE_PARTICIPANTS:`${API_BASE}/admin/participants/bulk-delete`,
     BULK_DELETE_TRAINERS:    `${API_BASE}/admin/trainers/bulk-delete`,
@@ -313,7 +316,43 @@ export const API = {
     ACTIVITY_HEATMAP:     `${API_BASE}/participant/activity/heatmap`,
   },
 
+  ATTENDANCE: {
+    STUDENT_SUMMARY:      `${API_BASE}/attendance/student/summary`,
+    SESSIONS:             `${API_BASE}/attendance/sessions`,
+    SESSION_DETAIL: (id) => `${API_BASE}/attendance/sessions/${id}`,
+    CREATE_SESSION:       `${API_BASE}/attendance/sessions`,
+    MARK:           (id) => `${API_BASE}/attendance/sessions/${id}/mark`,
+    UPDATE_RECORD: (sId, rId) => `${API_BASE}/attendance/sessions/${sId}/records/${rId}`,
+    TRAINER_SUMMARY:      `${API_BASE}/attendance/trainer/summary`,
+    ADMIN_ANALYTICS:      `${API_BASE}/attendance/admin/analytics`,
+  },
+
+  LEADERBOARD: {
+    OVERALL:              `${API_BASE}/leaderboard/overall`,
+    COURSE:   (courseId) => `${API_BASE}/leaderboard/course/${courseId}`,
+    TRAINING: (tId)      => `${API_BASE}/leaderboard/training/${tId}`,
+  },
+
+  FEEDBACK_SYSTEM: {
+    SUBMIT:               `${API_BASE}/feedback`,
+    MY_FEEDBACKS:         `${API_BASE}/feedback/my-feedbacks`,
+    TRAINER_FEEDBACKS:    `${API_BASE}/feedback/trainer-feedbacks`,
+    ADMIN_FEEDBACKS:      `${API_BASE}/feedback/admin-feedbacks`,
+    REPLY:          (id) => `${API_BASE}/feedback/${id}/reply`,
+  },
+
+  ANALYTICS: {
+    STUDENT:              `${API_BASE}/analytics/student`,
+    TRAINER:              `${API_BASE}/analytics/trainer`,
+    ADMIN:                `${API_BASE}/analytics/admin`,
+  },
+
+  CERTIFICATES: {
+    VERIFY:       (code) => `${API_BASE}/certificates/verify/${code}`,
+  },
+
 };
 
 export { API_BASE, BACKEND_ORIGIN };
+
 

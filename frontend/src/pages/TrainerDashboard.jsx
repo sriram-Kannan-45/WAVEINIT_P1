@@ -11,6 +11,10 @@ import { LineAreaChart } from '../components/ui/ChartWrappers'
 import NotesSection from '../components/trainer/notes/NotesSection'
 import ParticipantProfileView from '../components/shared/ParticipantProfileView'
 import TrainerCourses from './TrainerCourses'
+import TrainerAttendanceManagement from '../components/trainer/attendance/TrainerAttendanceManagement'
+import TrainerFeedbackAnalytics from '../components/trainer/feedback/TrainerFeedbackAnalytics'
+import TrainerPerformanceAnalytics from '../components/trainer/analytics/TrainerPerformanceAnalytics'
+import StudentLeaderboardView from '../components/student/leaderboard/StudentLeaderboardView'
 import { useToast } from '../components/Toast'
 import Pagination from '../components/Pagination'
 import { Button, Badge, EmptyState, StatCard, ProgressBar } from '../components/ui'
@@ -131,12 +135,33 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
   const navigate = useNavigate()
   const { success, error: showError } = useToast()
   const tab = activeTab || 'overview'
-  const [trainings, setTrainings] = useState([])
+  const cacheTrainingsKey = `trainer_trainings_${user?.id}`
+  const cacheStatsKey = `trainer_stats_${user?.id}`
+
+  const [trainings, setTrainings] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(cacheTrainingsKey)
+      if (cached) {
+        const parsed = JSON.parse(cached)
+        if (Array.isArray(parsed)) return parsed
+      }
+    } catch (_) {}
+    return []
+  })
   const [feedbacks, setFeedbacks] = useState([])
   const [interviews, setInterviews] = useState([])
-  const [stats, setStats] = useState({
-    totalTrainings: 0, avgTrainerRating: 0, totalFeedbacks: 0,
-    totalLearners: 0, publishedCourses: 0,
+  const [stats, setStats] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(cacheStatsKey)
+      if (cached) {
+        const parsed = JSON.parse(cached)
+        if (parsed && typeof parsed === 'object') return parsed
+      }
+    } catch (_) {}
+    return {
+      totalTrainings: 0, avgTrainerRating: 0, totalFeedbacks: 0,
+      totalLearners: 0, publishedCourses: 0,
+    }
   })
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL')
@@ -190,16 +215,25 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
       ])
       const list = rTrainings.trainings || []
       const cList = rCourses.courses || []
-      setTrainings(list.length > 0 ? list : cList)
       const dataset = list.length > 0 ? list : cList
+      setTrainings(dataset)
       const published = dataset.filter(t => (t.status || 'PUBLISHED').toUpperCase() === 'PUBLISHED').length
       const totalLearners = dataset.reduce((sum, t) => sum + (t.enrolledCount || t.participantCount || 0), 0)
-      setStats(p => ({
-        ...p,
+      const newStats = {
         totalTrainings: dataset.length,
         publishedCourses: published,
-        totalLearners: totalLearners
+        totalLearners: totalLearners,
+        avgTrainerRating: stats.avgTrainerRating || 0,
+        totalFeedbacks: stats.totalFeedbacks || 0,
+      }
+      setStats(p => ({
+        ...p,
+        ...newStats
       }))
+      try {
+        sessionStorage.setItem(cacheTrainingsKey, JSON.stringify(dataset))
+        sessionStorage.setItem(cacheStatsKey, JSON.stringify(newStats))
+      } catch (_) {}
     } catch (e) {
       console.error('fetchTrainings error:', e.message)
     }
@@ -355,7 +389,7 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
                 </div>
 
                 <div className="tdb-metric-item">
-                  <div className="tdb-metric-icon" style={{ background: '#FFFBEB', color: '#F59E0B' }}>
+                  <div className="tdb-metric-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16A34A' }}>
                     <BookOpen size={14} strokeWidth={2.2} />
                   </div>
                   <div>
@@ -365,7 +399,7 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
                 </div>
 
                 <div className="tdb-metric-item">
-                  <div className="tdb-metric-icon" style={{ background: '#EFF6FF', color: '#2563EB' }}>
+                  <div className="tdb-metric-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16A34A' }}>
                     <FileText size={14} strokeWidth={2.2} />
                   </div>
                   <div>
@@ -375,7 +409,7 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
                 </div>
 
                 <div className="tdb-metric-item">
-                  <div className="tdb-metric-icon" style={{ background: '#FAF5FF', color: '#8B5CF6' }}>
+                  <div className="tdb-metric-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16A34A' }}>
                     <Star size={14} strokeWidth={2.2} />
                   </div>
                   <div>
@@ -501,7 +535,7 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
                 className="tdb-action-card"
                 onClick={() => onTabChange?.('courses')}
               >
-                <div className="tdb-action-icon tdb-action-icon--blue">
+                <div className="tdb-action-icon" style={{ background: '#DCFCE7', color: '#15803D' }}>
                   <BookOpen size={16} strokeWidth={2.4} />
                 </div>
                 <div>
@@ -514,7 +548,7 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
                 className="tdb-action-card"
                 onClick={() => onTabChange?.('reports')}
               >
-                <div className="tdb-action-icon tdb-action-icon--amber">
+                <div className="tdb-action-icon" style={{ background: '#F1F5F9', color: '#0F172A' }}>
                   <TrendingUp size={16} strokeWidth={2.4} />
                 </div>
                 <div>
@@ -527,7 +561,7 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
                 className="tdb-action-card"
                 onClick={() => setBulkImportOpen(true)}
               >
-                <div className="tdb-action-icon tdb-action-icon--purple">
+                <div className="tdb-action-icon" style={{ background: '#DCFCE7', color: '#15803D' }}>
                   <FileText size={16} strokeWidth={2.4} />
                 </div>
                 <div>
@@ -607,75 +641,31 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
         </motion.div>
       )}
 
+      {/* Attendance Tab */}
+      {tab === 'attendance' && (
+        <motion.div variants={item}>
+          <TrainerAttendanceManagement user={user} />
+        </motion.div>
+      )}
+
       {/* Feedback Tab */}
       {tab === 'feedback' && (
-        <motion.div variants={item} className="enterprise-card">
-          <div className="enterprise-card__header">
-            <div>
-              <h2 className="enterprise-card__title">Feedback Received</h2>
-              <p style={{ fontSize: '13px', color: 'var(--neutral-500)', marginTop: '4px' }}>Ratings and comments from participants</p>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: 'rgba(245, 158, 11, 0.08)', borderRadius: 'var(--radius-md)' }}>
-              <Star size={14} style={{ color: '#f59e0b', fill: '#f59e0b' }} />
-              <span style={{ fontSize: '13px', fontWeight: 600, color: '#92400e' }}>{stats.avgTrainerRating ? Number(stats.avgTrainerRating).toFixed(1) : '—'}</span>
-            </div>
-          </div>
-          <div className="enterprise-card__body">
-            {feedbacks.length === 0 ? (
-              <EmptyState icon={MessageSquare} title="No Feedback Yet" description="Feedback from participants will appear here." />
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {paginatedFeedbacks.map((fb, i) => (
-                  <motion.div
-                    key={fb.id || i}
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: i * 0.05 }}
-                    style={{ display: 'flex', gap: '12px', padding: '16px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--neutral-150)', transition: 'border-color 150ms ease' }}
-                  >
-                    <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--neutral-100)', color: 'var(--neutral-600)', border: '1px solid var(--neutral-200)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 600, flexShrink: 0 }}>
-                      {fb.anonymous ? '?' : initials(fb.participantName)}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                        <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--neutral-800)' }}>{fb.anonymous ? 'Anonymous' : fb.participantName}</span>
-                        <span style={{ fontSize: '12px', color: 'var(--neutral-400)' }}>·</span>
-                        <span style={{ fontSize: '12px', color: 'var(--neutral-400)' }}>{fmtDate(fb.submittedAt)}</span>
-                      </div>
-                      <div style={{ fontSize: '12px', color: 'var(--neutral-500)', marginBottom: '8px' }}>
-                        for <span style={{ fontWeight: 500, color: 'var(--neutral-700)' }}>{fb.trainingTitle}</span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '8px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <span style={{ fontSize: '12px', color: 'var(--neutral-500)' }}>Trainer:</span>
-                          <Stars v={fb.trainerRating} />
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <span style={{ fontSize: '12px', color: 'var(--neutral-500)' }}>Subject:</span>
-                          <Stars v={fb.subjectRating} />
-                        </div>
-                      </div>
-                      {fb.comments && (
-                        <p style={{ fontSize: '13px', color: 'var(--neutral-600)', background: 'var(--neutral-50)', borderRadius: 'var(--radius-md)', padding: '12px', margin: 0 }}>{fb.comments}</p>
-                      )}
-                      {fb.trainerResponse ? (
-                        <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--brand-trainer)', background: 'var(--brand-trainer-bg)', borderRadius: 'var(--radius-md)', padding: '8px 12px' }}>
-                          <span style={{ fontWeight: 600 }}>Your reply:</span> {fb.trainerResponse}
-                        </div>
-                      ) : (
-                        <button onClick={() => { setReplyModal(fb); setReplyText(''); }} style={{ marginTop: '8px', fontSize: '12px', fontWeight: 600, color: 'var(--brand-trainer)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-                          Reply →
-                        </button>
-                      )}
-                    </div>
-                  </motion.div>
-                ))}
-                {totalFeedbackPages > 1 && (
-                  <Pagination currentPage={feedbackPage} totalPages={totalFeedbackPages} onPageChange={setFeedbackPage} />
-                )}
-              </div>
-            )}
-          </div>
+        <motion.div variants={item}>
+          <TrainerFeedbackAnalytics user={user} />
+        </motion.div>
+      )}
+
+      {/* Performance Analytics Tab */}
+      {tab === 'analytics' && (
+        <motion.div variants={item}>
+          <TrainerPerformanceAnalytics user={user} />
+        </motion.div>
+      )}
+
+      {/* Leaderboard Tab */}
+      {tab === 'leaderboard' && (
+        <motion.div variants={item}>
+          <StudentLeaderboardView user={user} />
         </motion.div>
       )}
 

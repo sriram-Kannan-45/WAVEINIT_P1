@@ -44,17 +44,17 @@ export default function LeaderboardSection({ enrollments = [], quizzes = [], cur
   }, [enrollments])
 
   const rankIcon = (rank) => {
-    if (rank === 1) return <Trophy size={18} style={{ color: '#F79009' }} />
-    if (rank === 2) return <Medal size={18} style={{ color: '#98A2B3' }} />
-    if (rank === 3) return <Medal size={18} style={{ color: '#D97706' }} />
+    if (rank === 1) return <Trophy size={18} style={{ color: '#16A34A' }} />
+    if (rank === 2) return <Medal size={18} style={{ color: '#0F172A' }} />
+    if (rank === 3) return <Medal size={18} style={{ color: '#475569' }} />
     return <span style={{ color: 'var(--neutral-400)', fontWeight: 600, fontSize: 14 }}>{rank}</span>
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', fontFamily: "'Poppins', sans-serif" }}>
       <div className="reg-admin-header" style={{ marginBottom: 0 }}>
-        <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #F59E0B, #D97706)' }}>
-          <Trophy size={22} color="#fff" />
+        <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16A34A' }}>
+          <Trophy size={22} color="#16A34A" />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h2 className="reg-admin-title">Leaderboard</h2>

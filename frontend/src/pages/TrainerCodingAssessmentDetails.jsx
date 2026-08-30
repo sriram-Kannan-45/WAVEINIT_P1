@@ -194,7 +194,6 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      onClick={onClose}
       style={{
         position: 'fixed',
         top: 0,

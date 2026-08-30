@@ -170,29 +170,38 @@ const getAllTrainings = async (req, res) => {
 
     const trainings = await Training.findAll(findOptions);
 
-    console.log('📋 Raw trainings from DB:', trainings.length);
+    const trainingIds = trainings.map(t => t.id);
+    const countMap = {};
+    const enrolledSet = new Set();
 
-    const formattedTrainings = await Promise.all(trainings.map(async t => {
-      let enrolledCount = 0;
+    if (trainingIds.length > 0) {
       try {
-        enrolledCount = await Enrollment.count({
-          where: { trainingId: t.id, status: 'ENROLLED' }
+        const counts = await Enrollment.findAll({
+          where: { trainingId: { [Op.in]: trainingIds }, status: 'ENROLLED' },
+          attributes: ['trainingId', [Training.sequelize.fn('COUNT', Training.sequelize.col('id')), 'count']],
+          group: ['trainingId'],
+          raw: true
         });
-      } catch (e) {
-        console.error('Count error for training', t.id, e.message);
-      }
+        counts.forEach(c => {
+          countMap[c.trainingId] = parseInt(c.count, 10) || 0;
+        });
 
-      let isEnrolled = false;
-      if (userId && userRole === 'PARTICIPANT') {
-        try {
-          const enrollment = await Enrollment.findOne({
-            where: { participantId: userId, trainingId: t.id, status: 'ENROLLED' }
+        if (userId && userRole === 'PARTICIPANT') {
+          const userEnrollments = await Enrollment.findAll({
+            where: { participantId: userId, trainingId: { [Op.in]: trainingIds }, status: 'ENROLLED' },
+            attributes: ['trainingId'],
+            raw: true
           });
-          isEnrolled = !!enrollment;
-        } catch (e) {
-          console.error('Enrollment check error:', e.message);
+          userEnrollments.forEach(e => enrolledSet.add(e.trainingId));
         }
+      } catch (countErr) {
+        console.error('Batch count error in getAllTrainings:', countErr.message);
       }
+    }
+
+    const formattedTrainings = trainings.map(t => {
+      const enrolledCount = countMap[t.id] || 0;
+      const isEnrolled = enrolledSet.has(t.id);
 
       const assignedTrainers = (t.trainerAssignments || []).map(ta => ta.trainer).filter(Boolean);
       const trainerNames = assignedTrainers.length > 0 ? assignedTrainers.map(tr => tr.name).join(', ') : (t.trainer ? t.trainer.name : null);
@@ -215,7 +224,7 @@ const getAllTrainings = async (req, res) => {
         isFull: t.capacity ? enrolledCount >= t.capacity : false,
         sequentialLearning: t.sequentialLearning || false
       };
-    }));
+    });
 
     const totalPages = Math.ceil(total / parsedLimit) || 1;
 

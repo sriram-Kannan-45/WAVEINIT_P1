@@ -172,6 +172,51 @@ const MonitoringSession = sequelize.define('MonitoringSession', {
     field: 'video_url',
     comment: 'URL/path to recorded proctoring/monitoring session video',
   },
+  monitoringStatus: {
+    type: DataTypes.ENUM(
+      'NOT_ENABLED',
+      'RECORDING',
+      'WAITING_FOR_PROCESSING',
+      'PROCESSING',
+      'PARTIAL',
+      'COMPLETED',
+      'FAILED'
+    ),
+    allowNull: false,
+    defaultValue: 'NOT_ENABLED',
+    field: 'monitoring_status',
+    comment: 'Async recorded-video pipeline aggregation status for this session',
+  },
+  monitoringFinalScore: {
+    type: DataTypes.FLOAT,
+    allowNull: true,
+    field: 'monitoring_final_score',
+    comment: 'Authoritative merged final score after all segments processed (0-100)',
+  },
+  monitoringCompletedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    field: 'monitoring_completed_at',
+    comment: 'When all segments were processed and the final score was computed',
+  },
+  totalSegments: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    field: 'total_segments',
+  },
+  completedSegments: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    field: 'completed_segments',
+  },
+  failedSegments: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    field: 'failed_segments',
+  },
 }, {
   tableName: 'monitoring_sessions',
   timestamps: true,
@@ -184,6 +229,7 @@ const MonitoringSession = sequelize.define('MonitoringSession', {
     { fields: ['context_type', 'context_id'] },
     { fields: ['status'] },
     { fields: ['risk_level'] },
+    { fields: ['monitoring_status'] },
   ],
 });
 

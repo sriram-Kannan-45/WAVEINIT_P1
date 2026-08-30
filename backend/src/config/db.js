@@ -178,6 +178,14 @@ const connectDB = async () => {
       logging: false
     });
     logger.info('✅ Database schema verified');
+
+    // Additive async-monitoring columns on pre-existing tables (dialect-agnostic).
+    try {
+      const { ensureMonitoringSchema } = require('./bootstrapMonitoringSchema');
+      await ensureMonitoringSchema();
+    } catch (bootstrapErr) {
+      logger.error('⚠️ Error bootstrapping async monitoring schema', { error: bootstrapErr.message });
+    }
     
     // Manual database migrations for MySQL
     if (!isPostgres) {

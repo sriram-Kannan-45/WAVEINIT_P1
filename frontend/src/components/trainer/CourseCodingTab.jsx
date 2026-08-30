@@ -86,7 +86,6 @@ function PublishCodingDialog({ user, assessment, onClose, onPublished }) {
   return (
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={() => !publishing && onClose()}
       style={{
         position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)',
         zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
@@ -208,7 +207,6 @@ function CodingPreview({ assessment, onClose }) {
   return (
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={onClose}
       style={{
         position: 'fixed', inset: 0, background: colors.bg.overlay,
         zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
@@ -330,7 +328,6 @@ function CodingLeaderboardModal({ assessment, data, onClose }) {
   return (
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={onClose}
       style={{
         position: 'fixed', inset: 0, background: colors.bg.overlay,
         zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
@@ -409,7 +406,7 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
   const { success, error: showError } = useToast()
   const [promptText, setPromptText] = useState('')
   const [problemCount, setProblemCount] = useState(3)
-  const [difficulty, setDifficulty] = useState('Medium')
+  const [difficulty, setDifficulty] = useState('MEDIUM')
   const [timeLimit, setTimeLimit] = useState(60)
   const [languages, setLanguages] = useState('javascript, python')
   const [generating, setGenerating] = useState(false)
@@ -429,7 +426,7 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
           courseId,
           prompt: promptText.trim(),
           problemCount: parseInt(problemCount, 10) || 3,
-          difficulty,
+          difficulty: difficulty.toUpperCase(),
           timeLimit: parseInt(timeLimit, 10) || 60,
           languages: languages.split(',').map(s => s.trim()).filter(Boolean),
         }),
@@ -446,7 +443,6 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
   return (
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={() => !generating && onClose()}
       style={{
         position: 'fixed', inset: 0, background: colors.bg.overlay,
         zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
@@ -489,7 +485,7 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
             <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
             <div style={{ fontWeight: 700, fontSize: 15, color: colors.slate[900] }}>AI is crafting your coding assessment...</div>
             <div style={{ fontSize: 13, color: colors.slate[400], maxWidth: 360 }}>
-              Generating problems with test cases and solutions. This may take up to 60 seconds.
+              Generating problems with test cases, starter code, and reference solutions.
             </div>
           </div>
         ) : (
@@ -526,9 +522,10 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
               <div>
                 <label style={{ ...lblStyle, marginTop: 0 }}>Difficulty</label>
                 <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)} style={inputStyle}>
-                  <option value="Easy">Easy</option>
-                  <option value="Medium">Medium</option>
-                  <option value="Hard">Hard</option>
+                  <option value="EASY">Easy</option>
+                  <option value="MEDIUM">Medium</option>
+                  <option value="HARD">Hard</option>
+                  <option value="MIXED">Mixed</option>
                 </select>
               </div>
               <div>

@@ -34,11 +34,21 @@ router.get('/sessions/:id/status', ctrl.getStatus);
 router.use(requireUserId);
 router.post('/sessions/start', ctrl.startSession);
 router.post('/sessions/:id/start-test', ctrl.startTestTimer);
+router.post('/sessions/:id/pause-test', ctrl.pauseTestTimer);
+router.post('/sessions/:id/resume-test', ctrl.resumeTestTimer);
+router.post('/sessions/:id/sync-duration', ctrl.syncTestDuration);
 router.post('/sessions/:id/calibrate', ctrl.recordCalibration);
 router.post('/sessions/:id/laptop/validate', ctrl.validateLaptop);
 router.post('/sessions/:id/mobile/pair', ctrl.getMobilePairingQR);
 router.post('/sessions/:id/video', uploadMonitoringVideo.single('video'), ctrl.uploadVideo);
 router.post('/sessions/:id/events', ctrl.recordEvent);
 router.post('/sessions/:id/end', ctrl.endSession);
+
+// Recorded-video async segment pipeline
+router.post('/sessions/:id/segments/register', ctrl.registerSegment);
+router.post('/sessions/:id/segments/:segmentKey/finalize', ctrl.finalizeSegment);
+router.post('/sessions/:id/segments/:segmentKey/video', uploadMonitoringVideo.single('video'), ctrl.uploadSegment);
+router.get('/sessions/:id/segments', ctrl.listSegments);
+router.get('/sessions/:id/pipeline', ctrl.getPipelineStatus);
 
 module.exports = router;

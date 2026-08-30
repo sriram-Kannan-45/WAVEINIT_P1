@@ -61,15 +61,39 @@ function isAdmin(user) { return user?.role === 'ADMIN'; }
 async function loadOwnedCourse(req, res, courseId) {
   const id = parseInt(courseId, 10);
   if (!id) { res.status(422).json({ error: 'Invalid courseId' }); return null; }
-  const course = await Course.findByPk(id);
+  let course = await Course.findByPk(id, {
+    include: [{ model: Training, as: 'program', attributes: ['id', 'title'] }],
+  });
+  if (!course) {
+    course = await Course.findOne({
+      where: { trainingProgramId: id },
+      include: [{ model: Training, as: 'program', attributes: ['id', 'title'] }],
+    });
+  }
   if (!course) { res.status(404).json({ error: 'Course not found' }); return null; }
+  
   const isOwner = Number(course.trainerId) === Number(req.user.id) || String(course.trainerId) === String(req.user.id);
   if (!isAdmin(req.user) && !isOwner) {
-    // Check many-to-many assignment
+    // Check CourseTrainerAssignment
     const assigned = await CourseTrainerAssignment.findOne({
       where: { courseId: course.id, trainerId: req.user.id }
     });
-    if (!assigned) {
+    
+    // Check TrainingTrainerAssignment or Training.trainerId
+    let trainingAssigned = false;
+    if (!assigned && course.trainingProgramId) {
+      const { TrainingTrainerAssignment } = require('../models');
+      const tAssign = await TrainingTrainerAssignment.findOne({
+        where: { trainingId: course.trainingProgramId, trainerId: req.user.id }
+      });
+      if (tAssign) trainingAssigned = true;
+      if (!trainingAssigned) {
+        const tr = await Training.findByPk(course.trainingProgramId);
+        if (tr && Number(tr.trainerId) === Number(req.user.id)) trainingAssigned = true;
+      }
+    }
+
+    if (!assigned && !trainingAssigned) {
       res.status(403).json({ error: 'You are not assigned to this course' });
       return null;
     }
@@ -94,7 +118,15 @@ async function loadOwnedLesson(req, res, lessonId) {
       const assigned = await CourseTrainerAssignment.findOne({
         where: { courseId: course.id, trainerId: req.user.id }
       });
-      if (!assigned) {
+      let trainingAssigned = false;
+      if (!assigned && course.trainingProgramId) {
+        const { TrainingTrainerAssignment } = require('../models');
+        const tAssign = await TrainingTrainerAssignment.findOne({
+          where: { trainingId: course.trainingProgramId, trainerId: req.user.id }
+        });
+        if (tAssign) trainingAssigned = true;
+      }
+      if (!assigned && !trainingAssigned) {
         res.status(403).json({ error: 'You do not own the parent course' });
         return null;
       }
@@ -127,15 +159,61 @@ async function listMyCourses(req, res) {
   try {
     let where = {};
     if (!isAdmin(req.user)) {
-      // Find course IDs where trainer is assigned via CourseTrainerAssignment
+      const { TrainingTrainerAssignment } = require('../models');
+
+      // 1. CourseTrainerAssignment
       const assignments = await CourseTrainerAssignment.findAll({
         where: { trainerId: req.user.id },
         attributes: ['courseId']
       });
       const assignedCourseIds = assignments.map(a => a.courseId).filter(Boolean);
+
+      // 2. TrainingTrainerAssignment
+      const trainingAssignments = await TrainingTrainerAssignment.findAll({
+        where: { trainerId: req.user.id },
+        attributes: ['trainingId']
+      });
+      const assignedTrainingIds = trainingAssignments.map(a => a.trainingId).filter(Boolean);
+
+      // 3. Primary trainer on Training
+      const primaryTrainings = await Training.findAll({
+        where: { trainerId: req.user.id },
+        attributes: ['id']
+      });
+      const primaryTrainingIds = primaryTrainings.map(t => t.id);
+
+      const allTrainingIds = [...new Set([...assignedTrainingIds, ...primaryTrainingIds])];
+
+      // Auto-bootstrap course records for assigned trainings that don't have a course record yet
+      if (allTrainingIds.length > 0) {
+        const existingCourses = await Course.findAll({
+          where: { trainingProgramId: { [Op.in]: allTrainingIds } },
+          attributes: ['trainingProgramId']
+        });
+        const existingTrainingIds = new Set(existingCourses.map(c => c.trainingProgramId));
+        const missingTrainingIds = allTrainingIds.filter(tId => !existingTrainingIds.has(tId));
+        if (missingTrainingIds.length > 0) {
+          const trainingsToBootstrap = await Training.findAll({ where: { id: { [Op.in]: missingTrainingIds } } });
+          for (const t of trainingsToBootstrap) {
+            try {
+              await Course.create({
+                title: t.title,
+                description: t.description || `${t.title} course`,
+                trainingProgramId: t.id,
+                trainerId: t.trainerId || req.user.id,
+                status: t.status || 'PUBLISHED',
+              });
+            } catch (_) {}
+          }
+        }
+      }
+
       const orConditions = [{ trainerId: req.user.id }];
       if (assignedCourseIds.length > 0) {
         orConditions.push({ id: { [Op.in]: assignedCourseIds } });
+      }
+      if (allTrainingIds.length > 0) {
+        orConditions.push({ trainingProgramId: { [Op.in]: allTrainingIds } });
       }
       where = {
         [Op.or]: orConditions

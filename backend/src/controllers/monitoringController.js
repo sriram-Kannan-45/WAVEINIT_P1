@@ -129,15 +129,77 @@ class MonitoringController {
   async startTestTimer(req, res) {
     try {
       const sessionId = req.params.id;
-      const { attemptId, testStartedAt } = req.body;
+      const { attemptId, testStartedAt, configuredDurationSeconds } = req.body;
       const session = await monitoringService.startTestSession({
         sessionId,
         attemptId,
         testStartedAt,
+        configuredDurationSeconds,
       });
       return ok(res, { session, success: true, message: 'Test active timer locked' });
     } catch (err) {
       logger.error(`[MonitoringController] startTestTimer error: ${err.message}`);
+      return fail(res, 500, err.message);
+    }
+  }
+
+  /**
+   * POST /api/monitoring/sessions/:id/pause-test
+   * Pause active test timer and exclude break time.
+   */
+  async pauseTestTimer(req, res) {
+    try {
+      const sessionId = req.params.id;
+      const { pausedAt, reason, activeDurationSeconds } = req.body;
+      const session = await monitoringService.pauseTestSession({
+        sessionId,
+        pausedAt,
+        reason,
+        activeDurationSeconds,
+      });
+      return ok(res, { session, success: true, message: 'Test active timer paused' });
+    } catch (err) {
+      logger.error(`[MonitoringController] pauseTestTimer error: ${err.message}`);
+      return fail(res, 500, err.message);
+    }
+  }
+
+  /**
+   * POST /api/monitoring/sessions/:id/resume-test
+   * Resume active test timer from the current moment.
+   */
+  async resumeTestTimer(req, res) {
+    try {
+      const sessionId = req.params.id;
+      const { resumedAt, reason } = req.body;
+      const session = await monitoringService.resumeTestSession({
+        sessionId,
+        resumedAt,
+        reason,
+      });
+      return ok(res, { session, success: true, message: 'Test active timer resumed' });
+    } catch (err) {
+      logger.error(`[MonitoringController] resumeTestTimer error: ${err.message}`);
+      return fail(res, 500, err.message);
+    }
+  }
+
+  /**
+   * POST /api/monitoring/sessions/:id/sync-duration
+   * Synchronize accumulated active test duration from client.
+   */
+  async syncTestDuration(req, res) {
+    try {
+      const sessionId = req.params.id;
+      const { activeDurationSeconds, activeSegments } = req.body;
+      const result = await monitoringService.syncTestDuration({
+        sessionId,
+        activeDurationSeconds,
+        activeSegments,
+      });
+      return ok(res, result);
+    } catch (err) {
+      logger.error(`[MonitoringController] syncTestDuration error: ${err.message}`);
       return fail(res, 500, err.message);
     }
   }
@@ -359,43 +421,20 @@ class MonitoringController {
   }
 
   /**
-   * POST /api/monitoring/sessions/:id/video
-   * Upload recorded proctoring/monitoring session video.
-   */
-  async uploadVideo(req, res) {
-    try {
-      const sessionId = req.params.id;
-      const participantId = req.user?.id;
-
-      if (!req.file) {
-        return fail(res, 400, 'No video file provided');
-      }
-
-      const result = await monitoringService.saveSessionVideo({
-        sessionId,
-        participantId,
-        filename: req.file.filename,
-      });
-
-      return ok(res, result);
-    } catch (err) {
-      logger.error(`[MonitoringController] uploadVideo error: ${err.message}`);
-      return fail(res, 500, err.message);
-    }
-  }
-
-  /**
    * POST /api/monitoring/sessions/:id/end
-   * Conclude monitoring session and persist final integrity flags.
+   * Conclude monitoring session and persist final integrity flags and active duration.
    */
   async endSession(req, res) {
     try {
       const participantId = req.user?.id;
       const sessionId = req.params.id;
+      const { actualTestDurationSeconds, activeSegments } = req.body || {};
 
       const report = await monitoringService.endSession({
         sessionId,
         participantId,
+        actualTestDurationSeconds,
+        activeSegments,
       });
 
       return ok(res, report);
@@ -432,11 +471,6 @@ class MonitoringController {
       return fail(res, 404, err.message);
     }
   }
-
-  /**
-   * GET /api/monitoring/reports
-   * Admin / Trainer filterable monitoring sessions view.
-   */
   async getReportsList(req, res) {
     try {
       const { contextType, contextId, participantId, riskLevel, limit, offset } = req.query;
@@ -622,6 +656,173 @@ class MonitoringController {
       return res.send(buffer);
     } catch (err) {
       logger.error(`[MonitoringController] downloadAssessmentExcelReport error: ${err.message}`);
+      return fail(res, 500, err.message);
+    }
+  }
+
+  /**
+   * POST /api/monitoring/sessions/:id/segments/register
+   * Idempotently register a recorded-video segment (rotation start). The client
+   * owns segmentSequence/startedAt; the backend confirms the canonical
+   * segmentKey so zero-gap rotation can never collide.
+   */
+  async registerSegment(req, res) {
+    try {
+      const sessionId = req.params.id;
+      const participantId = req.user?.id;
+      const { segmentSequence = 1, startedAt, durationSec = 0 } = req.body || {};
+      const videoService = require('../services/monitoringVideoService');
+      const segment = await videoService.registerSegment({
+        sessionId,
+        participantId,
+        segmentSequence: Math.max(1, Number(segmentSequence) || 1),
+        startedAt,
+        durationSec: Math.max(0, Number(durationSec) || 0),
+      });
+      return ok(res, { segment });
+    } catch (err) {
+      logger.error(`[MonitoringController] registerSegment error: ${err.message}`);
+      return fail(res, 400, err.message);
+    }
+  }
+
+  /**
+   * POST /api/monitoring/sessions/:id/segments/:segmentKey/finalize
+   * Mark a segment FINALIZING (rotate). Idempotent.
+   */
+  async finalizeSegment(req, res) {
+    try {
+      const sessionId = req.params.id;
+      const segmentKey = req.params.segmentKey;
+      const { endedAt, durationSec } = req.body || {};
+      const videoService = require('../services/monitoringVideoService');
+      const segment = await videoService.finalizeSegment({
+        sessionId,
+        segmentKey,
+        endedAt,
+        durationSec: Math.max(0, Number(durationSec) || 0),
+      });
+      if (!segment) return fail(res, 404, `Segment ${segmentKey} not found`);
+      return ok(res, { segment });
+    } catch (err) {
+      logger.error(`[MonitoringController] finalizeSegment error: ${err.message}`);
+      return fail(res, 400, err.message);
+    }
+  }
+
+  /**
+   * POST /api/monitoring/sessions/:id/segments/:segmentKey/video
+   * Upload a segment recording. Idempotent by segmentKey + uploadKey; once the
+   * segment is accepted it is queued for AI processing automatically.
+   */
+  async uploadSegment(req, res) {
+    try {
+      const sessionId = req.params.id;
+      const segmentKey = req.params.segmentKey;
+      if (!req.file) return fail(res, 400, 'No video file uploaded');
+
+      const videoService = require('../services/monitoringVideoService');
+      const result = await videoService.handleSegmentUpload({
+        sessionId,
+        segmentKey,
+        filePath: req.file.path,
+        uploadKey: req.body?.uploadKey || null,
+        mimeType: req.file.mimetype || null,
+        size: req.file.size || 0,
+      });
+
+      const io = req.app.get('io');
+      const segment = result.segment;
+      if (io && segment) {
+        const payload = {
+          sessionId,
+          segmentKey,
+          segmentSequence: segment.segmentSequence,
+          status: segment.status,
+          message: result.accepted ? 'Segment queued for AI processing' : `Segment already ${result.reason}`,
+          timestamp: new Date().toISOString(),
+        };
+        io.to(`monitoring_${sessionId}`).emit('monitoring:segment-status', payload);
+        if (segment.participantId) {
+          io.to(`user_${segment.participantId}`).emit('monitoring:segment-status', payload);
+        }
+      }
+
+      return ok(res, {
+        message: result.accepted ? 'Segment uploaded and queued' : `Segment upload idempotent (${result.reason})`,
+        accepted: result.accepted,
+        segment,
+      });
+    } catch (err) {
+      logger.error(`[MonitoringController] uploadSegment error: ${err.message}`);
+      return fail(res, 500, err.message);
+    }
+  }
+
+  /**
+   * GET /api/monitoring/sessions/:id/segments
+   * List all segments for a session with their pipeline status (used for
+   * client-side crash recovery + trainer review).
+   */
+  async listSegments(req, res) {
+    try {
+      const sessionId = req.params.id;
+      const videoService = require('../services/monitoringVideoService');
+      const segments = await videoService.listSegments(sessionId);
+      return ok(res, { segments });
+    } catch (err) {
+      return fail(res, 500, err.message);
+    }
+  }
+
+  /**
+   * GET /api/monitoring/sessions/:id/pipeline
+   * Async monitoring pipeline snapshot: session monitoringStatus, segment
+   * counts, and per-segment lifecycle states.
+   */
+  async getPipelineStatus(req, res) {
+    try {
+      const sessionId = req.params.id;
+      const { MonitoringSession } = require('../models');
+      const videoService = require('../services/monitoringVideoService');
+      const session = await MonitoringSession.findOne({ where: { sessionId } });
+      if (!session) return fail(res, 404, 'Monitoring session not found');
+      const segments = await videoService.listSegments(sessionId);
+      const jobs = await require('../models').ProcessingJob.findAll({
+        where: { monitoringSessionId: sessionId },
+        attributes: ['segmentKey', 'status', 'attempts', 'maxAttempts', 'lastError', 'updatedAt'],
+      });
+      return ok(res, {
+        sessionId,
+        monitoringStatus: session.monitoringStatus,
+        monitoringFinalScore: session.monitoringFinalScore,
+        monitoringCompletedAt: session.monitoringCompletedAt,
+        totalSegments: session.totalSegments,
+        completedSegments: session.completedSegments,
+        failedSegments: session.failedSegments,
+        segments: segments.map((s) => ({
+          segmentKey: s.segmentKey,
+          segmentSequence: s.segmentSequence,
+          status: s.status,
+          durationSec: s.durationSec,
+          startedAt: s.startedAt,
+          endedAt: s.endedAt,
+          uploadedAt: s.uploadedAt,
+          processedAt: s.processedAt,
+          processingRetries: s.processingRetries,
+          errorMessage: s.errorMessage,
+          results: s.results,
+        })),
+        jobs: jobs.map((j) => ({
+          segmentKey: j.segmentKey,
+          status: j.status,
+          attempts: j.attempts,
+          maxAttempts: j.maxAttempts,
+          lastError: j.lastError,
+          updatedAt: j.updatedAt,
+        })),
+      });
+    } catch (err) {
       return fail(res, 500, err.message);
     }
   }

@@ -1,343 +1,380 @@
-const { Feedback, Enrollment, Training, User, SurveyAnswer, Notification } = require('../models');
+const { Feedback, Enrollment, Training, Course, AIQuiz, User, Notification } = require('../models');
+const { Op } = require('sequelize');
+const logger = require('../utils/logger');
 const ActivityService = require('../services/activityService');
 
+/**
+ * POST /api/feedback
+ * Submit student feedback for Course, Trainer, Quiz, or General LMS
+ */
 const submitFeedback = async (req, res) => {
   try {
-    console.log("Feedback request:", req.body);
     const participantId = req.user.id;
-    const { trainingId, trainerRating, subjectRating, comments, anonymous, surveyAnswers } = req.body;
+    const {
+      trainingId,
+      courseId,
+      quizId,
+      assessmentId,
+      feedbackType = 'COURSE',
+      trainerRating,
+      subjectRating,
+      courseRating,
+      comments,
+      anonymous = false,
+      surveyResponses = [],
+    } = req.body;
 
-    if (!trainingId || !trainerRating || !subjectRating) {
-      return res.status(400).json({ error: 'Training ID and both ratings are required' });
+    // Validation: At least one rating is required
+    const ratingValue = courseRating || trainerRating || subjectRating;
+    if (!ratingValue || ratingValue < 1 || ratingValue > 5) {
+      return res.status(400).json({ success: false, error: 'A valid rating between 1 and 5 is required' });
     }
 
-    if (trainerRating < 1 || trainerRating > 5 || subjectRating < 1 || subjectRating > 5) {
-      return res.status(400).json({ error: 'Ratings must be between 1 and 5' });
-    }
+    // Determine target entity
+    let targetTrainerId = null;
+    let targetTitle = 'LMS';
 
-    const training = await Training.findByPk(trainingId);
-    if (!training) {
-      return res.status(404).json({ error: 'Training not found' });
-    }
+    if (courseId) {
+      const course = await Course.findByPk(courseId);
+      if (!course) return res.status(404).json({ success: false, error: 'Course not found' });
+      targetTrainerId = course.trainerId;
+      targetTitle = course.title;
 
-    // Allow feedback during or after training
-    const now = new Date();
-    const startDate = new Date(training.startDate);
-    
-    if (now < startDate) {
-      return res.status(400).json({ error: 'Feedback not allowed before training starts' });
-    }
+      // Check enrollment
+      const enrollment = await Enrollment.findOne({
+        where: { participantId, courseId, status: { [Op.in]: ['ENROLLED', 'COMPLETED'] } }
+      });
+      if (!enrollment && req.user.role !== 'ADMIN') {
+        return res.status(403).json({ success: false, error: 'You must be enrolled in this course to submit feedback' });
+      }
 
-    const enrollment = await Enrollment.findOne({
-      where: { participantId, trainingId, status: 'ENROLLED' }
-    });
-    if (!enrollment) {
-      return res.status(403).json({ error: 'You are not enrolled in this training' });
-    }
+      // Check duplicate
+      const existing = await Feedback.findOne({ where: { participantId, courseId } });
+      if (existing) {
+        return res.status(400).json({ success: false, error: 'Feedback has already been submitted for this course' });
+      }
+    } else if (trainingId) {
+      const training = await Training.findByPk(trainingId);
+      if (!training) return res.status(404).json({ success: false, error: 'Training not found' });
+      targetTrainerId = training.trainerId;
+      targetTitle = training.title;
 
-    const existingFeedback = await Feedback.findOne({
-      where: { participantId, trainingId }
-    });
-    if (existingFeedback) {
-      return res.status(400).json({ error: 'Feedback already submitted' });
+      const existing = await Feedback.findOne({ where: { participantId, trainingId } });
+      if (existing) {
+        return res.status(400).json({ success: false, error: 'Feedback has already been submitted for this training' });
+      }
+    } else if (quizId) {
+      const quiz = await AIQuiz.findByPk(quizId);
+      if (!quiz) return res.status(404).json({ success: false, error: 'Quiz not found' });
+      targetTrainerId = quiz.trainerId;
+      targetTitle = quiz.title;
+
+      const existing = await Feedback.findOne({ where: { participantId, quizId } });
+      if (existing) {
+        return res.status(400).json({ success: false, error: 'Feedback has already been submitted for this quiz' });
+      }
     }
 
     const feedback = await Feedback.create({
-      participantId: req.user.id,
-      trainingId,
-      trainerRating,
-      subjectRating,
-      comments: comments || null,
-      anonymous: anonymous || false
+      participantId,
+      trainingId: trainingId || null,
+      courseId: courseId || null,
+      quizId: quizId || null,
+      assessmentId: assessmentId || null,
+      feedbackType,
+      trainerRating: trainerRating || ratingValue,
+      subjectRating: subjectRating || ratingValue,
+      courseRating: courseRating || ratingValue,
+      comments: comments ? comments.trim() : null,
+      anonymous: !!anonymous,
+      surveyResponses: Array.isArray(surveyResponses) ? surveyResponses : null,
     });
-    console.log("Saved feedback:", feedback);
 
+    // Notify trainer & admins
     try {
-      if (surveyAnswers && surveyAnswers.length > 0) {
-        const answersData = surveyAnswers.map(ans => ({
-          feedbackId: feedback.id,
-          questionId: ans.questionId,
-          answerText: ans.answerText || null,
-          answerRating: ans.answerRating || null
-        }));
-        await SurveyAnswer.bulkCreate(answersData);
-      }
-
-      // Notify Admins
-      const admins = await User.findAll({ where: { role: 'ADMIN' } });
-      const notifications = admins.map(a => ({
-        userId: a.id,
-        message: `New feedback submitted for training: ${training.title}`,
-        isRead: false
-      }));
-      if (notifications.length > 0) {
-        await Notification.bulkCreate(notifications);
-      }
-
-      // Notify Trainer
-      if (training.trainerId) {
+      const io = req.app.get('io');
+      if (targetTrainerId) {
         await Notification.create({
-          userId: training.trainerId,
-          message: `You received new feedback for ${training.title}`,
-          isRead: false
+          userId: targetTrainerId,
+          message: `New feedback received for "${targetTitle}".`,
+          type: 'FEEDBACK_REPLY',
+          actionUrl: '/trainer?tab=feedbacks',
         });
       }
-
-      // Log activity
-      const io = req.app.get('io');
       const user = await User.findByPk(participantId);
       await ActivityService.logActivity({
         userId: participantId,
-        userName: anonymous ? 'Anonymous' : (user?.name || 'Unknown'),
+        userName: anonymous ? 'Anonymous' : (user?.name || 'Student'),
         action: 'FEEDBACK_SUBMITTED',
-        entityType: 'Training',
-        entityId: trainingId,
-        details: { trainingName: training.title }
+        entityType: feedbackType,
+        entityId: courseId || trainingId || quizId,
+        details: { targetTitle }
       }, io);
-    } catch (extraErr) {
-      console.error("Non-critical error adding survey/notifications:", extraErr.message);
-    }
+    } catch (_) {}
 
-    res.status(201).json({ message: 'Feedback submitted successfully', feedback });
+    res.status(201).json({ success: true, message: 'Feedback submitted successfully', feedback });
   } catch (error) {
-    console.error('Submit feedback error:', error.message);
-    res.status(500).json({ error: `Server error: ${error.message}` });
+    logger.error('Submit feedback error', { error: error.message });
+    res.status(500).json({ success: false, error: 'Failed to submit feedback' });
   }
 };
 
+/**
+ * GET /api/feedback/trainer-feedbacks
+ * Trainer's feedback list with strict anonymity masking
+ */
 const getTrainerFeedbacks = async (req, res) => {
   try {
     const trainerId = req.user.id;
-
-    const trainings = await Training.findAll({
-      where: { trainerId },
-      attributes: ['id']
-    });
-    const trainingIds = trainings.map(t => t.id);
-
-    const feedbacks = await Feedback.findAll({
-      where: { trainingId: trainingIds },
-      include: [{
-        model: Training,
-        as: 'training',
-        attributes: ['id', 'title']
-      }, {
-        model: User,
-        as: 'participant',
-        attributes: ['id', 'name', 'email']
-      }]
-    });
-
-    const formattedFeedbacks = feedbacks.map(f => ({
-      id: f.id,
-      trainingId: f.trainingId,
-      trainingTitle: f.training?.title,
-      trainerRating: f.trainerRating,
-      subjectRating: f.subjectRating,
-      comments: f.comments,
-      anonymous: f.anonymous,
-      trainerResponse: f.trainerResponse,
-      participantId: f.participantId,
-      participantName: f.anonymous ? 'Anonymous' : f.participant?.name,
-      submittedAt: f.submitted_at
-    }));
-
-    res.json({ 
-      success: true,
-      feedbacks: formattedFeedbacks 
-    });
-  } catch (error) {
-    console.error('Get trainer feedbacks error:', error.message);
-    res.status(500).json({ success: false, error: 'Server error fetching feedbacks' });
-  }
-};
-
-const getAdminFeedbacks = async (req, res) => {
-  try {
-    const { trainerId, trainingId, rating } = req.query;
+    const { courseId } = req.query;
 
     const where = {};
-    if (trainingId) where.trainingId = trainingId;
+    if (courseId) {
+      where.courseId = courseId;
+    } else {
+      // Find all courses / trainings owned by trainer
+      const [courses, trainings] = await Promise.all([
+        Course.findAll({ where: { trainerId }, attributes: ['id'] }),
+        Training.findAll({ where: { trainerId }, attributes: ['id'] }),
+      ]);
+      const cIds = courses.map(c => c.id);
+      const tIds = trainings.map(t => t.id);
+
+      where[Op.or] = [
+        ...(cIds.length > 0 ? [{ courseId: { [Op.in]: cIds } }] : []),
+        ...(tIds.length > 0 ? [{ trainingId: { [Op.in]: tIds } }] : []),
+      ];
+    }
 
     const feedbacks = await Feedback.findAll({
       where,
-      include: [{
-        model: Training,
-        as: 'training',
-        attributes: ['id', 'title', 'startDate', 'endDate'],
-        include: [{
-          model: User,
-          as: 'trainer',
-          attributes: ['id', 'name']
-        }]
-      }, {
-        model: User,
-        as: 'participant',
-        attributes: ['id', 'name', 'email']
-      }],
-      order: [['submitted_at', 'DESC']]
+      include: [
+        { model: Course, as: 'course', attributes: ['id', 'title'] },
+        { model: Training, as: 'training', attributes: ['id', 'title'] },
+        { model: User, as: 'participant', attributes: ['id', 'name', 'email', 'profilePic'] },
+      ],
+      order: [['submitted_at', 'DESC']],
+    });
+
+    // Mask personally identifiable information for anonymous submissions
+    const formatted = feedbacks.map(f => {
+      const isAnon = f.anonymous;
+      return {
+        id: f.id,
+        courseId: f.courseId,
+        courseTitle: f.course?.title || f.training?.title || 'Course',
+        trainingId: f.trainingId,
+        feedbackType: f.feedbackType,
+        trainerRating: f.trainerRating,
+        subjectRating: f.subjectRating,
+        courseRating: f.courseRating,
+        comments: f.comments,
+        anonymous: isAnon,
+        trainerResponse: f.trainerResponse,
+        participantId: isAnon ? null : f.participantId,
+        participantName: isAnon ? 'Anonymous Student' : f.participant?.name,
+        participantAvatar: isAnon ? null : f.participant?.profilePic,
+        surveyResponses: f.surveyResponses,
+        submittedAt: f.submitted_at,
+      };
+    });
+
+    // Compute rating statistics
+    const totalResponses = formatted.length;
+    const avgRating = totalResponses > 0
+      ? Number((formatted.reduce((s, f) => s + (f.courseRating || f.trainerRating || 0), 0) / totalResponses).toFixed(1))
+      : 5.0;
+
+    const ratingDistribution = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+    formatted.forEach(f => {
+      const r = Math.round(f.courseRating || f.trainerRating || 5);
+      if (ratingDistribution[r] !== undefined) ratingDistribution[r]++;
+    });
+
+    res.json({
+      success: true,
+      summary: {
+        totalResponses,
+        averageRating: avgRating,
+        ratingDistribution,
+      },
+      feedbacks: formatted,
+    });
+  } catch (error) {
+    logger.error('Get trainer feedbacks error', { error: error.message });
+    res.status(500).json({ success: false, error: 'Failed to fetch feedbacks' });
+  }
+};
+
+/**
+ * GET /api/feedback/admin-feedbacks
+ * Comprehensive feedback overview for admins
+ */
+const getAdminFeedbacks = async (req, res) => {
+  try {
+    const { trainerId, courseId, rating } = req.query;
+    const where = {};
+    if (courseId) where.courseId = courseId;
+    if (rating) where.courseRating = rating;
+
+    const feedbacks = await Feedback.findAll({
+      where,
+      include: [
+        {
+          model: Course,
+          as: 'course',
+          attributes: ['id', 'title', 'trainerId'],
+          include: [{ model: User, as: 'trainer', attributes: ['id', 'name'] }]
+        },
+        {
+          model: Training,
+          as: 'training',
+          attributes: ['id', 'title', 'trainerId'],
+          include: [{ model: User, as: 'trainer', attributes: ['id', 'name'] }]
+        },
+        { model: User, as: 'participant', attributes: ['id', 'name', 'email'] },
+      ],
+      order: [['submitted_at', 'DESC']],
     });
 
     let filtered = feedbacks;
     if (trainerId) {
-      filtered = filtered.filter(f => f.training?.trainerId === parseInt(trainerId));
+      filtered = filtered.filter(f =>
+        f.course?.trainerId === parseInt(trainerId, 10) || f.training?.trainerId === parseInt(trainerId, 10)
+      );
     }
 
-    const formattedFeedbacks = filtered.map(f => ({
+    const formatted = filtered.map(f => ({
       id: f.id,
-      trainingId: f.trainingId,
-      trainingTitle: f.training?.title,
-      trainerName: f.training?.trainer?.name || 'Unknown',
-      trainerId: f.training?.trainerId,
+      courseId: f.courseId,
+      courseTitle: f.course?.title || f.training?.title || 'General',
+      trainerName: f.course?.trainer?.name || f.training?.trainer?.name || 'Trainer',
+      trainerId: f.course?.trainerId || f.training?.trainerId,
+      feedbackType: f.feedbackType,
       trainerRating: f.trainerRating,
+      courseRating: f.courseRating,
       subjectRating: f.subjectRating,
       comments: f.comments,
-      trainerResponse: f.trainerResponse,
       anonymous: f.anonymous,
+      trainerResponse: f.trainerResponse,
       participantName: f.anonymous ? 'Anonymous' : f.participant?.name,
-      submittedAt: f.submitted_at
+      participantEmail: f.anonymous ? null : f.participant?.email,
+      submittedAt: f.submitted_at,
     }));
 
-    const avgTrainerRating = formattedFeedbacks.length > 0
-      ? (formattedFeedbacks.reduce((sum, f) => sum + f.trainerRating, 0) / formattedFeedbacks.length).toFixed(1)
-      : 0;
-      
-    const avgSubjectRating = formattedFeedbacks.length > 0
-      ? (formattedFeedbacks.reduce((sum, f) => sum + f.subjectRating, 0) / formattedFeedbacks.length).toFixed(1)
-      : 0;
+    const total = formatted.length;
+    const avgRating = total > 0
+      ? Number((formatted.reduce((s, f) => s + (f.courseRating || f.trainerRating || 0), 0) / total).toFixed(1))
+      : 5.0;
 
-    const avgRating = ((parseFloat(avgTrainerRating) + parseFloat(avgSubjectRating)) / 2).toFixed(1);
+    const ratingDistribution = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+    formatted.forEach(f => {
+      const r = Math.round(f.courseRating || f.trainerRating || 5);
+      if (ratingDistribution[r] !== undefined) ratingDistribution[r]++;
+    });
 
     res.json({
+      success: true,
       summary: {
-        totalResponses: formattedFeedbacks.length,
-        averageTrainerRating: parseFloat(avgTrainerRating),
-        averageSubjectRating: parseFloat(avgSubjectRating),
-        overallRating: parseFloat(avgRating)
+        totalResponses: total,
+        averageRating: avgRating,
+        ratingDistribution,
       },
-      feedbacks: formattedFeedbacks
+      feedbacks: formatted,
     });
   } catch (error) {
-    console.error('Get admin feedbacks error:', error.message);
-    res.status(500).json({ error: 'Server error fetching feedbacks' });
+    logger.error('Get admin feedbacks error', { error: error.message });
+    res.status(500).json({ success: false, error: 'Failed to fetch admin feedbacks' });
   }
 };
 
+/**
+ * GET /api/feedback/participant-feedbacks
+ * Student's submitted feedback history
+ */
 const getParticipantFeedbacks = async (req, res) => {
   try {
     const participantId = req.user.id;
-
     const feedbacks = await Feedback.findAll({
       where: { participantId },
-      include: [{
-        model: Training,
-        as: 'training',
-        attributes: ['id', 'title']
-      }]
+      include: [
+        { model: Course, as: 'course', attributes: ['id', 'title'] },
+        { model: Training, as: 'training', attributes: ['id', 'title'] },
+      ],
+      order: [['submitted_at', 'DESC']],
     });
 
-    const formattedFeedbacks = feedbacks.map(f => ({
+    const formatted = feedbacks.map(f => ({
       id: f.id,
-      trainingId: f.trainingId,
-      trainingTitle: f.training?.title,
-      trainerRating: f.trainerRating,
-      subjectRating: f.subjectRating,
+      courseId: f.courseId,
+      courseTitle: f.course?.title || f.training?.title || 'General',
+      feedbackType: f.feedbackType,
+      courseRating: f.courseRating || f.trainerRating,
       comments: f.comments,
       trainerResponse: f.trainerResponse,
       anonymous: f.anonymous,
-      submittedAt: f.submitted_at || f.createdAt
+      submittedAt: f.submitted_at,
     }));
 
-    res.json({ feedbacks: formattedFeedbacks });
+    res.json({ success: true, feedbacks: formatted });
   } catch (error) {
-    console.error('Get participant feedbacks error:', error.message);
-    res.status(500).json({ error: 'Server error fetching feedbacks' });
+    logger.error('Get participant feedbacks error', { error: error.message });
+    res.status(500).json({ success: false, error: 'Failed to fetch feedbacks' });
   }
 };
 
+/**
+ * POST /api/feedback/:id/reply
+ * Trainer replies to feedback
+ */
 const replyToFeedback = async (req, res) => {
   try {
-    const trainerId = req.user.id;
     const { id } = req.params;
     const { trainerResponse } = req.body;
+    const trainerId = req.user.id;
 
-    if (!trainerResponse || trainerResponse.trim() === '') {
-      return res.status(400).json({ error: 'Reply text is required' });
+    if (!trainerResponse || !trainerResponse.trim()) {
+      return res.status(400).json({ success: false, error: 'Reply text is required' });
     }
 
     const feedback = await Feedback.findByPk(id, {
-      include: [{ model: Training, as: 'training' }]
+      include: [
+        { model: Course, as: 'course' },
+        { model: Training, as: 'training' }
+      ]
     });
 
     if (!feedback) {
-      return res.status(404).json({ error: 'Feedback not found' });
+      return res.status(404).json({ success: false, error: 'Feedback not found' });
     }
 
-    if (!feedback.training || parseInt(feedback.training.trainerId) !== parseInt(trainerId)) {
-      return res.status(403).json({ error: 'Not authorized to reply to this feedback' });
+    // Auth check
+    if (req.user.role !== 'ADMIN') {
+      const isOwner =
+        feedback.course?.trainerId === trainerId || feedback.training?.trainerId === trainerId;
+      if (!isOwner) {
+        return res.status(403).json({ success: false, error: 'Not authorized to reply to this feedback' });
+      }
     }
 
-    await feedback.update({ trainerResponse });
+    await feedback.update({ trainerResponse: trainerResponse.trim() });
 
-    // Safely attempt to log activity without failing the main response
-    try {
-      const io = req.app.get('io');
-      const user = await User.findByPk(trainerId);
-      await ActivityService.logActivity({
-        userId: trainerId,
-        userName: user?.name || 'Unknown',
-        action: 'FEEDBACK_REPLIED',
-        entityType: 'Feedback',
-        entityId: feedback.id,
-        details: { trainingName: feedback.training?.title }
-      }, io);
-    } catch (activityErr) {
-      console.error('Non-fatal error logging activity:', activityErr.message);
+    // Notify student if not anonymous
+    if (!feedback.anonymous && feedback.participantId) {
+      try {
+        await Notification.create({
+          userId: feedback.participantId,
+          message: 'Your trainer responded to your feedback.',
+          type: 'FEEDBACK_REPLY',
+          actionUrl: '/participant?tab=feedback',
+        });
+      } catch (_) {}
     }
 
-    return res.status(200).json({ success: true, message: 'Reply saved' });
+    res.json({ success: true, message: 'Reply saved successfully', feedback });
   } catch (error) {
-    console.error('Reply feedback error:', error.message);
-    return res.status(500).json({ error: 'Server error: ' + error.message });
-  }
-};
-
-const updateFeedback = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { trainerRating, subjectRating, comments, anonymous } = req.body;
-    const feedback = await Feedback.findByPk(id);
-    if (!feedback) return res.status(404).json({ error: 'Feedback not found' });
-    
-    // Check if participant owns it
-    if (feedback.participantId !== req.user.id) {
-      return res.status(403).json({ error: 'Not authorized' });
-    }
-
-    await feedback.update({
-      trainerRating: trainerRating || feedback.trainerRating,
-      subjectRating: subjectRating || feedback.subjectRating,
-      comments: comments !== undefined ? comments : feedback.comments,
-      anonymous: anonymous !== undefined ? anonymous : feedback.anonymous
-    });
-    res.json({ message: 'Feedback updated successfully', feedback });
-  } catch (error) {
-    console.error('Update feedback error:', error.message);
-    res.status(500).json({ error: 'Server error' });
-  }
-};
-
-const deleteFeedback = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const feedback = await Feedback.findByPk(id);
-    if (!feedback) return res.status(404).json({ error: 'Feedback not found' });
-    
-    await feedback.destroy();
-    res.json({ message: 'Feedback deleted successfully' });
-  } catch (error) {
-    console.error('Delete feedback error:', error.message);
-    res.status(500).json({ error: 'Server error' });
+    logger.error('Reply to feedback error', { error: error.message });
+    res.status(500).json({ success: false, error: 'Failed to save reply' });
   }
 };
 
@@ -347,6 +384,4 @@ module.exports = {
   getAdminFeedbacks,
   getParticipantFeedbacks,
   replyToFeedback,
-  updateFeedback,
-  deleteFeedback
 };

@@ -54,15 +54,21 @@ function ParticipantCodingAttemptInner({ user }) {
 
   let attemptId = searchParams.get('attemptId')
   let sessionToken = searchParams.get('sessionToken')
+  let monitoringSessionId = searchParams.get('monitoringSessionId')
   const storageKey = getStorageKey(attemptId)
 
   if (assessmentId) {
     if (attemptId && sessionToken) {
-      sessionStorage.setItem(storageKey, JSON.stringify({ attemptId, sessionToken }))
+      sessionStorage.setItem(storageKey, JSON.stringify({ attemptId, sessionToken, monitoringSessionId }))
     } else {
       const cached = sessionStorage.getItem(storageKey)
       if (cached) {
-        try { const p = JSON.parse(cached); attemptId = attemptId || p.attemptId; sessionToken = sessionToken || p.sessionToken } catch {}
+        try {
+          const p = JSON.parse(cached);
+          attemptId = attemptId || p.attemptId;
+          sessionToken = sessionToken || p.sessionToken;
+          monitoringSessionId = monitoringSessionId || p.monitoringSessionId;
+        } catch {}
       }
     }
   }
@@ -76,6 +82,8 @@ function ParticipantCodingAttemptInner({ user }) {
   const [qrVerified, setQrVerified] = useState(false)
   const [verifSessionInfo, setVerifSessionInfo] = useState(null)
   const [consented, setConsented] = useState(false)
+  const [sharedCamStream, setSharedCamStream] = useState(null)
+  const [resolvedMonitoringSessionId, setResolvedMonitoringSessionId] = useState(monitoringSessionId || null)
 
   const [currentProblemIndex, setCurrentProblemIndex] = useState(0)
   const [codeByProblem, setCodeByProblem] = useState({})
@@ -217,10 +225,51 @@ function ParticipantCodingAttemptInner({ user }) {
 
   const formatTime = (s) => { const m = Math.floor(s / 60); const sec = s % 60; return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}` }
 
-  const handleConsented = useCallback(() => setConsented(true), [])
+  const [testStartedAt, setTestStartedAt] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(`coding_${assessmentId}_test_start_${attemptId}`);
+      return cached ? parseInt(cached, 10) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const handleConsented = useCallback((stream) => {
+    if (stream) setSharedCamStream(stream);
+    const start = Date.now();
+    setTestStartedAt(start);
+    try {
+      sessionStorage.setItem(`coding_${assessmentId}_test_start_${attemptId}`, String(start));
+    } catch {}
+    if (attemptId) {
+      monitoringClient.startActiveTestTimer(attemptId, (assessment?.timeLimit || 60) * 60);
+    }
+    setConsented(true);
+  }, [assessmentId, attemptId, assessment?.timeLimit])
+
+  // Watch for focus/blur to pause/resume active duration tracking
+  useEffect(() => {
+    if (!consented || submitted) return;
+
+    const onBlur = () => {
+      monitoringClient.pauseActiveTestTimer('TAB_SWITCH');
+    };
+    const onFocus = () => {
+      monitoringClient.resumeActiveTestTimer('RESUMED');
+    };
+
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [consented, submitted]);
+
   const handleCancel = useCallback(() => {
-    navigate(trainingId ? `/participant?tab=myEnrollments&courseId=${trainingId}` : '/participant?tab=myEnrollments')
-  }, [navigate, trainingId])
+    const targetCourseId = assessment?.courseId || trainingId
+    navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}&subtab=coding` : '/participant?tab=myEnrollments')
+  }, [navigate, assessment, trainingId])
 
   const currentProblem = problems[currentProblemIndex]
   const handleCodeChange = (value) => { if (!currentProblem) return; setCodeByProblem(prev => ({ ...prev, [currentProblem.id]: value || '' })) }
@@ -322,6 +371,11 @@ function ParticipantCodingAttemptInner({ user }) {
   // ── Exit fullscreen & cleanup ──
   const handleRecordingCleanup = useCallback(async () => {
     try {
+      if (sharedCamStream) {
+        sharedCamStream.getTracks().forEach(t => t.stop());
+      }
+    } catch (_) {}
+    try {
       await monitoringClient.finishSession();
     } catch (_) {}
     try {
@@ -334,7 +388,7 @@ function ParticipantCodingAttemptInner({ user }) {
     if (fsApi.element()) {
       try { await fsApi.exit() } catch {}
     }
-  }, [endVerificationSession]);
+  }, [endVerificationSession, sharedCamStream]);
 
   useEffect(() => {
     return () => {
@@ -360,10 +414,15 @@ function ParticipantCodingAttemptInner({ user }) {
     setSubmitting(true)
     try {
       await saveToServer()
+      const activeDurationSec = monitoringClient.getActiveDurationSeconds();
       const submissions = problems.map(p => ({ problemId: p.id, code: codeByProblem[p.id] || '', language: languageByProblem[p.id] || p.programmingLanguage || 'javascript' }))
       const headers = { ...authHeaders(user.token), 'Content-Type': 'application/json' }
       if (sessionToken) headers['X-Assessment-Session'] = sessionToken
-      const res = await fetch(`${API_BASE}/coding/participant/submit/${attemptId}`, { method: 'POST', headers, body: JSON.stringify({ submissions }) })
+      const res = await fetch(`${API_BASE}/coding/participant/submit/${attemptId}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ submissions, timeTaken: activeDurationSec, actualTestDurationSeconds: activeDurationSec })
+      })
       const data = await res.json()
       if (!res.ok) {
         if (res.status === 409 || res.status === 404) {
@@ -380,7 +439,8 @@ function ParticipantCodingAttemptInner({ user }) {
       await handleRecordingCleanup()
 
       localStorage.removeItem(getStorageKey(attemptId)); sessionStorage.removeItem(storageKey)
-      navigate(trainingId ? `/participant?tab=myEnrollments&courseId=${trainingId}` : '/participant?tab=myEnrollments')
+      const targetCourseId = assessment?.courseId || trainingId
+      navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}&subtab=coding` : '/participant?tab=myEnrollments')
     } catch (err) { showError?.(err.message || 'Submit failed') }
     finally { setSubmitting(false); submittingRef.current = false }
   }
@@ -388,26 +448,32 @@ function ParticipantCodingAttemptInner({ user }) {
   const currentLanguage = languageByProblem[currentProblem?.id] || currentProblem?.programmingLanguage || 'javascript'
 
   if (loading || restoring) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: '#94a3b8' }}><Loader2 size={24} className="animate-spin" /></div>
-  if (errorMsg) return <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', padding: 20, textAlign: 'center' }}><AlertCircle size={32} color="#dc2626" style={{ marginBottom: 12 }} /><div style={{ fontSize: 16, fontWeight: 600, color: '#dc2626', marginBottom: 8 }}>{errorMsg}</div><button onClick={() => navigate(trainingId ? `/participant?tab=myEnrollments&courseId=${trainingId}` : '/participant?tab=myEnrollments')} style={{ padding: '8px 20px', background: '#0D9488', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Go Back</button></div>
+  if (errorMsg) {
+    const targetCourseId = assessment?.courseId || trainingId
+    return <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', padding: 20, textAlign: 'center' }}><AlertCircle size={32} color="#dc2626" style={{ marginBottom: 12 }} /><div style={{ fontSize: 16, fontWeight: 600, color: '#dc2626', marginBottom: 8 }}>{errorMsg}</div><button onClick={() => navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}` : '/participant?tab=myEnrollments')} style={{ padding: '8px 20px', background: '#0D9488', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Go Back</button></div>
+  }
 
-  // Pre-test Step 1: Mobile Camera Pairing via QR Code (PAUSED - COMMENTED OUT)
-  // if (!qrVerified && assessment) {
-  //   return (
-  //     <AssessmentQRPairingModal
-  //       assessmentType="CODING"
-  //       assessmentId={Number(assessmentId)}
-  //       attemptId={Number(attemptId)}
-  //       assessmentTitle={assessment.title || 'Coding Assessment'}
-  //       participantName={user?.name || 'Participant'}
-  //       userToken={user?.token}
-  //       onVerified={(data) => {
-  //         setVerifSessionInfo(data);
-  //         setQrVerified(true);
-  //       }}
-  //       onCancel={() => navigate(`/trainings/${trainingId}`)}
-  //     />
-  //   )
-  // }
+  // Pre-test Step 1: Mobile Camera Pairing via QR Code
+  if (!qrVerified && assessment) {
+    return (
+      <AssessmentQRPairingModal
+        assessmentType="CODING"
+        assessmentId={Number(assessmentId)}
+        attemptId={Number(attemptId)}
+        assessmentTitle={assessment.title || 'Coding Assessment'}
+        participantName={user?.name || 'Participant'}
+        userToken={user?.token}
+        onVerified={(data) => {
+          setVerifSessionInfo(data);
+          setQrVerified(true);
+        }}
+        onCancel={() => {
+          const targetCourseId = assessment?.courseId || trainingId;
+          navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}&subtab=coding` : '/participant?tab=myEnrollments');
+        }}
+      />
+    );
+  }
 
   // Pre-test Step 2: Assessment Consent, Camera Calibration & Fullscreen Gate
   if (!consented) return (
@@ -567,12 +633,15 @@ function ParticipantCodingAttemptInner({ user }) {
           contextType="CODING"
           contextId={Number(assessmentId)}
           attemptId={Number(attemptId)}
-          sessionId={verifSessionInfo?.sessionId}
+          sessionId={resolvedMonitoringSessionId || verifSessionInfo?.sessionId}
           participantId={user?.id}
           userToken={user?.token}
           mobileEnabled={true}
           preCalibrated={true}
           prePaired={true}
+          isTestActive={consented}
+          testStartedAt={testStartedAt}
+          existingStream={sharedCamStream}
         />
       </div>
     </ExamProctorShell>

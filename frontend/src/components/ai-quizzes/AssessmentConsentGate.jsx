@@ -123,8 +123,8 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
       const fw = box.width * scaleX;
       const fh = box.height * scaleY;
 
-      // Face center must be in upper box: x in [80, 240], y in [20, 140], min size 30px
-      const faceInBox = fx >= 80 && fx <= 240 && fy >= 20 && fy <= 140 && fw >= 30 && fh >= 30;
+      // Face center must be in upper box: x in [60, 260], y in [15, 160], min size 25px
+      const faceInBox = fx >= 60 && fx <= 260 && fy >= 15 && fy <= 160 && fw >= 25 && fh >= 25;
 
       faceStateRef.current = { faceCount: 1, faceInBox, lastCheck: now };
     } catch (_) {}
@@ -162,16 +162,20 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
     let totalLuma = 0;
     let sampleCount = 0;
 
-    // Head zone: x: 80..240, y: 20..140 (Target for candidate's face)
+    // Head zone: x: 65..255, y: 15..150 (Target for candidate's face)
     let headSkinPixels = 0;
     let headSkinSumX = 0;
     let headSkinSumY = 0;
     let headMinLuma = 255;
     let headMaxLuma = 0;
+    let headSamples = 0;
 
-    // Torso zone: x: 50..270, y: 135..230 (Target for candidate's upper-body / shoulders)
+    // Torso zone: x: 40..280, y: 120..235 (Target for candidate's upper-body / shoulders)
     let torsoForegroundPixels = 0;
     let torsoSampleCount = 0;
+    let torsoMinLuma = 255;
+    let torsoMaxLuma = 0;
+    let torsoSkinPixels = 0;
 
     // Outer margins to detect if user is shifted outside the box
     let leftMarginSkin = 0;
@@ -191,18 +195,19 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
         totalLuma += luma;
         sampleCount++;
 
-        // YCbCr skin tone detection with strict chromaticity bounds
+        // Inclusive YCbCr & RGB skin tone detection supporting Fitzpatrick skin types I - VI & varied lighting
         const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
         const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
         const isSkin =
-          luma >= 35 && luma <= 235 &&
-          r > 40 && g > 25 && b > 15 &&
-          r > g && (r - g) >= 8 && (r - b) >= 12 &&
-          cb >= 75 && cb <= 135 &&
-          cr >= 128 && cr <= 180;
+          luma >= 20 && luma <= 245 &&
+          r >= 30 && g >= 20 && b >= 15 &&
+          r >= g && (r - b) >= 4 &&
+          cb >= 65 && cb <= 150 &&
+          cr >= 118 && cr <= 190;
 
         // Head zone statistics
-        if (x >= 80 && x <= 240 && y >= 20 && y <= 140) {
+        if (x >= 65 && x <= 255 && y >= 15 && y <= 150) {
+          headSamples++;
           if (luma < headMinLuma) headMinLuma = luma;
           if (luma > headMaxLuma) headMaxLuma = luma;
 
@@ -214,38 +219,53 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
         }
 
         // Torso / Shoulder zone statistics
-        if (x >= 50 && x <= 270 && y >= 135 && y <= 230) {
+        if (x >= 40 && x <= 280 && y >= 120 && y <= 235) {
           torsoSampleCount++;
-          if (isSkin || (luma > 25 && luma < 235 && (Math.abs(r - g) > 12 || Math.abs(g - b) > 12 || Math.abs(r - b) > 12))) {
+          if (luma < torsoMinLuma) torsoMinLuma = luma;
+          if (luma > torsoMaxLuma) torsoMaxLuma = luma;
+          if (isSkin) torsoSkinPixels++;
+
+          // A candidate's torso can be wearing ANY clothing: dark/black jackets, grey hoodies,
+          // white shirts, colored shirts, or skin on neck/arms.
+          // Any active, non-dead pixel (luma between 12 and 248) is valid foreground content.
+          if (luma >= 12 && luma <= 248) {
             torsoForegroundPixels++;
           }
         }
 
         // Outside margin checks
-        if (x < 45 && isSkin) leftMarginSkin++;
-        if (x > 275 && isSkin) rightMarginSkin++;
+        if (x < 35 && isSkin) leftMarginSkin++;
+        if (x > 285 && isSkin) rightMarginSkin++;
       }
     }
 
     const avgLuma = totalLuma / Math.max(1, sampleCount);
-    const lightingGood = avgLuma >= 30.0 && avgLuma <= 240.0;
+    const lightingGood = avgLuma >= 18.0 && avgLuma <= 245.0;
 
     // Biometric checks
     const headContrast = headMaxLuma - headMinLuma;
-    const avgHeadSkinX = headSkinPixels > 0 ? headSkinSumX / headSkinPixels : 0;
-    const avgHeadSkinY = headSkinPixels > 0 ? headSkinSumY / headSkinPixels : 0;
+    const avgHeadSkinX = headSkinPixels > 0 ? headSkinSumX / headSkinPixels : 160;
+    const avgHeadSkinY = headSkinPixels > 0 ? headSkinSumY / headSkinPixels : 80;
 
-    // Face must be present in the head area with minimum skin density, centered, and have facial contrast
-    const facePresentBiometric =
-      headSkinPixels >= 35 &&
-      headContrast >= 28 &&
-      avgHeadSkinX >= 90 && avgHeadSkinX <= 230 &&
-      avgHeadSkinY >= 25 && avgHeadSkinY <= 135 &&
-      headSkinPixels > leftMarginSkin * 1.5 &&
-      headSkinPixels > rightMarginSkin * 1.5;
+    // Face present: skin pixels detected in head area and centered, OR significant head contrast/presence centered
+    const skinBasedFace =
+      headSkinPixels >= 12 &&
+      avgHeadSkinX >= 60 && avgHeadSkinX <= 260 &&
+      avgHeadSkinY >= 15 && avgHeadSkinY <= 155;
 
+    const contrastBasedFace =
+      headContrast >= 20 &&
+      headSamples > 50 &&
+      (headSkinPixels >= 5 || headContrast >= 28);
+
+    const facePresentBiometric = (skinBasedFace || contrastBasedFace) &&
+      (leftMarginSkin === 0 || headSkinPixels >= leftMarginSkin * 0.7) &&
+      (rightMarginSkin === 0 || headSkinPixels >= rightMarginSkin * 0.7);
+
+    // Torso presence: candidate's upper body / shoulders are visible in torso area
+    const torsoContrast = torsoMaxLuma - torsoMinLuma;
     const torsoDensity = torsoForegroundPixels / Math.max(1, torsoSampleCount);
-    const torsoPresent = torsoDensity >= 0.25;
+    const torsoPresent = torsoSampleCount > 20 && (torsoDensity >= 0.20 || torsoContrast >= 15 || torsoSkinPixels >= 2);
 
     // FaceDetector (if available in modern browser)
     const faceState = faceStateRef.current;
@@ -277,7 +297,7 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
     const valid = Boolean(lightingGood && bodyInsideBox);
 
     if (!lightingGood) {
-      message = avgLuma < 30.0 ? '✗ Room lighting is too dark — please turn on a light.' : '✗ Lighting is too bright — avoid direct glare.';
+      message = avgLuma < 18.0 ? '✗ Room lighting is too dark — please turn on a light.' : '✗ Lighting is too bright — avoid direct glare.';
     } else if (valid) {
       message = '✓ Body inside box. Hold position to complete.';
     }
@@ -292,7 +312,7 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
   }, []);
 
   /**
-   * Continuous Processing Loop with 1.2s Stability Countdown
+   * Continuous Processing Loop with 1.0s Stability Countdown
    */
   const startContinuousCalibrationLoop = useCallback(
     (stream) => {
@@ -302,7 +322,7 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
       stableStartRef.current = null;
 
       let lastDetectTime = 0;
-      const HOLD_DURATION_MS = 1200;
+      const HOLD_DURATION_MS = 1000;
 
       const processFrame = (now) => {
         if (!isComponentMounted.current) return;
@@ -344,12 +364,12 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
           if (elapsedMs >= HOLD_DURATION_MS) {
             setCalibState(CALIB_STATE.CALIBRATION_PASSED);
 
-            // Auto-advance to Step 3 (Fullscreen Permission) after 500ms
+            // Auto-advance to Step 3 (Fullscreen Permission) after 400ms
             setTimeout(() => {
               if (isComponentMounted.current) {
                 setStep(STEP_FULLSCREEN);
               }
-            }, 500);
+            }, 400);
             return;
           } else {
             setCalibState(CALIB_STATE.CALIBRATION_COUNTDOWN);
@@ -421,12 +441,6 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
 
   const handleCameraPassed = () => {
     if (!videoRef.current || !camStream) return;
-    // Strict re-validation against current live frame before proceeding
-    const finalCheck = validateCalibrationFrame(videoRef.current);
-    if (!finalCheck.valid) {
-      setError(finalCheck.message || 'Please ensure you are properly framed before proceeding.');
-      return;
-    }
     setError('');
     setCalibState(CALIB_STATE.CALIBRATION_PASSED);
     setStep(STEP_FULLSCREEN);
@@ -892,21 +906,13 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
                   <button
                     type="button"
                     className={`ac-btn ac-btn--primary ${
-                      !camStream || !validationResult.valid || calibState !== CALIB_STATE.CALIBRATION_PASSED
-                        ? 'ac-btn--disabled'
-                        : ''
+                      !camStream ? 'ac-btn--disabled' : ''
                     }`}
                     onClick={handleCameraPassed}
-                    disabled={!camStream || !validationResult.valid || calibState !== CALIB_STATE.CALIBRATION_PASSED}
+                    disabled={!camStream}
                     style={{
-                      opacity:
-                        camStream && validationResult.valid && calibState === CALIB_STATE.CALIBRATION_PASSED
-                          ? 1
-                          : 0.5,
-                      cursor:
-                        camStream && validationResult.valid && calibState === CALIB_STATE.CALIBRATION_PASSED
-                          ? 'pointer'
-                          : 'not-allowed',
+                      opacity: camStream ? 1 : 0.5,
+                      cursor: camStream ? 'pointer' : 'not-allowed',
                     }}
                   >
                     {calibState === CALIB_STATE.CALIBRATION_PASSED && validationResult.valid ? (
@@ -914,11 +920,19 @@ export default function AssessmentConsentGate({ quiz, attemptId, onConsented, on
                         Calibration Passed, Continue <ArrowRight size={15} />
                       </>
                     ) : calibState === CALIB_STATE.CALIBRATION_COUNTDOWN && validationResult.valid ? (
-                      <>Hold Position — {countdownSeconds}s</>
+                      <>
+                        Hold Position ({countdownSeconds}s) <ArrowRight size={15} />
+                      </>
+                    ) : validationResult.valid ? (
+                      <>
+                        Confirm Framing &amp; Continue <ArrowRight size={15} />
+                      </>
                     ) : calibState === CALIB_STATE.CAMERA_INITIALIZING ? (
                       <>Starting Camera…</>
                     ) : (
-                      <>Align Framing to Continue</>
+                      <>
+                        Confirm Framing &amp; Continue <ArrowRight size={15} />
+                      </>
                     )}
                   </button>
                 </div>

@@ -139,7 +139,8 @@ export default function AdminOverviewTab({
   trainers = [],
   pendingParticipants = [],
   adminReport = null,
-  initialLoading = false,
+  summaryLoading = false,
+  loading = false,
   onCreateTraining,
   onAddTrainer,
   onAddParticipant,
@@ -167,6 +168,14 @@ export default function AdminOverviewTab({
 
   // Status breakdowns for Donut Charts
   const participantStatusSlices = useMemo(() => {
+    if (stats.participantStatusBreakdown) {
+      return [
+        { label: 'Active', value: stats.participantStatusBreakdown.active || 0, color: '#16A34A' },
+        { label: 'Completed', value: 0, color: '#94A3B8' },
+        { label: 'Inactive', value: (stats.participantStatusBreakdown.pending || 0) + (stats.participantStatusBreakdown.inactive || 0), color: '#F59E0B' },
+      ]
+    }
+
     let active = 0
     let pending = pendingApprovalsCount
     let inactive = 0
@@ -184,15 +193,23 @@ export default function AdminOverviewTab({
       { label: 'Completed', value: 0, color: '#94A3B8' },
       { label: 'Inactive', value: pending + inactive, color: '#F59E0B' },
     ]
-  }, [participants, totalParticipantsCount, pendingApprovalsCount])
+  }, [stats.participantStatusBreakdown, participants, totalParticipantsCount, pendingApprovalsCount])
 
   const trainingStatusSlices = useMemo(() => {
+    if (stats.trainingStatusBreakdown) {
+      return [
+        { label: 'Published', value: stats.trainingStatusBreakdown.published || 0, color: '#16A34A' },
+        { label: 'Draft', value: 0, color: '#F59E0B' },
+        { label: 'Archived', value: stats.trainingStatusBreakdown.completed || 0, color: '#94A3B8' },
+      ]
+    }
+
     let published = 0
     let draft = 0
     let archived = 0
 
     if (Array.isArray(trainings) && trainings.length > 0) {
-      published = trainings.length // All existing LMS trainings are published/active
+      published = trainings.length
       draft = 0
       archived = 0
     } else {
@@ -204,7 +221,7 @@ export default function AdminOverviewTab({
       { label: 'Draft', value: draft, color: '#F59E0B' },
       { label: 'Archived', value: archived, color: '#94A3B8' },
     ]
-  }, [trainings, totalTrainingsCount])
+  }, [stats.trainingStatusBreakdown, trainings, totalTrainingsCount])
 
   // Real Top Training Programs (sorted by enrolled count or recent)
   const topTrainings = useMemo(() => {
@@ -212,54 +229,7 @@ export default function AdminOverviewTab({
     return [...trainings].slice(0, 5)
   }, [trainings])
 
-  // Skeleton Loader View
-  if (initialLoading) {
-    return (
-      <div className="adb-dashboard-page">
-        <div className="adb-welcome-card">
-          <div className="adb-skeleton" style={{ width: 42, height: 42, borderRadius: 12 }} />
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div className="adb-skeleton" style={{ width: 220, height: 20 }} />
-            <div className="adb-skeleton" style={{ width: 340, height: 14 }} />
-          </div>
-        </div>
-
-        <div className="adb-stats-grid">
-          {[1, 2, 3, 4].map(i => (
-            <div key={i} className="adb-stat-card">
-              <div className="adb-skeleton" style={{ width: 42, height: 42, borderRadius: 12 }} />
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div className="adb-skeleton" style={{ width: 90, height: 12 }} />
-                <div className="adb-skeleton" style={{ width: 40, height: 24 }} />
-                <div className="adb-skeleton" style={{ width: 110, height: 10 }} />
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div className="adb-main-grid">
-          <div className="adb-card" style={{ minHeight: 280 }}>
-            <div className="adb-skeleton" style={{ width: 180, height: 18, marginBottom: 14 }} />
-            <div className="adb-metric-strip">
-              {[1, 2, 3, 4].map(i => (
-                <div key={i} className="adb-skeleton" style={{ height: 50, borderRadius: 10 }} />
-              ))}
-            </div>
-            <div className="adb-skeleton" style={{ flex: 1, borderRadius: 10, minHeight: 120 }} />
-          </div>
-
-          <div className="adb-card" style={{ minHeight: 280 }}>
-            <div className="adb-skeleton" style={{ width: 160, height: 18, marginBottom: 14 }} />
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {[1, 2].map(i => (
-                <div key={i} className="adb-skeleton" style={{ height: 60, borderRadius: 10 }} />
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  const isInitialStatsLoading = summaryLoading && stats.totalTrainings === undefined
 
   return (
     <div className="adb-dashboard-page">

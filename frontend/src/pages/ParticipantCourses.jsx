@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -64,8 +64,30 @@ const MAT_ICON = {
 function MyCoursesList({ user, onOpen }) {
   const navigate = useNavigate()
   const { error: showError } = useToast()
-  const [courses, setCourses] = useState([])
-  const [loading, setLoading] = useState(true)
+  
+  // Instant SWR cache hydration
+  const cacheKey = `participant_courses_${user?.id}`
+  const [courses, setCourses] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(cacheKey)
+      if (cached) {
+        const parsed = JSON.parse(cached)
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed
+      }
+    } catch (_) {}
+    return []
+  })
+  const [loading, setLoading] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(cacheKey)
+      if (cached) {
+        const parsed = JSON.parse(cached)
+        if (Array.isArray(parsed) && parsed.length > 0) return false
+      }
+    } catch (_) {}
+    return true
+  })
+  const [errorMsg, setErrorMsg] = useState(null)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [sortBy, setSortBy] = useState('newest')
@@ -75,32 +97,49 @@ function MyCoursesList({ user, onOpen }) {
   const [currentPage, setCurrentPage] = useState(1)
   const PAGE_SIZE = 4
 
+  const loadCourses = useCallback(async (signal) => {
+    try {
+      if (!courses || courses.length === 0) setLoading(true)
+      setErrorMsg(null)
+      const r = await fetchWithTimeout(API.PARTICIPANT_COURSES.LIST, {
+        headers: auth(user?.token || ''),
+        signal,
+      }, 12000)
+      const d = await r.json().catch(() => ({}))
+      if (d.success) {
+        const list = d.courses || []
+        setCourses(list)
+        setErrorMsg(null)
+        try {
+          sessionStorage.setItem(cacheKey, JSON.stringify(list))
+        } catch (_) {}
+      } else {
+        const msg = d.error || 'Unable to load your enrolled courses. Please try again.'
+        if (!courses || courses.length === 0) {
+          setErrorMsg(msg)
+        }
+        showError(msg)
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') {
+        const msg = e.message || 'Unable to load your enrolled courses. Please try again.'
+        if (!courses || courses.length === 0) {
+          setErrorMsg(msg)
+        }
+        showError(msg)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [user?.token, user?.id, cacheKey, courses.length, showError])
+
   useEffect(() => {
     const controller = new AbortController()
-    let aborted = false
-    ;(async () => {
-      try {
-        setLoading(true)
-        const r = await fetchWithTimeout(API.PARTICIPANT_COURSES.LIST, {
-          headers: auth(user?.token || ''),
-          signal: controller.signal,
-        }, 12000)
-        const d = await r.json().catch(() => ({}))
-        if (!aborted) {
-          if (d.success) setCourses(d.courses || [])
-          else showError(d.error || 'Failed to load courses')
-        }
-      } catch (e) {
-        if (!aborted && e.name !== 'AbortError') showError(e.message)
-      } finally {
-        if (!aborted) setLoading(false)
-      }
-    })()
+    loadCourses(controller.signal)
     return () => {
-      aborted = true
       controller.abort()
     }
-  }, [])
+  }, [user?.id])
 
   const activeCourses = useMemo(() => courses || [], [courses])
 
@@ -108,7 +147,7 @@ function MyCoursesList({ user, onOpen }) {
     total: activeCourses.length,
     published: activeCourses.filter(c => (c.status || 'PUBLISHED').toUpperCase() === 'PUBLISHED').length,
     draft: activeCourses.filter(c => (c.status || '').toUpperCase() === 'DRAFT').length,
-    archived: activeCourses.filter(c => (c.status || '').toUpperCase() === 'ARCHIVED').length,
+    archived: activeCourses.filter(c => (c.status || '').toUpperCase() === 'ARCHIVED' || (c.status || '').toUpperCase() === 'COMPLETED').length,
   }), [activeCourses])
 
   const filtered = useMemo(() => {
@@ -170,7 +209,7 @@ function MyCoursesList({ user, onOpen }) {
           <div className="tmt-stat-text-wrap">
             <span className="tmt-stat-label">Total Trainings</span>
             <div className="tmt-stat-value">{stats.total}</div>
-            <span className="tmt-stat-sub">All courses created</span>
+            <span className="tmt-stat-sub">Enrolled courses</span>
           </div>
         </div>
 
@@ -182,7 +221,7 @@ function MyCoursesList({ user, onOpen }) {
           <div className="tmt-stat-text-wrap">
             <span className="tmt-stat-label">Published</span>
             <div className="tmt-stat-value">{stats.published}</div>
-            <span className="tmt-stat-sub">Courses live</span>
+            <span className="tmt-stat-sub">Available to learn</span>
           </div>
         </div>
 
@@ -357,6 +396,36 @@ function MyCoursesList({ user, onOpen }) {
                     <div className="tmt-empty-state">
                       <div className="bulk-spin" style={{ display: 'inline-block', width: 24, height: 24, border: '2.5px solid #e2e8f0', borderTopColor: '#16A34A', borderRadius: '50%' }} />
                       <p style={{ marginTop: 6 }}>Loading your assigned courses...</p>
+                    </div>
+                  </td>
+                </tr>
+              ) : errorMsg && activeCourses.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="tmt-empty-cell">
+                    <div className="tmt-empty-state" style={{ padding: '24px 0' }}>
+                      <AlertCircle size={36} color="#EF4444" />
+                      <p style={{ fontWeight: 600, color: '#B91C1C', fontSize: 13.5, margin: '6px 0 3px' }}>
+                        Unable to load your enrolled courses
+                      </p>
+                      <span style={{ fontSize: 12, color: '#64748B', maxWidth: 360, display: 'block', margin: '0 auto 12px' }}>
+                        {errorMsg}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => loadCourses()}
+                        style={{
+                          padding: '6px 14px',
+                          background: '#16A34A',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '6px',
+                          fontWeight: 600,
+                          fontSize: '12px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Try Again
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -630,7 +699,40 @@ function CourseView({ user, courseId, onBack, onOpenLesson }) {
       </div>
     )
   }
-  if (!overview) return null
+  if (!overview) {
+    return (
+      <div className="wl-detail-page" style={{ padding: '40px 20px', textAlign: 'center' }}>
+        <div style={{ maxWidth: 460, margin: '40px auto', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 16, padding: '36px 24px', boxShadow: '0 4px 16px rgba(0,0,0,0.05)' }}>
+          <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#fee2e2', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+            <BookOpen size={28} />
+          </div>
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', marginBottom: 8 }}>Course Not Found</h2>
+          <p style={{ fontSize: 13, color: '#64748b', lineHeight: 1.5, marginBottom: 20 }}>
+            The requested course could not be loaded. Please return to your course list to view all available courses.
+          </p>
+          <button
+            type="button"
+            onClick={onBack}
+            style={{
+              padding: '10px 24px',
+              background: '#16a34a',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 8,
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
+            <ArrowLeft size={15} /> Return to My Courses
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   const artwork = getCourseArtwork(overview.course.title)
   const svgContent = getThumbnailSVG(artwork)
@@ -1194,14 +1296,12 @@ function QuizzesView({ user, courseId, trainingId }) {
       const res = await fetch(startUrl, { method: 'POST', headers: auth(token) })
       const response = await res.json()
       if (!res.ok) { showError(response.error || 'Failed to start quiz'); return }
-      // Navigate directly to Quiz Attempt (Mobile QR verification paused)
-      // navigate(`/trainings/${trainingId}/quizzes/${quizId}/verification?attemptId=${response.attemptId}&sessionToken=${response.sessionToken}`)
       const params = new URLSearchParams({
         attemptId: String(response.attemptId),
         sessionToken: response.sessionToken || '',
         monitoringSessionId: response.monitoringSessionId || '',
       })
-      navigate(`/trainings/${trainingId}/quizzes/${quizId}/attempt?${params.toString()}`)
+      navigate(`/trainings/${trainingId}/quizzes/${quizId}/verification?${params.toString()}`)
     } catch (err) { showError(err.message) }
   }
 
@@ -1350,9 +1450,12 @@ function CodingAssessmentsView({ user, courseId, trainingId }) {
           coding_assessment_id: assessmentId,
         })
       })
-      const response = await res.json()
-      if (!res.ok) { showError(response.error || 'Failed to start coding assessment'); return }
-      navigate(`/trainings/${trainingId}/coding/${assessmentId}/attempt?attemptId=${response.attemptId}&sessionToken=${response.sessionToken}`)
+      const params = new URLSearchParams({
+        attemptId: String(response.attemptId),
+        sessionToken: response.sessionToken || '',
+        monitoringSessionId: response.monitoringSessionId || '',
+      })
+      navigate(`/trainings/${trainingId}/coding/${assessmentId}/verification?${params.toString()}`)
     } catch (err) { showError(err.message) }
   }
 

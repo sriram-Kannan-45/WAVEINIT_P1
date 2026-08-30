@@ -15,6 +15,11 @@ import {
     UserCheck,
     Users,
     Video,
+    Calendar,
+    MessageSquare,
+    TrendingUp,
+    BarChart2,
+    ShieldCheck,
     X
 } from 'lucide-react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
@@ -48,9 +53,22 @@ const navGroups = {
       ],
     },
     {
+      title: 'ACADEMICS & FEEDBACK',
+      items: [
+        { key: 'attendance', label: 'Attendance Center', icon: Calendar },
+        { key: 'feedback', label: 'Feedback & Sentiment', icon: MessageSquare },
+      ],
+    },
+    {
       title: 'INTERVIEWS',
       items: [
         { key: 'interviews', label: 'Interviews', icon: Video },
+      ],
+    },
+    {
+      title: 'ANALYTICS',
+      items: [
+        { key: 'reports', label: 'Reports & Analytics', icon: BarChart2 },
       ],
     },
   ],
@@ -62,9 +80,18 @@ const navGroups = {
       ],
     },
     {
-      title: 'CONTENT',
+      title: 'TEACHING & CLASSES',
       items: [
         { key: 'courses', label: 'My Trainings', icon: GraduationCap },
+        { key: 'attendance', label: 'Attendance', icon: Calendar },
+        { key: 'feedback', label: 'Student Feedback', icon: MessageSquare },
+      ],
+    },
+    {
+      title: 'PERFORMANCE',
+      items: [
+        { key: 'analytics', label: 'Performance Analytics', icon: BarChart2 },
+        { key: 'leaderboard', label: 'Leaderboard', icon: Trophy },
       ],
     },
     {
@@ -91,14 +118,23 @@ const navGroups = {
       title: 'LEARNING',
       items: [
         { key: 'myEnrollments', label: 'My Courses', icon: GraduationCap },
+        { key: 'attendance', label: 'Attendance', icon: Calendar },
+        { key: 'progress', label: 'Progress & Analytics', icon: TrendingUp },
+      ],
+    },
+    {
+      title: 'ASSESSMENTS & RANKING',
+      items: [
+        { key: 'ai-quizzes', label: 'Quizzes & Tests', icon: FileText },
         { key: 'leaderboard', label: 'Leaderboard', icon: Trophy },
         { key: 'achievements', label: 'Achievements', icon: Award },
       ],
     },
     {
-      title: 'ACTIVITY',
+      title: 'ACTIVITY & RECORDS',
       items: [
         { key: 'certificates', label: 'Certificates', icon: Award },
+        { key: 'feedback', label: 'Feedback', icon: MessageSquare },
       ],
     },
     {
@@ -122,12 +158,17 @@ const pageDescriptions = {
   trainers: 'Manage trainer accounts and assignments',
   participants: 'View and manage learner accounts',
   courses: 'Manage your training courses',
+  attendance: 'Track class participation and attendance rates',
+  feedback: 'Course ratings and student sentiment',
+  progress: 'Track your overall milestones and skill strengths',
   profile: 'Manage your account settings',
   myEnrollments: 'Your enrolled training programs',
   leaderboard: 'See how you rank among learners',
   achievements: 'Your badges and accomplishments',
   certificates: 'Download your completion certificates',
   interviews: 'Schedule and manage interviews',
+  analytics: 'Detailed learner performance metrics and pass rates',
+  reports: 'Organization-wide reports and statistics',
 }
 
 export { navGroups, pageDescriptions }
@@ -144,9 +185,20 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
   const [coursesOpen, setCoursesOpen] = useState(true)
   const [courseFilter, setCourseFilter] = useState('')
 
-  // Fetch assigned courses dynamically for Trainer and Participant
+  // Hydrate assigned courses from cache and revalidate in background
   useEffect(() => {
     let aborted = false
+    const cacheKey = user?.role === 'TRAINER' ? `trainer_courses_${user?.id}` : `participant_courses_${user?.id}`
+    try {
+      const cached = sessionStorage.getItem(cacheKey)
+      if (cached) {
+        const parsed = JSON.parse(cached)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setCourses(parsed)
+        }
+      }
+    } catch (_) {}
+
     const fetchAssignedCourses = async () => {
       if (!user?.token) return
       try {
@@ -166,6 +218,9 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
             courseId: c.courseId ?? c.id
           }))
           setCourses(normalized)
+          try {
+            sessionStorage.setItem(cacheKey, JSON.stringify(normalized))
+          } catch (_) {}
         }
       } catch (err) {
         console.error('Sidebar failed to fetch assigned courses:', err.message)
@@ -173,7 +228,7 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
     }
     fetchAssignedCourses()
     return () => { aborted = true }
-  }, [user?.token, user?.role])
+  }, [user?.token, user?.role, user?.id])
 
   const filteredCourses = useMemo(() => {
     if (!courseFilter) return courses

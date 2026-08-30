@@ -62,4 +62,4 @@ async function getJobStatus(submissionId) {
   return { state, progress, failedReason: job.failedReason };
 }
 
-module.exports = { submissionQueue, enqueueSubmission, getJobStatus };
+module.exports = { submissionQueue, getSubmissionQueue, enqueueSubmission, getJobStatus };

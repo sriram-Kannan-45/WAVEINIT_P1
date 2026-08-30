@@ -13,60 +13,65 @@ const getAdminReport = async (req, res) => {
       return res.status(403).json({ error: 'Access denied: Admin role required' });
     }
 
-    const totalUsers = await User.count({ where: { isDeleted: false } });
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    const [
+      totalUsers,
+      adminCount,
+      trainerCount,
+      participantCount,
+      totalTrainings,
+      totalLessons,
+      avgCompletion,
+      enrolledParticipantsCount,
+      trainerPerformance,
+      activeUsersCount
+    ] = await Promise.all([
+      User.count({ where: { isDeleted: false } }),
+      User.count({ where: { role: 'ADMIN', isDeleted: false } }),
+      User.count({ where: { role: 'TRAINER', isDeleted: false } }),
+      User.count({ where: { role: 'PARTICIPANT', isDeleted: false } }),
+      Training.count(),
+      Lesson.count(),
+      Enrollment.aggregate('progressPercent', 'AVG', { where: { status: 'ENROLLED' } }),
+      Enrollment.count({ distinct: true, col: 'participant_id', where: { status: 'ENROLLED' } }),
+      Feedback.findAll({
+        attributes: [
+          [sequelize.col('training->trainer.id'), 'trainerId'],
+          [sequelize.col('training->trainer.name'), 'trainerName'],
+          [sequelize.fn('AVG', sequelize.col('trainerRating')), 'avgTrainerRating'],
+          [sequelize.fn('AVG', sequelize.col('subjectRating')), 'avgSubjectRating'],
+          [sequelize.fn('COUNT', sequelize.col('Feedbacks.id')), 'feedbackCount']
+        ],
+        include: [{
+          model: Training,
+          as: 'training',
+          attributes: [],
+          include: [{
+            model: User,
+            as: 'trainer',
+            attributes: []
+          }]
+        }],
+        group: ['training->trainer.id', 'training->trainer.name'],
+        raw: true
+      }),
+      ParticipantTracking.count({
+        distinct: true,
+        col: 'user_id',
+        where: {
+          lastActivity: { [Op.gte]: thirtyDaysAgo }
+        }
+      })
+    ]);
+
     const usersByRole = {
-      admin: await User.count({ where: { role: 'ADMIN', isDeleted: false } }),
-      trainer: await User.count({ where: { role: 'TRAINER', isDeleted: false } }),
-      participant: await User.count({ where: { role: 'PARTICIPANT', isDeleted: false } })
+      admin: adminCount,
+      trainer: trainerCount,
+      participant: participantCount
     };
 
-    const totalTrainings = await Training.count();
-    const totalLessons = await Lesson.count();
-
-    const avgCompletion = await Enrollment.aggregate('progressPercent', 'AVG', {
-      where: { status: 'ENROLLED' }
-    }) || 0;
-
-    const totalParticipants = usersByRole.participant;
-    const enrolledParticipantsCount = await Enrollment.count({
-      distinct: true,
-      col: 'participant_id',
-      where: { status: 'ENROLLED' }
-    });
-    const enrollmentRate = totalParticipants > 0 ? (enrolledParticipantsCount / totalParticipants) * 100 : 0;
-
-    // Trainer Performance
-    const trainerPerformance = await Feedback.findAll({
-      attributes: [
-        [sequelize.col('training->trainer.id'), 'trainerId'],
-        [sequelize.col('training->trainer.name'), 'trainerName'],
-        [sequelize.fn('AVG', sequelize.col('trainerRating')), 'avgTrainerRating'],
-        [sequelize.fn('AVG', sequelize.col('subjectRating')), 'avgSubjectRating'],
-        [sequelize.fn('COUNT', sequelize.col('Feedbacks.id')), 'feedbackCount']
-      ],
-      include: [{
-        model: Training,
-        as: 'training',
-        attributes: [],
-        include: [{
-          model: User,
-          as: 'trainer',
-          attributes: []
-        }]
-      }],
-      group: ['training->trainer.id', 'training->trainer.name'],
-      raw: true
-    });
-
-    // Active Users (activity in last 30 days)
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const activeUsersCount = await ParticipantTracking.count({
-      distinct: true,
-      col: 'user_id',
-      where: {
-        lastActivity: { [Op.gte]: thirtyDaysAgo }
-      }
-    });
+    const enrollmentRate = participantCount > 0 ? (enrolledParticipantsCount / participantCount) * 100 : 0;
 
     res.json({
       success: true,
@@ -75,7 +80,7 @@ const getAdminReport = async (req, res) => {
         usersByRole,
         totalTrainings,
         totalLessons,
-        completionRate: Number(Number(avgCompletion).toFixed(1)),
+        completionRate: Number(Number(avgCompletion || 0).toFixed(1)),
         enrollmentRate: Number(Number(enrollmentRate).toFixed(1)),
         trainerPerformance: trainerPerformance.map(tp => ({
           trainerId: tp.trainerId,
@@ -210,80 +215,78 @@ const getTrainerReport = async (req, res) => {
       };
     }));
 
-    // 2. Quiz Scores
-    const quizScores = await QuizResult.findAll({
-      include: [
-        { model: User, as: 'participant', attributes: ['id', 'name', 'email'] },
-        {
-          model: AIQuiz,
-          as: 'quiz',
-          attributes: ['id', 'title'],
-          where: {
-            [Op.or]: [
-              { courseId: { [Op.in]: courseIds } },
-              { trainingId: { [Op.in]: trainingIds } }
-            ]
+    // 2, 3, 4. Parallelize Quiz Scores, Assessment Scores, and Pending Reviews
+    const [quizScores, assessmentScores, pendingReviews] = await Promise.all([
+      QuizResult.findAll({
+        include: [
+          { model: User, as: 'participant', attributes: ['id', 'name', 'email'] },
+          {
+            model: AIQuiz,
+            as: 'quiz',
+            attributes: ['id', 'title'],
+            where: {
+              [Op.or]: [
+                { courseId: { [Op.in]: courseIds } },
+                { trainingId: { [Op.in]: trainingIds } }
+              ]
+            }
           }
-        }
-      ],
-      order: [['created_at', 'DESC']],
-      limit: 100
-    });
-
-    // 3. Assessment Scores
-    const assessmentScores = await AssessmentSubmission.findAll({
-      include: [
-        { model: User, as: 'participant', attributes: ['id', 'name', 'email'] },
-        {
-          model: LessonAssessment,
-          as: 'assessment',
-          attributes: ['id', 'title', 'maxScore'],
-          include: [{
-            model: Lesson,
-            as: 'lesson',
-            attributes: [],
-            where: {
-              [Op.or]: [
-                { courseId: { [Op.in]: courseIds } },
-                { trainingId: { [Op.in]: trainingIds } }
-              ]
-            }
-          }]
-        }
-      ],
-      where: {
-        status: ['REVIEWED', 'PUBLISHED']
-      },
-      order: [['updated_at', 'DESC']],
-      limit: 100
-    });
-
-    // 4. Pending Reviews
-    const pendingReviews = await AssessmentSubmission.findAll({
-      include: [
-        { model: User, as: 'participant', attributes: ['id', 'name', 'email'] },
-        {
-          model: LessonAssessment,
-          as: 'assessment',
-          attributes: ['id', 'title', 'maxScore'],
-          include: [{
-            model: Lesson,
-            as: 'lesson',
-            attributes: [],
-            where: {
-              [Op.or]: [
-                { courseId: { [Op.in]: courseIds } },
-                { trainingId: { [Op.in]: trainingIds } }
-              ]
-            }
-          }]
-        }
-      ],
-      where: {
-        status: 'SUBMITTED'
-      },
-      order: [['created_at', 'ASC']]
-    });
+        ],
+        order: [['created_at', 'DESC']],
+        limit: 100
+      }),
+      AssessmentSubmission.findAll({
+        include: [
+          { model: User, as: 'participant', attributes: ['id', 'name', 'email'] },
+          {
+            model: LessonAssessment,
+            as: 'assessment',
+            attributes: ['id', 'title', 'maxScore'],
+            include: [{
+              model: Lesson,
+              as: 'lesson',
+              attributes: [],
+              where: {
+                [Op.or]: [
+                  { courseId: { [Op.in]: courseIds } },
+                  { trainingId: { [Op.in]: trainingIds } }
+                ]
+              }
+            }]
+          }
+        ],
+        where: {
+          status: ['REVIEWED', 'PUBLISHED']
+        },
+        order: [['updated_at', 'DESC']],
+        limit: 100
+      }),
+      AssessmentSubmission.findAll({
+        include: [
+          { model: User, as: 'participant', attributes: ['id', 'name', 'email'] },
+          {
+            model: LessonAssessment,
+            as: 'assessment',
+            attributes: ['id', 'title', 'maxScore'],
+            include: [{
+              model: Lesson,
+              as: 'lesson',
+              attributes: [],
+              where: {
+                [Op.or]: [
+                  { courseId: { [Op.in]: courseIds } },
+                  { trainingId: { [Op.in]: trainingIds } }
+                ]
+              }
+            }]
+          }
+        ],
+        where: {
+          status: 'SUBMITTED'
+        },
+        order: [['created_at', 'ASC']]
+      })
+    ]);
 
     // 5. Average Completion
     const avgCompletion = enrollments.length > 0
@@ -328,14 +331,45 @@ const getTrainerReport = async (req, res) => {
 const getParticipantReport = async (req, res) => {
   try {
     const participantId = req.user.id;
+    const { LessonQuiz } = require('../models');
 
-    // 1. Progress
-    const enrollments = await Enrollment.findAll({
-      where: { participantId, status: 'ENROLLED' },
-      include: [
-        { model: Course, as: 'course', attributes: ['id', 'title'] },
-        { model: Training, as: 'training', attributes: ['id', 'title'] }
-      ]
+    // 1, 2, 3, 4. Fetch all top-level sets in parallel
+    const [enrollments, certificates, quizResults, assessmentHistory] = await Promise.all([
+      Enrollment.findAll({
+        where: { participantId, status: 'ENROLLED' },
+        include: [
+          { model: Course, as: 'course', attributes: ['id', 'title'] },
+          { model: Training, as: 'training', attributes: ['id', 'title'] }
+        ]
+      }),
+      Certificate.findAll({
+        where: { userId: participantId },
+        include: [
+          { model: Course, as: 'course', attributes: ['id', 'title'] },
+          { model: Training, as: 'training', attributes: ['id', 'title'] }
+        ],
+        order: [['issuedAt', 'DESC']]
+      }),
+      QuizResult.findAll({
+        where: { participantId },
+        include: [
+          { model: AIQuiz, as: 'quiz', attributes: ['id', 'title'] }
+        ],
+        order: [['created_at', 'DESC']]
+      }),
+      AssessmentSubmission.findAll({
+        where: { participantId },
+        include: [
+          { model: LessonAssessment, as: 'assessment', attributes: ['id', 'title', 'maxScore'] }
+        ],
+        order: [['created_at', 'DESC']]
+      })
+    ]);
+
+    const certLookupMap = new Map();
+    certificates.forEach(c => {
+      if (c.courseId) certLookupMap.set(`c_${c.courseId}`, c);
+      if (c.trainingId) certLookupMap.set(`t_${c.trainingId}`, c);
     });
 
     const progress = await Promise.all(enrollments.map(async e => {
@@ -366,16 +400,8 @@ const getParticipantReport = async (req, res) => {
         }) : 0;
       }
 
-      // Check certificate availability
-      const certificate = await Certificate.findOne({
-        where: {
-          userId: participantId,
-          [Op.or]: [
-            e.courseId ? { courseId: e.courseId } : null,
-            e.trainingId ? { trainingId: e.trainingId } : null
-          ].filter(Boolean)
-        }
-      });
+      const certKey = e.courseId ? `c_${e.courseId}` : `t_${e.trainingId}`;
+      const certificate = certLookupMap.get(certKey);
 
       return {
         id: e.id,
@@ -389,32 +415,14 @@ const getParticipantReport = async (req, res) => {
       };
     }));
 
-    // 2. Certificates
-    const certificates = await Certificate.findAll({
-      where: { userId: participantId },
-      include: [
-        { model: Course, as: 'course', attributes: ['id', 'title'] },
-        { model: Training, as: 'training', attributes: ['id', 'title'] }
-      ],
-      order: [['issuedAt', 'DESC']]
-    });
+    const quizIds = quizResults.map(qr => qr.quizId);
+    const lessonQuizzes = quizIds.length > 0 ? await LessonQuiz.findAll({
+      where: { quizId: { [Op.in]: quizIds } }
+    }) : [];
+    const lessonQuizMap = new Map(lessonQuizzes.map(lq => [lq.quizId, lq]));
 
-    // 3. Quiz History (respect publish flag)
-    const { LessonQuiz } = require('../models');
-    const quizResults = await QuizResult.findAll({
-      where: { participantId },
-      include: [
-        { model: AIQuiz, as: 'quiz', attributes: ['id', 'title'] }
-      ],
-      order: [['created_at', 'DESC']]
-    });
-
-    const quizHistory = await Promise.all(quizResults.map(async qr => {
-      // Find if the quiz results are published by looking up the LessonQuiz link
-      const lessonQuiz = await LessonQuiz.findOne({
-        where: { quizId: qr.quizId }
-      });
-
+    const quizHistory = quizResults.map(qr => {
+      const lessonQuiz = lessonQuizMap.get(qr.quizId);
       const isPublished = lessonQuiz ? lessonQuiz.resultStatus === 'PUBLISHED' : true;
 
       return {
@@ -424,15 +432,6 @@ const getParticipantReport = async (req, res) => {
         isPublished,
         date: qr.created_at
       };
-    }));
-
-    // 4. Assessment History
-    const assessmentHistory = await AssessmentSubmission.findAll({
-      where: { participantId },
-      include: [
-        { model: LessonAssessment, as: 'assessment', attributes: ['id', 'title', 'maxScore'] }
-      ],
-      order: [['created_at', 'DESC']]
     });
 
     res.json({
@@ -461,8 +460,66 @@ const getParticipantReport = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/certificates/verify/:code (Public verification)
+ */
+const verifyCertificate = async (req, res) => {
+  try {
+    const { code } = req.params;
+    if (!code) {
+      return res.status(400).json({ success: false, valid: false, error: 'Certificate code is required' });
+    }
+
+    const cert = await Certificate.findOne({
+      where: { certificateCode: code.trim().toUpperCase() },
+      include: [
+        { model: User, as: 'user', attributes: ['id', 'name', 'email'] },
+        {
+          model: Course,
+          as: 'course',
+          attributes: ['id', 'title'],
+          include: [{ model: User, as: 'trainer', attributes: ['id', 'name'] }]
+        },
+        {
+          model: Training,
+          as: 'training',
+          attributes: ['id', 'title'],
+          include: [{ model: User, as: 'trainer', attributes: ['id', 'name'] }]
+        },
+      ]
+    });
+
+    if (!cert) {
+      return res.status(404).json({
+        success: false,
+        valid: false,
+        message: 'Invalid certificate code. No record found.',
+      });
+    }
+
+    res.json({
+      success: true,
+      valid: true,
+      certificate: {
+        code: cert.certificateCode,
+        recipientName: cert.user?.name || 'Learner',
+        recipientEmail: cert.user?.email,
+        courseTitle: cert.course?.title || cert.training?.title || 'Course of Study',
+        trainerName: cert.course?.trainer?.name || cert.training?.trainer?.name || 'WAVE INIT Instructor',
+        issuedAt: cert.issuedAt,
+        status: 'VERIFIED_OFFICIAL',
+      }
+    });
+  } catch (error) {
+    console.error('Verify certificate error:', error.message);
+    res.status(500).json({ success: false, error: 'Failed to verify certificate' });
+  }
+};
+
 module.exports = {
   getAdminReport,
   getTrainerReport,
-  getParticipantReport
+  getParticipantReport,
+  verifyCertificate,
 };
+

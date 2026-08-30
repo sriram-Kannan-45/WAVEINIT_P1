@@ -187,6 +187,11 @@ module.exports = (io, socket) => {
     const targetSessionId = sessionId || socket.sessionId;
     if (!targetSessionId || !frame) return;
 
+    // Coalesce the legacy fallback relay (~2fps) to keep dashboards calm.
+    const now = Date.now();
+    if (now - (socket._lastAssessmentVerifFrameRelayAt || 0) < 500) return;
+    socket._lastAssessmentVerifFrameRelayAt = now;
+
     socket.to(`assessment_verif_${targetSessionId}`).emit('assessment_verif:frame', {
       sessionId: targetSessionId,
       frame,

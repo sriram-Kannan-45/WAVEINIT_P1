@@ -111,6 +111,8 @@ function ParticipantQuizAttemptPageInner({ user }) {
         setQuizData({
           id: data.quiz.id,
           title: data.quiz.title,
+          courseId: data.quiz.courseId || null,
+          trainingId: data.quiz.trainingId || null,
           timeLimit: data.quiz.timeLimit,
           copyProtectionEnabled: data.quiz.copyProtectionEnabled,
           maxCopyWarnings: data.quiz.maxCopyWarnings,
@@ -137,9 +139,23 @@ function ParticipantQuizAttemptPageInner({ user }) {
     return () => { aborted = true }
   }, [quizId, attemptId, user.token])
 
+  const [testStartedAt, setTestStartedAt] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(`quiz_${quizId}_test_start_${attemptId}`);
+      return cached ? parseInt(cached, 10) : null;
+    } catch {
+      return null;
+    }
+  });
+
   const handleConsented = useCallback(() => {
-    setConsented(true)
-  }, [])
+    const start = Date.now();
+    setTestStartedAt(start);
+    try {
+      sessionStorage.setItem(`quiz_${quizId}_test_start_${attemptId}`, String(start));
+    } catch {}
+    setConsented(true);
+  }, [quizId, attemptId]);
 
   const endVerificationSession = useCallback(() => {
     const sId = verifSessionInfo?.sessionId;
@@ -157,8 +173,9 @@ function ParticipantQuizAttemptPageInner({ user }) {
 
   const handleCancel = useCallback(() => {
     endVerificationSession();
-    navigate(trainingId ? `/participant?tab=myEnrollments&courseId=${trainingId}` : '/participant?tab=myEnrollments')
-  }, [navigate, trainingId, endVerificationSession])
+    const targetCourseId = quizData?.courseId || trainingId
+    navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}&subtab=quizzes` : '/participant?tab=myEnrollments')
+  }, [navigate, quizData, trainingId, endVerificationSession])
 
   // Stop media & exit fullscreen (called after quiz submission)
   const handleRecordingStop = useCallback(async () => {
@@ -198,8 +215,9 @@ function ParticipantQuizAttemptPageInner({ user }) {
   // Called from QuizTaking's "Back to Dashboard" button / auto-submit
   const handleSubmit = useCallback(async () => {
     await handleRecordingStop()
-    navigate(trainingId ? `/participant?tab=myEnrollments&courseId=${trainingId}` : '/participant?tab=myEnrollments')
-  }, [handleRecordingStop, trainingId, navigate])
+    const targetCourseId = quizData?.courseId || trainingId
+    navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}&subtab=quizzes` : '/participant?tab=myEnrollments')
+  }, [handleRecordingStop, quizData, trainingId, navigate])
 
   if (loading) {
     return (
@@ -221,6 +239,7 @@ function ParticipantQuizAttemptPageInner({ user }) {
   }
 
   if (errorMsg) {
+    const targetCourseId = quizData?.courseId || trainingId
     return (
       <div style={{
         minHeight: '100vh',
@@ -237,7 +256,7 @@ function ParticipantQuizAttemptPageInner({ user }) {
           {errorMsg}
         </div>
         <button
-          onClick={() => navigate(trainingId ? `/participant?tab=myEnrollments&courseId=${trainingId}` : '/participant?tab=myEnrollments')}
+          onClick={() => navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}` : '/participant?tab=myEnrollments')}
           style={{
             padding: '10px 20px',
             background: '#2563eb',
@@ -254,6 +273,25 @@ function ParticipantQuizAttemptPageInner({ user }) {
         </button>
       </div>
     )
+  }
+
+  // Pre-test Step 1: Mobile Camera Pairing via QR Code
+  if (!qrVerified && quizData) {
+    return (
+      <AssessmentQRPairingModal
+        assessmentType="QUIZ"
+        assessmentId={parseInt(quizId, 10)}
+        attemptId={parseInt(attemptId, 10)}
+        assessmentTitle={quizData.title || 'Quiz Assessment'}
+        participantName={user?.name || 'Participant'}
+        userToken={user?.token}
+        onVerified={(data) => {
+          setVerifSessionInfo(data);
+          setQrVerified(true);
+        }}
+        onCancel={handleCancel}
+      />
+    );
   }
 
   // Pre-test Step 2: Assessment Consent, Camera Calibration & Fullscreen Gate
@@ -292,6 +330,8 @@ function ParticipantQuizAttemptPageInner({ user }) {
         mobileEnabled={true}
         preCalibrated={true}
         prePaired={true}
+        isTestActive={consented}
+        testStartedAt={testStartedAt}
         onWebcamStreamReady={setSharedCamStream}
       />
     </>

@@ -64,7 +64,7 @@ class MonitoringExcelService {
     const pId = metrics.participantId || metrics.participant_id || 'Candidate';
     const sTime = metrics.startTime ? (typeof metrics.startTime === 'string' && metrics.startTime.includes('T') ? new Date(metrics.startTime).toLocaleTimeString() : String(metrics.startTime)) : '00:00:00';
     const eTime = metrics.endTime ? (typeof metrics.endTime === 'string' && metrics.endTime.includes('T') ? new Date(metrics.endTime).toLocaleTimeString() : String(metrics.endTime)) : '—';
-    const actDurSec = Number(metrics.actualTestDuration ?? metrics.actual_test_duration ?? metrics.testDuration ?? metrics.test_duration ?? 0);
+    const actDurSec = Number(metrics.actualTestDurationSeconds ?? metrics.actualTestDuration ?? metrics.actual_test_duration ?? metrics.testDuration ?? metrics.test_duration ?? 0);
     const actDurStr = `${Math.floor(actDurSec / 60)}m ${Math.round(actDurSec % 60)}s (${actDurSec.toFixed(1)}s)`;
     const vidUrl = metrics.videoUrl || metrics.video_url || '—';
 
@@ -150,7 +150,7 @@ class MonitoringExcelService {
     const ws2 = workbook.addWorksheet('Summary');
 
     const cfgDur = Number(metrics.configuredDuration ?? metrics.configured_duration ?? metrics.testDuration ?? metrics.test_duration ?? 0);
-    const actDur = Number(metrics.actualTestDuration ?? metrics.actual_test_duration ?? metrics.testDuration ?? metrics.test_duration ?? 0);
+    const actDur = Number(metrics.actualTestDurationSeconds ?? metrics.actualTestDuration ?? metrics.actual_test_duration ?? metrics.testDuration ?? metrics.test_duration ?? 0);
     const vSec = Number(metrics.violationSeconds ?? metrics.violation_seconds ?? 0);
     const vPct = Number(metrics.violationPercentage ?? metrics.violation_percentage ?? 0);
     const mScore = Number(metrics.monitoringScore ?? metrics.monitoring_score ?? metrics.eyeHeadScore ?? 0);

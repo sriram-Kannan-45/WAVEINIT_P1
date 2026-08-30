@@ -42,11 +42,56 @@ const {
   CodingAttempt,
   CodingSubmission,
   CodingResult,
+  AttendanceRecord,
+  AttendanceSession,
+  UserBadge,
+  AssessmentVerificationSession,
+  UserSession,
+  RefreshToken,
+  AuditLog,
+  PasswordResetOtp,
+  Interview,
+  InterviewSession,
+  InterviewDevice,
+  InterviewRecording,
+  InterviewLog,
+  InterviewAlert,
+  InterviewFeedback,
+  InterviewResult,
+  InterviewNotes,
+  SurveyAnswer,
+  ActivityLog,
+  ChatMessage,
+  UserProfile,
+  ProfileSkill,
+  ProfileExperience,
+  ProfileEducation,
+  ProfileCertificate,
+  ProfileProject,
+  ProfileContactLink,
+  ProfileActivityLog,
+  ParticipantProfile,
+  TrainerEducation,
+  TrainerExperience,
+  TrainerProfile,
+  Attendance,
+  MonitoringSession,
+  MonitoringEvent,
+  VideoSegment,
+  ProcessingJob,
+  MonitorAttempt,
+  MonitorViolation,
+  MonitorScreenshot,
+  ProctoringSession,
+  ProctoringEvent,
+  ProctoringReport,
+  DeviceFingerprint
 } = require('../models');
 const ActivityService = require('../services/activityService');
 const logger = require('../utils/logger');
 const bcrypt = require('bcryptjs');
 const { validateEmail, validatePassword } = require('../utils/validators');
+const { invalidateSummaryCache } = require('./adminSummaryController');
 
 const updateTraining = async (req, res) => {
   try {
@@ -595,43 +640,46 @@ const deleteTrainer = async (req, res) => {
 
 const getStats = async (req, res) => {
   try {
-    const totalTrainings = await Training.count();
-    const totalTrainers = await User.count({ where: { role: 'TRAINER', isDeleted: false, status: 'APPROVED' } });
-    const totalParticipants = await User.count({ where: { role: 'PARTICIPANT', isDeleted: false } });
-    const totalEnrollments = await Enrollment.count({ where: { status: 'ENROLLED' } });
-    const totalFeedbacks = await Feedback.count();
-    
-    // Pending counts
-    const pendingParticipants = await User.count({ 
-      where: { role: 'PARTICIPANT', status: 'PENDING', isDeleted: false } 
-    });
-    const { Note } = require('../models');
-    const pendingNotes = await Note.count({ where: { status: 'PENDING' } });
-    
-    // Completed trainings (trainings that have ended)
     const now = new Date();
-    const completedTrainings = await Training.count({
-      where: { endDate: { [require('sequelize').Op.lt]: now } }
-    });
+    const { Note } = require('../models');
+    const { sequelize } = require('../config/db');
+
+    const [
+      totalTrainings,
+      totalTrainers,
+      totalParticipants,
+      totalEnrollments,
+      totalFeedbacks,
+      pendingParticipants,
+      pendingNotes,
+      completedTrainings,
+      feedbackAgg
+    ] = await Promise.all([
+      Training.count(),
+      User.count({ where: { role: 'TRAINER', isDeleted: false, status: 'APPROVED' } }),
+      User.count({ where: { role: 'PARTICIPANT', isDeleted: false } }),
+      Enrollment.count({ where: { status: 'ENROLLED' } }),
+      Feedback.count(),
+      User.count({ where: { role: 'PARTICIPANT', status: 'PENDING', isDeleted: false } }),
+      Note.count({ where: { status: 'PENDING' } }),
+      Training.count({ where: { endDate: { [require('sequelize').Op.lt]: now } } }),
+      Feedback.findAll({
+        attributes: [
+          [sequelize.fn('AVG', sequelize.col('trainerRating')), 'avgTrainerRating'],
+          [sequelize.fn('AVG', sequelize.col('subjectRating')), 'avgSubjectRating']
+        ],
+        raw: true
+      }).catch(() => ([{}]))
+    ]);
+
     const activeTrainings = totalTrainings - completedTrainings;
 
-    // Feedback stats
-    const feedbacks = await Feedback.findAll({ 
-      attributes: ['trainerRating', 'subjectRating'] 
-    });
-    const avgTrainerRating = feedbacks.length > 0
-      ? (feedbacks.reduce((s, f) => s + f.trainerRating, 0) / feedbacks.length).toFixed(1) : 0;
-    const avgSubjectRating = feedbacks.length > 0
-      ? (feedbacks.reduce((s, f) => s + f.subjectRating, 0) / feedbacks.length).toFixed(1) : 0;
-    const satisfactionScore = feedbacks.length > 0
-      ? (((parseFloat(avgTrainerRating) + parseFloat(avgSubjectRating)) / 2)).toFixed(1)
-      : 0;
+    const fStat = (feedbackAgg && feedbackAgg[0]) || {};
+    const avgTrainerRating = fStat.avgTrainerRating ? parseFloat(fStat.avgTrainerRating).toFixed(1) : '0.0';
+    const avgSubjectRating = fStat.avgSubjectRating ? parseFloat(fStat.avgSubjectRating).toFixed(1) : '0.0';
+    const satisfactionScore = (((parseFloat(avgTrainerRating) + parseFloat(avgSubjectRating)) / 2) || 0).toFixed(1);
 
-    // Rating distribution (for charts)
     const ratingDistribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-    feedbacks.forEach(f => {
-      ratingDistribution[f.trainerRating] = (ratingDistribution[f.trainerRating] || 0) + 1;
-    });
 
     // Enrollment rate
     const enrollmentRate = totalParticipants > 0 
@@ -741,13 +789,16 @@ const getParticipants = async (req, res) => {
         if (QuizResult) {
           const quizResults = await QuizResult.findAll({
             where: { participantId: { [Op.in]: participantIds } },
-            attributes: ['participantId', 'score']
+            attributes: ['participantId', 'percentage', 'totalScore']
           });
           const userScores = {};
           quizResults.forEach(qr => {
             if (!userScores[qr.participantId]) userScores[qr.participantId] = [];
-            if (qr.score !== null && qr.score !== undefined) {
-              userScores[qr.participantId].push(Number(qr.score));
+            const val = qr.percentage !== null && qr.percentage !== undefined
+              ? Number(qr.percentage)
+              : (qr.totalScore !== null && qr.totalScore !== undefined ? Number(qr.totalScore) : null);
+            if (val !== null) {
+              userScores[qr.participantId].push(val);
             }
           });
           Object.keys(userScores).forEach(uId => {
@@ -760,7 +811,7 @@ const getParticipants = async (req, res) => {
 
         if (LessonProgress) {
           const progressRows = await LessonProgress.findAll({
-            where: { participantId: { [Op.in]: participantIds }, isCompleted: true },
+            where: { participantId: { [Op.in]: participantIds }, status: 'COMPLETED' },
             attributes: ['participantId', [LessonProgress.sequelize.fn('COUNT', '*'), 'completedCount']],
             group: ['participantId'],
             raw: true
@@ -850,6 +901,7 @@ const sendReminders = async (req, res) => {
 const deleteParticipant = async (req, res) => {
   const { id } = req.params;
   const { sequelize } = require('../config/db');
+  const { Op } = require('sequelize');
   let t;
   try {
     t = await sequelize.transaction();
@@ -865,157 +917,303 @@ const deleteParticipant = async (req, res) => {
       return res.status(404).json({ error: 'Participant not found' });
     }
 
-    const { Op } = require('sequelize');
-    const {
-      Enrollment, Feedback, Notification, ParticipantProfile,
-      DeviceFingerprint, ParticipantTracking, Certificate, Attendance, DiscussionPost,
-      LessonProgress, QuizProgress, QuizAttempt, QuizAnswer, QuizResult,
-      AssessmentSession, ExamSession, Violation, Screenshot, ProctorActivity,
-      QuizCopyViolation, QuizAssignment, AssessmentSubmission,
-      MonitorAttempt, MonitorViolation, MonitorScreenshot,
-      CodingAttempt, CodingSubmission, CodingResult,
-      QuizRecording, QuizResultsAudit,
-      ProctoringSession, ProctoringEvent, ProctoringReport
-    } = require('../models');
+    const email = participant.email;
 
-    // 1. Quiz attempt related cleanup — child tables before QuizAttempt
+    // 1. Unified Monitoring Sessions & Async Video Pipeline
+    const monitoringSessions = await MonitoringSession.findAll({
+      where: { participantId: id },
+      attributes: ['id', 'sessionId'],
+      transaction: t,
+    });
+    const monSessionUUIDs = monitoringSessions.map(m => m.sessionId).filter(Boolean);
+    const monSessionIds = monitoringSessions.map(m => m.id);
+
+    if (monSessionUUIDs.length > 0) {
+      const segments = await VideoSegment.findAll({
+        where: { monitoringSessionId: { [Op.in]: monSessionUUIDs } },
+        attributes: ['id'],
+        transaction: t,
+      });
+      const segmentIds = segments.map(s => s.id);
+
+      if (segmentIds.length > 0) {
+        await ProcessingJob.destroy({ where: { segmentId: { [Op.in]: segmentIds } }, transaction: t });
+        await MonitoringEvent.destroy({ where: { segmentId: { [Op.in]: segmentIds } }, transaction: t });
+        await VideoSegment.destroy({ where: { id: { [Op.in]: segmentIds } }, transaction: t });
+      }
+
+      await MonitoringEvent.destroy({
+        where: { monitoringSessionId: { [Op.in]: monSessionUUIDs } },
+        transaction: t,
+      });
+    }
+
+    if (monSessionIds.length > 0 || monSessionUUIDs.length > 0) {
+      await MonitoringSession.destroy({
+        where: {
+          [Op.or]: [
+            { id: { [Op.in]: monSessionIds } },
+            { participantId: id },
+          ],
+        },
+        transaction: t,
+      });
+    }
+
+    // 2. Quiz attempts & related child records
     const attempts = await QuizAttempt.findAll({
-      where: { participantId: id }, attributes: ['id'], transaction: t
+      where: { participantId: id },
+      attributes: ['id'],
+      transaction: t,
     });
     const attemptIds = attempts.map(a => a.id);
 
     if (attemptIds.length > 0) {
-      await ProctoringReport.destroy({
-        where: { attemptId: { [Op.in]: attemptIds } }, transaction: t
-      }).catch(() => {});
-      await ProctoringEvent.destroy({
-        where: { attemptId: { [Op.in]: attemptIds } }, transaction: t
-      }).catch(() => {});
-      await ProctoringSession.destroy({
-        where: { attemptId: { [Op.in]: attemptIds } }, transaction: t
-      }).catch(() => {});
+      await ProctoringReport.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t });
+      await ProctoringEvent.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t });
+      await ProctoringSession.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t });
       await QuizCopyViolation.destroy({
-        where: { attemptId: { [Op.in]: attemptIds } }, transaction: t
+        where: { [Op.or]: [{ attemptId: { [Op.in]: attemptIds } }, { participantId: id }] },
+        transaction: t,
       });
-      await QuizAnswer.destroy({
-        where: { attemptId: { [Op.in]: attemptIds } }, transaction: t
-      });
+      await QuizAnswer.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t });
       await QuizResult.destroy({
-        where: { attemptId: { [Op.in]: attemptIds } }, transaction: t
+        where: { [Op.or]: [{ attemptId: { [Op.in]: attemptIds } }, { participantId: id }] },
+        transaction: t,
       });
       await AssessmentSession.destroy({
-        where: { attemptId: { [Op.in]: attemptIds } }, transaction: t
+        where: { [Op.or]: [{ attemptId: { [Op.in]: attemptIds } }, { participantId: id }] },
+        transaction: t,
       });
       await ExamSession.destroy({
-        where: { attemptId: { [Op.in]: attemptIds } }, transaction: t
+        where: { [Op.or]: [{ attemptId: { [Op.in]: attemptIds } }, { participantId: id }] },
+        transaction: t,
       });
+      await QuizAttempt.destroy({ where: { id: { [Op.in]: attemptIds } }, transaction: t });
     }
 
-    // 2. Exam session & proctoring cleanup — children (Violation, Screenshot, ProctorActivity) before ExamSession
+    // Direct references
+    await QuizResult.destroy({ where: { participantId: id }, transaction: t });
+    await QuizCopyViolation.destroy({ where: { participantId: id }, transaction: t });
+    await QuizAttempt.destroy({ where: { participantId: id }, transaction: t });
+    await AssessmentSession.destroy({ where: { participantId: id }, transaction: t });
+
+    // 3. Exam Sessions, Proctoring Violations, Screenshots, Activities
     const examSessions = await ExamSession.findAll({
-      where: { participantId: id }, attributes: ['id'], transaction: t
+      where: { participantId: id },
+      attributes: ['id'],
+      transaction: t,
     });
     const sessionIds = examSessions.map(e => e.id);
 
     if (sessionIds.length > 0) {
-      await Violation.destroy({
-        where: { sessionId: { [Op.in]: sessionIds } }, transaction: t
-      });
-      await Screenshot.destroy({
-        where: { sessionId: { [Op.in]: sessionIds } }, transaction: t
-      });
-      await ProctorActivity.destroy({
-        where: { sessionId: { [Op.in]: sessionIds } }, transaction: t
-      });
-      await ExamSession.destroy({
-        where: { id: { [Op.in]: sessionIds } }, transaction: t
-      });
+      await Violation.destroy({ where: { sessionId: { [Op.in]: sessionIds } }, transaction: t });
+      await Screenshot.destroy({ where: { sessionId: { [Op.in]: sessionIds } }, transaction: t });
+      await ProctorActivity.destroy({ where: { sessionId: { [Op.in]: sessionIds } }, transaction: t });
+      await ExamSession.destroy({ where: { id: { [Op.in]: sessionIds } }, transaction: t });
     }
-    // Catch any records linked directly to the participant (orphans)
     await Violation.destroy({ where: { participantId: id }, transaction: t });
     await Screenshot.destroy({ where: { participantId: id }, transaction: t });
     await ProctorActivity.destroy({ where: { participantId: id }, transaction: t });
-    await AssessmentSession.destroy({ where: { participantId: id }, transaction: t });
+    await ExamSession.destroy({ where: { participantId: id }, transaction: t });
 
-    // 3. Discussion posts — detach children first, then delete the user's posts
-    const posts = await DiscussionPost.findAll({
-      where: { userId: id }, attributes: ['id'], transaction: t
-    });
-    const postIds = posts.map(p => p.id);
-    if (postIds.length > 0) {
-      await DiscussionPost.update(
-        { parentId: null },
-        { where: { parentId: { [Op.in]: postIds } }, transaction: t }
-      );
-    }
-    await DiscussionPost.destroy({ where: { userId: id }, transaction: t });
-
-    // 4. Coding attempt cleanup
+    // 4. Coding Attempts, Submissions & Results
     const codingAttempts = await CodingAttempt.findAll({
-      where: { participantId: id }, attributes: ['id'], transaction: t
+      where: { participantId: id },
+      attributes: ['id'],
+      transaction: t,
     });
     const codingAttemptIds = codingAttempts.map(ca => ca.id);
 
     if (codingAttemptIds.length > 0) {
-      await CodingSubmission.destroy({
-        where: { attemptId: { [Op.in]: codingAttemptIds } }, transaction: t
-      });
+      await CodingSubmission.destroy({ where: { attemptId: { [Op.in]: codingAttemptIds } }, transaction: t });
       await CodingResult.destroy({
-        where: { attemptId: { [Op.in]: codingAttemptIds } }, transaction: t
+        where: { [Op.or]: [{ attemptId: { [Op.in]: codingAttemptIds } }, { participantId: id }] },
+        transaction: t,
       });
-      await CodingAttempt.destroy({
-        where: { id: { [Op.in]: codingAttemptIds } }, transaction: t
-      });
+      await CodingAttempt.destroy({ where: { id: { [Op.in]: codingAttemptIds } }, transaction: t });
     }
+    await CodingResult.destroy({ where: { participantId: id }, transaction: t });
+    await CodingAttempt.destroy({ where: { participantId: id }, transaction: t });
 
-    // 5. Monitor system cleanup
+    // 5. Monitor attempts, violations, screenshots
     const monitorAttempts = await MonitorAttempt.findAll({
-      where: { participantId: id }, attributes: ['id'], transaction: t
+      where: { participantId: id },
+      attributes: ['id'],
+      transaction: t,
     });
     const monitorAttemptIds = monitorAttempts.map(ma => ma.id);
 
     if (monitorAttemptIds.length > 0) {
       await MonitorViolation.destroy({
-        where: { attemptId: { [Op.in]: monitorAttemptIds } }, transaction: t
+        where: { [Op.or]: [{ attemptId: { [Op.in]: monitorAttemptIds } }, { participantId: id }] },
+        transaction: t,
       });
       await MonitorScreenshot.destroy({
-        where: { attemptId: { [Op.in]: monitorAttemptIds } }, transaction: t
+        where: { [Op.or]: [{ attemptId: { [Op.in]: monitorAttemptIds } }, { participantId: id }] },
+        transaction: t,
       });
-      await MonitorAttempt.destroy({
-        where: { id: { [Op.in]: monitorAttemptIds } }, transaction: t
-      });
+      await MonitorAttempt.destroy({ where: { id: { [Op.in]: monitorAttemptIds } }, transaction: t });
     }
+    await MonitorViolation.destroy({ where: { participantId: id }, transaction: t });
+    await MonitorScreenshot.destroy({ where: { participantId: id }, transaction: t });
+    await MonitorAttempt.destroy({ where: { participantId: id }, transaction: t });
 
-    // 6. QuizProgress — fix: use participantId (was incorrectly filtering by lessonQuizId)
+    // 6. Interview module
+    const interviews = await Interview.findAll({
+      where: {
+        [Op.or]: [
+          { candidate_id: id },
+          { interviewer_id: id },
+          { created_by: id },
+        ],
+      },
+      attributes: ['id'],
+      transaction: t,
+    });
+    const interviewIds = interviews.map(iv => iv.id);
+
+    if (interviewIds.length > 0) {
+      await InterviewNotes.destroy({
+        where: { [Op.or]: [{ interview_id: { [Op.in]: interviewIds } }, { author_id: id }] },
+        transaction: t,
+      });
+      await InterviewFeedback.destroy({
+        where: { [Op.or]: [{ interview_id: { [Op.in]: interviewIds } }, { interviewer_id: id }] },
+        transaction: t,
+      });
+      await InterviewResult.destroy({
+        where: { [Op.or]: [{ interview_id: { [Op.in]: interviewIds } }, { decided_by: id }] },
+        transaction: t,
+      });
+      await InterviewRecording.destroy({
+        where: { [Op.or]: [{ interview_id: { [Op.in]: interviewIds } }, { uploaded_by: id }] },
+        transaction: t,
+      });
+      await InterviewLog.destroy({
+        where: { [Op.or]: [{ interview_id: { [Op.in]: interviewIds } }, { actor_id: id }] },
+        transaction: t,
+      });
+      await InterviewAlert.destroy({ where: { interview_id: { [Op.in]: interviewIds } }, transaction: t });
+      await InterviewSession.destroy({ where: { interview_id: { [Op.in]: interviewIds } }, transaction: t });
+      await InterviewDevice.destroy({
+        where: { [Op.or]: [{ interview_id: { [Op.in]: interviewIds } }, { user_id: id }] },
+        transaction: t,
+      });
+      await Interview.destroy({ where: { id: { [Op.in]: interviewIds } }, transaction: t });
+    }
+    await InterviewDevice.destroy({ where: { user_id: id }, transaction: t });
+    await InterviewNotes.destroy({ where: { author_id: id }, transaction: t });
+    await InterviewFeedback.destroy({ where: { interviewer_id: id }, transaction: t });
+    await InterviewResult.destroy({ where: { decided_by: id }, transaction: t });
+    await Interview.destroy({
+      where: {
+        [Op.or]: [{ candidate_id: id }, { interviewer_id: id }, { created_by: id }],
+      },
+      transaction: t,
+    });
+
+    // 7. Discussion posts (detach child replies before deletion)
+    const posts = await DiscussionPost.findAll({
+      where: { userId: id },
+      attributes: ['id'],
+      transaction: t,
+    });
+    const postIds = posts.map(p => p.id);
+    if (postIds.length > 0) {
+      await DiscussionPost.update({ parentId: null }, { where: { parentId: { [Op.in]: postIds } }, transaction: t });
+      await DiscussionPost.destroy({ where: { id: { [Op.in]: postIds } }, transaction: t });
+    }
+    await DiscussionPost.destroy({ where: { userId: id }, transaction: t });
+
+    // 8. Progress, Gating, Submissions, Verifications, Feedbacks & Attendance
     await QuizProgress.destroy({ where: { participantId: id }, transaction: t });
-
-    // 7. Other participant-scoped tables
+    await LessonProgress.destroy({ where: { participantId: id }, transaction: t });
     await AssessmentSubmission.destroy({ where: { participantId: id }, transaction: t });
-    await QuizRecording.destroy({ where: { participantId: id }, transaction: t });
+    await QuizRecording.destroy({
+      where: { [Op.or]: [{ participantId: id }, { trainerId: id }] },
+      transaction: t,
+    });
     await QuizResultsAudit.destroy({ where: { performedBy: id }, transaction: t });
     await QuizAssignment.destroy({ where: { participantId: id }, transaction: t });
-
-    // 8. General student records (sequentially to avoid FK conflicts)
-    await Notification.destroy({ where: { userId: id }, transaction: t });
-    await ParticipantProfile.destroy({ where: { userId: id }, transaction: t });
-    await DeviceFingerprint.destroy({ where: { userId: id }, transaction: t });
-    await ParticipantTracking.destroy({ where: { userId: id }, transaction: t });
+    await AssessmentVerificationSession.destroy({
+      where: { participant_id: id },
+      transaction: t,
+    });
+    await AttendanceRecord.destroy({
+      where: { [Op.or]: [{ studentId: id }, { markedBy: id }] },
+      transaction: t,
+    });
+    await UserBadge.destroy({ where: { userId: id }, transaction: t });
     await Certificate.destroy({ where: { userId: id }, transaction: t });
-    await Attendance.destroy({ where: { userId: id }, transaction: t });
-    await LessonProgress.destroy({ where: { participantId: id }, transaction: t });
+    await ParticipantTracking.destroy({ where: { userId: id }, transaction: t });
+
+    // Delete survey answers linked to feedbacks
+    const userFeedbacks = await Feedback.findAll({
+      where: { participantId: id },
+      attributes: ['id'],
+      transaction: t,
+    });
+    const fbIds = userFeedbacks.map(f => f.id);
+    if (fbIds.length > 0) {
+      await SurveyAnswer.destroy({ where: { feedbackId: { [Op.in]: fbIds } }, transaction: t });
+    }
     await Feedback.destroy({ where: { participantId: id }, transaction: t });
     await Enrollment.destroy({ where: { participantId: id }, transaction: t });
-    await QuizAttempt.destroy({ where: { participantId: id }, transaction: t });
 
-    // 9. Finally destroy the user
+    // 9. Profiles
+    const userProfiles = await UserProfile.findAll({
+      where: { userId: id },
+      attributes: ['id'],
+      transaction: t,
+    });
+    const upIds = userProfiles.map(u => u.id);
+    if (upIds.length > 0) {
+      await ProfileSkill.destroy({ where: { profileId: { [Op.in]: upIds } }, transaction: t });
+      await ProfileExperience.destroy({ where: { profileId: { [Op.in]: upIds } }, transaction: t });
+      await ProfileEducation.destroy({ where: { profileId: { [Op.in]: upIds } }, transaction: t });
+      await ProfileCertificate.destroy({ where: { profileId: { [Op.in]: upIds } }, transaction: t });
+      await ProfileProject.destroy({ where: { profileId: { [Op.in]: upIds } }, transaction: t });
+      await ProfileContactLink.destroy({ where: { profileId: { [Op.in]: upIds } }, transaction: t });
+      await ProfileActivityLog.destroy({ where: { profileId: { [Op.in]: upIds } }, transaction: t });
+      await UserProfile.destroy({ where: { id: { [Op.in]: upIds } }, transaction: t });
+    }
+    await UserProfile.destroy({ where: { userId: id }, transaction: t });
+    await ParticipantProfile.destroy({ where: { userId: id }, transaction: t });
+    await TrainerEducation.destroy({ where: { userId: id }, transaction: t });
+    await TrainerExperience.destroy({ where: { userId: id }, transaction: t });
+    await TrainerProfile.destroy({ where: { userId: id }, transaction: t });
+    await CourseTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t });
+    await TrainingTrainerAssignment.destroy({ where: { trainerId: id }, transaction: t });
+
+    // 10. Auth, Sessions, Messages, Notifications, Logs
+    await RegistrationApplication.destroy({
+      where: { [Op.or]: [{ userId: id }, { trainerId: id }, { reviewerId: id }] },
+      transaction: t,
+    });
+    await ChatMessage.destroy({ where: { senderId: id }, transaction: t });
+    await Note.destroy({ where: { trainerId: id }, transaction: t });
+    await Notification.destroy({ where: { userId: id }, transaction: t });
+    await DeviceFingerprint.destroy({ where: { userId: id }, transaction: t });
+    await ActivityLog.destroy({ where: { userId: id }, transaction: t });
+    await AuditLog.destroy({ where: { userId: id }, transaction: t });
+    await UserSession.destroy({ where: { userId: id }, transaction: t });
+    await RefreshToken.destroy({ where: { userId: id }, transaction: t });
+    if (email) {
+      await PasswordResetOtp.destroy({ where: { email }, transaction: t });
+    }
+    await Attendance.destroy({ where: { userId: id }, transaction: t });
+
+    // 11. Finally destroy User record
     await User.destroy({ where: { id }, transaction: t });
 
     await t.commit();
-    res.json({ message: 'Participant removed successfully' });
+    invalidateSummaryCache();
+    return res.json({ success: true, message: 'Participant removed successfully' });
   } catch (error) {
-    await t.rollback();
+    if (t && !t.finished) await t.rollback();
     console.error('Delete participant error:', error.stack || error.message);
-    res.status(500).json({ error: 'Server error deleting participant' });
+    res.status(500).json({ success: false, error: error.message || 'Server error deleting participant' });
   }
 };
 
@@ -1158,6 +1356,8 @@ const approveParticipant = async (req, res) => {
       isRead: false
     });
 
+    invalidateSummaryCache();
+
     res.json({
       success: true,
       message: 'Participant approved successfully',
@@ -1217,6 +1417,8 @@ const rejectParticipant = async (req, res) => {
       type: 'APPROVAL',
       isRead: false
     });
+
+    invalidateSummaryCache();
 
     res.json({
       success: true,
@@ -1543,94 +1745,301 @@ const bulkDeleteParticipants = async (req, res) => {
     // Execute deletion in a single database transaction
     const t = await sequelize.transaction();
     try {
-      // 1. Quiz attempt related cleanup
+      // 1. Unified Monitoring Sessions & Async Video Pipeline
+      const monitoringSessions = await MonitoringSession.findAll({
+        where: { participantId: { [Op.in]: eligibleIds } },
+        attributes: ['id', 'sessionId'],
+        transaction: t,
+      }).catch(() => []);
+      const monSessionUUIDs = monitoringSessions.map(m => m.sessionId).filter(Boolean);
+      const monSessionIds = monitoringSessions.map(m => m.id);
+
+      if (monSessionUUIDs.length > 0) {
+        const segments = await VideoSegment.findAll({
+          where: { monitoringSessionId: { [Op.in]: monSessionUUIDs } },
+          attributes: ['id'],
+          transaction: t,
+        }).catch(() => []);
+        const segmentIds = segments.map(s => s.id);
+
+        if (segmentIds.length > 0) {
+          await ProcessingJob.destroy({ where: { segmentId: { [Op.in]: segmentIds } }, transaction: t }).catch(() => {});
+          await MonitoringEvent.destroy({ where: { segmentId: { [Op.in]: segmentIds } }, transaction: t }).catch(() => {});
+          await VideoSegment.destroy({ where: { id: { [Op.in]: segmentIds } }, transaction: t }).catch(() => {});
+        }
+
+        await MonitoringEvent.destroy({
+          where: { monitoringSessionId: { [Op.in]: monSessionUUIDs } },
+          transaction: t,
+        }).catch(() => {});
+      }
+
+      if (monSessionIds.length > 0 || monSessionUUIDs.length > 0) {
+        await MonitoringSession.destroy({
+          where: {
+            [Op.or]: [
+              { id: { [Op.in]: monSessionIds } },
+              { participantId: { [Op.in]: eligibleIds } },
+            ],
+          },
+          transaction: t,
+        }).catch(() => {});
+      }
+
+      // 2. Quiz attempts & related child records
       const attempts = await QuizAttempt.findAll({
-        where: { participantId: { [Op.in]: eligibleIds } }, attributes: ['id'], transaction: t
-      });
+        where: { participantId: { [Op.in]: eligibleIds } },
+        attributes: ['id'],
+        transaction: t,
+      }).catch(() => []);
       const attemptIds = attempts.map(a => a.id);
 
       if (attemptIds.length > 0) {
-        if (ProctoringReport) await ProctoringReport.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
-        if (ProctoringEvent) await ProctoringEvent.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
-        if (ProctoringSession) await ProctoringSession.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
-        if (QuizCopyViolation) await QuizCopyViolation.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
-        if (QuizAnswer) await QuizAnswer.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
-        if (QuizResult) await QuizResult.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
-        if (AssessmentSession) await AssessmentSession.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
-        if (ExamSession) await ExamSession.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+        await ProctoringReport.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+        await ProctoringEvent.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+        await ProctoringSession.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+        await QuizCopyViolation.destroy({
+          where: { [Op.or]: [{ attemptId: { [Op.in]: attemptIds } }, { participantId: { [Op.in]: eligibleIds } }] },
+          transaction: t,
+        }).catch(() => {});
+        await QuizAnswer.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
+        await QuizResult.destroy({
+          where: { [Op.or]: [{ attemptId: { [Op.in]: attemptIds } }, { participantId: { [Op.in]: eligibleIds } }] },
+          transaction: t,
+        }).catch(() => {});
+        await AssessmentSession.destroy({
+          where: { [Op.or]: [{ attemptId: { [Op.in]: attemptIds } }, { participantId: { [Op.in]: eligibleIds } }] },
+          transaction: t,
+        }).catch(() => {});
+        await ExamSession.destroy({
+          where: { [Op.or]: [{ attemptId: { [Op.in]: attemptIds } }, { participantId: { [Op.in]: eligibleIds } }] },
+          transaction: t,
+        }).catch(() => {});
+        await QuizAttempt.destroy({ where: { id: { [Op.in]: attemptIds } }, transaction: t }).catch(() => {});
       }
 
-      // 2. Exam session & proctoring cleanup
+      // Direct references
+      await QuizResult.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await QuizCopyViolation.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await QuizAttempt.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await AssessmentSession.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+
+      // 3. Exam Sessions, Proctoring Violations, Screenshots, Activities
       const examSessions = await ExamSession.findAll({
-        where: { participantId: { [Op.in]: eligibleIds } }, attributes: ['id'], transaction: t
-      });
+        where: { participantId: { [Op.in]: eligibleIds } },
+        attributes: ['id'],
+        transaction: t,
+      }).catch(() => []);
       const sessionIds = examSessions.map(e => e.id);
 
       if (sessionIds.length > 0) {
-        if (Violation) await Violation.destroy({ where: { sessionId: { [Op.in]: sessionIds } }, transaction: t }).catch(() => {});
-        if (Screenshot) await Screenshot.destroy({ where: { sessionId: { [Op.in]: sessionIds } }, transaction: t }).catch(() => {});
-        if (ProctorActivity) await ProctorActivity.destroy({ where: { sessionId: { [Op.in]: sessionIds } }, transaction: t }).catch(() => {});
-        await ExamSession.destroy({ where: { id: { [Op.in]: sessionIds } }, transaction: t });
+        await Violation.destroy({ where: { sessionId: { [Op.in]: sessionIds } }, transaction: t }).catch(() => {});
+        await Screenshot.destroy({ where: { sessionId: { [Op.in]: sessionIds } }, transaction: t }).catch(() => {});
+        await ProctorActivity.destroy({ where: { sessionId: { [Op.in]: sessionIds } }, transaction: t }).catch(() => {});
+        await ExamSession.destroy({ where: { id: { [Op.in]: sessionIds } }, transaction: t }).catch(() => {});
       }
+      await Violation.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await Screenshot.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await ProctorActivity.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await ExamSession.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
 
-      if (Violation) await Violation.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
-      if (Screenshot) await Screenshot.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
-      if (ProctorActivity) await ProctorActivity.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
-      if (AssessmentSession) await AssessmentSession.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      // 4. Coding Attempts, Submissions & Results
+      const codingAttempts = await CodingAttempt.findAll({
+        where: { participantId: { [Op.in]: eligibleIds } },
+        attributes: ['id'],
+        transaction: t,
+      }).catch(() => []);
+      const codingAttemptIds = codingAttempts.map(ca => ca.id);
 
-      // 3. Discussion posts
+      if (codingAttemptIds.length > 0) {
+        await CodingSubmission.destroy({ where: { attemptId: { [Op.in]: codingAttemptIds } }, transaction: t }).catch(() => {});
+        await CodingResult.destroy({
+          where: { [Op.or]: [{ attemptId: { [Op.in]: codingAttemptIds } }, { participantId: { [Op.in]: eligibleIds } }] },
+          transaction: t,
+        }).catch(() => {});
+        await CodingAttempt.destroy({ where: { id: { [Op.in]: codingAttemptIds } }, transaction: t }).catch(() => {});
+      }
+      await CodingResult.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await CodingAttempt.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+
+      // 5. Monitor attempts, violations, screenshots
+      const monitorAttempts = await MonitorAttempt.findAll({
+        where: { participantId: { [Op.in]: eligibleIds } },
+        attributes: ['id'],
+        transaction: t,
+      }).catch(() => []);
+      const monitorAttemptIds = monitorAttempts.map(ma => ma.id);
+
+      if (monitorAttemptIds.length > 0) {
+        await MonitorViolation.destroy({
+          where: { [Op.or]: [{ attemptId: { [Op.in]: monitorAttemptIds } }, { participantId: { [Op.in]: eligibleIds } }] },
+          transaction: t,
+        }).catch(() => {});
+        await MonitorScreenshot.destroy({
+          where: { [Op.or]: [{ attemptId: { [Op.in]: monitorAttemptIds } }, { participantId: { [Op.in]: eligibleIds } }] },
+          transaction: t,
+        }).catch(() => {});
+        await MonitorAttempt.destroy({ where: { id: { [Op.in]: monitorAttemptIds } }, transaction: t }).catch(() => {});
+      }
+      await MonitorViolation.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await MonitorScreenshot.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await MonitorAttempt.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+
+      // 6. Interview module
+      const interviews = await Interview.findAll({
+        where: {
+          [Op.or]: [
+            { candidate_id: { [Op.in]: eligibleIds } },
+            { interviewer_id: { [Op.in]: eligibleIds } },
+            { created_by: { [Op.in]: eligibleIds } },
+          ],
+        },
+        attributes: ['id'],
+        transaction: t,
+      }).catch(() => []);
+      const interviewIds = interviews.map(iv => iv.id);
+
+      if (interviewIds.length > 0) {
+        await InterviewNotes.destroy({
+          where: { [Op.or]: [{ interview_id: { [Op.in]: interviewIds } }, { author_id: { [Op.in]: eligibleIds } }] },
+          transaction: t,
+        }).catch(() => {});
+        await InterviewFeedback.destroy({
+          where: { [Op.or]: [{ interview_id: { [Op.in]: interviewIds } }, { interviewer_id: { [Op.in]: eligibleIds } }] },
+          transaction: t,
+        }).catch(() => {});
+        await InterviewResult.destroy({
+          where: { [Op.or]: [{ interview_id: { [Op.in]: interviewIds } }, { decided_by: { [Op.in]: eligibleIds } }] },
+          transaction: t,
+        }).catch(() => {});
+        await InterviewRecording.destroy({
+          where: { [Op.or]: [{ interview_id: { [Op.in]: interviewIds } }, { uploaded_by: { [Op.in]: eligibleIds } }] },
+          transaction: t,
+        }).catch(() => {});
+        await InterviewLog.destroy({
+          where: { [Op.or]: [{ interview_id: { [Op.in]: interviewIds } }, { actor_id: { [Op.in]: eligibleIds } }] },
+          transaction: t,
+        }).catch(() => {});
+        await InterviewAlert.destroy({ where: { interview_id: { [Op.in]: interviewIds } }, transaction: t }).catch(() => {});
+        await InterviewSession.destroy({ where: { interview_id: { [Op.in]: interviewIds } }, transaction: t }).catch(() => {});
+        await InterviewDevice.destroy({
+          where: { [Op.or]: [{ interview_id: { [Op.in]: interviewIds } }, { user_id: { [Op.in]: eligibleIds } }] },
+          transaction: t,
+        }).catch(() => {});
+        await Interview.destroy({ where: { id: { [Op.in]: interviewIds } }, transaction: t }).catch(() => {});
+      }
+      await InterviewDevice.destroy({ where: { user_id: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await InterviewNotes.destroy({ where: { author_id: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await InterviewFeedback.destroy({ where: { interviewer_id: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await InterviewResult.destroy({ where: { decided_by: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await Interview.destroy({
+        where: {
+          [Op.or]: [
+            { candidate_id: { [Op.in]: eligibleIds } },
+            { interviewer_id: { [Op.in]: eligibleIds } },
+            { created_by: { [Op.in]: eligibleIds } }
+          ],
+        },
+        transaction: t,
+      }).catch(() => {});
+
+      // 7. Discussion posts
       const posts = await DiscussionPost.findAll({
-        where: { userId: { [Op.in]: eligibleIds } }, attributes: ['id'], transaction: t
-      });
+        where: { userId: { [Op.in]: eligibleIds } },
+        attributes: ['id'],
+        transaction: t,
+      }).catch(() => []);
       const postIds = posts.map(p => p.id);
       if (postIds.length > 0) {
         await DiscussionPost.update({ parentId: null }, { where: { parentId: { [Op.in]: postIds } }, transaction: t }).catch(() => {});
-        await DiscussionPost.destroy({ where: { id: { [Op.in]: postIds } }, transaction: t });
+        await DiscussionPost.destroy({ where: { id: { [Op.in]: postIds } }, transaction: t }).catch(() => {});
       }
+      await DiscussionPost.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
 
-      // 4. Coding attempt cleanup
-      const codingAttempts = await CodingAttempt.findAll({
-        where: { participantId: { [Op.in]: eligibleIds } }, attributes: ['id'], transaction: t
-      });
-      const codingAttemptIds = codingAttempts.map(ca => ca.id);
-      if (codingAttemptIds.length > 0) {
-        if (CodingSubmission) await CodingSubmission.destroy({ where: { attemptId: { [Op.in]: codingAttemptIds } }, transaction: t }).catch(() => {});
-        if (CodingResult) await CodingResult.destroy({ where: { attemptId: { [Op.in]: codingAttemptIds } }, transaction: t }).catch(() => {});
-        await CodingAttempt.destroy({ where: { id: { [Op.in]: codingAttemptIds } }, transaction: t });
+      // 8. Progress, Gating, Submissions, Verifications, Feedbacks & Attendance
+      await QuizProgress.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await LessonProgress.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await AssessmentSubmission.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await QuizRecording.destroy({
+        where: { [Op.or]: [{ participantId: { [Op.in]: eligibleIds } }, { trainerId: { [Op.in]: eligibleIds } }] },
+        transaction: t,
+      }).catch(() => {});
+      await QuizResultsAudit.destroy({ where: { performedBy: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await QuizAssignment.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await AssessmentVerificationSession.destroy({
+        where: { participant_id: { [Op.in]: eligibleIds } },
+        transaction: t,
+      }).catch(() => {});
+      await AttendanceRecord.destroy({
+        where: { [Op.or]: [{ studentId: { [Op.in]: eligibleIds } }, { markedBy: { [Op.in]: eligibleIds } }] },
+        transaction: t,
+      }).catch(() => {});
+      await UserBadge.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await Certificate.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await ParticipantTracking.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+
+      // Survey answers linked to feedbacks
+      const userFeedbacks = await Feedback.findAll({
+        where: { participantId: { [Op.in]: eligibleIds } },
+        attributes: ['id'],
+        transaction: t,
+      }).catch(() => []);
+      const fbIds = userFeedbacks.map(f => f.id);
+      if (fbIds.length > 0) {
+        await SurveyAnswer.destroy({ where: { feedbackId: { [Op.in]: fbIds } }, transaction: t }).catch(() => {});
       }
+      await Feedback.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await Enrollment.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
 
-      // 5. Monitor system cleanup
-      const monitorAttempts = await MonitorAttempt.findAll({
-        where: { participantId: { [Op.in]: eligibleIds } }, attributes: ['id'], transaction: t
-      });
-      const monitorAttemptIds = monitorAttempts.map(ma => ma.id);
-      if (monitorAttemptIds.length > 0) {
-        if (MonitorViolation) await MonitorViolation.destroy({ where: { attemptId: { [Op.in]: monitorAttemptIds } }, transaction: t }).catch(() => {});
-        if (MonitorScreenshot) await MonitorScreenshot.destroy({ where: { attemptId: { [Op.in]: monitorAttemptIds } }, transaction: t }).catch(() => {});
-        await MonitorAttempt.destroy({ where: { id: { [Op.in]: monitorAttemptIds } }, transaction: t });
+      // 9. Profiles
+      const userProfiles = await UserProfile.findAll({
+        where: { userId: { [Op.in]: eligibleIds } },
+        attributes: ['id'],
+        transaction: t,
+      }).catch(() => []);
+      const upIds = userProfiles.map(u => u.id);
+      if (upIds.length > 0) {
+        await ProfileSkill.destroy({ where: { profileId: { [Op.in]: upIds } }, transaction: t }).catch(() => {});
+        await ProfileExperience.destroy({ where: { profileId: { [Op.in]: upIds } }, transaction: t }).catch(() => {});
+        await ProfileEducation.destroy({ where: { profileId: { [Op.in]: upIds } }, transaction: t }).catch(() => {});
+        await ProfileCertificate.destroy({ where: { profileId: { [Op.in]: upIds } }, transaction: t }).catch(() => {});
+        await ProfileProject.destroy({ where: { profileId: { [Op.in]: upIds } }, transaction: t }).catch(() => {});
+        await ProfileContactLink.destroy({ where: { profileId: { [Op.in]: upIds } }, transaction: t }).catch(() => {});
+        await ProfileActivityLog.destroy({ where: { profileId: { [Op.in]: upIds } }, transaction: t }).catch(() => {});
+        await UserProfile.destroy({ where: { id: { [Op.in]: upIds } }, transaction: t }).catch(() => {});
       }
+      await UserProfile.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await ParticipantProfile.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await TrainerEducation.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await TrainerExperience.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await TrainerProfile.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await CourseTrainerAssignment.destroy({ where: { trainerId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await TrainingTrainerAssignment.destroy({ where: { trainerId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
 
-      // 6. Other participant scoped tables
-      if (QuizProgress) await QuizProgress.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
-      if (AssessmentSubmission) await AssessmentSubmission.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
-      if (QuizRecording) await QuizRecording.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
-      if (QuizResultsAudit) await QuizResultsAudit.destroy({ where: { performedBy: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
-      if (QuizAssignment) await QuizAssignment.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
-      if (Notification) await Notification.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
-      if (ParticipantProfile) await ParticipantProfile.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
-      if (DeviceFingerprint) await DeviceFingerprint.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
-      if (ParticipantTracking) await ParticipantTracking.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
-      if (Certificate) await Certificate.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
-      if (Attendance) await Attendance.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
-      if (LessonProgress) await LessonProgress.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
-      if (Feedback) await Feedback.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
-      if (Enrollment) await Enrollment.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
-      if (QuizAttempt) await QuizAttempt.destroy({ where: { participantId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      // 10. Auth, Sessions, Messages, Notifications, Logs
+      await RegistrationApplication.destroy({
+        where: { [Op.or]: [{ userId: { [Op.in]: eligibleIds } }, { trainerId: { [Op.in]: eligibleIds } }, { reviewerId: { [Op.in]: eligibleIds } }] },
+        transaction: t,
+      }).catch(() => {});
+      await ChatMessage.destroy({ where: { senderId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await Note.destroy({ where: { trainerId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await Notification.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await DeviceFingerprint.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await ActivityLog.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await AuditLog.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await UserSession.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      await RefreshToken.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
+      const emails = participants.map(p => p.email).filter(Boolean);
+      if (emails.length > 0) {
+        await PasswordResetOtp.destroy({ where: { email: { [Op.in]: emails } }, transaction: t }).catch(() => {});
+      }
+      await Attendance.destroy({ where: { userId: { [Op.in]: eligibleIds } }, transaction: t }).catch(() => {});
 
-      // 7. Finally destroy User records
+      // 11. Finally destroy User records
       await User.destroy({ where: { id: { [Op.in]: eligibleIds } }, transaction: t });
 
       await t.commit();
+      invalidateSummaryCache();
 
       return res.json({
         success: true,
@@ -1645,9 +2054,9 @@ const bulkDeleteParticipants = async (req, res) => {
       });
 
     } catch (err) {
-      await t.rollback();
+      if (t && !t.finished) await t.rollback();
       console.error('Bulk delete participants transaction error:', err);
-      return res.status(500).json({ success: false, error: 'Database transaction error during participant bulk delete.', details: err.message });
+      return res.status(500).json({ success: false, error: err.message || 'Database error during participant bulk delete.' });
     }
 
   } catch (error) {

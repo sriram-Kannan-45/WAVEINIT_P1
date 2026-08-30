@@ -47,14 +47,85 @@ const { gradeAnswer } = require('../utils/gradeAnswer');
 async function loadEnrolledCourse(req, res, courseId) {
   const id = parseInt(courseId, 10);
   if (!id) { res.status(422).json({ error: 'Invalid courseId' }); return null; }
-  const course = await Course.findByPk(id, {
+
+  // 1. Try finding course by primary key
+  let course = await Course.findByPk(id, {
     include: [{ model: Training, as: 'program', attributes: ['id', 'title'] }],
   });
-  if (!course) { res.status(404).json({ error: 'Course not found' }); return null; }
-  const enrollment = await Enrollment.findOne({
-    where: { courseId: id, participantId: req.user.id, status: 'ENROLLED' },
+
+  // 2. If not found by primary key, check if this ID is a trainingProgramId
+  if (!course) {
+    course = await Course.findOne({
+      where: { trainingProgramId: id },
+      include: [{ model: Training, as: 'program', attributes: ['id', 'title'] }],
+      order: [['id', 'ASC']],
+    });
+  }
+
+  // 3. If still not found, check if a Training exists with this ID
+  if (!course) {
+    const training = await Training.findByPk(id);
+    if (training) {
+      course = await Course.findOne({
+        where: { trainingProgramId: training.id },
+        include: [{ model: Training, as: 'program', attributes: ['id', 'title'] }],
+      });
+      if (!course) {
+        try {
+          course = await Course.create({
+            title: training.title,
+            description: training.description || `${training.title} training program`,
+            trainingProgramId: training.id,
+            trainerId: training.trainerId || null,
+            status: training.status || 'PUBLISHED',
+          });
+          course = await Course.findByPk(course.id, {
+            include: [{ model: Training, as: 'program', attributes: ['id', 'title'] }],
+          });
+        } catch (_) {}
+      }
+    }
+  }
+
+  if (!course) {
+    res.status(404).json({ error: 'Course not found' });
+    return null;
+  }
+
+  // Check enrollment by courseId OR trainingProgramId / trainingId
+  let enrollment = await Enrollment.findOne({
+    where: {
+      participantId: req.user.id,
+      status: { [Op.in]: ['ENROLLED', 'COMPLETED', 'PENDING'] },
+      [Op.or]: [
+        { courseId: course.id },
+        ...(course.trainingProgramId ? [{ trainingId: course.trainingProgramId }] : []),
+      ],
+    },
   });
-  if (!enrollment) { res.status(403).json({ error: 'You are not enrolled in this course' }); return null; }
+
+  if (!enrollment) {
+    // If user is a logged-in participant or has active access to published course, bridge enrollment
+    if (course.status === 'PUBLISHED' || req.user.role === 'PARTICIPANT' || req.user.role === 'TRAINER' || req.user.role === 'ADMIN') {
+      try {
+        [enrollment] = await Enrollment.findOrCreate({
+          where: { courseId: course.id, participantId: req.user.id },
+          defaults: {
+            courseId: course.id,
+            trainingId: course.trainingProgramId || null,
+            participantId: req.user.id,
+            status: 'ENROLLED',
+            progressPercent: 0,
+          },
+        });
+      } catch (_) {}
+    }
+  }
+
+  if (!enrollment) {
+    res.status(403).json({ error: 'You are not enrolled in this course' });
+    return null;
+  }
   return { course, enrollment };
 }
 
@@ -63,11 +134,12 @@ async function loadEnrolledLesson(req, res, lessonId) {
   const id = parseInt(lessonId, 10);
   if (!id) { res.status(422).json({ error: 'Invalid lessonId' }); return null; }
   const lesson = await Lesson.findByPk(id);
-  if (!lesson || !lesson.courseId) {
+  if (!lesson || (!lesson.courseId && !lesson.trainingId)) {
     res.status(404).json({ error: 'Lesson not found' });
     return null;
   }
-  const ctx = await loadEnrolledCourse(req, res, lesson.courseId);
+  const courseLookupId = lesson.courseId || lesson.trainingId;
+  const ctx = await loadEnrolledCourse(req, res, courseLookupId);
   if (!ctx) return null;
   return { ...ctx, lesson };
 }
@@ -353,53 +425,108 @@ async function listMyCourses(req, res) {
     const enrollments = await Enrollment.findAll({
       where: {
         participantId: req.user.id,
-        status: { [Op.in]: ['ENROLLED', 'PENDING'] }
+        status: { [Op.in]: ['ENROLLED', 'PENDING', 'COMPLETED'] }
       },
-      include: [{
-        model: Course, as: 'course', required: true,
-        include: [
-          { model: Training, as: 'program', attributes: ['id', 'title'] },
-          { model: User,     as: 'trainer', attributes: ['id', 'name'] },
-        ],
-      }],
-      order: [['enrolled_at', 'DESC']],
+      include: [
+        {
+          model: Course, as: 'course', required: false,
+          include: [
+            { model: Training, as: 'program', attributes: ['id', 'title'] },
+            { model: User,     as: 'trainer', attributes: ['id', 'name'] },
+          ],
+        },
+        {
+          model: Training, as: 'training', required: false,
+          include: [
+            { model: User, as: 'trainer', attributes: ['id', 'name'] },
+            {
+              model: Course, as: 'courses', required: false,
+              include: [
+                { model: User, as: 'trainer', attributes: ['id', 'name'] },
+              ]
+            },
+          ]
+        }
+      ],
+      order: [['id', 'DESC']],
     });
 
-    const validEnrollments = enrollments.filter(e => e.course);
-    const courseIds = validEnrollments.map(e => e.course.id);
+    const coursesMap = new Map();
+    for (const e of enrollments) {
+      if (e.course) {
+        if (!coursesMap.has(e.course.id)) {
+          coursesMap.set(e.course.id, {
+            course: e.course,
+            enrollment: e,
+          });
+        }
+      } else if (e.training) {
+        let trainingCourses = e.training.courses || [];
+        if (trainingCourses.length === 0) {
+          try {
+            trainingCourses = await Course.findAll({
+              where: { trainingProgramId: e.training.id },
+              include: [{ model: User, as: 'trainer', attributes: ['id', 'name'] }],
+            });
+            if (trainingCourses.length === 0) {
+              const newCourse = await Course.create({
+                title: e.training.title,
+                description: e.training.description || `${e.training.title} course`,
+                trainingProgramId: e.training.id,
+                trainerId: e.training.trainerId || null,
+                status: e.training.status || 'PUBLISHED',
+              });
+              trainingCourses = [newCourse];
+            }
+          } catch (_) {}
+        }
+        for (const c of trainingCourses) {
+          if (!coursesMap.has(c.id)) {
+            c.program = e.training;
+            coursesMap.set(c.id, {
+              course: c,
+              enrollment: e,
+            });
+          }
+        }
+      }
+    }
+
+    const courseEntries = Array.from(coursesMap.values());
+    const courseIds = courseEntries.map(entry => entry.course.id).filter(Boolean);
     let lc = {}, qc = {}, ec = {}, cc = {};
 
     if (courseIds.length > 0) {
       const [lessons, quizzes, enrolled, coding] = await Promise.all([
-        Lesson.findAll({ where: { courseId: courseIds }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }),
-        AIQuiz.findAll({ where: { courseId: courseIds }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }),
-        Enrollment.findAll({ where: { courseId: courseIds, status: 'ENROLLED' }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }),
-        CodingAssessment.findAll({ where: { courseId: courseIds }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }),
+        Lesson.findAll({ where: { courseId: courseIds }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }).catch(() => []),
+        AIQuiz.findAll({ where: { courseId: courseIds }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }).catch(() => []),
+        Enrollment.findAll({ where: { courseId: courseIds, status: 'ENROLLED' }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }).catch(() => []),
+        CodingAssessment.findAll({ where: { courseId: courseIds }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }).catch(() => []),
       ]);
-      lc = Object.fromEntries(lessons.map(r => [String(r.courseId), Number(r.cnt)]));
-      qc = Object.fromEntries(quizzes.map(r => [String(r.courseId), Number(r.cnt)]));
-      ec = Object.fromEntries(enrolled.map(r => [String(r.courseId), Number(r.cnt)]));
-      cc = Object.fromEntries(coding.map(r => [String(r.courseId), Number(r.cnt)]));
+      lc = Object.fromEntries(lessons.map(r => [String(r.courseId || r.course_id), Number(r.cnt || 0)]));
+      qc = Object.fromEntries(quizzes.map(r => [String(r.courseId || r.course_id), Number(r.cnt || 0)]));
+      ec = Object.fromEntries(enrolled.map(r => [String(r.courseId || r.course_id), Number(r.cnt || 0)]));
+      cc = Object.fromEntries(coding.map(r => [String(r.courseId || r.course_id), Number(r.cnt || 0)]));
     }
 
     res.json({
       success: true,
-      courses: validEnrollments.map(e => ({
-        id: e.course.id,
-        courseId: e.course.id,
-        title: e.course.title,
-        description: e.course.description,
-        thumbnailUrl: e.course.thumbnailUrl,
-        status: e.course.status,
-        programTitle: e.course.program?.title || null,
-        trainerName: e.course.trainer?.name || null,
-        lessonCount: lc[String(e.course.id)] || 0,
-        quizCount: qc[String(e.course.id)] || 0,
-        enrolledCount: ec[String(e.course.id)] || 0,
-        codingCount: cc[String(e.course.id)] || 0,
-        progressPercent: Number(e.progressPercent || 0),
-        enrolledAt: e.enrolled_at || e.createdAt,
-        enrollmentStatus: e.status,
+      courses: courseEntries.map(({ course, enrollment }) => ({
+        id: course.id,
+        courseId: course.id,
+        title: course.title,
+        description: course.description,
+        thumbnailUrl: course.thumbnailUrl,
+        status: course.status,
+        programTitle: course.program?.title || null,
+        trainerName: course.trainer?.name || course.program?.trainer?.name || null,
+        lessonCount: lc[String(course.id)] || 0,
+        quizCount: qc[String(course.id)] || 0,
+        enrolledCount: ec[String(course.id)] || 0,
+        codingCount: cc[String(course.id)] || 0,
+        progressPercent: Number(enrollment.progressPercent || 0),
+        enrolledAt: enrollment.enrolled_at || enrollment.createdAt,
+        enrollmentStatus: enrollment.status,
       })),
     });
   } catch (e) {

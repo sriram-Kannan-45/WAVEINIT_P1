@@ -8,6 +8,8 @@
     "start:clean": "kill-port 3001 && node src/app.js",
     "dev": "nodemon src/app.js",
     "dev:clean": "kill-port 3001 && nodemon src/app.js",
+    "worker:code": "node src/workers/codeWorkerService.js",
+    "worker:ai": "node src/workers/aiWorkerService.js",
     "test": "jest --no-coverage --passWithNoTests",
     "test:routes": "jest src/routes --no-coverage --passWithNoTests"
   },

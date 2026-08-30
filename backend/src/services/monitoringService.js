@@ -491,6 +491,160 @@ class MonitoringEngineService {
     return session;
   }
 
+  async startTestSession({ sessionId, attemptId = null, testStartedAt = null, configuredDurationSeconds = null }) {
+    const session = await MonitoringSession.findOne({
+      where: { [Op.or]: [{ sessionId: String(sessionId) }, ...(attemptId ? [{ attemptId: Number(attemptId) }] : [])] }
+    });
+    if (!session) throw new Error('Monitoring session not found');
+
+    const startTime = testStartedAt ? new Date(testStartedAt) : new Date();
+    const validStartedAt = Number.isNaN(startTime.getTime()) ? new Date() : startTime;
+
+    const existingMeta = session.metadata || {};
+    const initialActiveSegments = existingMeta.activeSegments || [];
+    
+    // If no active segments or starting fresh, initialize first active segment
+    const activeSegments = initialActiveSegments.length > 0 ? initialActiveSegments : [
+      { start: validStartedAt.toISOString(), end: null, durationSec: 0, reason: 'INITIAL_START' }
+    ];
+
+    const updatedMetadata = {
+      ...existingMeta,
+      testStartedAt: existingMeta.testStartedAt || validStartedAt.toISOString(),
+      currentSegmentStartedAt: validStartedAt.toISOString(),
+      activeSegments,
+      activeDurationSeconds: Number(existingMeta.activeDurationSeconds || 0),
+      isPaused: false,
+      ...(configuredDurationSeconds ? { configuredDurationSeconds: Number(configuredDurationSeconds) } : {})
+    };
+
+    session.status = 'ACTIVE';
+    session.laptopStatus = 'ACTIVE';
+    if (!session.startedAt || ['CALIBRATING', 'READY'].includes(session.status)) {
+      session.startedAt = validStartedAt;
+    }
+    if (attemptId && !session.attemptId) {
+      session.attemptId = Number(attemptId);
+    }
+    session.metadata = updatedMetadata;
+    await session.save();
+
+    logger.info(`[MonitoringEngine] Test officially started for session ${sessionId} at ${validStartedAt.toISOString()}`);
+    return session;
+  }
+
+  async pauseTestSession({ sessionId, pausedAt = null, reason = 'PAUSED', activeDurationSeconds = null }) {
+    const session = await this.getSession(sessionId);
+    if (!session) throw new Error('Monitoring session not found');
+
+    const pauseTime = pausedAt ? new Date(pausedAt) : new Date();
+    const validPausedAt = Number.isNaN(pauseTime.getTime()) ? new Date() : pauseTime;
+    const existingMeta = session.metadata || {};
+
+    let activeDuration = Number(activeDurationSeconds != null ? activeDurationSeconds : (existingMeta.activeDurationSeconds || 0));
+
+    // Close any open active segment
+    const activeSegments = Array.isArray(existingMeta.activeSegments) ? [...existingMeta.activeSegments] : [];
+    const openSegment = activeSegments.find(s => !s.end);
+    if (openSegment) {
+      openSegment.end = validPausedAt.toISOString();
+      const segStart = new Date(openSegment.start).getTime();
+      const segDuration = Math.max(0, Math.round((validPausedAt.getTime() - segStart) / 1000));
+      openSegment.durationSec = segDuration;
+      if (activeDurationSeconds == null) {
+        activeDuration = activeSegments.reduce((acc, s) => acc + (Number(s.durationSec) || 0), 0);
+      }
+    }
+
+    const pauseEvents = Array.isArray(existingMeta.pauseEvents) ? [...existingMeta.pauseEvents] : [];
+    pauseEvents.push({
+      pausedAt: validPausedAt.toISOString(),
+      resumedAt: null,
+      reason,
+    });
+
+    session.status = 'PAUSED';
+    session.laptopStatus = 'PAUSED';
+    session.metadata = {
+      ...existingMeta,
+      isPaused: true,
+      lastPausedAt: validPausedAt.toISOString(),
+      activeDurationSeconds: activeDuration,
+      activeSegments,
+      pauseEvents,
+    };
+    await session.save();
+
+    logger.info(`[MonitoringEngine] Test paused for session ${sessionId} at ${validPausedAt.toISOString()} (accumulated active: ${activeDuration}s)`);
+    return session;
+  }
+
+  async resumeTestSession({ sessionId, resumedAt = null, reason = 'RESUMED' }) {
+    const session = await this.getSession(sessionId);
+    if (!session) throw new Error('Monitoring session not found');
+
+    const resumeTime = resumedAt ? new Date(resumedAt) : new Date();
+    const validResumedAt = Number.isNaN(resumeTime.getTime()) ? new Date() : resumeTime;
+    const existingMeta = session.metadata || {};
+
+    // Close the latest open pause event
+    const pauseEvents = Array.isArray(existingMeta.pauseEvents) ? [...existingMeta.pauseEvents] : [];
+    const openPause = pauseEvents.slice().reverse().find(p => !p.resumedAt);
+    if (openPause) {
+      openPause.resumedAt = validResumedAt.toISOString();
+      const pStart = new Date(openPause.pausedAt).getTime();
+      openPause.breakDurationSec = Math.max(0, Math.round((validResumedAt.getTime() - pStart) / 1000));
+    }
+
+    // Start new active segment
+    const activeSegments = Array.isArray(existingMeta.activeSegments) ? [...existingMeta.activeSegments] : [];
+    // Ensure previous open segments are closed
+    activeSegments.forEach(s => {
+      if (!s.end) {
+        s.end = validResumedAt.toISOString();
+        s.durationSec = Math.max(0, Math.round((validResumedAt.getTime() - new Date(s.start).getTime()) / 1000));
+      }
+    });
+    activeSegments.push({
+      start: validResumedAt.toISOString(),
+      end: null,
+      durationSec: 0,
+      reason,
+    });
+
+    session.status = 'ACTIVE';
+    session.laptopStatus = 'ACTIVE';
+    session.metadata = {
+      ...existingMeta,
+      isPaused: false,
+      lastResumedAt: validResumedAt.toISOString(),
+      currentSegmentStartedAt: validResumedAt.toISOString(),
+      activeSegments,
+      pauseEvents,
+    };
+    await session.save();
+
+    logger.info(`[MonitoringEngine] Test resumed for session ${sessionId} at ${validResumedAt.toISOString()}`);
+    return session;
+  }
+
+  async syncTestDuration({ sessionId, activeDurationSeconds = 0, activeSegments = null }) {
+    const session = await this.getSession(sessionId);
+    if (!session) throw new Error('Monitoring session not found');
+
+    const existingMeta = session.metadata || {};
+    const updatedSec = Math.max(Number(existingMeta.activeDurationSeconds || 0), Number(activeDurationSeconds || 0));
+
+    session.metadata = {
+      ...existingMeta,
+      activeDurationSeconds: updatedSec,
+      ...(activeSegments ? { activeSegments } : {}),
+      lastDurationSyncAt: new Date().toISOString(),
+    };
+    await session.save();
+    return { success: true, activeDurationSeconds: updatedSec };
+  }
+
   async validateLaptop({ sessionId, participantId, frame }) {
     if (!frame) throw new Error('frame data is required');
 
@@ -690,27 +844,6 @@ class MonitoringEngineService {
 
     logger.info(`[MonitoringEngine] Mobile paired successfully for session ${sessionId}`);
     return { success: true, session };
-  }
-
-  async startTestSession({ sessionId, attemptId, testStartedAt }) {
-    const session = await MonitoringSession.findOne({
-      where: { [Op.or]: [{ sessionId }, ...(attemptId ? [{ attemptId }] : [])] }
-    });
-    if (session) {
-      const startTime = testStartedAt ? new Date(testStartedAt) : new Date();
-      await session.update({
-        startedAt: startTime,
-        attemptId: attemptId || session.attemptId,
-        laptopStatus: 'ACTIVE',
-        status: 'ACTIVE',
-        metadata: {
-          ...(session.metadata || {}),
-          testStartedAt: startTime.toISOString()
-        }
-      });
-      logger.info(`[MonitoringEngine] Test start time locked to ${startTime.toISOString()} for session ${session.sessionId}`);
-    }
-    return session;
   }
 
   async validateMobile({ sessionId, participantId, frame, confidenceThreshold = 0.35 }) {
@@ -1000,6 +1133,20 @@ class MonitoringEngineService {
     const normalizedSource = String(source).toUpperCase() === 'MOBILE' ? 'MOBILE' : 'LAPTOP';
     const normalizedSeverity = (severity || 'INFO').toUpperCase();
 
+    const now = Date.now();
+    const reportedAt = occurredAt ? new Date(occurredAt) : new Date(now);
+    const validReportedAt = Number.isNaN(reportedAt.getTime()) ? new Date(now) : reportedAt;
+
+    // Ensure test is active and event is not from pre-test calibration
+    if (session.status !== 'ACTIVE' && session.status !== 'PAUSED') {
+      logger.info(`[MonitoringEngine] Dropping pre-test event ${eventType} for session ${sessionId} (status=${session.status})`);
+      return { skipped: true, reason: 'TEST_NOT_ACTIVE', session };
+    }
+    if (session.startedAt && validReportedAt < new Date(session.startedAt)) {
+      logger.info(`[MonitoringEngine] Dropping event ${eventType} prior to test start for session ${sessionId}`);
+      return { skipped: true, reason: 'BEFORE_TEST_START', session };
+    }
+
     // 1. Debounce Check
     const cooldowns = config.cooldowns_ms || {};
     const isGranularEyeHead = /^GAZE_OFF_SCREEN_(LEFT|RIGHT|UP)$/.test(eventType) || /^HEAD_LOOKING_(LEFT|RIGHT|UP)$/.test(eventType);
@@ -1011,9 +1158,6 @@ class MonitoringEngineService {
       : defaultCooldown;
 
     const cooldownKey = `${sessionId}_${normalizedSource}_${eventType}`;
-    const now = Date.now();
-    const reportedAt = occurredAt ? new Date(occurredAt) : new Date(now);
-    const validReportedAt = Number.isNaN(reportedAt.getTime()) ? new Date(now) : reportedAt;
     const lastTriggered = this.inMemoryCooldowns.get(cooldownKey) || 0;
 
     if (now - lastTriggered < cooldownMs && normalizedSeverity !== 'CRITICAL') {
@@ -1261,7 +1405,7 @@ class MonitoringEngineService {
     };
   }
 
-  async endSession({ sessionId, participantId }) {
+  async endSession({ sessionId, participantId, actualTestDurationSeconds = null, activeSegments = null }) {
     const session = await this.getSession(sessionId);
     if (!session) throw new Error('Monitoring session not found');
 
@@ -1291,12 +1435,55 @@ class MonitoringEngineService {
       flags.push('MONITORING_PIPELINE_NOT_ACTIVE');
     }
 
+    const endTime = new Date();
+    const existingMeta = session.metadata || {};
+
+    // Finalize open active segment if any
+    let finalActiveSegments = activeSegments || (Array.isArray(existingMeta.activeSegments) ? [...existingMeta.activeSegments] : []);
+    const openSegment = finalActiveSegments.find(s => !s.end);
+    if (openSegment) {
+      openSegment.end = endTime.toISOString();
+      const segStart = new Date(openSegment.start).getTime();
+      openSegment.durationSec = Math.max(0, Math.round((endTime.getTime() - segStart) / 1000));
+    }
+
+    let finalActiveDurationSec = null;
+    if (actualTestDurationSeconds != null && Number(actualTestDurationSeconds) > 0) {
+      finalActiveDurationSec = Number(actualTestDurationSeconds);
+    } else if (finalActiveSegments.length > 0) {
+      finalActiveDurationSec = finalActiveSegments.reduce((acc, s) => acc + (Number(s.durationSec) || 0), 0);
+    } else if (existingMeta.activeDurationSeconds != null && Number(existingMeta.activeDurationSeconds) > 0) {
+      finalActiveDurationSec = Number(existingMeta.activeDurationSeconds);
+    }
+
     session.integrityFlags = flags;
     session.status = 'COMPLETED';
-    session.endedAt = new Date();
+    session.laptopStatus = 'COMPLETED';
+    session.endedAt = endTime;
+    session.metadata = {
+      ...existingMeta,
+      isPaused: false,
+      endedAt: endTime.toISOString(),
+      activeSegments: finalActiveSegments,
+      ...(finalActiveDurationSec != null ? {
+        actualTestDurationSeconds: finalActiveDurationSec,
+        activeDurationSeconds: finalActiveDurationSec,
+      } : {}),
+    };
     await session.save();
 
-    logger.info(`[MonitoringEngine] Ended session ${sessionId} with ${flags.length} integrity flags`);
+    logger.info(`[MonitoringEngine] Ended session ${sessionId} (actual active test duration: ${finalActiveDurationSec}s) with ${flags.length} integrity flags`);
+
+    // Refresh the segment pipeline status: if segments are still uploading or
+    // queued for the AI service, surface WAITING_FOR_PROCESSING immediately so
+    // trainers see results arrive asynchronously instead of stalling.
+    try {
+      const videoService = require('./monitoringVideoService');
+      await videoService.aggregateSession(sessionId);
+    } catch (err) {
+      logger.warn(`[MonitoringEngine] aggregateSession after endSession failed: ${err.message}`);
+    }
+
     return this.getReport({ sessionId: session.sessionId });
   }
 
@@ -1513,16 +1700,27 @@ class MonitoringEngineService {
     let configuredDurationSec = Number(session.metadata?.configuredDurationSeconds || session.metadata?.duration || 0);
     let attemptTimeTakenSec = null;
 
-    // Authoritative ACTIVE test start: set by the frontend startActiveTestTimer()
-    // (endpoint /monitoring/sessions/:id/start-test) at the first second the question
-    // timer actually starts. This excludes the consent / calibration / fullscreen
-    // setup delay that attempt.startedAt (attempt creation time) incorrectly includes.
-    let activeTestStartedAt = null;
-    if (session.metadata?.testStartedAt) {
-      const parsed = new Date(session.metadata.testStartedAt).getTime();
-      if (!isNaN(parsed)) {
-        activeTestStartedAt = new Date(parsed);
-      }
+    // Authoritative ACTIVE test duration calculation:
+    // Exclude break, pause, inactive, disconnected periods.
+    let authoritativeActiveDurationSec = null;
+
+    // 1. Check metadata.actualTestDurationSeconds or metadata.activeDurationSeconds
+    if (session.metadata?.actualTestDurationSeconds != null && Number(session.metadata.actualTestDurationSeconds) > 0) {
+      authoritativeActiveDurationSec = Number(session.metadata.actualTestDurationSeconds);
+    } else if (session.metadata?.activeDurationSeconds != null && Number(session.metadata.activeDurationSeconds) > 0) {
+      authoritativeActiveDurationSec = Number(session.metadata.activeDurationSeconds);
+    }
+
+    // 2. If activeSegments exist, sum completed valid active segments
+    if (authoritativeActiveDurationSec == null && Array.isArray(session.metadata?.activeSegments) && session.metadata.activeSegments.length > 0) {
+      const sumSegs = session.metadata.activeSegments.reduce((sum, seg) => {
+        if (seg.durationSec != null && seg.durationSec > 0) return sum + Number(seg.durationSec);
+        if (seg.start && seg.end) {
+          return sum + Math.max(0, Math.round((new Date(seg.end).getTime() - new Date(seg.start).getTime()) / 1000));
+        }
+        return sum;
+      }, 0);
+      if (sumSegs > 0) authoritativeActiveDurationSec = sumSegs;
     }
 
     // Fallback: If attemptId exists, check QuizAttempt or CodingAttempt for exact submission time & quiz limit
@@ -1535,9 +1733,6 @@ class MonitoringEngineService {
         if (qa) {
           if (qa.timeTaken && qa.timeTaken > 0) attemptTimeTakenSec = Number(qa.timeTaken);
           if (!sessionEndedAt && qa.submittedAt) sessionEndedAt = qa.submittedAt;
-          // Only fall back to the attempt-creation timestamp when the real active
-          // test start is unavailable. The active start wins (avoids setup-delay inflation).
-          if (!activeTestStartedAt && qa.startedAt) sessionStartedAt = qa.startedAt;
           if (!configuredDurationSec && qa.quiz?.timeLimit) {
             configuredDurationSec = Number(qa.quiz.timeLimit) * 60;
           }
@@ -1548,7 +1743,6 @@ class MonitoringEngineService {
           if (ca) {
             if (ca.timeTaken && ca.timeTaken > 0) attemptTimeTakenSec = Number(ca.timeTaken);
             if (!sessionEndedAt && ca.submittedAt) sessionEndedAt = ca.submittedAt;
-            if (!activeTestStartedAt && ca.startedAt) sessionStartedAt = ca.startedAt;
             if (!configuredDurationSec && ca.assessment?.timeLimit) {
               configuredDurationSec = Number(ca.assessment.timeLimit) * 60;
             }
@@ -1557,11 +1751,6 @@ class MonitoringEngineService {
       } catch (err) {
         logger.warn(`[getReport] Attempt metadata lookup note: ${err.message}`);
       }
-    }
-
-    // After resolving attempt fallbacks, promote the authoritative active test start.
-    if (activeTestStartedAt) {
-      sessionStartedAt = activeTestStartedAt;
     }
 
     // Also check session.contextId if configuredDurationSec is not yet found
@@ -1580,28 +1769,26 @@ class MonitoringEngineService {
 
     if (!configuredDurationSec) configuredDurationSec = 600;
 
-    // Actual participant test duration (elapsed time from the REAL test start to completion)
-    // When the authoritative active test start exists, it is preferred over qa.timeTaken
-    // because qa.timeTaken uses attempt.startedAt (attempt-creation), which includes the
-    // pre-test setup delay and therefore inflates the denominator of the Eye+Head score.
-    const useActiveStartElapsed = activeTestStartedAt != null;
+    // Actual participant test duration (elapsed time strictly from real active test time)
     let totalDurationSec;
-    if (useActiveStartElapsed) {
-      const endMs = sessionEndedAt
-        ? new Date(sessionEndedAt).getTime()
-        : Date.now();
-      totalDurationSec = Math.max(1, Math.round((endMs - new Date(activeTestStartedAt).getTime()) / 1000));
-      // Diagnostic guard: if the authoritative elapsed is implausibly small or large
-      // relative to the attempt clock, keep a single source of truth (the active start).
+    if (authoritativeActiveDurationSec != null && authoritativeActiveDurationSec > 0) {
+      totalDurationSec = authoritativeActiveDurationSec;
       logger.info(
-        `[getReport] Actual test duration ${totalDurationSec}s derived from authoritative active test start ` +
-        `${activeTestStartedAt.toISOString()} -> ${sessionEndedAt ? new Date(sessionEndedAt).toISOString() : 'now'} ` +
-        `(qa.timeTaken was ${attemptTimeTakenSec}s, skipped to avoid setup-delay inflation). attemptId=${session.attemptId}`
+        `[getReport] Actual test duration ${totalDurationSec}s derived from authoritative active test duration. ` +
+        `attemptId=${session.attemptId}`
       );
+    } else if (attemptTimeTakenSec != null && attemptTimeTakenSec > 0) {
+      totalDurationSec = attemptTimeTakenSec;
+    } else if (sessionEndedAt && sessionStartedAt) {
+      totalDurationSec = Math.max(1, Math.round((new Date(sessionEndedAt) - new Date(sessionStartedAt)) / 1000));
     } else {
-      totalDurationSec = attemptTimeTakenSec || (sessionEndedAt && sessionStartedAt
-        ? Math.max(1, Math.round((new Date(sessionEndedAt) - new Date(sessionStartedAt)) / 1000))
-        : Math.max(1, Math.round((Date.now() - new Date(sessionStartedAt).getTime()) / 1000)));
+      totalDurationSec = Math.max(1, Math.round((Date.now() - new Date(sessionStartedAt).getTime()) / 1000));
+    }
+
+    // Safety cap: If no active segments were recorded and totalDurationSec exceeds configuredDuration + 2 min grace,
+    // prevent unbounded disconnected/break inflation if attempt had a configured limit.
+    if (authoritativeActiveDurationSec == null && configuredDurationSec > 0 && totalDurationSec > (configuredDurationSec + 120)) {
+      totalDurationSec = configuredDurationSec;
     }
 
     // Dynamic Real Tracking Coverage Calculations (derived from actual test detection data)

@@ -7,14 +7,42 @@ const AnalyticsService = require('../services/analyticsService');
 const logger = require('../utils/logger');
 
 /**
- * GET /api/admin/analytics - Get comprehensive dashboard analytics
- * Only accessible by admins
+ * GET /api/analytics/student
+ * Get current student learning & performance analytics
+ */
+const getStudentAnalytics = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const analytics = await AnalyticsService.getStudentAnalytics(userId);
+    res.json({ success: true, data: analytics });
+  } catch (error) {
+    logger.error('Error fetching student analytics', { error: error.message });
+    res.status(500).json({ success: false, error: 'Failed to fetch student analytics' });
+  }
+};
+
+/**
+ * GET /api/analytics/trainer
+ * Get trainer performance, course analytics, and attendance rates
+ */
+const getTrainerAnalytics = async (req, res) => {
+  try {
+    const trainerId = req.user.id;
+    const analytics = await AnalyticsService.getTrainerAnalytics(trainerId);
+    res.json({ success: true, data: analytics });
+  } catch (error) {
+    logger.error('Error fetching trainer analytics', { error: error.message });
+    res.status(500).json({ success: false, error: 'Failed to fetch trainer analytics' });
+  }
+};
+
+/**
+ * GET /api/admin/analytics or /api/analytics/admin - Get comprehensive dashboard analytics
  */
 const getDashboardAnalytics = async (req, res) => {
   try {
-    // Check admin role
     if (req.user.role !== 'ADMIN') {
-      return res.status(403).json({ success: false, error: 'Access denied' });
+      return res.status(403).json({ success: false, error: 'Access denied: Admin role required' });
     }
 
     const { period = 'daily', days = 30, startDate, endDate } = req.query;
@@ -22,29 +50,15 @@ const getDashboardAnalytics = async (req, res) => {
     const options = {
       period,
       ...(startDate && endDate
-        ? {
-            dateRange: {
-              start: new Date(startDate),
-              end: new Date(endDate),
-            },
-          }
-        : {
-            dateRange: AnalyticsService.getDefaultDateRange(parseInt(days)),
-          }),
+        ? { dateRange: { start: new Date(startDate), end: new Date(endDate) } }
+        : { dateRange: AnalyticsService.getDefaultDateRange(parseInt(days, 10) || 30) }),
     };
 
     const analytics = await AnalyticsService.getDashboardAnalytics(options);
-
-    res.json({
-      success: true,
-      data: analytics,
-    });
+    res.json({ success: true, data: analytics });
   } catch (error) {
     logger.error('Error fetching dashboard analytics', { error: error.message });
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch analytics',
-    });
+    res.status(500).json({ success: false, error: 'Failed to fetch analytics' });
   }
 };
 
@@ -58,25 +72,16 @@ const getEnrollmentTrend = async (req, res) => {
     }
 
     const { period = 'daily', days = 30 } = req.query;
-
     const options = {
       period,
-      dateRange: AnalyticsService.getDefaultDateRange(parseInt(days)),
+      dateRange: AnalyticsService.getDefaultDateRange(parseInt(days, 10)),
     };
 
     const trend = await AnalyticsService.getEnrollmentTrend(options);
-
-    res.json({
-      success: true,
-      data: trend,
-      period,
-    });
+    res.json({ success: true, data: trend, period });
   } catch (error) {
     logger.error('Error fetching enrollment trend', { error: error.message });
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch enrollment trend',
-    });
+    res.status(500).json({ success: false, error: 'Failed to fetch enrollment trend' });
   }
 };
 
@@ -89,25 +94,11 @@ const getTrainerPerformance = async (req, res) => {
       return res.status(403).json({ success: false, error: 'Access denied' });
     }
 
-    const { days = 90, limit = 10 } = req.query;
-
-    const options = {
-      dateRange: AnalyticsService.getDefaultDateRange(parseInt(days)),
-      limit: parseInt(limit),
-    };
-
-    const performance = await AnalyticsService.getTrainerPerformance(options);
-
-    res.json({
-      success: true,
-      data: performance,
-    });
+    const performance = await AnalyticsService.getTrainerPerformance();
+    res.json({ success: true, data: performance });
   } catch (error) {
     logger.error('Error fetching trainer performance', { error: error.message });
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch trainer performance',
-    });
+    res.status(500).json({ success: false, error: 'Failed to fetch trainer performance' });
   }
 };
 
@@ -120,111 +111,11 @@ const getUserMetrics = async (req, res) => {
       return res.status(403).json({ success: false, error: 'Access denied' });
     }
 
-    const { days = 30, inactiveThresholdDays = 7 } = req.query;
-
-    const options = {
-      dateRange: AnalyticsService.getDefaultDateRange(parseInt(days)),
-      inactiveThresholdDays: parseInt(inactiveThresholdDays),
-    };
-
-    const metrics = await AnalyticsService.getUserMetrics(options);
-
-    res.json({
-      success: true,
-      data: metrics,
-    });
+    const metrics = await AnalyticsService.getUserMetrics();
+    res.json({ success: true, data: metrics });
   } catch (error) {
     logger.error('Error fetching user metrics', { error: error.message });
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch user metrics',
-    });
-  }
-};
-
-/**
- * GET /api/admin/analytics/enrollments - Get enrollment metrics
- */
-const getEnrollmentMetrics = async (req, res) => {
-  try {
-    if (req.user.role !== 'ADMIN') {
-      return res.status(403).json({ success: false, error: 'Access denied' });
-    }
-
-    const { days = 90 } = req.query;
-
-    const options = {
-      dateRange: AnalyticsService.getDefaultDateRange(parseInt(days)),
-    };
-
-    const metrics = await AnalyticsService.getEnrollmentMetrics(options);
-
-    res.json({
-      success: true,
-      data: metrics,
-    });
-  } catch (error) {
-    logger.error('Error fetching enrollment metrics', { error: error.message });
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch enrollment metrics',
-    });
-  }
-};
-
-/**
- * GET /api/admin/analytics/active-users - Get active user count
- */
-const getActiveUsers = async (req, res) => {
-  try {
-    if (req.user.role !== 'ADMIN') {
-      return res.status(403).json({ success: false, error: 'Access denied' });
-    }
-
-    const { inactiveThresholdDays = 7 } = req.query;
-
-    const activeUsers = await AnalyticsService.getActiveUserCount(
-      parseInt(inactiveThresholdDays)
-    );
-
-    res.json({
-      success: true,
-      data: { activeUsers, threshold: `${inactiveThresholdDays} days` },
-    });
-  } catch (error) {
-    logger.error('Error fetching active users', { error: error.message });
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch active users',
-    });
-  }
-};
-
-/**
- * GET /api/admin/analytics/training-stats - Get training statistics
- */
-const getTrainingStats = async (req, res) => {
-  try {
-    if (req.user.role !== 'ADMIN') {
-      return res.status(403).json({ success: false, error: 'Access denied' });
-    }
-
-    const { trainingId } = req.query;
-
-    const stats = await AnalyticsService.getTrainingStats(
-      trainingId ? parseInt(trainingId) : null
-    );
-
-    res.json({
-      success: true,
-      data: stats,
-    });
-  } catch (error) {
-    logger.error('Error fetching training statistics', { error: error.message });
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch training statistics',
-    });
+    res.status(500).json({ success: false, error: 'Failed to fetch user metrics' });
   }
 };
 
@@ -238,29 +129,20 @@ const getRecentActivities = async (req, res) => {
     }
 
     const { limit = 10 } = req.query;
-
-    const activities = await AnalyticsService.getRecentActivities(parseInt(limit));
-
-    res.json({
-      success: true,
-      data: activities,
-    });
+    const activities = await AnalyticsService.getRecentActivities(parseInt(limit, 10));
+    res.json({ success: true, data: activities });
   } catch (error) {
     logger.error('Error fetching recent activities', { error: error.message });
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch recent activities',
-    });
+    res.status(500).json({ success: false, error: 'Failed to fetch recent activities' });
   }
 };
 
 module.exports = {
+  getStudentAnalytics,
+  getTrainerAnalytics,
   getDashboardAnalytics,
   getEnrollmentTrend,
   getTrainerPerformance,
   getUserMetrics,
-  getEnrollmentMetrics,
-  getActiveUsers,
-  getTrainingStats,
   getRecentActivities,
 };

@@ -44,6 +44,12 @@ const CodingAttempt = sequelize.define('CodingAttempt', {
     allowNull: false,
     defaultValue: 0,
     field: 'violation_count'
+  },
+  monitoringSessionId: {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    field: 'monitoring_session_id',
+    comment: 'Linked ProctoringSession.session_id'
   }
 }, {
   tableName: 'coding_attempts',

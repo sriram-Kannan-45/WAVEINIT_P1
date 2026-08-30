@@ -1240,7 +1240,20 @@ router.post('/participant/submit/:attemptId',
         const submittedAt = new Date();
         let timeTaken = null;
         try {
-          if (attempt.startedAt) {
+          if (req.body?.actualTestDurationSeconds != null && Number(req.body.actualTestDurationSeconds) > 0) {
+            timeTaken = Number(req.body.actualTestDurationSeconds);
+          } else if (req.body?.timeTaken != null && Number(req.body.timeTaken) > 0) {
+            timeTaken = Number(req.body.timeTaken);
+          } else if (attempt.monitoringSessionId) {
+            const { MonitoringSession } = require('../models');
+            const ms = await MonitoringSession.findOne({ where: { sessionId: attempt.monitoringSessionId } });
+            if (ms?.metadata?.actualTestDurationSeconds) {
+              timeTaken = Number(ms.metadata.actualTestDurationSeconds);
+            } else if (ms?.metadata?.activeDurationSeconds) {
+              timeTaken = Number(ms.metadata.activeDurationSeconds);
+            }
+          }
+          if (timeTaken == null && attempt.startedAt) {
             timeTaken = Math.max(0, Math.round((submittedAt.getTime() - new Date(attempt.startedAt).getTime()) / 1000));
           }
         } catch (e) { /* non-fatal */ }

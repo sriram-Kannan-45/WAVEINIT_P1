@@ -8,6 +8,7 @@ const proctoring = require('../services/proctoringService');
 const proctoringReportService = require('../services/proctoringReportService');
 const { ExamSession, AIQuiz, AIQuestion, QuizAnswer, QuizAttempt, QuizResult, CodingAssessment, CodingAttempt, CodingResult, User, Screenshot, ProctoringSession, ProctoringEvent, ProctoringReport, Course, Training, CourseTrainerAssignment, TrainingTrainerAssignment } = require('../models');
 const aiService = require('../services/aiService');
+const { acquireLock, releaseLock } = require('../config/redis');
 const logger = require('../utils/logger');
 
 const { gradeAnswer } = require('../utils/gradeAnswer');
@@ -418,9 +419,13 @@ exports.finalize = async (req, res, next) => {
       return ok(res, { submitted: true });
     }
 
-    // ── Quiz: full grading logic ──
+    // ── Quiz: full grading logic with Distributed Lock Protection ──
+    const lockKey = `lock:quiz:finalize:${session.attemptId}`;
+    const lockToken = await acquireLock(lockKey, 20000);
+
     const existingResult = await QuizResult.findOne({ where: { attemptId: session.attemptId } });
     if (existingResult) {
+      if (lockToken) await releaseLock(lockKey, lockToken);
       if (session.status !== 'SUBMITTED' && session.status !== 'TERMINATED') {
         await proctoring.submitSession(session);
       }
@@ -550,6 +555,10 @@ exports.finalize = async (req, res, next) => {
         });
       }
     } catch { /* swallow */ }
+
+    if (lockToken) {
+      await releaseLock(lockKey, lockToken).catch(() => {});
+    }
 
     ok(res, {
       result: {

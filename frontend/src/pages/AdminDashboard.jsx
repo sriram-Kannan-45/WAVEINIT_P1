@@ -16,6 +16,8 @@ import TrainerProfileModal from '../components/admin/TrainerProfileModal'
 import UserAvatar, { getTwoLetterInitials } from '../components/common/UserAvatar'
 import AdminPagination from '../components/common/AdminPagination'
 import BulkDeleteConfirmModal from '../components/admin/BulkDeleteConfirmModal'
+import AdminAttendanceAnalytics from '../components/admin/attendance/AdminAttendanceAnalytics'
+import AdminFeedbackAnalytics from '../components/admin/feedback/AdminFeedbackAnalytics'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'
@@ -129,7 +131,9 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
   const [coursesLoading, setCoursesLoading] = useState(false)
   const [courseForm, setCourseForm] = useState({ title: '', description: '', trainerId: '', programId: '', status: 'ACTIVE' })
 
-  const [initialLoading, setInitialLoading] = useState(true)
+  const [summaryLoading, setSummaryLoading] = useState(false)
+  const [overviewTrainings, setOverviewTrainings] = useState([])
+  const [recentActivities, setRecentActivities] = useState([])
   const [confirmModal, setConfirmModal] = useState(null)
 
   // Bulk Delete Modal State
@@ -156,45 +160,77 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
     }
   }
 
-  useEffect(() => {
-    const loadAll = async () => {
-      setInitialLoading(true)
-      try {
-        await fetchAll()
-      } finally {
-        setInitialLoading(false)
+  const fetchDashboardSummary = async (refresh = false) => {
+    setSummaryLoading(true)
+    try {
+      const url = refresh ? `${API.ADMIN.DASHBOARD_SUMMARY}?fresh=true` : API.ADMIN.DASHBOARD_SUMMARY
+      const r = await fetchWithTimeout(url, { headers: auth() }, 10000)
+      const d = await r.json().catch(() => ({}))
+      if (r.ok && d.success && d.data) {
+        const data = d.data
+        setStats(data)
+        if (Array.isArray(data.topTrainings)) {
+          setOverviewTrainings(data.topTrainings)
+        }
+        if (Array.isArray(data.pendingList)) {
+          setPendingParticipants(data.pendingList)
+        }
+        if (Array.isArray(data.recentActivities)) {
+          setRecentActivities(data.recentActivities)
+        }
+        try {
+          sessionStorage.setItem('admin_dashboard_summary_cache', JSON.stringify(data))
+          sessionStorage.setItem('admin_stats_cache', JSON.stringify(data))
+        } catch (_) {}
       }
+    } catch (err) {
+      console.warn('Dashboard summary fetch note:', err.message)
+    } finally {
+      setSummaryLoading(false)
     }
-    loadAll()
+  }
+
+  // Hydrate cached stats on mount for 0ms initial render
+  useEffect(() => {
+    try {
+      const cached = sessionStorage.getItem('admin_dashboard_summary_cache') || sessionStorage.getItem('admin_stats_cache')
+      if (cached) {
+        const parsed = JSON.parse(cached)
+        setStats(parsed)
+        if (Array.isArray(parsed.topTrainings)) setOverviewTrainings(parsed.topTrainings)
+        if (Array.isArray(parsed.pendingList)) setPendingParticipants(parsed.pendingList)
+      }
+    } catch (_) {}
+
+    // Fetch fresh summary from database in background
+    fetchDashboardSummary()
   }, [])
 
   useEffect(() => {
-    if (tab === 'reports') {
+    if (tab === 'overview') {
+      fetchDashboardSummary()
+    } else if (tab === 'reports') {
       fetchAdminReport()
+    } else if (tab === 'trainers') {
+      fetchTrainers(trainerPage, trainerLimit, trainerSearch)
+    } else if (tab === 'trainings') {
+      fetchTrainings(trainingPage, trainingLimit, trainingSearch, trainingStatusFilter)
+    } else if (tab === 'participants') {
+      fetchParticipants(participantPage, participantLimit, participantSearch, participantStatusFilter)
+    } else if (tab === 'programs' || tab === 'courses') {
+      fetchPrograms(programPage, programLimit, programSearch)
+      fetchCourses(coursePage, courseLimit, courseSearch, courseStatusFilter)
+    } else if (tab === 'notes') {
+      fetchNotes(noteFilter)
+    } else if (tab === 'survey' || tab === 'questions') {
+      fetchQuestions()
+    } else if (tab === 'feedback') {
+      fetchFeedbacks()
     }
   }, [tab])
 
-  const fetchAll = async () => {
-    await Promise.all([
-      fetchStats(),
-      fetchTrainers(1, trainerLimit, ''),
-      fetchTrainings(1, trainingLimit, '', 'ALL'),
-      fetchFeedbacks(),
-      fetchParticipants(1, participantLimit, '', 'ALL'),
-      fetchQuestions(),
-      fetchPendingParticipants(),
-      fetchNotes(),
-      fetchPrograms(1, programLimit, ''),
-      fetchCourses(1, courseLimit, '', 'ALL'),
-      fetchAdminReport()
-    ])
-  }
-
   const fetchStats = async () => {
-    try {
-      const r = await fetchWithTimeout(`${API_BASE}/admin/stats`, { headers: auth() }, 10000)
-      if (r.ok) setStats(await r.json())
-    } catch {}
+    await fetchDashboardSummary()
   }
 
   const fetchPendingParticipants = async () => {
@@ -221,11 +257,14 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
         success('Training deleted successfully', 'The training session has been removed.')
         fetchTrainings(); fetchStats()
       } else if (confirmModal.action === 'delete-participant') {
-        const r = await fetch(`${API_BASE}/admin/participants/${confirmModal.id}`, { method: 'DELETE', headers: auth() })
-        const d = await r.json()
-        if (!r.ok) throw new Error(d.error)
+        const r = await fetch(API.ADMIN.DELETE_PARTICIPANT(confirmModal.id), { method: 'DELETE', headers: auth() })
+        const d = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(d.message || d.error || 'Server error deleting participant')
         success('Participant removed successfully')
-        fetchParticipants(); fetchStats()
+        fetchParticipants(participantPage, participantLimit, participantSearch, participantStatusFilter)
+        fetchPendingParticipants()
+        fetchStats()
+        fetchDashboardSummary(true)
       } else if (confirmModal.action === 'delete-trainer') {
         const r = await fetch(`${API_BASE}/admin/trainers/${confirmModal.id}`, { method: 'DELETE', headers: auth() })
         const d = await r.json()
@@ -389,6 +428,15 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
     } finally {
       setCoursesLoading(false)
     }
+  }
+
+  // Aggregate refresh used by the Overview refresh action and post-create handlers
+  const fetchAll = () => {
+    fetchDashboardSummary(true)
+    if (tab === 'participants') fetchParticipants(participantPage, participantLimit, participantSearch, participantStatusFilter)
+    if (tab === 'trainers') fetchTrainers(trainerPage, trainerLimit, trainerSearch)
+    if (tab === 'trainings') fetchTrainings(trainingPage, trainingLimit, trainingSearch, trainingStatusFilter)
+    if (tab === 'feedback') fetchFeedbacks()
   }
 
   // Multi-select helpers
@@ -808,12 +856,12 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
           user={user}
           stats={stats}
           feedbacks={feedbacks}
-          trainings={trainings}
+          trainings={overviewTrainings.length > 0 ? overviewTrainings : trainings}
           participants={participants}
           trainers={trainers}
           pendingParticipants={pendingParticipants}
           adminReport={adminReport}
-          initialLoading={initialLoading}
+          summaryLoading={summaryLoading}
           loading={loading}
           onCreateTraining={() => handleTabChange('createTraining')}
           onAddTrainer={() => handleTabChange('createTrainer')}
@@ -1583,8 +1631,8 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       {tab === 'surveys' && (
         <motion.div variants={itemVariants} className="reg-admin">
           <div className="reg-admin-header">
-            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #0d9488, #0f766e)' }}>
-              <MessageSquare size={22} color="#fff" />
+            <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16A34A' }}>
+              <MessageSquare size={22} color="#16A34A" />
             </div>
             <div>
               <h2 className="reg-admin-title">Survey Questions</h2>
@@ -1706,8 +1754,8 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       {tab === 'notes' && (
         <motion.div variants={itemVariants} className="reg-admin">
           <div className="reg-admin-header">
-            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
-              <ClipboardList size={22} color="#fff" />
+            <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16A34A' }}>
+              <ClipboardList size={22} color="#16A34A" />
             </div>
             <div>
               <h2 className="reg-admin-title">Notes Management</h2>
@@ -1792,7 +1840,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
             <div className="reg-admin-stat"><TrendingUp size={20} style={{ color: '#2563eb' }} /><div><span className="reg-admin-stat-num">{stats.avgSubjectRating ?? '0.0'}</span><span className="reg-admin-stat-label">Avg Subject Rating</span></div></div>
           </div>
           <div className="reg-admin-table-wrap">
-            {initialLoading ? (
+            {loading ? (
               <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading feedback...</p></div>
             ) : feedbacks.length === 0 ? (
               <div className="reg-admin-empty"><MessageSquare size={40} /><h3>No Feedback Yet</h3><p>No feedback submitted yet.</p></div>
@@ -1825,7 +1873,6 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
         <motion.div variants={itemVariants}>
           <CreateTrainerModule
             trainers={trainers}
-            initialLoading={initialLoading}
             token={user.token}
             onCreated={() => { fetchTrainers(); fetchStats() }}
             onDelete={handleDeleteTrainer}
@@ -1848,7 +1895,6 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
             onEdit={openEdit}
             onDelete={handleDeleteTraining}
             loading={loading}
-            initialLoading={initialLoading}
             onBack={() => handleTabChange('trainings')}
           />
         </motion.div>
@@ -1859,8 +1905,8 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
         <motion.div variants={itemVariants} className="reg-admin">
           {/* Header */}
           <div className="reg-admin-header">
-            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #0d9488, #0f766e)' }}>
-              <ClipboardList size={22} color="#fff" />
+            <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16A34A' }}>
+              <ClipboardList size={22} color="#16A34A" />
             </div>
             <div>
               <h2 className="reg-admin-title">Programs & Courses</h2>
@@ -2281,12 +2327,26 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
         </motion.div>
       )}
 
+      {/* ── ATTENDANCE CENTER ── */}
+      {tab === 'attendance' && (
+        <motion.div variants={itemVariants}>
+          <AdminAttendanceAnalytics user={user} />
+        </motion.div>
+      )}
+
+      {/* ── FEEDBACK & SENTIMENT ── */}
+      {tab === 'feedback' && (
+        <motion.div variants={itemVariants}>
+          <AdminFeedbackAnalytics user={user} />
+        </motion.div>
+      )}
+
       {/* ── REPORTS & ANALYTICS ── */}
       {tab === 'reports' && (
         <motion.div variants={itemVariants} className="reg-admin">
           <div className="reg-admin-header">
-            <div className="reg-admin-header-icon" style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}>
-              <TrendingUp size={22} color="#fff" />
+            <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16A34A' }}>
+              <TrendingUp size={22} color="#16A34A" />
             </div>
             <div>
               <h2 className="reg-admin-title">Reports & Analytics</h2>

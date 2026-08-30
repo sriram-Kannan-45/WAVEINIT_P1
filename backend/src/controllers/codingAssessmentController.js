@@ -13,6 +13,20 @@ const logger = require('../utils/logger');
 function ok(res, data) { return res.json({ success: true, ...data }); }
 function fail(res, status, err) { return res.status(status).json({ error: typeof err === 'string' ? err : err.message || 'Unknown error' }); }
 
+const normalizeAssessmentDifficulty = (d) => {
+  if (!d) return 'MEDIUM';
+  const u = String(d).trim().toUpperCase();
+  if (['EASY', 'MEDIUM', 'HARD', 'MIXED'].includes(u)) return u;
+  return 'MEDIUM';
+};
+
+const normalizeProblemDifficulty = (d) => {
+  if (!d) return 'MEDIUM';
+  const u = String(d).trim().toUpperCase();
+  if (['EASY', 'MEDIUM', 'HARD'].includes(u)) return u;
+  return 'MEDIUM';
+};
+
 // ── TRAINER: CRUD Assessments ──
 
 exports.list = async (req, res) => {
@@ -101,7 +115,7 @@ exports.create = async (req, res) => {
     const resolvedTrainingId = trainingId && trainingId !== 'undefined' && trainingId !== 'null' ? trainingId : null;
     const assessment = await CodingAssessment.create({
       title: title || 'Untitled Coding Assessment', description, timeLimit,
-      difficulty, courseId: resolvedCourseId, trainingId: resolvedTrainingId,
+      difficulty: normalizeAssessmentDifficulty(difficulty), courseId: resolvedCourseId, trainingId: resolvedTrainingId,
       languages: Array.isArray(languages) ? languages : ['javascript'],
       trainerId: req.user.id, status: 'DRAFT'
     });
@@ -116,7 +130,13 @@ exports.update = async (req, res) => {
     const allowed = ['title', 'description', 'timeLimit', 'difficulty', 'status', 'startTime', 'endTime', 'showResultImmediately', 'allowMultipleAttempts', 'maxAttempts', 'proctoringEnabled', 'proctoringLevel', 'gracePeriodMinutes', 'maxCopyWarnings'];
     const updates = {};
     for (const key of allowed) {
-      if (req.body[key] !== undefined) updates[key] = req.body[key];
+      if (req.body[key] !== undefined) {
+        if (key === 'difficulty') {
+          updates[key] = normalizeAssessmentDifficulty(req.body[key]);
+        } else {
+          updates[key] = req.body[key];
+        }
+      }
     }
     await assessment.update(updates);
     ok(res, { assessment });
@@ -235,8 +255,9 @@ exports.generateFromPrompt = async (req, res) => {
     const { prompt, difficulty = 'MEDIUM', problemCount = 5, courseId, trainingId, languages } = req.body;
     if (!prompt) return fail(res, 400, 'Prompt is required');
     const count = parseInt(problemCount, 10) || 5;
+    const normDiff = normalizeAssessmentDifficulty(difficulty);
     const aiService = require('../services/aiService');
-    const result = await aiService.generateCodingProblemsFromPrompt(prompt, count, difficulty);
+    const result = await aiService.generateCodingProblemsFromPrompt(prompt, count, normDiff);
     if (!result.problems || result.problems.length === 0) {
       return fail(res, 502, 'AI returned no problems');
     }
@@ -248,7 +269,7 @@ exports.generateFromPrompt = async (req, res) => {
       trainerId: req.user.id, trainingId: resolvedTrainingId, courseId: resolvedCourseId,
       title: result.title || `Coding: ${prompt.substring(0, 60)}`,
       timeLimit: assessmentTimeLimit,
-      numProblems: result.problems.length, difficulty, status: 'DRAFT',
+      numProblems: result.problems.length, difficulty: normDiff, status: 'DRAFT',
       languages: Array.isArray(lang) ? lang : ['javascript'],
     });
     for (let i = 0; i < result.problems.length; i++) {
@@ -257,7 +278,7 @@ exports.generateFromPrompt = async (req, res) => {
         assessmentId: assessment.id, title: p.title, description: p.description,
         constraints: p.constraints, inputFormat: p.inputFormat, outputFormat: p.outputFormat,
         sampleInput: p.sampleInput, sampleOutput: p.sampleOutput, explanation: p.explanation,
-        difficulty: p.difficulty || 'MEDIUM', programmingLanguage: p.programmingLanguage || 'javascript',
+        difficulty: normalizeProblemDifficulty(p.difficulty || normDiff), programmingLanguage: p.programmingLanguage || 'javascript',
         starterCode: p.starterCode, expectedSolution: p.expectedSolution,
         timeLimit: p.timeLimit || 5, memoryLimit: p.memoryLimit || 256, marks: p.marks || 10,
         tags: p.tags || [], order: i
@@ -535,17 +556,38 @@ exports.start = async (req, res) => {
       session = await AssessmentSession.create(sessionData);
     }
 
-    console.log('Attempt created successfully. Attempt ID:', attempt.id, 'Session Token:', session.sessionToken);
+    let monitoringSessionId = attempt.monitoringSessionId || null;
+    try {
+      const monitoringService = require('../services/monitoringService');
+      const { session: monSession } = await monitoringService.startSession({
+        participantId,
+        contextType: 'CODING',
+        contextId: Number(assessmentId),
+        attemptId: attempt.id,
+        mobileEnabled: true,
+      });
+      if (monSession?.sessionId) {
+        monitoringSessionId = monSession.sessionId;
+        await attempt.update({ monitoringSessionId });
+      }
+    } catch (monErr) {
+      console.warn('Failed to initialize monitoring session for coding attempt:', monErr.message);
+    }
+
+    console.log('Attempt created successfully. Attempt ID:', attempt.id, 'Session Token:', session.sessionToken, 'Monitoring Session ID:', monitoringSessionId);
 
     ok(res, {
       success: true,
       attemptId: attempt.id,
       sessionToken: session.sessionToken,
+      monitoringSessionId,
       assessment: {
         id: assessment.id,
         title: assessment.title,
         timeLimit: assessment.timeLimit,
-        proctoringEnabled: assessment.proctoringEnabled
+        proctoringEnabled: assessment.proctoringEnabled !== false,
+        proctoringLevel: assessment.proctoringLevel || 'MEDIUM',
+        gracePeriodMinutes: assessment.gracePeriodMinutes || 2,
       }
     });
   } catch (err) {
@@ -836,18 +878,21 @@ exports.submitAssessment = async (req, res) => {
     const result = await sequelize.transaction(async (t) => {
       const attempt = await CodingAttempt.findOne({
         where: { id: attemptId, participantId: req.user.id },
-        include: [
-          { model: CodingSubmission, as: 'submissions' },
-          { model: CodingAssessment, as: 'assessment', include: [{ model: CodingProblem, as: 'problems', include: [{ model: CodingTestCase, as: 'testCases' }] }] }
-        ],
         lock: t.LOCK.UPDATE,
         transaction: t
       });
       if (!attempt) throw Object.assign(new Error('Attempt not found'), { status: 404 });
       if (attempt.status !== 'IN_PROGRESS') throw Object.assign(new Error('Attempt already submitted'), { status: 409 });
 
-      const problems = attempt.assessment.problems || [];
-      const existingSubs = attempt.submissions || [];
+      const assessment = await CodingAssessment.findByPk(attempt.assessmentId, {
+        include: [{ model: CodingProblem, as: 'problems', include: [{ model: CodingTestCase, as: 'testCases' }] }],
+        transaction: t
+      });
+      const problems = assessment?.problems || [];
+      const existingSubs = await CodingSubmission.findAll({
+        where: { attemptId: attempt.id },
+        transaction: t
+      });
       const evaluatedProblemIds = new Set(existingSubs.filter(s => s.status !== 'PENDING' && s.totalTestCases > 0).map(s => s.problemId));
       const problemData = req.body.submissions || [];
 
@@ -918,9 +963,29 @@ exports.submitAssessment = async (req, res) => {
       }
       totalScore = Math.min(totalScore, maxScore);
       const percentage = maxScore > 0 ? Math.min(Math.round((totalScore / maxScore) * 10000) / 100, 100) : 0;
+      let timeTaken = null;
+      try {
+        if (req.body?.actualTestDurationSeconds != null && Number(req.body.actualTestDurationSeconds) > 0) {
+          timeTaken = Number(req.body.actualTestDurationSeconds);
+        } else if (req.body?.timeTaken != null && Number(req.body.timeTaken) > 0) {
+          timeTaken = Number(req.body.timeTaken);
+        } else if (attempt.monitoringSessionId) {
+          const { MonitoringSession } = require('../models');
+          const ms = await MonitoringSession.findOne({ where: { sessionId: attempt.monitoringSessionId } });
+          if (ms?.metadata?.actualTestDurationSeconds) {
+            timeTaken = Number(ms.metadata.actualTestDurationSeconds);
+          } else if (ms?.metadata?.activeDurationSeconds) {
+            timeTaken = Number(ms.metadata.activeDurationSeconds);
+          }
+        }
+        if (timeTaken == null && attempt.startedAt) {
+          timeTaken = Math.max(0, Math.round((Date.now() - new Date(attempt.startedAt).getTime()) / 1000));
+        }
+      } catch (_) {}
+
       await attempt.update({
         status: 'SUBMITTED', submittedAt: new Date(),
-        timeTaken: Math.round((Date.now() - new Date(attempt.startedAt).getTime()) / 1000)
+        ...(timeTaken != null ? { timeTaken } : {})
       }, { transaction: t });
       const codingResult = await CodingResult.create({
         attemptId: attempt.id, assessmentId: attempt.assessmentId, participantId: req.user.id,
@@ -937,6 +1002,17 @@ exports.submitAssessment = async (req, res) => {
     try {
       const verificationService = require('../services/assessmentVerificationService');
       await verificationService.endSession({ attemptId: result.attemptId, participantId: req.user.id }).catch(() => {});
+    } catch (_) {}
+
+    try {
+      const monitoringService = require('../services/monitoringService');
+      const activeDurationSec = req.body?.actualTestDurationSeconds || req.body?.timeTaken || null;
+      await monitoringService.endSession({
+        sessionId: result.monitoringSessionId,
+        attemptId: result.attemptId,
+        participantId: req.user.id,
+        actualTestDurationSeconds: activeDurationSec
+      }).catch(() => {});
     } catch (_) {}
 
     // Auto-generate proctoring report in background for coding attempt

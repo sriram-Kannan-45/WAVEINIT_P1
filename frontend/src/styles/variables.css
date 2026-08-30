@@ -34,7 +34,7 @@
 
   --color-border-default: #e5e7eb;
   --color-border-light: #f1f5f9;
-  --color-border-focus: #0d9488;
+  --color-border-focus: #16a34a;
 
   /* Primary — WAVE INIT Green */
   --color-primary-50: #f0fdf4;
@@ -51,9 +51,9 @@
   --color-accent-hover: #15803d;
   --color-accent-light: #dcfce7;
 
-  /* Secondary — Blue */
-  --color-secondary-500: #3b82f6;
-  --color-secondary-600: #2563eb;
+  /* Secondary — Black & Charcoal */
+  --color-secondary-500: #1e293b;
+  --color-secondary-600: #0f172a;
 
   /* Status Colors */
   --color-success: #16a34a;
@@ -62,8 +62,8 @@
   --color-warning-bg: #fef3c7;
   --color-danger: #dc2626;
   --color-danger-bg: #fee2e2;
-  --color-info: #2563eb;
-  --color-info-bg: #dbeafe;
+  --color-info: #16a34a;
+  --color-info-bg: #dcfce7;
 
   /* ── Typography ─────────────────────────────────────────────── */
   --font-display: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams, useLocation, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { QRCodeSVG } from 'qrcode.react'
 import { io } from 'socket.io-client'
@@ -23,7 +23,8 @@ import {
   Minimize2,
   Lock,
   Unlock,
-  Radio
+  Radio,
+  Code
 } from 'lucide-react'
 import Layout from '../components/Layout'
 import { API_BASE, BACKEND_ORIGIN } from '../api/api'
@@ -39,13 +40,18 @@ const ICE_SERVERS = [
   { urls: 'stun:stun4.l.google.com:19302' },
 ]
 
-export default function ParticipantQuizVerificationPage({ user, onLogout }) {
+export default function ParticipantQuizVerificationPage({ user, onLogout, assessmentType: propAssessmentType }) {
   const navigate = useNavigate()
-  const { trainingId: paramTrainingId, quizId: paramQuizId, attemptId: paramAttemptId } = useParams()
+  const location = useLocation()
+  const { trainingId: paramTrainingId, quizId: paramQuizId, assessmentId: paramAssessmentId, attemptId: paramAttemptId } = useParams()
   const [searchParams] = useSearchParams()
   const { error: showError, success: showSuccess } = useToast()
 
-  const quizId = paramQuizId || searchParams.get('quizId')
+  const isCoding = propAssessmentType === 'CODING' || location.pathname.includes('/coding/') || searchParams.get('type') === 'CODING'
+  const currentAssessmentType = isCoding ? 'CODING' : 'QUIZ'
+
+  const effectiveId = paramQuizId || paramAssessmentId || searchParams.get('quizId') || searchParams.get('assessmentId')
+  const quizId = effectiveId
   const trainingId = paramTrainingId || searchParams.get('trainingId')
   let attemptId = paramAttemptId || searchParams.get('attemptId')
   let sessionToken = searchParams.get('sessionToken')
@@ -94,12 +100,12 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
       ? localStorage.getItem('token') || sessionStorage.getItem('token')
       : null)
 
-  // 1. Fetch Course and Quiz Info + Create / Restore Quiz Attempt
+  // 1. Fetch Course and Quiz/Coding Info + Create / Restore Attempt
   useEffect(() => {
     let aborted = false
-    const initQuizAttempt = async () => {
-      if (!quizId) {
-        setError('Quiz ID is required.')
+    const initAttempt = async () => {
+      if (!effectiveId) {
+        setError(`${isCoding ? 'Assessment' : 'Quiz'} ID is required.`)
         setLoading(false)
         return
       }
@@ -113,37 +119,53 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
         let curSessionToken = activeSessionToken
 
         if (!curAttemptId) {
-          const startRes = await fetch(`${API_BASE}/quizzes/${quizId}/start`, {
+          const startEndpoint = isCoding
+            ? `${API_BASE}/coding/participant/start/${effectiveId}`
+            : `${API_BASE}/quizzes/${effectiveId}/start`
+
+          const startRes = await fetch(startEndpoint, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               ...(activeToken ? { Authorization: `Bearer ${activeToken}` } : {}),
             },
+            ...(isCoding ? {
+              body: JSON.stringify({
+                participant_id: user?.id,
+                training_id: trainingId,
+                lesson_id: null,
+                coding_assessment_id: effectiveId,
+              })
+            } : {})
           })
           const startData = await startRes.json()
           if (!startRes.ok || !startData.attemptId) {
-            throw new Error(startData.error || 'Failed to initialize quiz attempt.')
+            throw new Error(startData.error || `Failed to initialize ${isCoding ? 'coding' : 'quiz'} attempt.`)
           }
           curAttemptId = startData.attemptId
           curSessionToken = startData.sessionToken
           setActiveAttemptId(curAttemptId)
           setActiveSessionToken(curSessionToken)
           setActiveMonitoringSessionId(startData.monitoringSessionId || null)
-          if (startData.quiz) {
-            setQuizDetails(startData.quiz)
+          if (startData.quiz || startData.assessment) {
+            setQuizDetails(startData.quiz || startData.assessment)
           }
         }
 
-        // Fetch Quiz & Questions metadata
-        const qRes = await fetch(`${API_BASE}/quizzes/${quizId}/questions`, {
+        // Fetch Quiz / Coding Assessment metadata
+        const qEndpoint = isCoding
+          ? `${API_BASE}/coding/assessments/${effectiveId}`
+          : `${API_BASE}/quizzes/${effectiveId}/questions`
+
+        const qRes = await fetch(qEndpoint, {
           headers: {
             'Content-Type': 'application/json',
             ...(activeToken ? { Authorization: `Bearer ${activeToken}` } : {}),
           },
         })
         const qData = await qRes.json()
-        if (!aborted && qRes.ok && qData.quiz) {
-          setQuizDetails(qData.quiz)
+        if (!aborted && qRes.ok) {
+          setQuizDetails(qData.quiz || qData.assessment || qData)
         }
 
         // Fetch Course / Training details if trainingId exists
@@ -160,7 +182,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
               setCourseDetails(courseData.course)
             }
           } catch (e) {
-            // Non-critical, fallback to trainingId or 'react'
+            // Non-critical
           }
         }
 
@@ -173,8 +195,8 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
               ...(activeToken ? { Authorization: `Bearer ${activeToken}` } : {}),
             },
             body: JSON.stringify({
-              assessmentType: 'QUIZ',
-              assessmentId: parseInt(quizId, 10),
+              assessmentType: currentAssessmentType,
+              assessmentId: parseInt(effectiveId, 10),
               attemptId: parseInt(curAttemptId, 10),
             }),
           })
@@ -202,11 +224,11 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
       }
     }
 
-    initQuizAttempt()
+    initAttempt()
     return () => {
       aborted = true
     }
-  }, [quizId, trainingId, activeToken])
+  }, [effectiveId, isCoding, activeAttemptId, activeSessionToken, activeToken, trainingId, user?.id, currentAssessmentType])
 
   // 2. Real-time Countdown Timer
   useEffect(() => {
@@ -231,7 +253,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
   }, [timeLeft])
 
-  // 3. WebRTC Peer Connection Setup: Low-latency P2P configuration
+  // 3. WebRTC Peer Connection Setup
   const getOrCreatePeerConnection = useCallback(() => {
     if (pcRef.current) return pcRef.current
 
@@ -299,201 +321,192 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
     const currentSessionId = sessionData?.sessionId || sessionIdRef.current
     if (!currentSessionId) return
 
-    const wsUrl = BACKEND_ORIGIN || window.location.origin
-    const socket = io(wsUrl, {
-      auth: { token: activeToken },
+    console.log('[LAPTOP-VERIF] Connecting to Socket.IO for session:', currentSessionId)
+    const socket = io(BACKEND_ORIGIN, {
+      path: '/socket.io/',
       transports: ['websocket', 'polling'],
-      reconnectionAttempts: 20,
+      reconnectionAttempts: 15,
+      reconnectionDelay: 1000,
     })
     socketRef.current = socket
 
     socket.on('connect', () => {
-      console.log('[LAPTOP-P2P] Socket connected:', socket.id, 'session:', currentSessionId)
-      socket.emit('assessment_verif:join', {
+      console.log('[LAPTOP-VERIF] Connected to verification socket with ID:', socket.id)
+      socket.emit('assessment_verif:join-session', {
         sessionId: currentSessionId,
         role: 'laptop',
+        clientType: 'browser_desktop',
       })
     })
 
-    socket.on('assessment_verif:mobile_joined', ({ socketId }) => {
-      console.log('[LAPTOP-P2P] Mobile peer joined:', socketId)
-      mobileSocketIdRef.current = socketId
+    socket.on('assessment_verif:mobile-scanned', (payload) => {
+      console.log('[LAPTOP-VERIF] Mobile scanned QR:', payload)
       setQrScanned(true)
       setParticipantValidated(true)
-      setIsDisconnected(false)
-      getOrCreatePeerConnection()
-
-      const targetSessionId = currentSessionId || sessionIdRef.current
-      socket.emit('assessment_verif:laptop_joined', {
-        sessionId: targetSessionId,
-        socketId: socket.id,
-      })
+      if (payload.mobileSocketId) {
+        mobileSocketIdRef.current = payload.mobileSocketId
+      }
     })
 
-    socket.on('assessment_verif:offer', async ({ offer, fromSocketId, sessionId }) => {
-      try {
-        console.log('[LAPTOP-P2P] Offer received from mobile:', fromSocketId)
-        mobileSocketIdRef.current = fromSocketId
-        setQrScanned(true)
-        setParticipantValidated(true)
-        const pc = getOrCreatePeerConnection()
-        await pc.setRemoteDescription(new RTCSessionDescription(offer))
+    socket.on('assessment_verif:mobile-camera-ready', (payload) => {
+      console.log('[LAPTOP-VERIF] Mobile camera ready:', payload)
+      setMobileCameraReady(true)
+      setQrScanned(true)
+      setParticipantValidated(true)
+      if (payload.mobileSocketId) {
+        mobileSocketIdRef.current = payload.mobileSocketId
+      }
+    })
 
-        if (candidateQueueRef.current.length > 0) {
-          for (const cand of candidateQueueRef.current) {
-            try {
-              await pc.addIceCandidate(new RTCIceCandidate(cand))
-            } catch (e) {
-              console.error('[LAPTOP-P2P] ICE queue candidate error:', e)
-            }
-          }
-          candidateQueueRef.current = []
+    socket.on('assessment_verif:webrtc-offer', async ({ offer, mobileSocketId }) => {
+      console.log('[LAPTOP-VERIF] Received WebRTC offer from mobile')
+      if (mobileSocketId) mobileSocketIdRef.current = mobileSocketId
+      const pc = getOrCreatePeerConnection()
+
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(offer))
+        while (candidateQueueRef.current.length > 0) {
+          const cand = candidateQueueRef.current.shift()
+          await pc.addIceCandidate(cand)
         }
 
         const answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
-        const targetSessionId = sessionId || currentSessionId || sessionIdRef.current
-        socket.emit('assessment_verif:answer', {
-          sessionId: targetSessionId,
-          targetSocketId: fromSocketId,
-          answer: pc.localDescription,
+
+        socket.emit('assessment_verif:webrtc-answer', {
+          sessionId: currentSessionId,
+          targetSocketId: mobileSocketIdRef.current,
+          answer,
         })
-      } catch (err) {
-        console.error('[LAPTOP-P2P] WebRTC Offer handling error:', err)
+      } catch (e) {
+        console.error('[LAPTOP-VERIF] Failed to handle WebRTC offer:', e)
       }
     })
 
     socket.on('assessment_verif:ice-candidate', async ({ candidate }) => {
-      try {
-        const pc = getOrCreatePeerConnection()
-        if (pc && candidate) {
-          if (pc.remoteDescription && pc.remoteDescription.type) {
+      const pc = pcRef.current
+      if (pc && candidate) {
+        try {
+          if (pc.remoteDescription) {
             await pc.addIceCandidate(new RTCIceCandidate(candidate))
           } else {
-            candidateQueueRef.current.push(candidate)
+            candidateQueueRef.current.push(new RTCIceCandidate(candidate))
           }
+        } catch (e) {
+          console.warn('[LAPTOP-VERIF] Error adding ICE candidate:', e)
         }
-      } catch (err) {
-        console.error('[LAPTOP-P2P] ICE Candidate error:', err)
       }
     })
 
-    socket.on('assessment_verif:mobile_status', (data) => {
-      if (data.mobileReady || data.connected || data.mobileVerified) {
+    socket.on('assessment_verif:frame-preview', (payload) => {
+      if (payload.frameData) {
+        setLastFrame(payload.frameData)
+        setMobileStreamConnected(true)
+        setMobileCameraReady(true)
+        setQrScanned(true)
+        setParticipantValidated(true)
+      }
+    })
+
+    socket.on('assessment_verif:session-status-updated', (payload) => {
+      if (payload.status === 'PAIRED' || payload.status === 'VERIFIED') {
         setQrScanned(true)
         setParticipantValidated(true)
         setMobileCameraReady(true)
-        setIsDisconnected(false)
-      } else {
-        setIsDisconnected(true)
+      }
+      if (payload.status === 'VERIFIED') {
+        setIsFullyVerified(true)
       }
     })
 
-    socket.on('assessment_verif:stream_status', (data) => {
-      if (data.streaming) {
-        setQrScanned(true)
-        setParticipantValidated(true)
-        setMobileCameraReady(true)
-        setIsDisconnected(false)
-      }
-    })
-
-    socket.on('assessment_verif:unlocked', () => {
-      setQrScanned(true)
-      setParticipantValidated(true)
-      setIsDisconnected(false)
+    socket.on('assessment_verif:mobile-disconnected', () => {
+      console.warn('[LAPTOP-VERIF] Mobile device disconnected')
+      setIsDisconnected(true)
+      setWebRtcConnected(false)
+      setRemoteVideoReady(false)
     })
 
     return () => {
       socket.disconnect()
       if (pcRef.current) {
-        try { pcRef.current.close() } catch (e) {}
+        pcRef.current.close()
         pcRef.current = null
       }
     }
-  }, [sessionData?.sessionId, activeToken, getOrCreatePeerConnection])
+  }, [sessionData?.sessionId, getOrCreatePeerConnection])
 
-  // 5. Attach remote video stream to DOM
+  // 5. Polling Fallback
   useEffect(() => {
-    const video = videoRef.current
-    if (!video || !remoteStream) return
+    const currentSessionId = sessionData?.sessionId || sessionIdRef.current
+    if (!currentSessionId) return
 
-    video.srcObject = remoteStream
-    video.muted = true
-    video.autoplay = true
-    video.playsInline = true
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/assessment-verification/status/${currentSessionId}`)
+        const data = await res.json()
+        if (data.success && data.session) {
+          const s = data.session
+          if (s.qrScanned || s.status === 'PAIRED' || s.status === 'VERIFIED' || s.mobileVerified) {
+            setQrScanned(true)
+            setParticipantValidated(true)
+          }
+          if (s.mobileCameraReady) {
+            setMobileCameraReady(true)
+          }
+          if (s.status === 'VERIFIED') {
+            setIsFullyVerified(true)
+          }
+          if (s.lastFramePreview) {
+            setLastFrame(s.lastFramePreview)
+            setMobileStreamConnected(true)
+          }
+        }
+      } catch (_) {}
+    }, 3000)
 
-    video.onplaying = () => {
-      if (video.videoWidth > 0 && video.videoHeight > 0) {
-        setRemoteVideoReady(true)
-        setMobileStreamConnected(true)
-        setMobileCameraReady(true)
-        setIsFullyVerified(true)
-      }
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
     }
+  }, [sessionData?.sessionId])
 
-    video.play().catch((err) => {
-      console.warn('[LAPTOP-P2P] Video playback error:', err)
-    })
-  }, [remoteStream])
-
-  // Connection Confirmation
-  useEffect(() => {
-    if (remoteVideoReady) {
-      setMobileStreamConnected(true)
-      setMobileCameraReady(true)
-      setIsFullyVerified(true)
-      setIsDisconnected(false)
-    }
-  }, [remoteVideoReady])
-
-  // 7. Refresh QR Code
-  const handleRefreshQr = async () => {
-    if (!sessionData?.sessionId || refreshing) return
+  // 6. Manual Refresh Session
+  const handleRefreshQR = async () => {
     try {
       setRefreshing(true)
-      const res = await fetch(`${API_BASE}/assessment-verification/refresh`, {
+      const res = await fetch(`${API_BASE}/assessment-verification/initiate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(activeToken ? { Authorization: `Bearer ${activeToken}` } : {}),
         },
-        body: JSON.stringify({ sessionId: sessionData.sessionId }),
+        body: JSON.stringify({
+          assessmentType: currentAssessmentType,
+          assessmentId: parseInt(effectiveId, 10),
+          attemptId: parseInt(activeAttemptId, 10),
+        }),
       })
       const data = await res.json()
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to refresh QR code')
+      if (data.success) {
+        sessionIdRef.current = data.sessionId
+        setSessionData(data)
+        setQrScanned(false)
+        setParticipantValidated(false)
+        setMobileStreamConnected(false)
+        setMobileCameraReady(false)
+        setWebRtcConnected(false)
+        setRemoteVideoReady(false)
+        setIsFullyVerified(false)
+        setIsDisconnected(false)
+        showSuccess('QR code refreshed successfully')
       }
-      setSessionData(data)
-      setQrScanned(false)
-      setParticipantValidated(false)
-      setMobileStreamConnected(false)
-      setMobileCameraReady(false)
-      setIsFullyVerified(false)
-      setIsDisconnected(false)
-      setRemoteStream(null)
-      setLastFrame(null)
-      if (pcRef.current) {
-        try { pcRef.current.close() } catch (e) {}
-        pcRef.current = null
-      }
-      showSuccess('Generated a new verification QR code.')
-    } catch (err) {
-      showError(err.message || 'Unable to refresh QR code')
+    } catch (e) {
+      showError('Failed to refresh QR session')
     } finally {
       setRefreshing(false)
     }
   }
 
-  // 8. Copy Session ID
-  const handleCopySessionId = () => {
-    if (!sessionData?.sessionId) return
-    navigator.clipboard?.writeText(sessionData.sessionId)
-    setCopiedSessionId(true)
-    setTimeout(() => setCopiedSessionId(false), 2000)
-  }
-
-  // 9. Fullscreen Video Preview Toggle
+  // 7. Fullscreen Video Preview Toggle
   const toggleFullscreen = () => {
     if (!previewContainerRef.current) return
     if (!document.fullscreenElement) {
@@ -505,7 +518,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
     }
   }
 
-  // 10. Start / Resume Quiz after Verification (Mobile QR Paused)
+  // 8. Start Assessment after Verification
   const handleStartQuiz = async () => {
     try {
       setVerifyingStart(true)
@@ -513,37 +526,37 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
       // Persist verification in session storage
       try {
         sessionStorage.setItem(
-          `assessment_verif_QUIZ_${quizId}_${activeAttemptId}`,
+          `assessment_verif_${currentAssessmentType}_${effectiveId}_${activeAttemptId}`,
           JSON.stringify({ sessionId: sessionData?.sessionId || `bypassed_${Date.now()}`, token: sessionData?.token || 'bypassed' })
         )
       } catch (e) {}
 
-      // Navigate to the actual quiz attempt screen
+      // Navigate to the actual attempt screen
       const coursePath = trainingId ? `/trainings/${trainingId}` : ''
       const params = new URLSearchParams({
         attemptId: String(activeAttemptId),
         sessionToken: activeSessionToken || '',
         monitoringSessionId: activeMonitoringSessionId || '',
       })
-      navigate(`${coursePath}/quizzes/${quizId}/attempt?${params.toString()}`)
+      navigate(`${coursePath}/${isCoding ? 'coding' : 'quizzes'}/${effectiveId}/attempt?${params.toString()}`)
     } catch (err) {
-      showError(err.message || 'Unable to start quiz')
+      showError(err.message || `Unable to start ${isCoding ? 'coding assessment' : 'quiz'}`)
       setVerifyingStart(false)
     }
   }
 
   const handleBackToQuiz = () => {
     if (trainingId) {
-      navigate(`/participant?tab=myEnrollments&courseId=${trainingId}&subtab=quizzes`)
+      navigate(`/participant?tab=myEnrollments&courseId=${trainingId}&subtab=${isCoding ? 'coding' : 'quizzes'}`)
     } else {
       navigate('/participant?tab=myEnrollments')
     }
   }
 
   const courseDisplayName = courseDetails?.title || (trainingId ? `Training ${trainingId}` : 'react')
-  const quizDisplayName = quizDetails?.title || 'AI Generated Quiz'
+  const quizDisplayName = quizDetails?.title || (isCoding ? 'Coding Assessment' : 'AI Generated Quiz')
   const durationDisplay = quizDetails?.timeLimit ? `${quizDetails.timeLimit} Minutes` : '60 Minutes'
-  const marksDisplay = quizDetails?.totalMarks || (quizDetails?.questions ? `${quizDetails.questions.length * 5 || 50} Marks` : '50 Marks')
+  const marksDisplay = quizDetails?.totalMarks || (quizDetails?.questions ? `${quizDetails.questions.length * 5 || 50} Marks` : (isCoding ? `${(quizDetails?.numProblems || 3) * 10} Marks` : '50 Marks'))
   const mobilePairUrl = buildAssessmentMobileUrl(sessionData?.qrPayload?.shortUrl)
 
   return (
@@ -570,7 +583,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
               {courseDisplayName}
             </span>
             <span className="wi-verif-breadcrumb-sep">/</span>
-            <span style={{ color: '#16A34A', fontWeight: 600 }}>AI Quiz - Verification</span>
+            <span style={{ color: '#16A34A', fontWeight: 600 }}>{isCoding ? 'Coding Assessment - Verification' : 'AI Quiz - Verification'}</span>
           </nav>
         </div>
 
@@ -580,20 +593,20 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
             <button
               onClick={handleBackToQuiz}
               className="wi-verif-round-btn"
-              title="Back to Quiz"
+              title="Back"
               aria-label="Back"
             >
               <ArrowLeft size={16} />
             </button>
             <div>
-              <h1 className="wi-verif-heading">AI Quiz – Mobile Camera Verification</h1>
-              <p className="wi-verif-subheading">Secure assessment with identity verification</p>
+              <h1 className="wi-verif-heading">{isCoding ? 'Coding Assessment – Mobile Camera Verification' : 'AI Quiz – Mobile Camera Verification'}</h1>
+              <p className="wi-verif-subheading">Secure proctoring with multi-angle identity verification</p>
             </div>
           </div>
 
           <div className="wi-verif-actions-right">
             <button onClick={handleBackToQuiz} className="wi-verif-back-btn">
-              <ArrowLeft size={14} /> Back to Quiz
+              <ArrowLeft size={14} /> Back
             </button>
             <div className="wi-verif-progress-pill">
               <span className="wi-verif-pulse-dot" />
@@ -606,7 +619,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
         <div className="wi-verif-summary-card">
           <div className="wi-verif-summary-item">
             <div className="wi-verif-summary-icon">
-              <Sparkles size={20} strokeWidth={2.2} />
+              {isCoding ? <Code size={20} strokeWidth={2.2} /> : <Sparkles size={20} strokeWidth={2.2} />}
             </div>
             <div className="wi-verif-summary-text">
               <span className="wi-verif-summary-label">Assessment</span>
@@ -655,7 +668,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
                 <h2 className="wi-verif-col-title">Scan with Mobile Camera</h2>
               </div>
               <p className="wi-verif-col-desc">
-                Use your registered mobile device to scan the QR code and connect your camera.
+                Use your mobile phone camera to scan the QR code and pair your side camera feed.
               </p>
 
               <div className="wi-verif-steps-box">
@@ -664,291 +677,207 @@ export default function ParticipantQuizVerificationPage({ user, onLogout }) {
                   <li>Open camera on your mobile device</li>
                   <li>Scan the QR code shown below</li>
                   <li>Allow camera access when prompted</li>
-                  <li>Keep your face in view during the assessment</li>
+                  <li>Position phone at a 45° angle to capture desk & hands</li>
                 </ol>
               </div>
 
-              {/* QR Code */}
+              {/* QR Code Container */}
               <div className="wi-verif-qr-wrapper">
-                {loading ? (
-                  <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Loader2 size={32} className="animate-spin" color="#16A34A" />
-                  </div>
-                ) : isExpired ? (
-                  <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                    <AlertCircle size={40} color="#DC2626" style={{ margin: '0 auto 8px' }} />
-                    <p style={{ fontSize: 13, color: '#DC2626', fontWeight: 600, margin: '0 0 10px' }}>
-                      QR Code Expired
-                    </p>
-                    <button
-                      onClick={handleRefreshQr}
-                      disabled={refreshing}
-                      className="wi-verif-start-btn"
-                      style={{ padding: '8px 16px', fontSize: 12.5 }}
-                    >
-                      <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /> Generate New QR
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <div className="wi-verif-qr-frame">
-                      <span className="wi-verif-qr-corner wi-verif-qr-corner--tl" />
-                      <span className="wi-verif-qr-corner wi-verif-qr-corner--tr" />
-                      <span className="wi-verif-qr-corner wi-verif-qr-corner--bl" />
-                      <span className="wi-verif-qr-corner wi-verif-qr-corner--br" />
-                      <QRCodeSVG
-                        value={mobilePairUrl || `https://waveinit.com/join/${sessionData?.token || 'session'}`}
-                        size={176}
-                        level="M"
-                        includeMargin={false}
-                        fgColor="#0F172A"
-                        bgColor="#FFFFFF"
-                      />
+                <div className="wi-verif-qr-inner">
+                  {loading ? (
+                    <div className="wi-verif-qr-loading">
+                      <Loader2 size={32} className="animate-spin text-emerald-600" />
+                      <span>Generating secure QR...</span>
                     </div>
-
-                    <span className="wi-verif-timer-label">QR Code Expires In</span>
-                    <div className="wi-verif-timer-value">
-                      <Clock size={16} />
-                      <span>{formattedTimer}</span>
-                    </div>
-
-                    <span className="wi-verif-session-label">Session ID</span>
-                    <div className="wi-verif-session-pill">
-                      <span>{sessionData?.sessionId || 'verif_quiz_8_trc8boccn61g'}</span>
-                      <button
-                        type="button"
-                        onClick={handleCopySessionId}
-                        className="wi-verif-copy-btn"
-                        title="Copy Session ID"
-                      >
-                        {copiedSessionId ? <Check size={13} color="#16A34A" /> : <Copy size={13} />}
+                  ) : error ? (
+                    <div className="wi-verif-qr-loading">
+                      <AlertCircle size={32} color="#dc2626" />
+                      <span style={{ color: '#dc2626' }}>{error}</span>
+                      <button onClick={handleRefreshQR} className="wi-verif-retry-btn">
+                        <RefreshCw size={12} /> Retry
                       </button>
                     </div>
-                  </>
-                )}
+                  ) : isExpired ? (
+                    <div className="wi-verif-qr-loading">
+                      <Clock size={32} color="#f59e0b" />
+                      <span style={{ color: '#f59e0b', fontWeight: 600 }}>QR Code Expired</span>
+                      <button onClick={handleRefreshQR} className="wi-verif-retry-btn">
+                        <RefreshCw size={12} /> Refresh QR
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="wi-verif-qr-content">
+                      <QRCodeSVG
+                        value={mobilePairUrl || 'https://waveinit.com'}
+                        size={175}
+                        level="M"
+                        includeMargin={false}
+                      />
+                      {qrScanned && (
+                        <div className="wi-verif-qr-scanned-overlay">
+                          <CheckCircle2 size={40} color="#16a34a" />
+                          <span>QR Scanned!</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="wi-verif-qr-footer">
+                  <div className="wi-verif-timer-row">
+                    <Clock size={13} />
+                    <span>Expires in <strong>{formattedTimer}</strong></span>
+                  </div>
+                  <button
+                    onClick={handleRefreshQR}
+                    disabled={refreshing || loading}
+                    className="wi-verif-refresh-btn"
+                  >
+                    <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} /> Refresh
+                  </button>
+                </div>
               </div>
             </div>
 
-            {/* ── RIGHT COLUMN: Status & Camera Preview ── */}
+            {/* ── RIGHT COLUMN: Live Stream & Checklist ── */}
             <div>
               <div className="wi-verif-col-header">
                 <span className="wi-verif-num-badge">2</span>
-                <h2 className="wi-verif-col-title">Verification Status</h2>
+                <h2 className="wi-verif-col-title">Live Mobile Camera Feed</h2>
               </div>
+              <p className="wi-verif-col-desc">
+                Once paired, your mobile stream will appear below in real-time.
+              </p>
 
-              <div className="wi-verif-checklist">
-                {/* Step 1 */}
-                <div className="wi-verif-check-row">
-                  <div className="wi-verif-check-left">
-                    <Check size={16} color={qrScanned ? '#16A34A' : '#94A3B8'} strokeWidth={2.5} />
-                    <span>QR Code Scanned & Paired</span>
-                  </div>
-                  <span
-                    className={`wi-verif-check-badge ${
-                      qrScanned ? 'wi-verif-check-badge--completed' : 'wi-verif-check-badge--waiting'
-                    }`}
-                  >
-                    {qrScanned ? 'Completed' : 'Waiting...'}
-                  </span>
-                </div>
+              {/* Video Preview Container */}
+              <div ref={previewContainerRef} className="wi-verif-video-box">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className={`wi-verif-video-el ${remoteVideoReady ? 'block' : 'hidden'}`}
+                />
 
-                {/* Step 2 */}
-                <div className="wi-verif-check-row">
-                  <div className="wi-verif-check-left">
-                    <Check size={16} color={participantValidated ? '#16A34A' : '#94A3B8'} strokeWidth={2.5} />
-                    <span>Participant & Attempt Validated</span>
-                  </div>
-                  <span
-                    className={`wi-verif-check-badge ${
-                      participantValidated
-                        ? 'wi-verif-check-badge--completed'
-                        : 'wi-verif-check-badge--waiting'
-                    }`}
-                  >
-                    {participantValidated ? 'Completed' : 'Waiting...'}
-                  </span>
-                </div>
-
-                {/* Step 3 */}
-                <div className="wi-verif-check-row">
-                  <div className="wi-verif-check-left">
-                    <Wifi
-                      size={16}
-                      color={
-                        mobileStreamConnected || remoteVideoReady
-                          ? '#16A34A'
-                          : qrScanned
-                          ? '#D97706'
-                          : '#94A3B8'
-                      }
-                    />
-                    <span>Mobile Camera Stream</span>
-                  </div>
-                  <span
-                    className={`wi-verif-check-badge ${
-                      mobileStreamConnected || remoteVideoReady
-                        ? 'wi-verif-check-badge--live'
-                        : isDisconnected
-                        ? 'wi-verif-check-badge--error'
-                        : qrScanned
-                        ? 'wi-verif-check-badge--connecting'
-                        : 'wi-verif-check-badge--waiting'
-                    }`}
-                  >
-                    {mobileStreamConnected || remoteVideoReady ? (
-                      <>
-                        <span className="wi-verif-pulse-dot" style={{ width: 6, height: 6 }} /> Live
-                      </>
-                    ) : isDisconnected ? (
-                      'Disconnected'
-                    ) : qrScanned ? (
-                      'Connecting...'
-                    ) : (
-                      'Waiting'
-                    )}
-                  </span>
-                </div>
-
-                {/* Step 4 */}
-                <div className="wi-verif-check-row">
-                  <div className="wi-verif-check-left">
-                    <Radio
-                      size={16}
-                      color={
-                        mobileCameraReady || remoteVideoReady
-                          ? '#16A34A'
-                          : qrScanned
-                          ? '#D97706'
-                          : '#94A3B8'
-                      }
-                    />
-                    <span>Mobile Camera Connected</span>
-                  </div>
-                  <span
-                    className={`wi-verif-check-badge ${
-                      mobileCameraReady || remoteVideoReady
-                        ? 'wi-verif-check-badge--completed'
-                        : isDisconnected
-                        ? 'wi-verif-check-badge--error'
-                        : qrScanned
-                        ? 'wi-verif-check-badge--connecting'
-                        : 'wi-verif-check-badge--waiting'
-                    }`}
-                  >
-                    {mobileCameraReady || remoteVideoReady
-                      ? 'Connected'
-                      : isDisconnected
-                      ? 'Disconnected'
-                      : qrScanned
-                      ? 'Connecting...'
-                      : 'Waiting'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Subheading */}
-              <div className="wi-verif-preview-section-title">Mobile Camera Preview</div>
-
-              {/* Dark Camera Preview Box */}
-              <div className="wi-verif-preview-container" ref={previewContainerRef}>
-                {remoteStream ? (
-                  <>
-                    <div className="wi-verif-preview-live-badge">
-                      <span className="wi-verif-pulse-dot" style={{ width: 6, height: 6 }} />
-                      <span>LIVE</span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={toggleFullscreen}
-                      className="wi-verif-fs-btn"
-                      title={isFullscreenVideo ? 'Exit Fullscreen' : 'Fullscreen'}
-                    >
-                      {isFullscreenVideo ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-                    </button>
-
-                    <video
-                      ref={videoRef}
-                      className="wi-verif-preview-video"
-                      playsInline
-                      autoPlay
-                      muted
-                      disablePictureInPicture
-                    />
-                  </>
-                ) : (
-                  <>
-                    {/* Centered Viewfinder Corners */}
-                    <div className="wi-verif-preview-viewfinder">
-                      <span className="wi-verif-qr-corner wi-verif-qr-corner--tl" />
-                      <span className="wi-verif-qr-corner wi-verif-qr-corner--tr" />
-                      <span className="wi-verif-qr-corner wi-verif-qr-corner--bl" />
-                      <span className="wi-verif-qr-corner wi-verif-qr-corner--br" />
-                    </div>
-
-                    <div className="wi-verif-preview-camera-circle">
-                      <Camera size={22} />
-                    </div>
-
-                    <p className="wi-verif-preview-waiting-title">
-                      Waiting for mobile camera connection
-                    </p>
-                    <p className="wi-verif-preview-waiting-sub">
-                      After connecting, the live camera feed will appear here.
-                    </p>
-                  </>
+                {!remoteVideoReady && lastFrame && (
+                  <img
+                    src={lastFrame}
+                    alt="Live Mobile Feed"
+                    className="wi-verif-video-el block object-cover"
+                  />
                 )}
+
+                {!remoteVideoReady && !lastFrame && (
+                  <div className="wi-verif-video-placeholder">
+                    {loading ? (
+                      <Loader2 size={36} className="animate-spin text-slate-400" />
+                    ) : qrScanned ? (
+                      <div className="wi-verif-stream-connecting">
+                        <RefreshCw size={32} className="animate-spin text-emerald-400" />
+                        <span style={{ fontWeight: 600, color: '#34d399' }}>Connecting WebRTC Stream...</span>
+                        <span style={{ fontSize: 11, color: '#94a3b8' }}>Camera access granted on mobile</span>
+                      </div>
+                    ) : (
+                      <div className="wi-verif-stream-idle">
+                        <Video size={40} strokeWidth={1.5} color="#64748b" />
+                        <span style={{ fontWeight: 600, color: '#cbd5e1' }}>Awaiting Mobile Camera</span>
+                        <span style={{ fontSize: 11, color: '#94a3b8' }}>Scan QR code on left to connect</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Status Badges on Video */}
+                <div className="wi-verif-video-overlay-top">
+                  <div className="wi-verif-live-pill">
+                    <Radio size={12} className="animate-pulse" />
+                    <span>{remoteVideoReady || lastFrame ? 'LIVE FEED' : 'STANDBY'}</span>
+                  </div>
+                  <button onClick={toggleFullscreen} className="wi-verif-icon-btn">
+                    {isFullscreenVideo ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                  </button>
+                </div>
+
+                <div className="wi-verif-video-overlay-bottom">
+                  <span className="wi-verif-source-pill">
+                    <Camera size={11} /> Secondary Mobile Feed
+                  </span>
+                </div>
+              </div>
+
+              {/* Real-time Checklist */}
+              <div className="wi-verif-checklist-box">
+                <div className="wi-verif-checklist-title">Verification Checklist</div>
+                <div className="wi-verif-checklist-items">
+                  <div className={`wi-verif-check-item ${qrScanned ? 'is-done' : ''}`}>
+                    <div className="wi-verif-check-circle">
+                      {qrScanned ? <Check size={12} strokeWidth={3} /> : <span className="wi-verif-check-dot" />}
+                    </div>
+                    <span>QR Code Scanned</span>
+                  </div>
+
+                  <div className={`wi-verif-check-item ${participantValidated ? 'is-done' : ''}`}>
+                    <div className="wi-verif-check-circle">
+                      {participantValidated ? <Check size={12} strokeWidth={3} /> : <span className="wi-verif-check-dot" />}
+                    </div>
+                    <span>Mobile Device Validated</span>
+                  </div>
+
+                  <div className={`wi-verif-check-item ${mobileCameraReady ? 'is-done' : ''}`}>
+                    <div className="wi-verif-check-circle">
+                      {mobileCameraReady ? <Check size={12} strokeWidth={3} /> : <span className="wi-verif-check-dot" />}
+                    </div>
+                    <span>Camera Permission Allowed</span>
+                  </div>
+
+                  <div className={`wi-verif-check-item ${remoteVideoReady || lastFrame || webRtcConnected ? 'is-done' : ''}`}>
+                    <div className="wi-verif-check-circle">
+                      {remoteVideoReady || lastFrame || webRtcConnected ? <Check size={12} strokeWidth={3} /> : <span className="wi-verif-check-dot" />}
+                    </div>
+                    <span>Live Video Stream Active</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Start Assessment CTA Button */}
+              <div style={{ marginTop: 20 }}>
+                <button
+                  onClick={handleStartQuiz}
+                  disabled={verifyingStart || loading}
+                  className="wi-verif-start-btn"
+                  style={{
+                    width: '100%',
+                    padding: '14px 20px',
+                    borderRadius: 10,
+                    background: '#16a34a',
+                    color: '#ffffff',
+                    border: 'none',
+                    fontWeight: 700,
+                    fontSize: 15,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 10,
+                    boxShadow: '0 4px 14px 0 rgba(22,163,74,0.39)',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  {verifyingStart ? (
+                    <>
+                      <Loader2 size={18} className="animate-spin" />
+                      <span>Starting Assessment...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Shield size={18} />
+                      <span>Proceed to {isCoding ? 'Coding Assessment' : 'Quiz'}</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
           </div>
-        </div>
-
-        {/* ── Bottom Lock / Unlock Control Card ── */}
-        <div className="wi-verif-bottom-card">
-          <div className="wi-verif-lock-banner">
-            <div className="wi-verif-lock-icon-wrap">
-              <Shield size={18} />
-            </div>
-            <div>
-              <div className="wi-verif-lock-title">
-                {isFullyVerified || mobileCameraReady
-                  ? 'Verification completed. Assessment is ready to start.'
-                  : 'Assessment is locked until verification is completed.'}
-              </div>
-              <div className="wi-verif-lock-sub">
-                Keep your mobile camera active throughout the assessment.
-              </div>
-            </div>
-          </div>
-
-          <div className="wi-verif-lock-action-row">
-            <div
-              className="wi-verif-lock-state wi-verif-lock-state--unlocked"
-            >
-              <Unlock size={16} />
-              <span>READY (MOBILE PAUSED)</span>
-            </div>
-
-            <button
-              onClick={handleStartQuiz}
-              disabled={verifyingStart}
-              className="wi-verif-start-btn"
-            >
-              {verifyingStart ? (
-                <>
-                  <Loader2 size={16} className="animate-spin" /> Starting...
-                </>
-              ) : (
-                <>
-                  Start / Resume Quiz &rarr;
-                </>
-              )}
-            </button>
-          </div>
-
-          <p className="wi-verif-footer-help">
-            Mobile QR verification is temporarily paused. Click Start / Resume Quiz to enter the assessment.
-          </p>
         </div>
       </div>
     </Layout>

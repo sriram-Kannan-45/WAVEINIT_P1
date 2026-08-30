@@ -47,8 +47,22 @@ function timeAgo(dateString) {
 function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
   const navigate = useNavigate()
   const { error: showError, success } = useToast()
-  const [loading, setLoading] = useState(true)
-  const [courses, setCourses] = useState([])
+  const [courses, setCourses] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(`trainer_courses_${user?.id || 'me'}`)
+      return cached ? JSON.parse(cached) : []
+    } catch {
+      return []
+    }
+  })
+  const [loading, setLoading] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(`trainer_courses_${user?.id || 'me'}`)
+      return !cached
+    } catch {
+      return true
+    }
+  })
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [sortBy, setSortBy] = useState('newest')
@@ -65,17 +79,25 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
 
   const fetchCourses = async (signal) => {
     try {
-      setLoading(true)
+      if (courses.length === 0) setLoading(true)
       setError(null)
       const r = await fetchWithTimeout(API.TRAINER_COURSES.LIST, { headers: auth(), signal }, 12000)
       const d = await r.json().catch(() => ({}))
-      if (d.success) setCourses(d.courses || [])
-      else throw new Error(d.error || 'Failed to load courses')
+      if (d.success && Array.isArray(d.courses)) {
+        setCourses(d.courses)
+        try {
+          sessionStorage.setItem(`trainer_courses_${user?.id || 'me'}`, JSON.stringify(d.courses))
+        } catch (_) {}
+      } else {
+        throw new Error(d.error || 'Failed to load courses')
+      }
     } catch (e) {
       if (e.name === 'AbortError') return
       console.error('Failed to load courses:', e.message)
-      setError(e.message || 'Failed to load courses')
-      showError(e.message)
+      if (courses.length === 0) {
+        setError(e.message || 'Failed to load courses')
+        showError(e.message)
+      }
     } finally {
       setLoading(false)
     }
@@ -156,7 +178,7 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
           </div>
           <div className="tmt-stat-text-wrap">
             <span className="tmt-stat-label">Total Trainings</span>
-            <div className="tmt-stat-value">{stats.total}</div>
+            <div className="tmt-stat-value">{loading && courses.length === 0 ? '—' : stats.total}</div>
             <span className="tmt-stat-sub">All courses created</span>
           </div>
         </div>
@@ -168,7 +190,7 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
           </div>
           <div className="tmt-stat-text-wrap">
             <span className="tmt-stat-label">Published</span>
-            <div className="tmt-stat-value">{stats.published}</div>
+            <div className="tmt-stat-value">{loading && courses.length === 0 ? '—' : stats.published}</div>
             <span className="tmt-stat-sub">Courses live</span>
           </div>
         </div>
@@ -180,7 +202,7 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
           </div>
           <div className="tmt-stat-text-wrap">
             <span className="tmt-stat-label">Drafts</span>
-            <div className="tmt-stat-value">{stats.draft}</div>
+            <div className="tmt-stat-value">{loading && courses.length === 0 ? '—' : stats.draft}</div>
             <span className="tmt-stat-sub">In progress</span>
           </div>
         </div>
@@ -192,7 +214,7 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
           </div>
           <div className="tmt-stat-text-wrap">
             <span className="tmt-stat-label">Archived</span>
-            <div className="tmt-stat-value">{stats.archived}</div>
+            <div className="tmt-stat-value">{loading && courses.length === 0 ? '—' : stats.archived}</div>
             <span className="tmt-stat-sub">Completed courses</span>
           </div>
         </div>
@@ -216,25 +238,25 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
             onClick={() => setStatusFilter('ALL')}
             className={`tmt-pill ${statusFilter === 'ALL' ? 'tmt-pill--active' : ''}`}
           >
-            All <span className="tmt-pill-badge">{stats.total}</span>
+            All <span className="tmt-pill-badge">{loading && courses.length === 0 ? '…' : stats.total}</span>
           </button>
           <button
             onClick={() => setStatusFilter('PUBLISHED')}
             className={`tmt-pill ${statusFilter === 'PUBLISHED' ? 'tmt-pill--active' : ''}`}
           >
-            Published <span className="tmt-pill-badge">{stats.published}</span>
+            Published <span className="tmt-pill-badge">{loading && courses.length === 0 ? '…' : stats.published}</span>
           </button>
           <button
             onClick={() => setStatusFilter('DRAFT')}
             className={`tmt-pill ${statusFilter === 'DRAFT' ? 'tmt-pill--active' : ''}`}
           >
-            Draft <span className="tmt-pill-badge">{stats.draft}</span>
+            Draft <span className="tmt-pill-badge">{loading && courses.length === 0 ? '…' : stats.draft}</span>
           </button>
           <button
             onClick={() => setStatusFilter('ARCHIVED')}
             className={`tmt-pill ${statusFilter === 'ARCHIVED' ? 'tmt-pill--active' : ''}`}
           >
-            Archived <span className="tmt-pill-badge">{stats.archived}</span>
+            Archived <span className="tmt-pill-badge">{loading && courses.length === 0 ? '…' : stats.archived}</span>
           </button>
         </div>
       </div>
@@ -532,7 +554,6 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={() => setBulkImportOpen(false)}
             style={{ zIndex: 1000 }}
           >
             <motion.div
@@ -1109,7 +1130,6 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
           <motion.div
             className="wl-modal-overlay"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            onClick={() => setShowModal(false)}
           >
             <motion.form
               onClick={(e) => e.stopPropagation()}

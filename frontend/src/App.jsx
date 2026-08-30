@@ -141,6 +141,7 @@ const CodingAssessmentResultPage = lazyRetry(() => import('./pages/CodingAssessm
 const TrainerCourses = lazyRetry(() => import('./pages/TrainerCourses'))
 const ProfilePage = lazyRetry(() => import('./pages/Profile/ProfilePage'))
 const TrainingLeaderboard = lazyRetry(() => import('./pages/TrainingLeaderboard'))
+const CertificateVerifyPage = lazyRetry(() => import('./pages/CertificateVerifyPage'))
 
 // Interview Module (Read-only reference)
 const InterviewDashboard = lazyRetry(() => import('./pages/interview/InterviewDashboard'))
@@ -757,6 +758,28 @@ function AppRoutes({ user, onLogin, onLogout }) {
       />
 
       <Route
+        path="/trainings/:trainingId/coding/:assessmentId/verification"
+        element={
+          user?.role === 'PARTICIPANT' ? (
+            <ParticipantQuizVerificationPage user={user} onLogout={onLogout} assessmentType="CODING" />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+
+      <Route
+        path="/coding/:assessmentId/verification"
+        element={
+          user?.role === 'PARTICIPANT' ? (
+            <ParticipantQuizVerificationPage user={user} onLogout={onLogout} assessmentType="CODING" />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+
+      <Route
         path="/trainings/:trainingId/coding/:assessmentId/attempt"
         element={
           user?.role === 'PARTICIPANT' ? (
@@ -856,10 +879,10 @@ function AppRoutes({ user, onLogin, onLogout }) {
         path="/assessment/mobile-join/:token"
         element={<AssessmentMobileJoin />}
       />
-      <Route
-        path="/assessment/mobile/:token"
-        element={<AssessmentMobileJoin />}
-      />
+      {/* Public Certificate Verification Routes */}
+      <Route path="/verify-certificate" element={<CertificateVerifyPage />} />
+      <Route path="/verify-certificate/:code" element={<CertificateVerifyPage />} />
+      <Route path="/certificates/verify/:code" element={<CertificateVerifyPage />} />
 
       <Route
         path="*"

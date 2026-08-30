@@ -4,6 +4,7 @@ Uses LangChain + Gemini to generate quizzes from documents.
 """
 import os
 import sys
+import shutil
 
 # Force headless execution for OpenCV, Qt, Matplotlib, and MediaPipe on Linux server environments
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -3014,6 +3015,78 @@ async def analyze_proctoring_frame(req: AnalyzeFrameRequest):
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "Frame analysis failed"))
     return result
+
+
+@app.post("/api/proctoring/process-video")
+async def process_proctoring_segment(
+    file: UploadFile = File(...),
+    session_id: str = Form(""),
+    segment_key: str = Form(""),
+    attempt_id: str = Form(""),
+    participant_id: str = Form(""),
+    configured_duration: Optional[float] = Form(None),
+    sample_fps: Optional[float] = Form(None),
+    start_time: Optional[int] = Form(None),
+    no_person_min_frames: Optional[int] = Form(None),
+    no_person_min_duration_sec: Optional[float] = Form(None),
+    multiple_person_min_frames: Optional[int] = Form(None),
+    multiple_person_min_duration_sec: Optional[float] = Form(None),
+    face_not_visible_min_frames: Optional[int] = Form(None),
+    face_not_visible_min_duration_sec: Optional[float] = Form(None),
+):
+    """Analyze a recorded webcam segment (multipart upload) offline with the
+    MediaPipe engine sampled at `sample_fps`. Returns segment-level aggregated
+    events + scoring inputs; authoritative scoring is computed by the backend."""
+    if not PROCTORING_ENGINE_AVAILABLE or proctor_engine is None:
+        raise HTTPException(status_code=503, detail="MediaPipe proctoring engine is unavailable")
+
+    ext = os.path.splitext(file.filename or "segment.webm")[1].lower()
+    allowlist = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v", ""}
+    if ext not in allowlist:
+        await file.close()
+        raise HTTPException(status_code=400, detail=f"Unsupported video type: {ext or 'unknown'}")
+
+    thresholds = {
+        k: v for k, v in {
+            "no_person_min_frames": no_person_min_frames,
+            "no_person_min_duration_sec": no_person_min_duration_sec,
+            "multiple_person_min_frames": multiple_person_min_frames,
+            "multiple_person_min_duration_sec": multiple_person_min_duration_sec,
+            "face_not_visible_min_frames": face_not_visible_min_frames,
+            "face_not_visible_min_duration_sec": face_not_visible_min_duration_sec,
+        }.items() if v is not None
+    }
+
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(suffix=ext or ".webm", prefix="mon_seg_")
+        with os.fdopen(fd, "wb") as out:
+            shutil.copyfileobj(file.file, out, length=1 << 20)
+        await file.close()
+
+        result = proctor_engine.process_video_file(
+            video_path=tmp_path,
+            session_id=session_id or f"seg_{file.filename}",
+            segment_key=segment_key or None,
+            configured_duration=configured_duration,
+            sample_fps=float(sample_fps) if sample_fps else 3.0,
+            start_time_ms=start_time,
+            attempt_id=attempt_id or None,
+            participant_id=participant_id or None,
+            thresholds=thresholds,
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.warning("process-video failed for %s: %s", segment_key or file.filename, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
 
 @app.post("/api/proctoring/validate-calibration")

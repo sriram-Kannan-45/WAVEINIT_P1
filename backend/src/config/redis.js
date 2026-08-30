@@ -97,9 +97,120 @@ async function closeRedis() {
   }
 }
 
+/**
+ * Acquire a distributed lock using Redis SET key value NX PX <ttlMs>
+ * @param {string} lockKey - Name of lock (e.g. 'lock:quiz:sub:123')
+ * @param {number} ttlMs - Lock expiration in milliseconds (default: 10000)
+ * @returns {Promise<string|null>} Lock token if acquired, null if already locked
+ */
+async function acquireLock(lockKey, ttlMs = 10000) {
+  const client = getRedisClient();
+  const token = `lock_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  if (!client || !isRedisReady()) {
+    // In-memory single-instance fallback
+    if (!global.__inMemoryLocks) global.__inMemoryLocks = new Map();
+    const existing = global.__inMemoryLocks.get(lockKey);
+    const now = Date.now();
+    if (existing && existing.expiresAt > now) {
+      return null;
+    }
+    global.__inMemoryLocks.set(lockKey, { token, expiresAt: now + ttlMs });
+    return token;
+  }
+  try {
+    const res = await client.set(lockKey, token, 'PX', ttlMs, 'NX');
+    return res === 'OK' ? token : null;
+  } catch (err) {
+    logger.warn('[Redis] acquireLock error, falling back to permissive', { error: err.message, lockKey });
+    return token;
+  }
+}
+
+/**
+ * Release a distributed lock safely using Lua script
+ * @param {string} lockKey - Name of lock
+ * @param {string} token - Token returned by acquireLock
+ * @returns {Promise<boolean>} True if released, false otherwise
+ */
+async function releaseLock(lockKey, token) {
+  if (!token) return false;
+  const client = getRedisClient();
+  if (!client || !isRedisReady()) {
+    if (global.__inMemoryLocks) {
+      const existing = global.__inMemoryLocks.get(lockKey);
+      if (existing && existing.token === token) {
+        global.__inMemoryLocks.delete(lockKey);
+        return true;
+      }
+    }
+    return false;
+  }
+  try {
+    const luaScript = `
+      if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("del", KEYS[1])
+      else
+        return 0
+      end
+    `;
+    const result = await client.eval(luaScript, 1, lockKey, token);
+    return result === 1;
+  } catch (err) {
+    logger.warn('[Redis] releaseLock error', { error: err.message, lockKey });
+    return false;
+  }
+}
+
+/**
+ * Helper to get JSON cached data
+ */
+async function getCache(key) {
+  const client = getRedisClient();
+  if (!client || !isRedisReady()) return null;
+  try {
+    const data = await client.get(key);
+    return data ? JSON.parse(data) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Helper to set JSON cached data with TTL (seconds)
+ */
+async function setCache(key, value, ttlSeconds = 60) {
+  const client = getRedisClient();
+  if (!client || !isRedisReady()) return false;
+  try {
+    await client.set(key, JSON.stringify(value), 'EX', ttlSeconds);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Helper to delete cached data
+ */
+async function delCache(key) {
+  const client = getRedisClient();
+  if (!client || !isRedisReady()) return false;
+  try {
+    await client.del(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 module.exports = {
   initRedis,
   getRedisClient,
   isRedisReady,
   closeRedis,
+  acquireLock,
+  releaseLock,
+  getCache,
+  setCache,
+  delCache,
 };

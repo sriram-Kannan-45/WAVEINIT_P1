@@ -62,6 +62,8 @@ const ipLimiter = rateLimit({
 });
 
 // ── Attempt record helpers ─────────────────────────────────────
+const { getRedisClient, isRedisReady } = require('../config/redis');
+
 function getRecord(email) {
   let rec = store.get(email);
   if (!rec) {
@@ -79,6 +81,12 @@ function resetLockout(identifier) {
   if (!identifier) return;
   const key = identifier.toString().toLowerCase().trim();
   store.delete(key);
+  try {
+    const client = getRedisClient();
+    if (client && isRedisReady()) {
+      client.del(`auth:lockout:${key}`).catch(() => {});
+    }
+  } catch (_) {}
 }
 
 function unlockAll() {

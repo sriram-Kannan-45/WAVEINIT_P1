@@ -670,6 +670,59 @@ class ContinuousDirectionCounter:
         return self.close(now)
 
 
+class SampledIntervalTracker:
+    """Accumulate a boolean state over sampled video frames and emit an interval
+    only when it is backed by enough consecutive frames AND enough real time.
+
+    Used by the offline video processor for intervals the engine itself does
+    not track (no-person, multiple-person, face-not-visible). `now` must be the
+    same monotonic clock as the engine uses (session.created_at + video time).
+    """
+
+    def __init__(self, name: str, min_frames: int = 5, min_duration_sec: float = 1.0):
+        self.name = name
+        self.min_frames = max(1, int(min_frames))
+        self.min_duration_sec = max(0.0, float(min_duration_sec))
+        self._start = None
+        self._last = None
+        self._frames = 0
+
+    def update(self, active: bool, now: float) -> Optional[Dict[str, Any]]:
+        now = float(now)
+        if active:
+            if self._start is None:
+                self._start = now
+            self._last = now
+            self._frames += 1
+            return None
+        return self.flush(now)
+
+    def flush(self, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+        if self._start is None:
+            return None
+        end = float(now if now is not None else self._last)
+        start = float(self._start)
+        duration = max(0.0, end - start)
+        frames = self._frames
+        self._start = None
+        self._last = None
+        self._frames = 0
+        if frames < self.min_frames or duration < self.min_duration_sec:
+            return None
+        return {
+            "category": self.name,
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "duration": round(duration, 3),
+            "frames": frames,
+        }
+
+    def elapsed(self) -> float:
+        if self._start is None:
+            return 0.0
+        return max(0.0, float(self._last) - float(self._start))
+
+
 # ============================================================
 # SESSION
 # ============================================================
@@ -1815,6 +1868,276 @@ class MediaPipeProctorEngine:
                 for key, value in score.items()
             },
             "events_count": len(self._validated_episodes(session)),
+        }
+
+    def process_video_file(
+        self,
+        video_path: str,
+        session_id: str,
+        segment_key: Optional[str] = None,
+        configured_duration: Optional[float] = None,
+        sample_fps: float = 3.0,
+        start_time_ms: Optional[Union[int, float]] = None,
+        attempt_id: Optional[str] = None,
+        participant_id: Optional[str] = None,
+        thresholds: Optional[Dict[str, Any]] = None,
+        **extra,
+    ) -> Dict[str, Any]:
+        """Analyze a recorded webcam segment file with the same MediaPipe
+        engine used online, sampled at `sample_fps`.
+
+        Frame timestamps are anchored to the real recording: each sampled
+        frame is stamped `session.created_at + frame_idx / source_fps`, so the
+        engine's counters and episodes land on the true video timeline.
+
+        Live-only behavior is deliberately not performed here:
+          - no mobile/phone detection (mobile stays live, merged by the backend)
+          - no Gemini vision inspection
+          - no Excel/JSON report generation (the backend persists results)
+          - no session finalize (the engine session is discarded afterwards)
+
+        Returns segment-level aggregated events + scoring inputs.
+        """
+        if not os.path.isfile(video_path):
+            raise ValueError(f"Video file not found: {video_path}")
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            cap.release()
+            raise ValueError(f"Could not open video file: {video_path}")
+
+        try:
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            if not fps or fps <= 0 or fps > 240:
+                fps = 30.0
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            if total_frames <= 0:
+                raise ValueError("Video has no decodable frames")
+            duration = total_frames / fps
+        except Exception:
+            cap.release()
+            raise
+
+        effective_fps = max(1.0, min(30.0, float(sample_fps) or 3.0))
+        step = max(1, int(round(fps / effective_fps)))
+
+        th = thresholds or {}
+        tracker_kwargs = lambda name: {
+            "min_frames": int(th.get(f"{name}_min_frames")
+                             or max(5, int(round(effective_fps * (th.get("min_duration_sec") or 1.0))))),
+            "min_duration_sec": float(
+                th.get(f"{name}_min_duration_sec") or th.get("min_duration_sec") or 1.0
+            ),
+        }
+        no_person_tracker = SampledIntervalTracker("no_person", **tracker_kwargs("no_person"))
+        multiple_tracker = SampledIntervalTracker("multiple_person", **tracker_kwargs("multiple_person"))
+        fnv_tracker = SampledIntervalTracker("face_not_visible", **tracker_kwargs("face_not_visible"))
+
+        engine_session_id = segment_key or session_id
+        duration = max(0.001, duration)
+        duration_arg = configured_duration if configured_duration is not None else duration
+
+        self.start_session(
+            session_id=engine_session_id,
+            participant_id=str(participant_id or "1"),
+            configured_duration=max(0.0, float(duration_arg)),
+            actual_start_time=normalize_timestamp_ms(start_time_ms),
+            attempt_id=attempt_id,
+        )
+        session = self.sessions[engine_session_id]
+        if session.finalized:
+            raise ValueError(f"Engine session already finalized: {engine_session_id}")
+
+        base = session.created_at
+        frame_idx = 0
+        sampled_frames = 0
+        inference_errors = 0
+        try:
+            while True:
+                success, frame = cap.read()
+                if not success:
+                    break
+                if frame_idx % step != 0:
+                    frame_idx += 1
+                    continue
+                now = base + (frame_idx / fps)
+                frame_idx += 1
+
+                try:
+                    result = self._detect(frame)
+                except Exception as exc:
+                    inference_errors += 1
+                    logger.warning("Sampled frame detection failed: %s", exc)
+                    continue
+                sampled_frames += 1
+
+                face_count = 1 if (result and result.face_landmarks and len(result.face_landmarks) > 0) else 0
+
+                # Person-presence fallback (YOLO person class). Consulted every
+                # sampled frame (throttled to ~1 Hz internally) so multiple
+                # persons are caught even while a face is present.
+                person_present = self._check_person_present(session, frame, now)
+
+                if face_count == 0:
+                    person_count = session.person_count_cache if person_present else 0
+                else:
+                    person_count = max(face_count, session.person_count_cache or face_count)
+
+                try:
+                    self._process_detection(
+                        session, result, frame, now, person_present=person_present
+                    )
+                except Exception:
+                    logger.exception("Per-frame processing failed at frame %d", frame_idx)
+                    continue
+
+                if person_count == 0:
+                    no_person_tracker.update(True, now)
+                    multiple_tracker.update(False, now)
+                    fnv_tracker.update(False, now)
+                elif person_count > 1:
+                    no_person_tracker.update(False, now)
+                    multiple_tracker.update(True, now)
+                    fnv_tracker.update(False, now)
+                else:
+                    no_person_tracker.update(False, now)
+                    multiple_tracker.update(False, now)
+                    fnv_tracker.update(face_count == 0, now)
+        finally:
+            cap.release()
+
+        end_now = base + duration
+        self._close_all_counters(session, end_now)
+
+        no_person_ev = no_person_tracker.flush(end_now)
+        multiple_ev = multiple_tracker.flush(end_now)
+        fnv_ev = fnv_tracker.flush(end_now)
+
+        # ── Build the segment-level event list ────────────────────────────────
+        events: List[Dict[str, Any]] = []
+
+        def rel(ts: float) -> float:
+            return round(max(0.0, float(ts) - base), 3)
+
+        for ep in self._validated_episodes(session):
+            if ep.duration <= 0.0:
+                continue
+            dir_token = str(ep.direction or "").upper()
+            detector = "head" if str(ep.category or "").lower().startswith("head") else "eye"
+            if dir_token not in ("LEFT", "RIGHT", "UP"):
+                continue
+            events.append({
+                "category": "looking_away",
+                "detector": detector,
+                "direction": dir_token,
+                "start": rel(ep.start_time),
+                "end": rel(ep.end_time),
+                "duration": round(max(0.0, float(ep.duration)), 3),
+                "confidence": 0.9,
+                "validationStatus": ep.validation_status,
+            })
+
+        for ev in (no_person_ev, multiple_ev, fnv_ev):
+            if ev is None:
+                continue
+            events.append({
+                "category": ev["category"],
+                "detector": "body",
+                "direction": None,
+                "start": rel(ev["start"]),
+                "end": rel(ev["end"]),
+                "duration": ev["duration"],
+                "confidence": 0.95,
+                "validationStatus": "VALID",
+                "frames": ev["frames"],
+                "personDetected": True if ev["category"] == "face_not_visible" else None,
+            })
+
+        events.sort(key=lambda e: (e["start"], e["end"]))
+
+        # ── Aggregates ────────────────────────────────────────────────────────
+        looking_rows = [e for e in events if e["category"] == "looking_away"]
+        no_person_rows = [e for e in events if e["category"] == "no_person"]
+        multiple_rows = [e for e in events if e["category"] == "multiple_person"]
+        fnv_rows = [e for e in events if e["category"] == "face_not_visible"]
+
+        def sum_seconds(rows):
+            return round(sum(float(r["duration"]) for r in rows), 3)
+
+        direction_total_seconds = {}
+        for r in looking_rows:
+            key = f"{r['detector']}_{r['direction']}".lower()
+            direction_total_seconds[key] = direction_total_seconds.get(key, 0.0) + float(r["duration"])
+
+        # ── Informational scoring (authoritative score is computed backend-side) ─
+        score = self._score(session, max(0.001, duration))
+        intervals = [
+            (rel(ep.start_time), rel(ep.end_time))
+            for ep in self._validated_episodes(session)
+            if ep.duration > 0.0
+        ]
+        unique_violation_seconds = calculate_unique_violation_seconds(intervals)
+
+        # Drop the engine session so segments never accumulate in memory.
+        self.sessions.pop(engine_session_id, None)
+
+        return {
+            "status": "processed",
+            "session_id": session_id,
+            "segment_key": segment_key,
+            "attempt_id": attempt_id,
+            "durationSec": round(duration, 3),
+            "framesProcessed": sampled_frames,
+            "inferenceErrors": inference_errors,
+            "sourceFps": round(float(fps), 3),
+            "sampleFps": effective_fps,
+            "resolution": {"width": width, "height": height},
+            "startTimeMs": start_time_ms,
+            "events": events,
+            "aggregates": {
+                "lookingAwayCount": len(looking_rows),
+                "lookingAwaySeconds": sum_seconds(looking_rows),
+                "uniqueViolationSeconds": unique_violation_seconds,
+                "directionTotalSeconds": direction_total_seconds,
+                "noPersonCount": len(no_person_rows),
+                "noPersonSeconds": sum_seconds(no_person_rows),
+                "multiplePersonCount": len(multiple_rows),
+                "multiplePersonSeconds": sum_seconds(multiple_rows),
+                "faceNotVisibleCount": len(fnv_rows),
+                "faceNotVisibleSeconds": sum_seconds(fnv_rows),
+            },
+            "scoring": {
+                "eyeHead": {
+                    "score": round(float(score.get("eye_head_score", 0.0)), 2),
+                    "max": MONITORING_SCORE_MAX,
+                    "violationSeconds": unique_violation_seconds,
+                },
+                "noPerson": {
+                    "score": NO_PERSON_SCORE_MAX if no_person_rows else 0.0,
+                    "max": NO_PERSON_SCORE_MAX,
+                    "seconds": sum_seconds(no_person_rows),
+                },
+                "multipleFace": {
+                    "score": MULTIPLE_FACE_SCORE_MAX if multiple_rows else 0.0,
+                    "max": MULTIPLE_FACE_SCORE_MAX,
+                    "seconds": sum_seconds(multiple_rows),
+                },
+                "phone": {"score": 0.0, "max": MOBILE_SCORE_MAX, "count": 0, "note": "mobile detection stays live and is merged by the backend"},
+                "finalScore": round(float(score.get("final_score", 0.0)), 2),
+            },
+            "config": {
+                "sampleFps": effective_fps,
+                "sourceFps": round(float(fps), 3),
+                "calibrationFrames": CALIBRATION_FRAMES,
+                "configuredDuration": round(float(duration_arg), 3),
+                "thresholds": {
+                    "noPersonMinFrames": no_person_tracker.min_frames,
+                    "multiplePersonMinFrames": multiple_tracker.min_frames,
+                    "faceNotVisibleMinFrames": fnv_tracker.min_frames,
+                },
+            },
         }
 
     def finalize_session(
