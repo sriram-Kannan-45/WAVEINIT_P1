@@ -94,4 +94,4 @@ jobs:
           app-name: 'waveinit-init'
           slot-name: 'Production'
           package: ./ai-service-deploy
-          startup-command: 'sh startup.sh'
+          startup-command: 'gunicorn -k uvicorn.workers.UvicornWorker --bind=0.0.0.0:8000 main:app --timeout 120'
