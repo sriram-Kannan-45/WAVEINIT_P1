@@ -18,7 +18,6 @@ const ProcessingJob = sequelize.define('ProcessingJob', {
   jobId: {
     type: DataTypes.STRING(191),
     allowNull: false,
-    unique: true,
     field: 'job_id',
     comment: 'Unique job id, derived from the segment: msj_<segmentKey>',
   },
@@ -30,7 +29,6 @@ const ProcessingJob = sequelize.define('ProcessingJob', {
   segmentKey: {
     type: DataTypes.STRING(191),
     allowNull: false,
-    unique: true,
     field: 'segment_key',
     comment: 'One-to-one with the owning video_segments.segment_key',
   },

@@ -23,7 +23,8 @@
  *   to share state across multiple backend instances.
  */
 
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
+const { getClientIp, normalizeIp } = require('../utils/ipHelper');
 const crypto = require('crypto');
 const { transporter } = require('../config/mailer');
 
@@ -55,8 +56,17 @@ const ipLimiter = rateLimit({
   max: IP_MAX_REQUESTS,
   standardHeaders: true,
   legacyHeaders: false,
-  handler: (_req, res) => {
-    logger.warn(`[AUTH RATE LIMIT] IP rate limit exceeded: ${_req.ip}`);
+  keyGenerator: (req) => {
+    const cleanIp = getClientIp(req);
+    return ipKeyGenerator(cleanIp);
+  },
+  validate: {
+    xForwardedForHeader: false,
+    default: true,
+  },
+  handler: (req, res) => {
+    const ip = getClientIp(req);
+    logger.warn(`[AUTH RATE LIMIT] IP rate limit exceeded: ${ip}`);
     res.status(429).json({ error: 'Too many login attempts. Please wait a minute and try again.' });
   },
 });

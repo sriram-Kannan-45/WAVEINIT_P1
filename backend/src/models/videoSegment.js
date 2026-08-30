@@ -22,7 +22,6 @@ const VideoSegment = sequelize.define('VideoSegment', {
   segmentKey: {
     type: DataTypes.STRING(191),
     allowNull: false,
-    unique: true,
     field: 'segment_key',
     comment: 'Unique idempotency key for this segment: <sessionId>_seg_<sequence>',
   },

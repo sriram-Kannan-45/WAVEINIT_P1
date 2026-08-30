@@ -63,9 +63,12 @@ const attendanceRoutes = require('./routes/attendanceRoutes');
 const leaderboardRoutes = require('./routes/leaderboardRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 
+const { ipNormalizerMiddleware } = require('./utils/ipHelper');
+
 const app = express();
-// Enable trust proxy so Express parses the real client IP behind reverse proxies/load balancers (Render, Cloudflare, AWS, Nginx)
-app.set('trust proxy', 1);
+// Enable trust proxy so Express parses the real client IP behind reverse proxies/load balancers (Azure App Service, Cloudflare, AWS, Nginx)
+app.set('trust proxy', true);
+app.use(ipNormalizerMiddleware);
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3001;
 
