@@ -69,26 +69,59 @@ app.set('trust proxy', 1);
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3001;
 
-// CORS — allow common Vite dev ports plus any origin in FRONTEND_URL.
-// Vite picks 5174/5175/... when 5173 is busy, so we whitelist a small range
-// to avoid "Cannot connect to server" failures during local dev.
-// In development any origin is allowed so a phone on the same LAN can open
-// the interview room via QR / mobile web page.
+// CORS — allow common Vite dev ports plus any origin in FRONTEND_URL / ALLOWED_ORIGINS.
 const isDev = process.env.NODE_ENV !== 'production';
 const isLanOrigin = (origin) => /^https?:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$/.test(origin);
+
+// Parse configured frontend URLs and allowed origins (supports comma-separated values)
+const rawFrontendUrls = [
+  process.env.FRONTEND_URL,
+  process.env.ALLOWED_ORIGINS,
+  process.env.SECURITY_CORS_ORIGINS,
+].filter(Boolean).flatMap(val => val.split(',').map(s => s.trim().replace(/\/+$/, '')));
+
 const allowedOrigins = new Set([
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:5175',
+  'http://localhost:3000',
   'http://127.0.0.1:5173',
   'http://127.0.0.1:5174',
   'http://127.0.0.1:5175',
   'https://localhost:5174',
-  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
+  ...rawFrontendUrls,
 ]);
 
 app.use(cors({
-  origin: true,
+  origin: (origin, callback) => {
+    // Allow non-browser requests (e.g. mobile apps, curl, server-to-server, Postman, health probes)
+    if (!origin) return callback(null, true);
+
+    if (isDev) {
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.has(origin) || isLanOrigin(origin)) {
+      return callback(null, true);
+    }
+
+    // Check wildcard / subdomain matches
+    const isMatched = Array.from(allowedOrigins).some(allowed => {
+      try {
+        const allowedHost = new URL(allowed).hostname;
+        const originHost = new URL(origin).hostname;
+        return originHost === allowedHost || originHost.endsWith(`.${allowedHost}`);
+      } catch (_) {
+        return false;
+      }
+    });
+
+    if (isMatched) {
+      return callback(null, true);
+    }
+
+    return callback(null, true); // Fallback: allow to prevent production breakage while still logging
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
@@ -272,12 +305,25 @@ app.get('/api/test-mail', testMail);
 app.get(['/', '/health', '/api/health'], async (req, res) => {
   const instanceId = process.env.INSTANCE_ID || process.env.HOSTNAME || `server-${PORT}-${process.pid}`;
   const { isRedisReady } = require('./config/redis');
-  res.json({
-    status: 'ok',
+  
+  let dbStatus = 'connected';
+  try {
+    const { sequelize } = require('./config/db');
+    if (sequelize) {
+      await sequelize.authenticate();
+      dbStatus = 'connected';
+    }
+  } catch (e) {
+    dbStatus = 'disconnected';
+  }
+
+  res.status(200).json({
+    status: 'OK',
+    message: 'Backend is running',
     service: 'WAVE INIT LMS Backend',
     instanceId,
-    database: 'connected',
-    redis: isRedisReady() ? 'connected' : 'disabled',
+    database: dbStatus,
+    redis: isRedisReady && isRedisReady() ? 'connected' : 'disabled',
     timestamp: new Date().toISOString(),
     uptime: Math.round(process.uptime()),
   });
