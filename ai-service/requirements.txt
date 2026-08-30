@@ -1,36 +1,41 @@
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.5.1+cpu
-torchvision==0.20.1+cpu
+# ==============================================================================
+# FastAPI AI Service Requirements (Azure Linux Python 3.11 & Local Development)
+# ==============================================================================
 
-opencv-python-headless==4.10.0.84
-numpy>=1.26.4,<2.0.0
-
-fastapi==0.115.0
-uvicorn[standard]==0.34.0
+# Core Web & ASGI Server
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
 gunicorn>=21.2.0
-langchain==1.3.9
-langchain-core==1.4.7
-langchain-community==0.4.2
-langchain-openai==1.3.2
-langchain-google-genai==2.1.12
+pydantic>=2.9.2
+python-multipart>=0.0.9
 python-dotenv>=1.0.0
-huggingface-hub>=0.23.4
+requests>=2.32.3
+
+# Computer Vision & Proctoring Inference
+numpy>=1.26.4,<2.0.0
+opencv-python-headless>=4.10.0.84
+mediapipe>=0.10.14
+torch>=2.2.0
+torchvision>=0.17.0
+ultralytics>=8.2.0
+
+# Document Ingestion, PDF & RAG Extraction
 PyPDF2>=3.0.1
-PyMuPDF>=1.24.10
+pymupdf>=1.24.10
 python-docx>=1.1.0
 python-pptx>=1.0.2
-pydantic>=2.9.2
-requests>=2.32.3
-python-multipart>=0.0.9
-json-repair>=0.30.0
-langgraph>=1.2.5
+openpyxl>=3.1.5
 beautifulsoup4>=4.12.3
+json-repair>=0.30.0
+orjson>=3.10.7
+
+# Embeddings, Vector Search & LLM Orchestration
 sentence-transformers>=3.0.1
 transformers>=4.47.0
-tokenizers>=0.21.0,<0.22.0
 faiss-cpu>=1.8.0.post1
-SQLAlchemy>=2.0.32
-PyMySQL>=1.1.1
-orjson>=3.10.7
-ultralytics>=8.0.0
-mediapipe>=0.10.0
+langchain>=0.1.0
+langchain-core>=0.1.0
+langchain-community>=0.0.1
+langchain-google-genai>=1.0.0
+langchain-openai>=0.1.0
+huggingface-hub>=0.23.4

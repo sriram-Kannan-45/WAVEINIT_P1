@@ -50,8 +50,13 @@ echo "Working directory: $(pwd)"
 echo "=============================================================================="
 
 # 3. Start the ASGI server with Gunicorn (UvicornWorker) or fallback to Uvicorn directly
-if command -v gunicorn >/dev/null 2>&1; then
+if python -c "import gunicorn, uvicorn" >/dev/null 2>&1; then
     exec gunicorn -k uvicorn.workers.UvicornWorker --bind="${HOST}:${PORT}" main:app --timeout 120 --workers 1
-else
+elif python -c "import uvicorn" >/dev/null 2>&1; then
+    exec python -m uvicorn main:app --host "${HOST}" --port "${PORT}" --timeout-keep-alive 120
+elif command -v uvicorn >/dev/null 2>&1; then
     exec uvicorn main:app --host "${HOST}" --port "${PORT}" --timeout-keep-alive 120
+else
+    echo "❌ Error: Neither gunicorn nor uvicorn found in Python environment"
+    exit 1
 fi

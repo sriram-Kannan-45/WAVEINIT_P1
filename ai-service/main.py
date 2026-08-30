@@ -101,6 +101,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Health & Status Endpoints ─────────────────────────
+@app.get("/")
+@app.get("/health")
+@app.get("/api/health")
+async def health_check():
+    """Service health check endpoint for Azure App Service, backend probes, and monitoring."""
+    return {
+        "status": "ok",
+        "service": "LMS AI Quiz & Proctoring Service",
+        "version": "3.0.0",
+        "timestamp": datetime.now().isoformat(),
+        "provider": "Gemini" if os.getenv("GEMINI_API_KEY") else "Fallback",
+        "yolo_engine": "available" if YOLO_ENGINE_AVAILABLE else "unavailable",
+        "proctoring_engine": "available" if PROCTORING_ENGINE_AVAILABLE else "unavailable"
+    }
+
 # ── Cache Implementation ───────────────────────────────
 class SimpleCache:
     """In-memory cache with TTL support for quiz generation results."""
