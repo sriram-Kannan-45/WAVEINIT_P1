@@ -27,15 +27,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Create and Start virtual environment and Install dependencies
-        working-directory: ai-service
-        run: |
-          python -m venv antenv
-          source antenv/bin/activate
-          pip install --upgrade pip
-          pip install -r requirements.txt
-          chmod +x startup.sh
-
       - name: Upload artifact for deployment jobs
         uses: actions/upload-artifact@v4
         with:
@@ -44,6 +35,7 @@ jobs:
             ai-service/
             !ai-service/.venv/
             !ai-service/venv/
+            !ai-service/antenv/
             !ai-service/__pycache__/
 
   deploy:
@@ -67,6 +59,34 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_2AAFDF1F53BE4ADB850460F3750C2437 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_42B805BB56D5497BB27CAAF402A3C099 }}
 
+      - name: Configure Azure App Settings
+        uses: azure/appservice-settings@v1
+        with:
+          app-name: 'waveinit-init'
+          app-settings-json: |
+            [
+              {
+                "name": "SCM_DO_BUILD_DURING_DEPLOYMENT",
+                "value": "true",
+                "slotSetting": false
+              },
+              {
+                "name": "WEBSITES_PORT",
+                "value": "8000",
+                "slotSetting": false
+              },
+              {
+                "name": "PORT",
+                "value": "8000",
+                "slotSetting": false
+              },
+              {
+                "name": "PYTHONUNBUFFERED",
+                "value": "1",
+                "slotSetting": false
+              }
+            ]
+
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v3
         id: deploy-to-webapp
@@ -74,3 +94,4 @@ jobs:
           app-name: 'waveinit-init'
           slot-name: 'Production'
           package: ./ai-service-deploy
+          startup-command: 'sh startup.sh'
