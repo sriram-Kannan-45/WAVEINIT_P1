@@ -19,16 +19,21 @@ if command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq && apt-get install -y -qq --no-install-recommends libgl1 libglib2.0-0 libxcb1 libxext6 || true
 fi
 
+export PYTHONPATH="/home/site/wwwroot:$(pwd):$PYTHONPATH"
+
 # 1. Activate Python virtual environment safely if present (do not fail if absent)
-if [ -f "/antenv/bin/activate" ]; then
-    echo "Using virtual environment at /antenv"
-    . /antenv/bin/activate
+if [ -f "/home/site/wwwroot/antenv/bin/activate" ]; then
+    echo "Using virtual environment at /home/site/wwwroot/antenv"
+    . /home/site/wwwroot/antenv/bin/activate
+elif [ -f "antenv/bin/activate" ]; then
+    echo "Using virtual environment at antenv"
+    . antenv/bin/activate
 elif [ -f "./antenv/bin/activate" ]; then
     echo "Using virtual environment at ./antenv"
     . ./antenv/bin/activate
-elif [ -f "/home/site/wwwroot/antenv/bin/activate" ]; then
-    echo "Using virtual environment at /home/site/wwwroot/antenv"
-    . /home/site/wwwroot/antenv/bin/activate
+elif [ -f "/antenv/bin/activate" ]; then
+    echo "Using virtual environment at /antenv"
+    . /antenv/bin/activate
 elif [ -f ".venv/bin/activate" ]; then
     echo "Using virtual environment at .venv"
     . .venv/bin/activate
