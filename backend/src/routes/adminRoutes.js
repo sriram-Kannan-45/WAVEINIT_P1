@@ -483,7 +483,7 @@ router.post(  '/courses/bulk-delete',                     adminAuth, (req, res) 
   adminCourseController.bulkDeleteCourses(req, res));
 
 // ── Bulk Participant Import ────────────────────────────────────────────────
-const bulkImportDir = path.join(process.cwd(), 'uploads', 'bulk-import');
+const bulkImportDir = require('../config/paths').getUploadsPath('bulk-import');
 if (!fs.existsSync(bulkImportDir)) fs.mkdirSync(bulkImportDir, { recursive: true });
 
 const bulkImportUpload = multer({

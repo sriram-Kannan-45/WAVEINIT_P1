@@ -392,7 +392,7 @@ class AssessmentVerificationService {
   async endSession({ sessionId, token, participantId, attemptId } = {}) {
     const { AssessmentVerificationSession, MonitoringSession, Sequelize } = require('../models');
     const { Op } = Sequelize || require('sequelize');
-    const { getIO } = require('../socket');
+    const { getIO } = require('../config/socket');
 
     const orClauses = [];
     if (sessionId) orClauses.push({ session_id: sessionId });

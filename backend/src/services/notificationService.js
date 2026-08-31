@@ -7,6 +7,21 @@
 const { Notification, User } = require('../models');
 const logger = require('../utils/logger');
 
+// Relay-aware realtime delivery: notifications must reach a user's socket even
+// when the user connected to a different App Service instance. crossInstance
+// fans out through the shared DB when no Redis adapter is configured.
+const relay = require('../socket/crossInstance');
+
+function resolveIO(io) {
+  if (io) return io;
+  try {
+    const { getIO } = require('../config/socket');
+    return getIO ? getIO() : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 class NotificationService {
   /**
    * Create and send a notification
@@ -26,9 +41,10 @@ class NotificationService {
         isRead: false,
       });
 
-      // Emit real-time notification via Socket.IO
-      if (io) {
-        io.to(`user_${notificationData.userId}`).emit('notification:new', {
+      // Emit real-time notification via Socket.IO (cross-instance aware)
+      const sock = resolveIO(io);
+      if (sock) {
+        relay.relayEmit(sock, 'user-room', notificationData.userId, 'notification:new', {
           id: notification.id,
           userId: notification.userId,
           message: notification.message,
@@ -40,7 +56,7 @@ class NotificationService {
 
         // Also emit to admin room for certain notification types
         if (['APPROVAL', 'FEEDBACK_REPLY'].includes(notification.type)) {
-          io.to('role_ADMIN').emit('notification:new', {
+          relay.relayEmit(sock, 'room', 'role_ADMIN', 'notification:new', {
             id: notification.id,
             message: notification.message,
             type: notification.type,
@@ -74,8 +90,9 @@ class NotificationService {
       await notification.save();
 
       // Emit update via Socket.IO
-      if (io) {
-        io.to(`user_${notification.userId}`).emit('notification:read', {
+      const sock = resolveIO(io);
+      if (sock) {
+        relay.relayEmit(sock, 'user-room', notification.userId, 'notification:read', {
           notificationId: notification.id,
           isRead: true,
         });
@@ -147,8 +164,9 @@ class NotificationService {
         { where: { userId, isRead: false } }
       );
 
-      if (io) {
-        io.to(`user_${userId}`).emit('notification:markAllRead', {
+      const sock = resolveIO(io);
+      if (sock) {
+        relay.relayEmit(sock, 'user-room', userId, 'notification:markAllRead', {
           timestamp: new Date(),
         });
       }
@@ -185,8 +203,9 @@ class NotificationService {
    */
   static async broadcastToRole(role, notificationData, io) {
     try {
-      if (io) {
-        io.to(`role_${role}`).emit('notification:new', notificationData);
+      const sock = resolveIO(io);
+      if (sock) {
+        relay.relayEmit(sock, 'room', `role_${role}`, 'notification:new', notificationData);
       }
       logger.info(`Broadcast notification to role ${role}`, { notificationData });
     } catch (error) {

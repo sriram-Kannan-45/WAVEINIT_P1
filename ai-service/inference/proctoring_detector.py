@@ -743,6 +743,7 @@ class SessionState:
     actual_end_time: Optional[float] = None
 
     created_at_monotonic: float = field(default_factory=time.monotonic)
+    last_active_monotonic: float = field(default_factory=time.monotonic)
     finalized: bool = False
     final_payload: Optional[Dict[str, Any]] = None
 
@@ -1165,7 +1166,35 @@ class MediaPipeProctorEngine:
                 configured_duration=configured_duration,
                 **kwargs,
             )
-        return self.sessions[session_id]
+        session = self.sessions[session_id]
+        session.last_active_monotonic = time.monotonic()
+        return session
+
+    def cleanup_stale_sessions(
+        self,
+        max_idle_seconds: float = float(
+            os.getenv("PROCTORING_SESSION_MAX_IDLE_SECONDS", "900")
+        ),
+    ) -> int:
+        """Drop abandoned live sessions whose frames stopped arriving.
+
+        This AI service is intentionally single-instance, but a single instance
+        long-lived process can still accumulate sessions if a client disconnects
+        mid-assessment. Frames update ``last_active_monotonic``; sessions idle
+        longer than ``max_idle_seconds`` are evicted from the in-memory dict so
+        memory does not grow unbounded.
+        """
+        now = time.monotonic()
+        stale = [
+            sid
+            for sid, s in self.sessions.items()
+            if not s.finalized
+            and now - getattr(s, "last_active_monotonic", s.created_at_monotonic)
+            > max_idle_seconds
+        ]
+        for sid in stale:
+            self.sessions.pop(sid, None)
+        return len(stale)
 
     @staticmethod
     def decode_b64(data: str) -> Optional[np.ndarray]:

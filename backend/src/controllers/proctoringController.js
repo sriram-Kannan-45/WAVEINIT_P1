@@ -22,15 +22,15 @@ function clientIp(req) {
     req.socket?.remoteAddress ||
     null
   );
-}
+const relay = require('../socket/crossInstance');
 
 function emitTrainerUpdate(req, quizId, payload, assessmentId) {
   const io = req.app.get('io');
   if (!io) return;
   const roomId = quizId || `coding_${assessmentId || ''}`;
-  io.to(`proctor_quiz_${roomId}`).emit('proctor:update', payload);
+  relay.relayEmit(io, 'room', `proctor_quiz_${roomId}`, 'proctor:update', payload);
   if (quizId) {
-    io.to(`proctor_coding_${quizId}`).emit('proctor:update', payload);
+    relay.relayEmit(io, 'room', `proctor_coding_${quizId}`, 'proctor:update', payload);
   }
 }
 
@@ -745,9 +745,9 @@ exports.recordMonitoringEvent = async (req, res, next) => {
     let user = req.user;
     if (!user && req.headers && req.headers['authorization'] && req.headers['authorization'].startsWith('Bearer ')) {
       try {
-        const { verifyAccessToken } = require('../security/tokenService');
+        const { verifyAndCheckToken } = require('../security/tokenService');
         const token = req.headers['authorization'].split(' ')[1];
-        user = verifyAccessToken(token);
+        user = await verifyAndCheckToken(token);
       } catch (_) {}
     }
 

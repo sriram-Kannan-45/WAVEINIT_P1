@@ -13,10 +13,10 @@
  *   - Role normalization
  */
 
-const { verifyAccessToken } = require('../security/tokenService');
+const { verifyAndCheckToken } = require('../security/tokenService');
 const logger = require('../utils/logger');
 
-const authenticateToken = (req, res, next) => {
+const authenticateToken = async (req, res, next) => {
   let token = null;
 
   // 1. Try Authorization header
@@ -40,7 +40,9 @@ const authenticateToken = (req, res, next) => {
   }
 
   try {
-    const decoded = verifyAccessToken(token);
+    // Async full verification: JWT verify + in-memory fast path + shared-DB
+    // (token_blacklist) check so revocations are global across instances.
+    const decoded = await verifyAndCheckToken(token);
     req.user = decoded;
 
     // Normalize role to uppercase for internal compatibility

@@ -6,14 +6,13 @@ const { Note, User, Training, Notification } = require('../models');
 const authenticateToken = require('../middleware/auth');
 const roleMiddleware = require('../middleware/roles');
 const ActivityService = require('../services/activityService');
+const paths = require('../config/paths');
+const { resolveUploadsPath } = paths;
 
 const router = express.Router();
 
-// Ensure uploads directory exists
-const notesDir = path.join(__dirname, '../../../uploads/notes');
-if (!fs.existsSync(notesDir)) {
-  fs.mkdirSync(notesDir, { recursive: true });
-}
+// Ensure uploads directory exists (shared storage root — see config/paths.js)
+const notesDir = paths.getUploadsPath('notes');
 
 // Configure multer for notes storage
 const notesStorage = multer.diskStorage({
@@ -238,7 +237,7 @@ router.put(
       if (req.file) {
         // Stash old local file path for cleanup AFTER save succeeds
         if (note.fileUrl && !note.fileUrl.startsWith('http')) {
-          oldFileToDelete = path.join(__dirname, '../../..', note.fileUrl);
+          oldFileToDelete = resolveUploadsPath(note.fileUrl);
         }
         patch.fileUrl = `/uploads/notes/${req.file.filename}`;
         patch.fileName = req.file.originalname;
@@ -460,7 +459,7 @@ router.delete(
 
       // Delete file if exists
       if (note.fileUrl && !note.fileUrl.startsWith('http')) {
-        const filePath = path.join(__dirname, '../../..', note.fileUrl);
+        const filePath = resolveUploadsPath(note.fileUrl);
         if (fs.existsSync(filePath)) {
           fs.unlinkSync(filePath);
         }

@@ -1,11 +1,9 @@
 const fs = require('fs');
 const multer = require('multer');
 const path = require('path');
+const { getUploadsPath } = require('../config/paths');
 
-const uploadsDir = path.join(process.cwd(), 'uploads', 'ai-docs');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
+const uploadsDir = getUploadsPath('ai-docs');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadsDir),

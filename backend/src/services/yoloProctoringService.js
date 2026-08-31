@@ -7,6 +7,7 @@
  */
 
 const axios = require('axios');
+const relay = require('../socket/crossInstance');
 const logger = require('../utils/logger');
 const { ProctoringEvent, InterviewAlert, InterviewLog, ExamSession } = require('../models');
 
@@ -257,7 +258,7 @@ class YOLOProctoringService {
 
     // Room determination
     if (moduleType === 'INTERVIEW') {
-      io.to(`interview_${sessionId}`).emit('interview-alert', {
+      relay.relayEmit(io, 'room', `interview_${sessionId}`, 'interview-alert', {
         sessionId,
         alertType: event.eventType,
         severity: event.severity,
@@ -288,9 +289,9 @@ class YOLOProctoringService {
         },
       };
 
-      io.to(`proctor_quiz_${roomId}`).emit('proctor:update', payload);
-      io.to(`proctor_coding_${roomId}`).emit('proctor:update', payload);
-      io.to(`proctor_session_${sessionId}`).emit('proctor:yolo_status', payload.monitoring);
+      relay.relayEmit(io, 'room', `proctor_quiz_${roomId}`, 'proctor:update', payload);
+      relay.relayEmit(io, 'room', `proctor_coding_${roomId}`, 'proctor:update', payload);
+      relay.relayEmit(io, 'room', `proctor_session_${sessionId}`, 'proctor:yolo_status', payload.monitoring);
     }
   }
 }

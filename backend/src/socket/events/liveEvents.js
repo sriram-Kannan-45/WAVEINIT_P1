@@ -1,4 +1,5 @@
 const { LiveSession, Attendance, ChatMessage, User } = require('../../models');
+const relay = require('../crossInstance');
 const logger = require('../../utils/logger');
 
 // Store active users per room for analytics
@@ -28,7 +29,7 @@ module.exports = (io, socket) => {
       }
 
       // Notify others
-      socket.to(`room_${roomId}`).emit('user-joined', { userId, socketId: socket.id });
+      relay.relayEmit(io, 'room', `room_${roomId}`, 'user-joined', { userId, socketId: socket.id }, { excludingSocket: socket });
       
       // Send current participants to the new user
       const participants = Array.from(activeRooms.get(roomId));
@@ -50,15 +51,15 @@ module.exports = (io, socket) => {
 
   // WebRTC Signaling
   socket.on('offer', (payload) => {
-    io.to(payload.target).emit('offer', payload);
+    relay.relayEmit(io, 'socket', payload.target, 'offer', payload);
   });
 
   socket.on('answer', (payload) => {
-    io.to(payload.target).emit('answer', payload);
+    relay.relayEmit(io, 'socket', payload.target, 'answer', payload);
   });
 
   socket.on('ice-candidate', (payload) => {
-    io.to(payload.target).emit('ice-candidate', payload);
+    relay.relayEmit(io, 'socket', payload.target, 'ice-candidate', payload);
   });
 
   // === 2. REAL-TIME CHAT EVENTS ===
@@ -80,7 +81,7 @@ module.exports = (io, socket) => {
       });
 
       // Broadcast to room
-      io.to(`room_${roomId}`).emit('receive-message', fullMessage);
+      relay.relayEmit(io, 'room', `room_${roomId}`, 'receive-message', fullMessage);
     } catch (error) {
       logger.error('Error sending message', error);
       socket.emit('error', { message: 'Failed to send message' });
@@ -88,11 +89,11 @@ module.exports = (io, socket) => {
   });
 
   socket.on('typing', ({ roomId, userId, userName }) => {
-    socket.to(`room_${roomId}`).emit('user-typing', { userId, userName });
+    relay.relayEmit(io, 'room', `room_${roomId}`, 'user-typing', { userId, userName }, { excludingSocket: socket });
   });
 
   socket.on('stop-typing', ({ roomId, userId }) => {
-    socket.to(`room_${roomId}`).emit('user-stop-typing', { userId });
+    relay.relayEmit(io, 'room', `room_${roomId}`, 'user-stop-typing', { userId }, { excludingSocket: socket });
   });
 
   // Handle sudden disconnects
@@ -126,7 +127,7 @@ async function handleUserLeave(io, socket, roomId, userId) {
       }
     }
 
-    socket.to(`room_${roomId}`).emit('user-left', { userId, socketId: socket.id });
+    relay.relayEmit(io, 'room', `room_${roomId}`, 'user-left', { userId, socketId: socket.id });
     logger.info(`User ${userId} left room ${roomId}`);
     
     updateDashboardStats(io);
@@ -149,7 +150,7 @@ async function updateDashboardStats(io) {
     const activeSessionsCount = activeRooms.size;
 
     // Broadcast to admins
-    io.to('role_ADMIN').emit('dashboard-update', {
+    relay.relayEmit(io, 'room', 'role_ADMIN', 'dashboard-update', {
       totalActiveUsers,
       activeSessionsCount,
       timestamp: new Date()

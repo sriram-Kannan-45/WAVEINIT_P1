@@ -4,11 +4,22 @@
  */
 
 const socketIO = require('socket.io');
-const redis = require('redis');
-const { createAdapter } = require('@socket.io/redis-adapter');
 const jwt = require('jsonwebtoken');
+let redis = null;
+let createAdapter = null;
+// The socket.io-redis-adapter is an OPTIONAL dependency. When it isn't
+// installed (or Redis isn't configured) we fall back to the DB-outbox relay
+// in crossInstance.js so the backend always starts and cross-instance emits work.
+try {
+  redis = require('redis');
+  ({ createAdapter } = require('@socket.io/redis-adapter'));
+} catch (e) {
+  redis = null;
+  createAdapter = null;
+}
 const { User } = require('../models');
 const tokenService = require('../services/interviewTokenService');
+const crossInstance = require('../socket/crossInstance');
 const logger = require('../utils/logger');
 
 /**
@@ -218,8 +229,16 @@ const initializeSocket = (server) => {
  */
 const setupRedisAdapter = async (io) => {
   const redisUrl = process.env.REDIS_URL;
+  // Without the optional package AND a configured Redis URL, the DB-outbox
+  // relay (crossInstance) handles cross-instance emits.
+  if (!redis || !createAdapter) {
+    crossInstance.setAdapterMode('relay');
+    logger.info('[Socket.IO] redis-adapter not available; using DB-outbox relay for cross-instance emits');
+    return;
+  }
   if (!redisUrl || !redisUrl.trim()) {
-    logger.info('[Socket.IO] No REDIS_URL configured; running in single-instance in-memory mode');
+    crossInstance.setAdapterMode('relay');
+    logger.info('[Socket.IO] No REDIS_URL configured; using DB-outbox relay for cross-instance emits');
     return;
   }
   try {
@@ -233,21 +252,23 @@ const setupRedisAdapter = async (io) => {
 
     io.adapter(createAdapter(pubClient, subClient));
     io.redisClients = { pubClient, subClient };
+    crossInstance.setAdapterMode('redis');
     logger.info('🚀 Socket.IO Redis adapter connected — cluster real-time synchronization active');
   } catch (error) {
-    logger.warn('Failed to setup Redis adapter for Socket.IO, falling back to in-memory adapter', { error: error.message });
+    crossInstance.setAdapterMode('relay');
+    logger.warn('Failed to setup Redis adapter for Socket.IO, falling back to DB-outbox relay', { error: error.message });
   }
 };
 
 /**
- * Emit event to specific user
+ * Emit event to specific user (works cross-instance through relay when no Redis)
  * @param {Object} io - Socket.IO instance
  * @param {string|number} userId - User ID
  * @param {string} event - Event name
  * @param {Object} data - Event data
  */
 const emitToUser = (io, userId, event, data) => {
-  io.to(`user_${userId}`).emit(event, data);
+  return crossInstance.relayEmit(io, 'user-room', userId, event, data);
 };
 
 /**
@@ -258,7 +279,7 @@ const emitToUser = (io, userId, event, data) => {
  * @param {Object} data - Event data
  */
 const emitToRole = (io, role, event, data) => {
-  io.to(`role_${role}`).emit(event, data);
+  return crossInstance.relayEmit(io, 'room', `role_${role}`, event, data);
 };
 
 /**
@@ -268,7 +289,7 @@ const emitToRole = (io, role, event, data) => {
  * @param {Object} data - Event data
  */
 const broadcastEvent = (io, event, data) => {
-  io.emit(event, data);
+  return crossInstance.relayEmit(io, 'broadcast', '*', event, data);
 };
 
 /**

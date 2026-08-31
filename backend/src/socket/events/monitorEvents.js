@@ -5,9 +5,11 @@ const {
   MonitorViolation,
   MonitorScreenshot,
 } = require('../../models');
+const { getUploadsPath } = require('../../config/paths');
+const relay = require('../crossInstance');
 const logger = require('../../utils/logger');
 
-const SCREENSHOT_DIR = path.join(__dirname, '../../../uploads/monitor-screenshots');
+const SCREENSHOT_DIR = getUploadsPath('monitor-screenshots');
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {
@@ -73,7 +75,7 @@ module.exports = function registerMonitorEvents(io, socket) {
       });
 
       // Forward to trainers
-      io.to(`trainer_${attempt.testId}`).emit('new-frame', {
+      relay.relayEmit(io, 'room', `trainer_${attempt.testId}`, 'new-frame', {
         participantId,
         imageBase64,
         timestamp: screenshot.timestamp,
@@ -100,7 +102,7 @@ module.exports = function registerMonitorEvents(io, socket) {
 
       const count = await MonitorViolation.count({ where: { attemptId } });
 
-      io.to(`trainer_${attempt.testId}`).emit('violation', {
+      relay.relayEmit(io, 'room', `trainer_${attempt.testId}`, 'violation', {
         participantId,
         type,
         timestamp: violation.timestamp,
@@ -109,7 +111,7 @@ module.exports = function registerMonitorEvents(io, socket) {
       if (count >= 5 && !attempt.flagged) {
         attempt.flagged = true;
         await attempt.save();
-        io.to(`trainer_${attempt.testId}`).emit('participant-flagged', {
+        relay.relayEmit(io, 'room', `trainer_${attempt.testId}`, 'participant-flagged', {
           participantId,
           reason: 'Exceeded violation threshold',
         });
@@ -135,7 +137,7 @@ module.exports = function registerMonitorEvents(io, socket) {
         metadata: { reason },
       });
 
-      io.to(`trainer_${attempt.testId}`).emit('participant-flagged', {
+      relay.relayEmit(io, 'room', `trainer_${attempt.testId}`, 'participant-flagged', {
         participantId,
         reason: reason || 'Auto-flagged by client',
       });
@@ -159,8 +161,8 @@ module.exports = function registerMonitorEvents(io, socket) {
         metadata: { message },
       });
 
-      io.to(`participant_${attemptId}`).emit('trainer-warning', { message });
-      io.to(`trainer_${attempt.testId}`).emit('violation', {
+      relay.relayEmit(io, 'room', `participant_${attemptId}`, 'trainer-warning', { message });
+      relay.relayEmit(io, 'room', `trainer_${attempt.testId}`, 'violation', {
         participantId: attempt.participantId,
         type: 'TRAINER_WARNING',
         timestamp: new Date(),
@@ -183,8 +185,8 @@ module.exports = function registerMonitorEvents(io, socket) {
       attempt.autoSubmitted = true;
       await attempt.save();
 
-      io.to(`participant_${attemptId}`).emit('force-submit', { reason: reason || 'Force submitted by trainer' });
-      io.to(`trainer_${attempt.testId}`).emit('test-submitted', {
+      relay.relayEmit(io, 'room', `participant_${attemptId}`, 'force-submit', { reason: reason || 'Force submitted by trainer' });
+      relay.relayEmit(io, 'room', `trainer_${attempt.testId}`, 'test-submitted', {
         participantId: attempt.participantId,
         score: attempt.score,
         submittedAt: attempt.submittedAt,

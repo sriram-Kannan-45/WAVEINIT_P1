@@ -32,11 +32,14 @@ if (!ACCESS_TOKEN_SECRET) {
   throw new Error('[SECURITY] JWT_SECRET is required. Set it in .env');
 }
 
-// ── In-memory access token blacklist (use Redis in production) ──────────────
-// Stores revoked JWT IDs until they naturally expire
+// ── Access-token blacklist ──────────────────────────────────────────────────
+// Fast in-memory mirror (per process) + persistent store in the SHARED
+// database (token_blacklist table). The DB row is what makes revocation global
+// across all App Service instances; the Set is a zero-cost fast path.
 const tokenBlacklist = new Set();
 
-// Periodic cleanup of expired blacklisted tokens
+// Periodic cleanup of expired in-memory blacklisted tokens. The DB rows are
+// purged by the leader-guarded cleanup job in app.js.
 setInterval(() => {
   const now = Math.floor(Date.now() / 1000);
   for (const jti of tokenBlacklist) {
@@ -123,11 +126,51 @@ async function generateTokenPair(user, req, family = null) {
 }
 
 // ── Verify Access Token ────────────────────────────────────────────────────
+/**
+ * Synchronous JWT verify + in-memory blacklist fast path.
+ * Kept for synchronous call sites. For a revocation check that also hits the
+ * shared DB, use `verifyAndCheckToken`.
+ */
 function verifyAccessToken(token) {
   const decoded = jwt.verify(token, ACCESS_TOKEN_SECRET);
   if (decoded.type !== 'access') throw new Error('Invalid token type');
   const blacklistKey = `${decoded.jti}:${decoded.id}`;
   if (tokenBlacklist.has(blacklistKey)) throw new Error('Token has been revoked');
+  return decoded;
+}
+
+/**
+ * Async revocation check against the shared token_blacklist table (PK lookup
+ * on `jti`). Serves as the cross-instance source of truth for revocation.
+ * @returns {Promise<boolean>}
+ */
+async function isTokenRevoked(decoded) {
+  if (!decoded || !decoded.jti) return false;
+  const blacklistKey = `${decoded.jti}:${decoded.id}`;
+  if (tokenBlacklist.has(blacklistKey)) return true;
+  try {
+    const { TokenBlacklist } = require('../models');
+    const row = await TokenBlacklist.findOne({
+      where: { jti: decoded.jti },
+      attributes: ['id'],
+    });
+    if (row) tokenBlacklist.add(blacklistKey); // warm the fast path next time
+    return !!row;
+  } catch (_) {
+    // DB unavailable — treat as valid (matching the previous in-memory-only
+    // behavior) rather than failing the request.
+    return false;
+  }
+}
+
+/**
+ * Full verification for request auth: JWT verify + fast-path + shared-DB check.
+ * @returns {Promise<object>} decoded payload
+ */
+async function verifyAndCheckToken(token) {
+  const decoded = verifyAccessToken(token);
+  const revoked = await isTokenRevoked(decoded);
+  if (revoked) throw new Error('Token has been revoked');
   return decoded;
 }
 
@@ -197,8 +240,42 @@ async function rotateRefreshToken(token, req) {
 }
 
 // ── Blacklist access token ─────────────────────────────────────────────────
-function blacklistAccessToken(decoded) {
+/**
+ * Revoke an access token (logout, password change, session kill).
+ * Writes to the shared DB so every instance rejects the token, and warms the
+ * local Set for zero-cost rejection on this instance.
+ */
+async function blacklistAccessToken(decoded, { reason = 'logout' } = {}) {
+  if (!decoded || !decoded.jti) return;
   const blacklistKey = `${decoded.jti}:${decoded.id}`;
+
+  let exp = null;
+  try {
+    const raw = jwt.decode(decoded.raw || '');
+    if (!raw && decoded.exp) {
+      exp = new Date(decoded.exp * 1000);
+    } else if (raw && raw.exp) {
+      exp = new Date(raw.exp * 1000);
+    }
+  } catch (_) { /* exp left null */ }
+
+  try {
+    const { TokenBlacklist } = require('../models');
+    await TokenBlacklist.findOrCreate({
+      where: { jti: decoded.jti },
+      defaults: {
+        jti: decoded.jti,
+        userId: decoded.id || null,
+        tokenHash: decoded.raw ? hashToken(decoded.raw) : null,
+        reason,
+        expiresAt: exp,
+      },
+    });
+  } catch (err) {
+    logger.warn('[SECURITY] Failed to persist token blacklist row', { error: err.message, jti: decoded.jti });
+  }
+
+  // Always warm the local fast path.
   tokenBlacklist.add(blacklistKey);
 }
 
@@ -239,6 +316,8 @@ function clearRefreshTokenCookie(res) {
 module.exports = {
   generateTokenPair,
   verifyAccessToken,
+  verifyAndCheckToken,
+  isTokenRevoked,
   verifyRefreshToken,
   rotateRefreshToken,
   blacklistAccessToken,

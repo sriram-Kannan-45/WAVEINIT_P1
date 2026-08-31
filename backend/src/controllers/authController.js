@@ -331,9 +331,9 @@ const logout = async (req, res) => {
     const sessionId = req.query?.sessionId || req.user?.sessionId;
 
     if (userId) {
-      // Blacklist the current access token
+      // Blacklist the current access token (shared DB so all instances reject it)
       if (req.user?.jti) {
-        tokenService.blacklistAccessToken(req.user);
+        await tokenService.blacklistAccessToken(req.user, { reason: 'logout' });
       }
 
       // Revoke refresh token for this session

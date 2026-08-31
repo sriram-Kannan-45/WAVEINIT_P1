@@ -4,6 +4,7 @@
  * Includes WebRTC signaling (offer, answer, ICE candidates) and stream state tracking.
  */
 const logger = require('../utils/logger');
+const relay = require('./crossInstance');
 
 module.exports = (io, socket) => {
   // Join verification session room
@@ -22,16 +23,16 @@ module.exports = (io, socket) => {
     try {
       if (socket.verifRole === 'mobile_camera') {
         // 1. Notify laptop peer that mobile joined
-        socket.to(roomName).emit('assessment_verif:mobile_joined', {
+        relay.relayEmit(io, 'room', roomName, 'assessment_verif:mobile_joined', {
           sessionId,
           socketId: socket.id,
           timestamp: Date.now(),
-        });
-        socket.to(`monitoring_room_${sessionId}`).emit('monitoring:mobile_joined', {
+        }, { excludingSocket: socket });
+        relay.relayEmit(io, 'room', `monitoring_room_${sessionId}`, 'monitoring:mobile_joined', {
           sessionId,
           socketId: socket.id,
           timestamp: Date.now(),
-        });
+        }, { excludingSocket: socket });
 
         // 2. Also notify the newly joined mobile about any existing laptop in the room
         const socketsInRoom = await io.in(roomName).fetchSockets();
@@ -52,16 +53,16 @@ module.exports = (io, socket) => {
         }
       } else if (socket.verifRole === 'laptop') {
         // 1. Notify mobile if already in the room
-        socket.to(roomName).emit('assessment_verif:laptop_joined', {
+        relay.relayEmit(io, 'room', roomName, 'assessment_verif:laptop_joined', {
           sessionId,
           socketId: socket.id,
           timestamp: Date.now(),
-        });
-        socket.to(`monitoring_room_${sessionId}`).emit('monitoring:laptop_joined', {
+        }, { excludingSocket: socket });
+        relay.relayEmit(io, 'room', `monitoring_room_${sessionId}`, 'monitoring:laptop_joined', {
           sessionId,
           socketId: socket.id,
           timestamp: Date.now(),
-        });
+        }, { excludingSocket: socket });
 
         // 2. Also notify the newly joined laptop about any existing mobile in the room
         const socketsInRoom = await io.in(roomName).fetchSockets();
@@ -94,27 +95,27 @@ module.exports = (io, socket) => {
 
     logger.info(`[SocketIO WebRTC] Forwarding OFFER from ${socket.id} to ${targetSocketId || `assessment_verif_${targetSessionId}`}`);
     if (targetSocketId) {
-      io.to(targetSocketId).emit('assessment_verif:offer', {
+      relay.relayEmit(io, 'socket', targetSocketId, 'assessment_verif:offer', {
         sessionId: targetSessionId,
         fromSocketId: socket.id,
         offer,
       });
-      io.to(targetSocketId).emit('monitoring:offer', {
+      relay.relayEmit(io, 'socket', targetSocketId, 'monitoring:offer', {
         sessionId: targetSessionId,
         fromSocketId: socket.id,
         offer,
       });
     } else {
-      socket.to(`assessment_verif_${targetSessionId}`).emit('assessment_verif:offer', {
+      relay.relayEmit(io, 'room', `assessment_verif_${targetSessionId}`, 'assessment_verif:offer', {
         sessionId: targetSessionId,
         fromSocketId: socket.id,
         offer,
-      });
-      socket.to(`monitoring_room_${targetSessionId}`).emit('monitoring:offer', {
+      }, { excludingSocket: socket });
+      relay.relayEmit(io, 'room', `monitoring_room_${targetSessionId}`, 'monitoring:offer', {
         sessionId: targetSessionId,
         fromSocketId: socket.id,
         offer,
-      });
+      }, { excludingSocket: socket });
     }
   });
 
@@ -126,27 +127,27 @@ module.exports = (io, socket) => {
 
     logger.info(`[SocketIO WebRTC] Forwarding ANSWER from ${socket.id} to ${targetSocketId || `assessment_verif_${targetSessionId}`}`);
     if (targetSocketId) {
-      io.to(targetSocketId).emit('assessment_verif:answer', {
+      relay.relayEmit(io, 'socket', targetSocketId, 'assessment_verif:answer', {
         sessionId: targetSessionId,
         fromSocketId: socket.id,
         answer,
       });
-      io.to(targetSocketId).emit('monitoring:answer', {
+      relay.relayEmit(io, 'socket', targetSocketId, 'monitoring:answer', {
         sessionId: targetSessionId,
         fromSocketId: socket.id,
         answer,
       });
     } else {
-      socket.to(`assessment_verif_${targetSessionId}`).emit('assessment_verif:answer', {
+      relay.relayEmit(io, 'room', `assessment_verif_${targetSessionId}`, 'assessment_verif:answer', {
         sessionId: targetSessionId,
         fromSocketId: socket.id,
         answer,
-      });
-      socket.to(`monitoring_room_${targetSessionId}`).emit('monitoring:answer', {
+      }, { excludingSocket: socket });
+      relay.relayEmit(io, 'room', `monitoring_room_${targetSessionId}`, 'monitoring:answer', {
         sessionId: targetSessionId,
         fromSocketId: socket.id,
         answer,
-      });
+      }, { excludingSocket: socket });
     }
   });
 
@@ -157,27 +158,27 @@ module.exports = (io, socket) => {
     if (!targetSessionId || !candidate) return;
 
     if (targetSocketId) {
-      io.to(targetSocketId).emit('assessment_verif:ice-candidate', {
+      relay.relayEmit(io, 'socket', targetSocketId, 'assessment_verif:ice-candidate', {
         sessionId: targetSessionId,
         fromSocketId: socket.id,
         candidate,
       });
-      io.to(targetSocketId).emit('monitoring:ice-candidate', {
+      relay.relayEmit(io, 'socket', targetSocketId, 'monitoring:ice-candidate', {
         sessionId: targetSessionId,
         fromSocketId: socket.id,
         candidate,
       });
     } else {
-      socket.to(`assessment_verif_${targetSessionId}`).emit('assessment_verif:ice-candidate', {
+      relay.relayEmit(io, 'room', `assessment_verif_${targetSessionId}`, 'assessment_verif:ice-candidate', {
         sessionId: targetSessionId,
         fromSocketId: socket.id,
         candidate,
-      });
-      socket.to(`monitoring_room_${targetSessionId}`).emit('monitoring:ice-candidate', {
+      }, { excludingSocket: socket });
+      relay.relayEmit(io, 'room', `monitoring_room_${targetSessionId}`, 'monitoring:ice-candidate', {
         sessionId: targetSessionId,
         fromSocketId: socket.id,
         candidate,
-      });
+      }, { excludingSocket: socket });
     }
   });
 
@@ -217,11 +218,11 @@ module.exports = (io, socket) => {
 
       if (res?.success && res.proctoring_event?.shouldBroadcast) {
         yoloService.broadcastEvent(io, res.proctoring_event);
-        io.to(`assessment_verif_${targetSessionId}`).emit('assessment_verif:yolo_detection', {
+        relay.relayEmit(io, 'room', `assessment_verif_${targetSessionId}`, 'assessment_verif:yolo_detection', {
           event: res.proctoring_event,
           detections: res.detections,
         });
-        io.to(`monitoring_room_${targetSessionId}`).emit('monitoring:mobile_composition', {
+        relay.relayEmit(io, 'room', `monitoring_room_${targetSessionId}`, 'monitoring:mobile_composition', {
           sessionId: targetSessionId,
           compositionState: res.composition_state,
           userMessage: res.user_message,
@@ -240,18 +241,18 @@ module.exports = (io, socket) => {
     const targetSessionId = sessionId || socket.sessionId;
     if (!targetSessionId) return;
 
-    socket.to(`assessment_verif_${targetSessionId}`).emit('assessment_verif:stream_status', {
+    relay.relayEmit(io, 'room', `assessment_verif_${targetSessionId}`, 'assessment_verif:stream_status', {
       sessionId: targetSessionId,
       streaming: !!streaming,
       quality: quality || 'good',
       timestamp: Date.now(),
-    });
-    socket.to(`monitoring_room_${targetSessionId}`).emit('monitoring:stream_status', {
+    }, { excludingSocket: socket });
+    relay.relayEmit(io, 'room', `monitoring_room_${targetSessionId}`, 'monitoring:stream_status', {
       sessionId: targetSessionId,
       streaming: !!streaming,
       quality: quality || 'good',
       timestamp: Date.now(),
-    });
+    }, { excludingSocket: socket });
   });
 
   // Mobile camera is live and streaming/ready
@@ -274,7 +275,7 @@ module.exports = (io, socket) => {
       logger.error('Error updating mobile_verified on socket ready', { error: e.message });
     }
 
-    io.to(`assessment_verif_${targetSessionId}`).emit('assessment_verif:mobile_status', {
+    relay.relayEmit(io, 'room', `assessment_verif_${targetSessionId}`, 'assessment_verif:mobile_status', {
       sessionId: targetSessionId,
       connected: false,
       mobileReady: true,
@@ -302,7 +303,7 @@ module.exports = (io, socket) => {
       logger.error('Error updating laptop_verified on socket ready', { error: e.message });
     }
 
-    io.to(`assessment_verif_${targetSessionId}`).emit('assessment_verif:laptop_status', {
+    relay.relayEmit(io, 'room', `assessment_verif_${targetSessionId}`, 'assessment_verif:laptop_status', {
       sessionId: targetSessionId,
       connected: true,
       laptopVerified: true,
@@ -315,7 +316,7 @@ module.exports = (io, socket) => {
     const { sessionId } = data || {};
     if (!sessionId) return;
 
-    io.to(`assessment_verif_${sessionId}`).emit('assessment_verif:unlocked', {
+    relay.relayEmit(io, 'room', `assessment_verif_${sessionId}`, 'assessment_verif:unlocked', {
       sessionId,
       status: 'VERIFIED',
       timestamp: Date.now(),
@@ -328,7 +329,7 @@ module.exports = (io, socket) => {
     const targetSessionId = sessionId || socket.sessionId;
     if (!targetSessionId) return;
 
-    io.to(`assessment_verif_${targetSessionId}`).emit('assessment_verif:assessment_started', {
+    relay.relayEmit(io, 'room', `assessment_verif_${targetSessionId}`, 'assessment_verif:assessment_started', {
       sessionId: targetSessionId,
       status: 'IN_PROGRESS',
       timestamp: Date.now(),
@@ -342,13 +343,13 @@ module.exports = (io, socket) => {
     if (!targetSessionId) return;
 
     logger.info(`[SocketIO] Assessment session ended for ${targetSessionId}`);
-    io.to(`assessment_verif_${targetSessionId}`).emit('assessment_verif:session_ended', {
+    relay.relayEmit(io, 'room', `assessment_verif_${targetSessionId}`, 'assessment_verif:session_ended', {
       sessionId: targetSessionId,
       status: 'COMPLETED',
       reason: 'ASSESSMENT_COMPLETED',
       timestamp: Date.now(),
     });
-    io.to(`monitoring_room_${targetSessionId}`).emit('monitoring:session_ended', {
+    relay.relayEmit(io, 'room', `monitoring_room_${targetSessionId}`, 'monitoring:session_ended', {
       sessionId: targetSessionId,
       status: 'COMPLETED',
       reason: 'ASSESSMENT_COMPLETED',
@@ -359,7 +360,7 @@ module.exports = (io, socket) => {
   // Disconnect handling
   socket.on('disconnect', () => {
     if (socket.sessionId && socket.verifRole === 'mobile_camera') {
-      io.to(`assessment_verif_${socket.sessionId}`).emit('assessment_verif:mobile_status', {
+      relay.relayEmit(io, 'room', `assessment_verif_${socket.sessionId}`, 'assessment_verif:mobile_status', {
         sessionId: socket.sessionId,
         connected: false,
         mobileVerified: false,

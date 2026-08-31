@@ -14,6 +14,7 @@
 
 const { Op } = require('sequelize');
 const { AssessmentSession } = require('../models');
+const { withLeaderLock } = require('../utils/leaderElection');
 
 async function sweepExpiredAssessmentSessions() {
   const [affected] = await AssessmentSession.update(
@@ -29,14 +30,18 @@ async function sweepExpiredAssessmentSessions() {
 }
 
 function startAssessmentSessionExpiryJob({ intervalMs = 5 * 60_000, logger = console } = {}) {
+  // Leader-guarded: across multiple instances only one runs the sweep.
+  const sweepLeaderGuarded = () =>
+    withLeaderLock('cron:assessment-session-expiry', () => sweepExpiredAssessmentSessions());
+
   // Run once at boot so any rows that expired while the server was down
   // get cleaned up immediately rather than waiting up to intervalMs.
-  sweepExpiredAssessmentSessions()
+  sweepLeaderGuarded()
     .then((n) => { if (n > 0) logger.info?.(`[assessment-session-expiry] swept ${n} expired session(s) at boot`); })
     .catch((err) => logger.warn?.('[assessment-session-expiry] boot sweep failed', { error: err.message }));
 
   const handle = setInterval(() => {
-    sweepExpiredAssessmentSessions()
+    sweepLeaderGuarded()
       .then((n) => { if (n > 0) logger.info?.(`[assessment-session-expiry] swept ${n} expired session(s)`); })
       .catch((err) => logger.warn?.('[assessment-session-expiry] sweep failed', { error: err.message }));
   }, intervalMs);

@@ -17,6 +17,7 @@ const path = require('path');
 const axios = require('axios');
 const FormData = require('form-data');
 const { Op } = require('sequelize');
+const relay = require('../socket/crossInstance');
 const logger = require('../utils/logger');
 const monitoringConfig = require('../config/monitoringConfig');
 const { getRedisClient, isRedisReady } = require('../config/redis');
@@ -40,9 +41,9 @@ async function emitSegmentStatus(io, segment, status, message = '') {
       message,
       timestamp: new Date().toISOString(),
     };
-    io.to(`monitoring_${segment.monitoringSessionId}`).emit('monitoring:segment-status', payload);
+    relay.relayEmit(io, 'room', `monitoring_${segment.monitoringSessionId}`, 'monitoring:segment-status', payload);
     if (segment.participantId) {
-      io.to(`user_${segment.participantId}`).emit('monitoring:segment-status', payload);
+      relay.relayEmit(io, 'user-room', segment.participantId, 'monitoring:segment-status', payload);
     }
   } catch (err) {
     logger.warn('[MonitoringWorker] Failed to emit segment status', { error: err.message });

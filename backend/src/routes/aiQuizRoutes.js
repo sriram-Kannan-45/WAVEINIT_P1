@@ -3,6 +3,7 @@ const { Op } = require('sequelize');
 const { sequelize } = require('../config/db');
 const multer = require('multer');
 const path = require('path');
+const { getUploadsPath, resolveUploadsPath } = require('../config/paths');
 const { AIDocument, AIQuiz, AIQuestion, AIQuestionOption, QuizAttempt, QuizAnswer, QuizResult, Training, User, Course, CourseTrainerAssignment, TrainingTrainerAssignment, QuizAssignment } = require('../models');
 const authenticateToken = require('../middleware/auth');
 const roleMiddleware = require('../middleware/roles');
@@ -18,8 +19,8 @@ const { areResultsVisible } = require('../utils/quizStateMachine');
  
 const router = express.Router();
 
-  // Absolute path for uploads directory
-  const uploadsDir = path.join(process.cwd(), 'uploads', 'ai-docs');
+  // Absolute path for uploads directory (shared storage root — config/paths.js)
+  const uploadsDir = getUploadsPath('ai-docs');
   
   // Ensure uploads directory exists
   if (!fs.existsSync(uploadsDir)) {
@@ -75,7 +76,7 @@ const router = express.Router();
 
   const extractText = async (filePath, mimeType) => {
     // Ensure the file path is absolute
-    const absPath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
+    const absPath = path.isAbsolute(filePath) ? filePath : resolveUploadsPath(filePath);
     
     if (!fs.existsSync(absPath)) {
       throw new Error(`File not found: ${absPath}`);
@@ -374,7 +375,7 @@ const router = express.Router();
       let content = '';
       try {
         // Ensure we pass absolute path to extractText
-        const absPath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
+        const absPath = path.isAbsolute(filePath) ? filePath : resolveUploadsPath(filePath);
         content = await extractText(absPath, fileType);
       } catch (err) {
         // Clean up file on error

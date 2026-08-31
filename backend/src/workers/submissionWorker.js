@@ -3,6 +3,7 @@ const { JudgeEngine } = require('../judge/engine');
 const { VERDICTS } = require('../judge/verdicts');
 const { sequelize } = require('../config/db');
 const { CodingSubmission, CodingProblem, CodingTestCase } = require('../models');
+const relay = require('../socket/crossInstance');
 const logger = require('../utils/logger');
 
 const { getRedisClient, isRedisReady } = require('../config/redis');
@@ -12,7 +13,7 @@ const judgeEngine = new JudgeEngine();
 async function emitProgress(io, submissionId, progress) {
   if (!io) return;
   try {
-    io.to(`submission_${submissionId}`).emit('submission:progress', {
+    relay.relayEmit(io, 'room', `submission_${submissionId}`, 'submission:progress', {
       submissionId, ...progress,
     });
   } catch (err) {
@@ -137,7 +138,7 @@ async function evaluateSubmission({ submissionId, attemptId, problemId, code, la
             }
 
             try {
-              io.to(`user_${participantId}`).emit('coding:result-update', {
+              relay.relayEmit(io, 'user-room', participantId, 'coding:result-update', {
                 attemptId,
                 assessmentId,
                 totalScore,

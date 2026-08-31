@@ -19,7 +19,7 @@ const router = express.Router();
 
 // ─── File Upload Config ───────────────────────────────────────────────────
 
-const regUploadDir = path.join(process.cwd(), 'uploads', 'registrations');
+const regUploadDir = require('../config/paths').getUploadsPath('registrations');
 if (!fs.existsSync(regUploadDir)) fs.mkdirSync(regUploadDir, { recursive: true });
 
 const regStorage = multer.diskStorage({

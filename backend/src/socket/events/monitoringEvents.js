@@ -6,6 +6,7 @@
  */
 
 const monitoringService = require('../../services/monitoringService');
+const relay = require('../crossInstance');
 const logger = require('../../utils/logger');
 
 module.exports = function registerMonitoringEvents(io, socket) {
@@ -28,11 +29,11 @@ module.exports = function registerMonitoringEvents(io, socket) {
 
     try {
       if (role === 'mobile_camera') {
-        socket.to(roomName).emit('monitoring:mobile_joined', {
+        relay.relayEmit(io, 'room', roomName, 'monitoring:mobile_joined', {
           sessionId,
           socketId: socket.id,
           timestamp: Date.now(),
-        });
+        }, { excludingSocket: socket });
 
         // Inform mobile if laptop is already present
         const socketsInRoom = await io.in(roomName).fetchSockets();
@@ -46,11 +47,11 @@ module.exports = function registerMonitoringEvents(io, socket) {
           }
         }
       } else if (role === 'laptop') {
-        socket.to(roomName).emit('monitoring:laptop_joined', {
+        relay.relayEmit(io, 'room', roomName, 'monitoring:laptop_joined', {
           sessionId,
           socketId: socket.id,
           timestamp: Date.now(),
-        });
+        }, { excludingSocket: socket });
 
         const socketsInRoom = await io.in(roomName).fetchSockets();
         for (const s of socketsInRoom) {
@@ -79,17 +80,17 @@ module.exports = function registerMonitoringEvents(io, socket) {
 
     const roomName = `monitoring_room_${targetSession}`;
     if (targetSocketId) {
-      io.to(targetSocketId).emit('monitoring:offer', {
+      relay.relayEmit(io, 'socket', targetSocketId, 'monitoring:offer', {
         sessionId: targetSession,
         fromSocketId: socket.id,
         offer,
       });
     } else {
-      socket.to(roomName).emit('monitoring:offer', {
+      relay.relayEmit(io, 'room', roomName, 'monitoring:offer', {
         sessionId: targetSession,
         fromSocketId: socket.id,
         offer,
-      });
+      }, { excludingSocket: socket });
     }
   });
 
@@ -101,17 +102,17 @@ module.exports = function registerMonitoringEvents(io, socket) {
 
     const roomName = `monitoring_room_${targetSession}`;
     if (targetSocketId) {
-      io.to(targetSocketId).emit('monitoring:answer', {
+      relay.relayEmit(io, 'socket', targetSocketId, 'monitoring:answer', {
         sessionId: targetSession,
         fromSocketId: socket.id,
         answer,
       });
     } else {
-      socket.to(roomName).emit('monitoring:answer', {
+      relay.relayEmit(io, 'room', roomName, 'monitoring:answer', {
         sessionId: targetSession,
         fromSocketId: socket.id,
         answer,
-      });
+      }, { excludingSocket: socket });
     }
   });
 
@@ -123,17 +124,17 @@ module.exports = function registerMonitoringEvents(io, socket) {
 
     const roomName = `monitoring_room_${targetSession}`;
     if (targetSocketId) {
-      io.to(targetSocketId).emit('monitoring:ice-candidate', {
+      relay.relayEmit(io, 'socket', targetSocketId, 'monitoring:ice-candidate', {
         sessionId: targetSession,
         fromSocketId: socket.id,
         candidate,
       });
     } else {
-      socket.to(roomName).emit('monitoring:ice-candidate', {
+      relay.relayEmit(io, 'room', roomName, 'monitoring:ice-candidate', {
         sessionId: targetSession,
         fromSocketId: socket.id,
         candidate,
-      });
+      }, { excludingSocket: socket });
     }
   });
 
@@ -212,7 +213,7 @@ module.exports = function registerMonitoringEvents(io, socket) {
       });
 
       // Broadcast to room for live viewers
-      io.to(`monitoring_room_${targetSession}`).emit('proctoring_event', {
+      relay.relayEmit(io, 'room', `monitoring_room_${targetSession}`, 'proctoring_event', {
         sessionId: targetSession,
         eventType,
         severity,
@@ -247,7 +248,7 @@ module.exports = function registerMonitoringEvents(io, socket) {
         metadata: ev.metadata || {},
       });
 
-      io.to(`monitoring_room_${targetSession}`).emit('proctoring_event', {
+      relay.relayEmit(io, 'room', `monitoring_room_${targetSession}`, 'proctoring_event', {
         sessionId: targetSession,
         ...ev,
         timestamp: Date.now(),
@@ -266,13 +267,13 @@ module.exports = function registerMonitoringEvents(io, socket) {
     const targetSession = sessionId || socket.monitoringSessionId;
     if (!targetSession) return;
 
-    io.to(`monitoring_room_${targetSession}`).emit('monitoring:session_ended', {
+    relay.relayEmit(io, 'room', `monitoring_room_${targetSession}`, 'monitoring:session_ended', {
       sessionId: targetSession,
       status: 'COMPLETED',
       reason: 'ASSESSMENT_COMPLETED',
       timestamp: Date.now(),
     });
-    io.to(`assessment_verif_${targetSession}`).emit('assessment_verif:session_ended', {
+    relay.relayEmit(io, 'room', `assessment_verif_${targetSession}`, 'assessment_verif:session_ended', {
       sessionId: targetSession,
       status: 'COMPLETED',
       reason: 'ASSESSMENT_COMPLETED',

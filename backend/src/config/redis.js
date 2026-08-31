@@ -84,6 +84,14 @@ function isRedisReady() {
   return isAvailable && redisClient !== null && redisClient.status === 'ready';
 }
 
+/**
+ * Which transport backs acquireLock/releaseLock: 'redis' or 'db'.
+ * Exposed on the health endpoint so deployments can confirm the shared lock.
+ */
+function getLockProvider() {
+  return isRedisReady() ? 'redis' : 'db';
+}
+
 async function closeRedis() {
   if (redisClient) {
     try {
@@ -107,15 +115,23 @@ async function acquireLock(lockKey, ttlMs = 10000) {
   const client = getRedisClient();
   const token = `lock_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   if (!client || !isRedisReady()) {
-    // In-memory single-instance fallback
-    if (!global.__inMemoryLocks) global.__inMemoryLocks = new Map();
-    const existing = global.__inMemoryLocks.get(lockKey);
-    const now = Date.now();
-    if (existing && existing.expiresAt > now) {
-      return null;
+    // No Redis → use the shared-DB distributed lock (multi-instance safe)
+    // when the database is available; otherwise (unit tests, bootstrapping)
+    // fall back to the per-process in-memory Map.
+    try {
+      const dbLock = require('../utils/distributedLock');
+      const acquired = await dbLock.acquire(lockKey, ttlMs, 'redis-fallback');
+      return acquired || null;
+    } catch (err) {
+      if (!global.__inMemoryLocks) global.__inMemoryLocks = new Map();
+      const existing = global.__inMemoryLocks.get(lockKey);
+      const now = Date.now();
+      if (existing && existing.expiresAt > now) {
+        return null;
+      }
+      global.__inMemoryLocks.set(lockKey, { token, expiresAt: now + ttlMs });
+      return token;
     }
-    global.__inMemoryLocks.set(lockKey, { token, expiresAt: now + ttlMs });
-    return token;
   }
   try {
     const res = await client.set(lockKey, token, 'PX', ttlMs, 'NX');
@@ -136,14 +152,19 @@ async function releaseLock(lockKey, token) {
   if (!token) return false;
   const client = getRedisClient();
   if (!client || !isRedisReady()) {
-    if (global.__inMemoryLocks) {
-      const existing = global.__inMemoryLocks.get(lockKey);
-      if (existing && existing.token === token) {
-        global.__inMemoryLocks.delete(lockKey);
-        return true;
+    try {
+      const dbLock = require('../utils/distributedLock');
+      return await dbLock.release(lockKey, token);
+    } catch (err) {
+      if (global.__inMemoryLocks) {
+        const existing = global.__inMemoryLocks.get(lockKey);
+        if (existing && existing.token === token) {
+          global.__inMemoryLocks.delete(lockKey);
+          return true;
+        }
       }
+      return false;
     }
-    return false;
   }
   try {
     const luaScript = `
@@ -207,6 +228,7 @@ module.exports = {
   initRedis,
   getRedisClient,
   isRedisReady,
+  getLockProvider,
   closeRedis,
   acquireLock,
   releaseLock,

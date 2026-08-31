@@ -18,6 +18,7 @@ const {
 } = require('../models');
 const tokenService = require('../services/interviewTokenService');
 const aiMonitorService = require('../services/interviewAiMonitorService');
+const relay = require('./crossInstance');
 const logger = require('../utils/logger');
 
 // In-memory room state: interviewId → InterviewRoomState instance
@@ -95,7 +96,7 @@ function broadcastRoomState(io, interviewId) {
   if (!room) return;
   const snapshot = room.toSnapshot();
   console.log(`[ROOM STATE] server: broadcast snapshot for roomId=${key} (peers=${snapshot.peers.length}, mobilePaired=${snapshot.mobilePaired})`);
-  io.to(`interview_${key}`).emit('room:state', snapshot);
+  relay.relayEmit(io, 'room', `interview_${key}`, 'room:state', snapshot);
 }
 
 /**
@@ -174,13 +175,13 @@ function registerInterviewEvents(io, socket) {
           pairedAt: Date.now(),
         };
         console.log(`[WEBRTC SIGNALING] server: mobile-camera-paired emitted, roomId=${interviewId}, socketId=${socket.id}`);
-        socket.to(`interview_${interviewId}`).emit('device-status', {
+        relay.relayEmit(io, 'room', `interview_${interviewId}`, 'device-status', {
           fromUserId: socket.userId,
           deviceType: 'MOBILE',
           connected: true,
           timestamp: new Date().toISOString(),
-        });
-        io.to(`interview_${interviewId}`).emit('mobile-camera-paired', pairedPayload);
+        }, { excludingSocket: socket });
+        relay.relayEmit(io, 'room', `interview_${interviewId}`, 'mobile-camera-paired', pairedPayload);
       }
 
       // Find or create session
@@ -196,18 +197,14 @@ function registerInterviewEvents(io, socket) {
 
       const room = getRoom(interviewId);
 
-      // Notify existing peers before adding new one
-      for (const [peerSocketId, peerInfo] of room.peers) {
-        if (peerSocketId !== socket.id) {
-          io.to(peerSocketId).emit('peer-joined', {
-            socketId: socket.id,
-            userId: socket.userId,
-            role: socket.userRole,
-            userName: socket.userName,
-            deviceType,
-          });
-        }
-      }
+      // Notify all peers in the room across instances about new joiner
+      relay.relayEmit(io, 'room', `interview_${interviewId}`, 'peer-joined', {
+        socketId: socket.id,
+        userId: socket.userId,
+        role: socket.userRole,
+        userName: socket.userName,
+        deviceType,
+      }, { excludingSocket: socket });
 
       // Add this socket to the room
       socket.join(`interview_${interviewId}`);
@@ -295,7 +292,7 @@ function registerInterviewEvents(io, socket) {
     const interviewId = data?.interviewId != null ? String(data.interviewId) : null;
     if (!interviewId) return;
 
-    io.to(`interview_${interviewId}`).emit('interview-started', {
+    relay.relayEmit(io, 'room', `interview_${interviewId}`, 'interview-started', {
       startedBy: socket.userId,
       startedByName: socket.userName,
       timestamp: new Date().toISOString(),
@@ -330,7 +327,7 @@ function registerInterviewEvents(io, socket) {
       }
 
       // Notify everyone in the room (including the trainer)
-      io.to(`interview_${interviewId}`).emit('interview-ended', {
+      relay.relayEmit(io, 'room', `interview_${interviewId}`, 'interview-ended', {
         endedBy: socket.userId,
         endedByName: socket.userName,
         timestamp: new Date().toISOString(),
@@ -353,7 +350,7 @@ function registerInterviewEvents(io, socket) {
     console.log(`[SERVER] Received offer for interviewId/room: ${interviewId} (targetSocketId: ${targetSocketId}) from socket: ${socket.id}`);
     if (targetSocketId) {
       console.log(`[SERVER] Relaying offer to targetSocketId: ${targetSocketId}`);
-      io.to(targetSocketId).emit('offer', {
+      relay.relayEmit(io, 'socket', targetSocketId, 'offer', {
         fromSocketId: socket.id,
         fromUserId: socket.userId,
         offer,
@@ -369,7 +366,7 @@ function registerInterviewEvents(io, socket) {
     console.log(`[SERVER] Received answer from socket: ${socket.id} for targetSocketId: ${targetSocketId}`);
     if (targetSocketId) {
       console.log(`[SERVER] Relaying answer to targetSocketId: ${targetSocketId}`);
-      io.to(targetSocketId).emit('answer', {
+      relay.relayEmit(io, 'socket', targetSocketId, 'answer', {
         fromSocketId: socket.id,
         fromUserId: socket.userId,
         answer,
@@ -383,7 +380,7 @@ function registerInterviewEvents(io, socket) {
     const { targetSocketId, candidate } = data;
     console.log(`[SERVER] Received ice-candidate from socket: ${socket.id} for targetSocketId: ${targetSocketId}`);
     if (targetSocketId) {
-      io.to(targetSocketId).emit('ice-candidate', {
+      relay.relayEmit(io, 'socket', targetSocketId, 'ice-candidate', {
         fromSocketId: socket.id,
         candidate,
       });
@@ -397,12 +394,12 @@ function registerInterviewEvents(io, socket) {
     const { sharing, metadata } = data;
     const interviewId = data.interviewId != null ? String(data.interviewId) : null;
     if (interviewId) {
-      socket.to(`interview_${interviewId}`).emit('screen-share', {
+      relay.relayEmit(io, 'room', `interview_${interviewId}`, 'screen-share', {
         fromSocketId: socket.id,
         fromUserId: socket.userId,
         sharing,
         metadata,
-      });
+      }, { excludingSocket: socket });
     }
   });
 
@@ -424,7 +421,7 @@ function registerInterviewEvents(io, socket) {
       }).catch(() => {});
     }
 
-    io.to(`interview_${interviewId}`).emit('chat-message', {
+    relay.relayEmit(io, 'room', `interview_${interviewId}`, 'chat-message', {
       fromSocketId: socket.id,
       fromUserId: socket.userId,
       fromUserName: socket.userName,
@@ -441,7 +438,7 @@ function registerInterviewEvents(io, socket) {
     const interviewId = data?.interviewId != null ? String(data.interviewId) : String(socket.currentInterviewId || '');
     if (!interviewId) return;
 
-    io.to(`interview_${interviewId}`).emit('participant-step-progress', {
+    relay.relayEmit(io, 'room', `interview_${interviewId}`, 'participant-step-progress', {
       fromSocketId: socket.id,
       fromUserId: socket.userId,
       step,
@@ -458,7 +455,7 @@ function registerInterviewEvents(io, socket) {
     const interviewId = data?.interviewId != null ? String(data.interviewId) : String(socket.currentInterviewId || '');
     if (!interviewId) return;
 
-    io.to(`interview_${interviewId}`).emit('participant-tab-switch', {
+    relay.relayEmit(io, 'room', `interview_${interviewId}`, 'participant-tab-switch', {
       fromSocketId: socket.id,
       fromUserId: socket.userId,
       timestamp: new Date().toISOString(),
@@ -474,7 +471,7 @@ function registerInterviewEvents(io, socket) {
     if (!interviewId) return;
 
     // Broadcast to room
-    io.to(`interview_${interviewId}`).emit('device-status', {
+    relay.relayEmit(io, 'room', `interview_${interviewId}`, 'device-status', {
       fromUserId: socket.userId,
       deviceType,
       connected,
@@ -504,13 +501,14 @@ function registerInterviewEvents(io, socket) {
     }).catch(() => null);
 
     if (alert) {
-      // Broadcast alert to interviewer (and admin if present)
+      // Broadcast alert to interviewer (and admin if present) — user-room so it
+      // reaches the trainer's socket wherever it is connected.
       const alertRoomId = String(data.interviewId || socket.currentInterviewId || '');
       const room = alertRoomId ? getRoom(alertRoomId) : null;
       if (room) {
         for (const [peerSocketId, peerInfo] of room.peers) {
           if (peerInfo.role === 'TRAINER' || peerInfo.role === 'ADMIN') {
-            io.to(peerSocketId).emit('interview-alert', {
+            relay.relayEmit(io, 'socket', peerSocketId, 'interview-alert', {
               alertId: alert.id,
               alertType: alert.alert_type,
               severity: alert.severity,
@@ -557,7 +555,7 @@ function registerInterviewEvents(io, socket) {
         // Broadcast alert if suspicious event or state change
         if (ev.shouldBroadcast) {
           const alertRoomId = String(interviewId || sessionId);
-          io.to(`interview_${alertRoomId}`).emit('interview-alert', {
+          relay.relayEmit(io, 'room', `interview_${alertRoomId}`, 'interview-alert', {
             alertType: ev.eventType,
             severity: ev.severity,
             sourceDevice: cameraSource === 'MOBILE_CAMERA' ? 'MOBILE' : 'LAPTOP',
@@ -589,13 +587,13 @@ function registerInterviewEvents(io, socket) {
     if (!interviewId) return;
 
     // Broadcast to all peers except sender (last-write-wins for MVP)
-    socket.to(`interview_${interviewId}`).emit('code-sync', {
+    relay.relayEmit(io, 'room', `interview_${interviewId}`, 'code-sync', {
       fromUserId: socket.userId,
       content,
       language,
       cursor,
       timestamp: Date.now(),
-    });
+    }, { excludingSocket: socket });
   });
 
   /**
@@ -606,7 +604,7 @@ function registerInterviewEvents(io, socket) {
     const interviewId = data.interviewId != null ? String(data.interviewId) : null;
     if (!interviewId) return;
 
-    io.to(`interview_${interviewId}`).emit('recording-status', {
+    relay.relayEmit(io, 'room', `interview_${interviewId}`, 'recording-status', {
       fromUserId: socket.userId,
       recording,
       deviceType,
@@ -620,7 +618,7 @@ function registerInterviewEvents(io, socket) {
   socket.on('ice-restart', (data) => {
     const { targetSocketId } = data;
     if (targetSocketId) {
-      io.to(targetSocketId).emit('ice-restart', {
+      relay.relayEmit(io, 'socket', targetSocketId, 'ice-restart', {
         fromSocketId: socket.id,
       });
     }
@@ -653,7 +651,7 @@ async function handleLeaveRoom(io, socket, interviewId) {
 
   // Notify remaining peers
   for (const [peerSocketId] of room.peers) {
-    io.to(peerSocketId).emit('peer-left', {
+    relay.relayEmit(io, 'socket', peerSocketId, 'peer-left', {
       socketId: socket.id,
       userId: socket.userId,
       userName: socket.userName,
@@ -693,13 +691,13 @@ async function handleLeaveRoom(io, socket, interviewId) {
   if (deviceType === 'MOBILE') {
     console.log(`[WEBRTC SIGNALING] server: mobile-camera-disconnected emitted, roomId=${interviewId}, socketId=${socket.id}`);
     for (const [peerSocketId] of room.peers) {
-      io.to(peerSocketId).emit('device-status', {
+      relay.relayEmit(io, 'socket', peerSocketId, 'device-status', {
         fromUserId: socket.userId,
         deviceType: 'MOBILE',
         connected: false,
         timestamp: new Date().toISOString(),
       });
-      io.to(peerSocketId).emit('mobile-camera-disconnected', {
+      relay.relayEmit(io, 'socket', peerSocketId, 'mobile-camera-disconnected', {
         roomId: interviewId,
         socketId: socket.id,
         participantId: socket.userId,

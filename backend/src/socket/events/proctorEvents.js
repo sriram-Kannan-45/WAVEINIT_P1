@@ -46,6 +46,8 @@ const fs = require('fs');
 const path = require('path');
 const proctoring = require('../../services/proctoringService');
 const { ExamSession, Screenshot } = require('../../models');
+const { getUploadsPath } = require('../../config/paths');
+const relay = require('../crossInstance');
 const logger = require('../../utils/logger');
 
 module.exports = function registerProctorEvents(io, socket) {
@@ -88,14 +90,14 @@ module.exports = function registerProctorEvents(io, socket) {
         if (wasDisconnected && session.status === 'ACTIVE') {
           await proctoring.reconnectSession(session);
           socket.emit('proctor:reconnected', { session: proctoring.buildClientView(session) });
-          io.to(`proctor_quiz_${session.quizId}`).emit('proctor:update', {
+          relay.relayEmit(io, 'room', `proctor_quiz_${session.quizId}`, 'proctor:update', {
             type: 'reconnected',
             session: proctoring.buildClientView(session),
           });
         } else {
           session.isOnline = true;
           await session.save();
-          io.to(`proctor_quiz_${session.quizId}`).emit('proctor:update', {
+          relay.relayEmit(io, 'room', `proctor_quiz_${session.quizId}`, 'proctor:update', {
             type: 'online',
             session: proctoring.buildClientView(session),
           });
@@ -122,7 +124,7 @@ module.exports = function registerProctorEvents(io, socket) {
       const session = await ExamSession.findByPk(sessionId);
       if (!session || session.participantId !== socket.userId) return;
       await proctoring.heartbeat(session);
-      io.to(`proctor_quiz_${session.quizId}`).emit('proctor:heartbeat', {
+      relay.relayEmit(io, 'room', `proctor_quiz_${session.quizId}`, 'proctor:heartbeat', {
         sessionId,
         at: session.lastHeartbeatAt,
       });
@@ -143,7 +145,7 @@ module.exports = function registerProctorEvents(io, socket) {
         return ack?.({ ok: false, error: 'imageBase64 required' });
       }
 
-      const screenshotsDir = path.join(__dirname, '../../../uploads/screenshots', String(sessionId));
+      const screenshotsDir = path.join(getUploadsPath('screenshots'), String(sessionId));
       fs.mkdirSync(screenshotsDir, { recursive: true });
       
       let base64Data = imageBase64;
@@ -164,7 +166,7 @@ module.exports = function registerProctorEvents(io, socket) {
         capturedAt: timestamp ? new Date(timestamp) : new Date(),
       });
 
-      io.to(`proctor_quiz_${session.quizId}`).emit('proctor:screen-frame', {
+      relay.relayEmit(io, 'room', `proctor_quiz_${session.quizId}`, 'proctor:screen-frame', {
         sessionId,
         screenshot: {
           id: screenshot.id,
@@ -196,7 +198,7 @@ module.exports = function registerProctorEvents(io, socket) {
         session.isOnline = flags.isOnline; mutated = true;
       }
       if (mutated) await session.save();
-      io.to(`proctor_quiz_${session.quizId}`).emit('proctor:update', {
+      relay.relayEmit(io, 'room', `proctor_quiz_${session.quizId}`, 'proctor:update', {
         type: 'state',
         session: proctoring.buildClientView(session),
       });
@@ -216,7 +218,7 @@ module.exports = function registerProctorEvents(io, socket) {
       }
       const result = await proctoring.recordViolation({ session, type, message, metadata });
 
-      io.to(`proctor_quiz_${session.quizId}`).emit('proctor:update', {
+      relay.relayEmit(io, 'room', `proctor_quiz_${session.quizId}`, 'proctor:update', {
         type: 'violation',
         session: proctoring.buildClientView(session),
         violation: result.violation,
@@ -263,10 +265,10 @@ module.exports = function registerProctorEvents(io, socket) {
       if (!session) return ack?.({ ok: false, error: 'not_found' });
       await proctoring.terminateSession({ session, reason: reason || 'Trainer terminated' });
 
-      io.to(`user_${session.participantId}`).emit('proctor:terminated', {
+      relay.relayEmit(io, 'user-room', session.participantId, 'proctor:terminated', {
         sessionId, reason: session.terminationReason,
       });
-      io.to(`proctor_quiz_${session.quizId}`).emit('proctor:update', {
+      relay.relayEmit(io, 'room', `proctor_quiz_${session.quizId}`, 'proctor:update', {
         type: 'terminated',
         session: proctoring.buildClientView(session),
       });
@@ -285,7 +287,7 @@ module.exports = function registerProctorEvents(io, socket) {
 
       console.log(`[proctorEvents] Offer received from participant ${socket.userId} for viewer ${viewerId}, session ${sessionId}`);
       // Relay offer to the requesting trainer only
-      io.to(`user_${viewerId}`).emit('proctor:webrtc-offer', {
+      relay.relayEmit(io, 'user-room', viewerId, 'proctor:webrtc-offer', {
         sessionId, viewerId, sdp, participantName: socket.userName || 'Participant',
       });
       console.log(`[proctorEvents] Offer relayed to trainer ${viewerId}`);
@@ -302,7 +304,7 @@ module.exports = function registerProctorEvents(io, socket) {
       if (!['TRAINER', 'ADMIN'].includes(socket.userRole)) return; // only trainers answer
       console.log(`[proctorEvents] Answer received from trainer ${socket.userId} for participant ${session.participantId}, session ${sessionId}`);
       // Relay answer to the participant
-      io.to(`user_${session.participantId}`).emit('proctor:webrtc-answer', {
+      relay.relayEmit(io, 'user-room', session.participantId, 'proctor:webrtc-answer', {
         sessionId, viewerId, sdp,
       });
       console.log(`[proctorEvents] Answer relayed to participant ${session.participantId}`);
@@ -322,7 +324,7 @@ module.exports = function registerProctorEvents(io, socket) {
       if (!isOwner && !['TRAINER', 'ADMIN'].includes(socket.userRole)) return;
       const targetUserId = isOwner ? viewerId : session.participantId;
       console.log(`[proctorEvents] ICE candidate relay from ${isOwner ? 'participant' : 'trainer'} ${socket.userId} to ${targetUserId}, session ${sessionId}`);
-      io.to(`user_${targetUserId}`).emit('proctor:ice-candidate', {
+      relay.relayEmit(io, 'user-room', targetUserId, 'proctor:ice-candidate', {
         sessionId, viewerId, candidate,
       });
     } catch (err) {
@@ -348,10 +350,10 @@ module.exports = function registerProctorEvents(io, socket) {
         payload: { timestamp: new Date() }
       });
 
-      io.to(`proctor_quiz_${session.quizId}`).emit('proctor:stream-available', {
+      relay.relayEmit(io, 'room', `proctor_quiz_${session.quizId}`, 'proctor:stream-available', {
         sessionId,
       });
-      io.to(`proctor_quiz_${session.quizId}`).emit('proctor:update', {
+      relay.relayEmit(io, 'room', `proctor_quiz_${session.quizId}`, 'proctor:update', {
         type: 'state',
         session: proctoring.buildClientView(session),
       });
@@ -377,10 +379,10 @@ module.exports = function registerProctorEvents(io, socket) {
         payload: { timestamp: new Date() }
       });
 
-      io.to(`proctor_quiz_${session.quizId}`).emit('proctor:stream-ended', {
+      relay.relayEmit(io, 'room', `proctor_quiz_${session.quizId}`, 'proctor:stream-ended', {
         sessionId,
       });
-      io.to(`proctor_quiz_${session.quizId}`).emit('proctor:update', {
+      relay.relayEmit(io, 'room', `proctor_quiz_${session.quizId}`, 'proctor:update', {
         type: 'state',
         session: proctoring.buildClientView(session),
       });
@@ -399,7 +401,7 @@ module.exports = function registerProctorEvents(io, socket) {
       }
       console.log(`[proctorEvents] Trainer ${socket.userId} observing session ${sessionId}`);
       // Tell the participant to create a WebRTC offer for this trainer
-      io.to(`user_${session.participantId}`).emit('proctor:observe-request', {
+      relay.relayEmit(io, 'user-room', session.participantId, 'proctor:observe-request', {
         sessionId, viewerId: socket.userId,
       });
       ack?.({ ok: true });
@@ -414,7 +416,7 @@ module.exports = function registerProctorEvents(io, socket) {
       if (!session) return;
       if (!canViewSession(session) || !['TRAINER', 'ADMIN'].includes(socket.userRole)) return;
       // Tell the participant to close the peer connection for this trainer
-      io.to(`user_${session.participantId}`).emit('proctor:unobserve-request', {
+      relay.relayEmit(io, 'user-room', session.participantId, 'proctor:unobserve-request', {
         sessionId, viewerId: socket.userId,
       });
     } catch (err) {
@@ -435,7 +437,7 @@ module.exports = function registerProctorEvents(io, socket) {
       if (!session) return ack?.({ ok: false, error: 'not_found' });
 
       // Push warning to participant
-      io.to(`user_${session.participantId}`).emit('proctor:trainerMessage', {
+      relay.relayEmit(io, 'user-room', session.participantId, 'proctor:trainerMessage', {
         message: message.trim(),
         from: socket.userName || 'Trainer',
         at: new Date(),
@@ -450,7 +452,7 @@ module.exports = function registerProctorEvents(io, socket) {
       });
 
       // Notify trainers
-      io.to(`proctor_quiz_${session.quizId}`).emit('proctor:update', {
+      relay.relayEmit(io, 'room', `proctor_quiz_${session.quizId}`, 'proctor:update', {
         type: 'trainerMessage',
         session: proctoring.buildClientView(session),
       });
@@ -529,7 +531,7 @@ module.exports = function registerProctorEvents(io, socket) {
             eventType: 'SCREEN_SHARE_STOP',
             payload: { reason: 'socket disconnected', timestamp: new Date() }
           });
-          io.to(`proctor_quiz_${session.quizId}`).emit('proctor:stream-ended', {
+          relay.relayEmit(io, 'room', `proctor_quiz_${session.quizId}`, 'proctor:stream-ended', {
             sessionId: session.id,
           });
         }
@@ -541,7 +543,7 @@ module.exports = function registerProctorEvents(io, socket) {
           payload: { reason: 'socket disconnected' }
         });
 
-        io.to(`proctor_quiz_${session.quizId}`).emit('proctor:update', {
+        relay.relayEmit(io, 'room', `proctor_quiz_${session.quizId}`, 'proctor:update', {
           type: 'disconnected',
           session: proctoring.buildClientView(session),
         });

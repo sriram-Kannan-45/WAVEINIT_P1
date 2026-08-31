@@ -101,20 +101,58 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Instance identity (for scale-out / readiness signaling) ───────
+def get_instance_id() -> str:
+    """Stable-ish identifier for this AI-service instance.
+
+    On Azure App Service every instance of the same app shares the same
+    WEBSITE_INSTANCE_ID *scope* but each gets a distinct suffix; fall back to
+    hostname + PID so multiple replicas are distinguishable in logs/health.
+    """
+    import socket
+    import uuid
+    env_id = os.getenv("INSTANCE_ID") or os.getenv("WEBSITE_INSTANCE_ID")
+    if env_id:
+        return str(env_id)[:64]
+    try:
+        host = socket.getfqdn() or socket.gethostname()
+    except Exception:
+        host = "ai"
+    return f"{host}-{os.getpid()}"
+
+AI_INSTANCE_ID = get_instance_id()
+
 # ── Health & Status Endpoints ─────────────────────────
 @app.get("/")
 @app.get("/health")
 @app.get("/api/health")
 async def health_check():
     """Service health check endpoint for Azure App Service, backend probes, and monitoring."""
+    provider = "Gemini" if os.getenv("GEMINI_API_KEY") else "Fallback"
     return {
-        "status": "ok",
+        "status": "healthy",
         "service": "LMS AI Quiz & Proctoring Service",
+        "ai_service": "ready",
+        "backend": "ready",
         "version": "3.0.0",
+        "instance_id": AI_INSTANCE_ID,
         "timestamp": datetime.now().isoformat(),
-        "provider": "Gemini" if os.getenv("GEMINI_API_KEY") else "Fallback",
+        "provider": provider,
         "yolo_engine": "available" if YOLO_ENGINE_AVAILABLE else "unavailable",
         "proctoring_engine": "available" if PROCTORING_ENGINE_AVAILABLE else "unavailable"
+    }
+
+@app.get("/ready")
+@app.get("/api/ready")
+async def ready_check():
+    """Liveness/readiness probe for Azure App Service load balancing."""
+    return {
+        "status": "ready",
+        "ai_service": "ready",
+        "service": "LMS AI Quiz & Proctoring Service",
+        "instance_id": AI_INSTANCE_ID,
+        "timestamp": datetime.now().isoformat(),
+        "yolo_engine": "available" if YOLO_ENGINE_AVAILABLE else "unavailable"
     }
 
 # ── Cache Implementation ───────────────────────────────
@@ -1583,9 +1621,10 @@ def root():
         "docs": "/docs"
     }
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint."""
+@app.get("/rag/status")
+@app.get("/api/rag/status")
+async def rag_status_check():
+    """RAG pipeline status check endpoint."""
     provider = "None"
     model = "None"
     if llm is not None:
@@ -1597,6 +1636,7 @@ async def health_check():
         "provider": provider,
         "model": model,
         "port": current_port,
+        "instance_id": AI_INSTANCE_ID,
         "service": "ai-quiz-generator",
         "llm": llm_type,
         "gemini_key_set": bool(GEMINI_API_KEY and GEMINI_API_KEY != "your-gemini-api-key-here"),
@@ -3013,7 +3053,15 @@ async def get_yolo_proctoring_status():
             "status": "DOWN",
             "error": "YOLO engine module not loaded"
         }
-    return yolo_engine.get_status()
+    try:
+        pruned = yolo_engine.cleanup_stale_sessions()
+        if pruned:
+            log.info("Pruned %d stale YOLO session state(s)", pruned)
+    except Exception:
+        pruned = 0
+    status = yolo_engine.get_status()
+    status["pruned_stale_sessions"] = pruned
+    return status
 
 
 @app.post("/api/proctoring/analyze-frame")
@@ -3150,9 +3198,26 @@ async def inspect_proctoring_with_gemini(req: AnalyzeFrameRequest):
 @app.get("/api/proctoring/status")
 async def get_proctoring_status():
     """Health check for MediaPipe, Gemini & YOLO proctoring engines."""
+    # Opportunistic pruning of abandoned sessions (bounded memory on a long-lived instance).
+    pruned_yolo = 0
+    pruned_mediapipe = 0
+    try:
+        if YOLO_ENGINE_AVAILABLE:
+            pruned_yolo = yolo_engine.cleanup_stale_sessions()
+    except Exception:
+        pruned_yolo = 0
+    try:
+        if PROCTORING_ENGINE_AVAILABLE and hasattr(proctor_engine, "cleanup_stale_sessions"):
+            pruned_mediapipe = proctor_engine.cleanup_stale_sessions()
+    except Exception:
+        pruned_mediapipe = 0
+    if pruned_yolo or pruned_mediapipe:
+        log.info("Pruned stale sessions yolo=%d mediapipe=%d", pruned_yolo, pruned_mediapipe)
     yolo_status = yolo_engine.get_status() if YOLO_ENGINE_AVAILABLE else {"status": "DOWN"}
     return {
         "status": "UP" if (PROCTORING_ENGINE_AVAILABLE or YOLO_ENGINE_AVAILABLE) else "DOWN",
+        "instance_id": AI_INSTANCE_ID,
+        "pruned_stale_sessions": {"yolo": pruned_yolo, "mediapipe": pruned_mediapipe},
         "engines": {
             "yolo": yolo_status,
             "mediapipe": {

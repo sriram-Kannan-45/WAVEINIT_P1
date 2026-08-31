@@ -192,6 +192,28 @@ class YOLOProctorEngine:
             }
         return self.session_states[session_key]
 
+    def cleanup_stale_sessions(
+        self,
+        max_idle_seconds: float = float(
+            os.getenv("PROCTORING_SESSION_MAX_IDLE_SECONDS", "900")
+        ),
+    ) -> int:
+        """Evict mobile-composition sessions whose frames stopped arriving.
+
+        A single long-lived AI instance can accumulate session_states entries if a
+        participant disconnects mid-assessment. Frames refresh ``last_frame_ts``;
+        states idle longer than ``max_idle_seconds`` are dropped to bound memory.
+        """
+        now = time.time()
+        stale = [
+            key
+            for key, st in list(self.session_states.items())
+            if now - st.get("last_frame_ts", now) > max_idle_seconds
+        ]
+        for key in stale:
+            self.session_states.pop(key, None)
+        return len(stale)
+
     def validate_mobile_composition(
         self,
         detections: List[Dict[str, Any]],
@@ -427,6 +449,7 @@ class YOLOProctorEngine:
 
         # Throttling & state change detection
         state_data = self._get_session_state(session_key)
+        state_data["last_frame_ts"] = time.time()
         is_state_change = (state_data["last_event_type"] != event_type) or (state_data["last_state"] != composition_state)
         time_since_last = time.time() - state_data["last_emitted_time"]
         should_emit = is_state_change or (severity in ("HIGH", "MEDIUM") and time_since_last > 4.0) or (time_since_last > 12.0)

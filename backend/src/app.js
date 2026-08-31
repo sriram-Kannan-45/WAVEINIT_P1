@@ -30,6 +30,8 @@ const {
   cleanupSocket,
 } = require('./config/socket');
 const { initRedis, closeRedis } = require('./config/redis');
+const paths = require('./config/paths');
+const { getInstanceId, getInstanceInfo } = require('./config/instance');
 
 // Security middleware
 const { detectSqlInjection, detectXss, detectPathTraversal, detectAnomalies } = require('./security/threatDetector');
@@ -181,8 +183,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// Serve uploaded files statically with cache headers
-app.use('/uploads', express.static(path.join(__dirname, '../uploads'), {
+// Serve uploaded files statically with cache headers.
+// All uploads live under the SHARED storage root (see config/paths.js) so the
+// same files are visible from every App Service instance.
+app.use('/uploads', express.static(paths.getUploadsRoot(), {
   maxAge: '7d',
   etag: true,
   lastModified: true,
@@ -304,14 +308,14 @@ app.put('/api/update-profile', authenticateToken, upload.single('profilePic'), p
 const { testMail } = require('./controllers/forgotPasswordController');
 app.get('/api/test-mail', testMail);
 
-// Health check (supports root, /health, and /api/health for Load Balancers & cluster probes)
+// Health check (supports root, /health, and /api/health for Load Balancers & cluster probes).
+// Enriched with instance identity, shared-lock provider and AI-service status so
+// operators can confirm scale-out readiness from any instance.
 app.get(['/', '/health', '/api/health'], async (req, res) => {
-  const instanceId = process.env.INSTANCE_ID || process.env.HOSTNAME || `server-${PORT}-${process.pid}`;
-  const { isRedisReady } = require('./config/redis');
-  
+  const { isRedisReady, getLockProvider } = require('./config/redis');
+
   let dbStatus = 'connected';
   try {
-    const { sequelize } = require('./config/db');
     if (sequelize) {
       await sequelize.authenticate();
       dbStatus = 'connected';
@@ -320,13 +324,66 @@ app.get(['/', '/health', '/api/health'], async (req, res) => {
     dbStatus = 'disconnected';
   }
 
-  res.status(200).json({
-    status: 'OK',
+  let aiService = 'unknown';
+  try {
+    const aiSvc = require('./services/aiService');
+    const result = await aiSvc.checkHealth();
+    aiService = result.available ? 'ready' : 'unavailable';
+  } catch (_) {
+    aiService = 'not-configured';
+  }
+
+  const isHealthy = dbStatus === 'connected';
+
+  res.status(isHealthy ? 200 : 503).json({
+    status: isHealthy ? 'healthy' : 'unhealthy',
+    backend: 'ready',
+    ai_service: aiService,
+    database: dbStatus,
+    instance_id: getInstanceId(),
     message: 'Backend is running',
     service: 'WAVE INIT LMS Backend',
-    instanceId,
-    database: dbStatus,
+    ...getInstanceInfo(),
     redis: isRedisReady && isRedisReady() ? 'connected' : 'disabled',
+    lock_provider: getLockProvider ? getLockProvider() : 'db',
+    storage_root: paths.getStorageRoot(),
+    timestamp: new Date().toISOString(),
+    uptime: Math.round(process.uptime()),
+  });
+});
+
+// Readiness probe — the same probes an App Service load balancer sends before
+// routing traffic to an instance. 200 only when the DB is reachable.
+app.get(['/ready', '/api/ready'], async (req, res) => {
+  const { isRedisReady, getLockProvider } = require('./config/redis');
+  let dbStatus = 'connected';
+  try {
+    if (sequelize) {
+      await sequelize.authenticate();
+      dbStatus = 'connected';
+    }
+  } catch (e) {
+    dbStatus = 'disconnected';
+  }
+
+  let aiService = 'unknown';
+  try {
+    const aiSvc = require('./services/aiService');
+    const result = await aiSvc.checkHealth();
+    aiService = result.available ? 'ready' : 'unavailable';
+  } catch (_) {
+    aiService = 'not-configured';
+  }
+
+  const ready = dbStatus === 'connected';
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'ready' : 'not_ready',
+    backend: ready ? 'ready' : 'not_ready',
+    ai_service: aiService,
+    database: dbStatus,
+    instance_id: getInstanceId(),
+    service: 'WAVE INIT LMS Backend',
+    lock_provider: getLockProvider ? getLockProvider() : 'db',
     timestamp: new Date().toISOString(),
     uptime: Math.round(process.uptime()),
   });
@@ -398,6 +455,21 @@ const startServer = async () => {
 
     // 5. Connect to database
     await connectDB();
+
+    // Scale-out infrastructure tables — additive sync (distributed locks,
+    // shared token blacklist, socket relay outbox). Created EARLY (right after
+    // the main schema sync) and BEFORE the (slow) per-table sync chain + cron /
+    // relay startup, so leader-guarded jobs and the relay poller never hit a
+    // missing table. Needed on every instance of a scale-out pool.
+    try {
+      const { DistributedLock, TokenBlacklist, SocketRelayEvent } = require('./models');
+      await DistributedLock.sync({ alter: true });
+      await TokenBlacklist.sync({ alter: true });
+      await SocketRelayEvent.sync({ alter: true });
+      logger.info('scale-out tables ready (distributed_locks, token_blacklist, socket_relay_events)');
+    } catch (e) {
+      logger.error('Could not sync scale-out tables', { error: e.message });
+    }
 
     // Sync security tables (new — non-critical, additive)
     try {
@@ -726,19 +798,46 @@ const startServer = async () => {
       logger.warn('Could not start assessment session expiry job', { error: e.message });
     }
 
-    // Background OTP cleanup — removes expired & old-used rows every 5 min
-    // (replaces MongoDB TTL index since we use Sequelize/MySQL).
+    // Background OTP cleanup — removes expired & old-used rows every 5 min.
+    // Leader-guarded so only one instance across the pool performs it.
     try {
       const { cleanupExpiredOtps } = require('./controllers/forgotPasswordController');
-      cleanupExpiredOtps(); // run once at startup
-      setInterval(() => cleanupExpiredOtps(), 5 * 60_000).unref();
+      const { scheduleSingletonInterval } = require('./utils/leaderElection');
+      scheduleSingletonInterval('cron:otp-cleanup', 5 * 60_000, cleanupExpiredOtps, { runImmediately: true });
     } catch (e) { /* non-fatal */ }
 
     // Setup Redis (fail-fast, leak-free)
     await initRedis();
 
-    // Setup Redis adapter for multi-instance scaling when REDIS_URL is present
+    // Setup the Socket.IO adapter: enables the Redis adapter when REDIS_URL is
+    // present, otherwise sets the DB-outbox relay mode (no-op when Redis up).
     await setupRedisAdapter(io);
+
+    // Cross-instance Socket.IO relay poller (no-op when the Redis adapter is up).
+    // Delivers signaling/notification events that originated on other instances.
+    try {
+      const crossInstance = require('./socket/crossInstance');
+      crossInstance.startRelayPoller(io, { intervalMs: 120 });
+      logger.info(`Socket relay poller started (mode: ${crossInstance.isClusterMode() ? 'redis' : 'db-outbox'})`);
+    } catch (e) {
+      logger.warn('Could not start socket relay poller', { error: e.message });
+    }
+
+    // Leader-guarded cleanup of scale-out tables (single writer namespace).
+    try {
+      const { scheduleSingletonInterval } = require('./utils/leaderElection');
+      scheduleSingletonInterval('cron:scaleout-maintenance', 5 * 60_000, async () => {
+        const { TokenBlacklist, SocketRelayEvent } = require('./models');
+        const dbLock = require('./utils/distributedLock');
+        const { Op } = require('sequelize');
+        const now = new Date();
+        await TokenBlacklist.destroy({ where: { expiresAt: { [Op.lt]: now } } });
+        await SocketRelayEvent.destroy({ where: { createdAt: { [Op.lt]: new Date(Date.now() - 60_000) } } });
+        await dbLock.cleanupExpired();
+      });
+    } catch (e) {
+      logger.warn('Could not start scale-out maintenance job', { error: e.message });
+    }
 
     // Parallel monitor system auto-submit cron (every minute)
     try {
@@ -807,35 +906,38 @@ const startServer = async () => {
       logger.warn('Failed to start quiz auto-close job:', jobErr.message);
     }
 
-    // Start proctoring reapers
+    // Start proctoring reapers — leader-guarded so only one instance in a
+    // scale-out pool expires/auto-submits sessions (double-submitting would
+    // duplicate results and double-emit socket events).
     try {
+      const { withLeaderLock } = require('./utils/leaderElection');
       const proctoringService = require('./services/proctoringService');
       // Every 30 seconds: expire stale sessions (no heartbeat for 25s)
       setInterval(async () => {
         try {
-          await proctoringService.expireStaleSessions(io);
+          await withLeaderLock('reaper:proctoring-stale', () => proctoringService.expireStaleSessions(io));
         } catch (e) {
           logger.warn('Failed to run expireStaleSessions reaper:', e.message);
         }
-      }, 30000);
+      }, 30000).unref?.();
 
       // Every 60 seconds: expire grace period sessions (disconnect timeout)
       setInterval(async () => {
         try {
-          await proctoringService.expireGracePeriodSessions(io);
+          await withLeaderLock('reaper:proctoring-grace', () => proctoringService.expireGracePeriodSessions(io));
         } catch (e) {
           logger.warn('Failed to run expireGracePeriodSessions reaper:', e.message);
         }
-      }, 60000);
+      }, 60000).unref?.();
 
       // Every 60 seconds: auto-submit sessions past endsAt absolute timer
       setInterval(async () => {
         try {
-          await proctoringService.autoSubmitExpiredSessions(io);
+          await withLeaderLock('reaper:proctoring-auto-submit', () => proctoringService.autoSubmitExpiredSessions(io));
         } catch (e) {
           logger.warn('Failed to run autoSubmitExpiredSessions reaper:', e.message);
         }
-      }, 60000);
+      }, 60000).unref?.();
     } catch (proctorErr) {
       logger.warn('Failed to start proctoring reapers:', proctorErr.message);
     }

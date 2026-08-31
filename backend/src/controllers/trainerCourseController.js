@@ -48,6 +48,7 @@ const {
   User,
 } = require('../models');
 const { TYPE_LIMITS, ROOT: MATERIALS_ROOT } = require('../middleware/uploadMaterial');
+const { getUploadsRoot, resolveUploadsPath } = require('../config/paths');
 const NotificationService = require('../services/notificationService');
 const aiService = require('../services/aiService');
 
@@ -544,7 +545,7 @@ async function reorderLessons(req, res) {
 function publicUrlForUploaded(file) {
   if (!file) return null;
   // file.path is absolute; convert to /uploads/... relative URL.
-  const rel = path.relative(path.join(process.cwd(), 'uploads'), file.path).replace(/\\/g, '/');
+  const rel = path.relative(getUploadsRoot(), file.path).replace(/\\/g, '/');
   return `/uploads/${rel}`;
 }
 
@@ -668,8 +669,7 @@ async function deleteMaterial(req, res) {
 
     // Best-effort: delete the underlying file if it lives in our uploads tree.
     if (material.fileUrl && material.fileUrl.startsWith('/uploads/')) {
-      const abs = path.join(process.cwd(), material.fileUrl.replace(/^\//, ''));
-      safeUnlink(abs);
+      safeUnlink(resolveUploadsPath(material.fileUrl));
     }
     await material.destroy();
     res.json({ success: true, message: 'Material deleted' });

@@ -5,17 +5,14 @@ const multer = require('multer');
 const { ParticipantProfile, User } = require('../models');
 const authenticateToken = require('../middleware/auth');
 const roleMiddleware = require('../middleware/roles');
+const paths = require('../config/paths');
 
 const router = express.Router();
 
-// ─── Avatar upload (multipart) ───────────────────────────────────────────
-// Files are written to backend/uploads/avatars/ so the existing
-// `app.use('/uploads', express.static(path.join(__dirname, '../uploads')))`
-// in app.js serves them automatically.
-const avatarsDir = path.join(__dirname, '../../uploads/avatars');
-if (!fs.existsSync(avatarsDir)) {
-  fs.mkdirSync(avatarsDir, { recursive: true });
-}
+// ── Avatar upload (multipart) ────────────────────────────────────────────────
+// Files are written to the SHARED uploads root (config/paths.js) so the
+// `app.use('/uploads', ...)` static mount serves them from every instance.
+const avatarsDir = paths.getUploadsPath('avatars');
 
 const avatarStorage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, avatarsDir),

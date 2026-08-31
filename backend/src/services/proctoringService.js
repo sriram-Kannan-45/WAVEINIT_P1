@@ -19,6 +19,7 @@ const {
   User,
 } = require('../models');
 const { encrypt, decrypt, newSessionToken } = require('../utils/crypto');
+const relay = require('../socket/crossInstance');
 const logger = require('../utils/logger');
 const aiQuizService = require('./aiQuizService');
 
@@ -704,11 +705,11 @@ async function expireGracePeriodSessions(io) {
     });
     if (io) {
       const roomId = s.quizId || `coding_${s.assessmentId}`;
-      io.to(`proctor_quiz_${roomId}`).emit('proctor:update', {
+      relay.relayEmit(io, 'room', `proctor_quiz_${roomId}`, 'proctor:update', {
         type: 'terminated',
         session: buildClientView(s),
       });
-      io.to(`user_${s.participantId}`).emit('proctor:terminated', {
+      relay.relayEmit(io, 'user-room', s.participantId, 'proctor:terminated', {
         sessionId: s.id,
         reason: 'Auto-terminated: Disconnection grace period expired',
       });
@@ -768,7 +769,7 @@ async function expireStaleSessions(io) {
 
         if (io) {
           const roomId = s.quizId || `coding_${s.assessmentId}`;
-          io.to(`proctor_quiz_${roomId}`).emit('proctor:update', {
+          relay.relayEmit(io, 'room', `proctor_quiz_${roomId}`, 'proctor:update', {
             type: 'violation',
             session: buildClientView(s),
             violation,
@@ -780,7 +781,7 @@ async function expireStaleSessions(io) {
     // Always emit online=false status to trainer
     const roomId = s.quizId || `coding_${s.assessmentId}`;
     if (io && (s.quizId || s.assessmentId)) {
-      io.to(`proctor_quiz_${roomId}`).emit('proctor:update', {
+      relay.relayEmit(io, 'room', `proctor_quiz_${roomId}`, 'proctor:update', {
         type: 'state',
         session: buildClientView(s),
         heartbeatLost: true,
@@ -818,11 +819,11 @@ async function autoSubmitExpiredSessions(io) {
 
       if (io) {
         const roomId = s.quizId || `coding_${s.assessmentId}`;
-        io.to(`proctor_quiz_${roomId}`).emit('proctor:update', {
+        relay.relayEmit(io, 'room', `proctor_quiz_${roomId}`, 'proctor:update', {
           type: 'submitted',
           session: buildClientView(s)
         });
-        io.to(`user_${s.participantId}`).emit('proctor:terminated', {
+        relay.relayEmit(io, 'user-room', s.participantId, 'proctor:terminated', {
           sessionId: s.id,
           reason: 'Time limit reached'
         });

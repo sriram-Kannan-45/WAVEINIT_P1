@@ -6,49 +6,54 @@
  */
 const { Op } = require('sequelize');
 const { AIQuiz, QuizAttempt, QuizResult, QuizAnswer } = require('../models');
+const { withLeaderLock } = require('../utils/leaderElection');
+const relay = require('../socket/crossInstance');
 
 const INTERVAL_MS = 60_000;
 
 async function tick() {
-  const now = new Date();
-  let io = null;
-  try {
-    io = require('../app')?.get('io');
-  } catch (_) {}
+  // Leader-guarded: across multiple instances only one auto-closes quizzes.
+  await withLeaderLock('cron:quiz-auto-close', async () => {
+    const now = new Date();
+    let io = null;
+    try {
+      io = require('../app')?.get('io');
+    } catch (_) {}
 
-  try {
-    const expiredQuizzes = await AIQuiz.findAll({
-      where: {
-        status: 'PUBLISHED',
-        endTime: { [Op.lte]: now },
-      }
-    });
-
-    for (const quiz of expiredQuizzes) {
-      console.log(`[quizAutoClose] Auto-closing quiz #${quiz.id} "${quiz.title}" — end_time passed`);
-
-      // Auto-submit in-progress attempts
-      const inProgress = await QuizAttempt.findAll({
-        where: { quizId: quiz.id, status: 'IN_PROGRESS' }
+    try {
+      const expiredQuizzes = await AIQuiz.findAll({
+        where: {
+          status: 'PUBLISHED',
+          endTime: { [Op.lte]: now },
+        }
       });
-      for (const attempt of inProgress) {
-        await attempt.update({ status: 'AUTO_SUBMITTED', submittedAt: now });
+
+      for (const quiz of expiredQuizzes) {
+        console.log(`[quizAutoClose] Auto-closing quiz #${quiz.id} "${quiz.title}" — end_time passed`);
+
+        // Auto-submit in-progress attempts
+        const inProgress = await QuizAttempt.findAll({
+          where: { quizId: quiz.id, status: 'IN_PROGRESS' }
+        });
+        for (const attempt of inProgress) {
+          await attempt.update({ status: 'AUTO_SUBMITTED', submittedAt: now });
+        }
+
+        await quiz.update({ status: 'CLOSED', closedAt: now });
+
+        if (io) {
+          relay.relayEmit(io, 'broadcast', '*', 'quiz:closed', { quizId: quiz.id });
+          relay.relayEmit(io, 'broadcast', '*', 'quiz:published', { quizId: quiz.id });
+        }
       }
 
-      await quiz.update({ status: 'CLOSED', closedAt: now });
-
-      if (io) {
-        io.emit('quiz:closed', { quizId: quiz.id });
-        io.emit('quiz:published', { quizId: quiz.id });
+      if (expiredQuizzes.length > 0) {
+        console.log(`[quizAutoClose] Closed ${expiredQuizzes.length} quiz(es), auto-submitted in-progress attempts`);
       }
+    } catch (error) {
+      console.error('[quizAutoClose] Error:', error.message);
     }
-
-    if (expiredQuizzes.length > 0) {
-      console.log(`[quizAutoClose] Closed ${expiredQuizzes.length} quiz(es), auto-submitted in-progress attempts`);
-    }
-  } catch (error) {
-    console.error('[quizAutoClose] Error:', error.message);
-  }
+  });
 }
 
 let intervalHandle = null;

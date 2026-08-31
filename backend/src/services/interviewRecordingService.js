@@ -9,7 +9,7 @@ const path = require('path');
 const { InterviewRecording, InterviewSession } = require('../models');
 const logger = require('../utils/logger');
 
-const RECORDING_DIR = path.join(__dirname, '../../uploads/interviews');
+const RECORDING_DIR = require('../config/paths').getUploadsPath('interviews');
 const SIGNING_SECRET = process.env.RECORDING_SIGNING_SECRET || crypto.randomBytes(32).toString('hex');
 const SIGNING_TTL_MS = 30 * 60 * 1000; // 30 minutes
 

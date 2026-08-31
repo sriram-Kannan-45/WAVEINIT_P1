@@ -21,8 +21,9 @@
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { getUploadsPath } = require('../config/paths');
 
-const ROOT = path.join(process.cwd(), 'uploads', 'materials');
+const ROOT = getUploadsPath('materials');
 if (!fs.existsSync(ROOT)) fs.mkdirSync(ROOT, { recursive: true });
 
 const storage = multer.diskStorage({

@@ -322,9 +322,10 @@ async function deleteProgram(req, res) {
 
           const fs = require('fs');
           const path = require('path');
+          const { getUploadsPath } = require('../config/paths');
           for (const sessionId of sessionIds) {
             try {
-              const screenshotsDir = path.join(__dirname, '../../uploads/screenshots', String(sessionId));
+              const screenshotsDir = path.join(getUploadsPath('screenshots'), String(sessionId));
               if (fs.existsSync(screenshotsDir)) {
                 fs.rmSync(screenshotsDir, { recursive: true, force: true });
               }
@@ -645,9 +646,10 @@ async function deleteCourse(req, res) {
 
         const fs = require('fs');
         const path = require('path');
+        const { getUploadsPath } = require('../config/paths');
         for (const sessionId of sessionIds) {
           try {
-            const screenshotsDir = path.join(__dirname, '../../uploads/screenshots', String(sessionId));
+            const screenshotsDir = path.join(getUploadsPath('screenshots'), String(sessionId));
             if (fs.existsSync(screenshotsDir)) {
               fs.rmSync(screenshotsDir, { recursive: true, force: true });
             }

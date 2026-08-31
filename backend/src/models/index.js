@@ -37,6 +37,11 @@ const RefreshToken = require('./RefreshToken');
 const UserSession = require('./UserSession');
 const AuditLog = require('./AuditLog');
 
+// Scale-out / multi-instance infrastructure models
+const DistributedLock = require('./DistributedLock');
+const TokenBlacklist = require('./TokenBlacklist');
+const SocketRelayEvent = require('./SocketRelayEvent');
+
 // Lesson workflow module (lessons + quiz/assessment gating + progress)
 const Lesson = require('./lesson');
 const LessonQuiz = require('./lessonQuiz');
@@ -619,4 +624,8 @@ module.exports = {
   AttendanceSession,
   AttendanceRecord,
   UserBadge,
+  // Scale-out / multi-instance infrastructure
+  DistributedLock,
+  TokenBlacklist,
+  SocketRelayEvent,
 };

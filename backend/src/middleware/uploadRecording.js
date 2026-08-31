@@ -1,8 +1,9 @@
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { getTmpRoot } = require('../config/paths');
 
-const TMP_DIR = path.join(__dirname, '..', '..', 'tmp');
+const TMP_DIR = getTmpRoot();
 if (!fs.existsSync(TMP_DIR)) {
   fs.mkdirSync(TMP_DIR, { recursive: true });
 }
