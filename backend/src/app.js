@@ -847,6 +847,22 @@ const startServer = async () => {
       logger.warn('Could not start monitor auto-submit cron', { error: e.message });
     }
 
+    // Automatic Attendance Daily Sync Job (Morning/Evening auto-generation & lock sync)
+    try {
+      const { startAttendanceAutoJob } = require('./jobs/attendanceAutoJob');
+      startAttendanceAutoJob();
+    } catch (e) {
+      logger.warn('Could not start attendance auto job', { error: e.message });
+    }
+
+    // Quiz Auto-Close scheduler
+    try {
+      const { start: startQuizAutoClose } = require('./jobs/quizAutoClose');
+      startQuizAutoClose();
+    } catch (e) {
+      logger.warn('Could not start quiz auto-close scheduler', { error: e.message });
+    }
+
     // Workers: In multi-server cluster mode, workers run in dedicated independent processes.
     // In standalone / single-instance mode (or when RUN_EMBEDDED_WORKERS=true), they start in-process.
     const runEmbeddedWorkers = process.env.RUN_EMBEDDED_WORKERS !== 'false';

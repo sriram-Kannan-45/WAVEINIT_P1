@@ -22,6 +22,7 @@ function clientIp(req) {
     req.socket?.remoteAddress ||
     null
   );
+}
 const relay = require('../socket/crossInstance');
 
 function emitTrainerUpdate(req, quizId, payload, assessmentId) {

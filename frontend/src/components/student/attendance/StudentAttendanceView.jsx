@@ -107,6 +107,37 @@ export default function StudentAttendanceView({ user }) {
     }
   }
 
+  const renderSlotBadge = (sessionType) => {
+    const isMorning = (sessionType || 'MORNING').toUpperCase() === 'MORNING'
+    const isEvening = (sessionType || '').toUpperCase() === 'EVENING'
+
+    if (isMorning) {
+      return (
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          padding: '2px 7px', borderRadius: 4,
+          background: '#FEF3C7', color: '#B45309',
+          fontSize: 11, fontWeight: 700
+        }}>
+          Morning
+        </span>
+      )
+    }
+    if (isEvening) {
+      return (
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          padding: '2px 7px', borderRadius: 4,
+          background: '#E0E7FF', color: '#4338CA',
+          fontSize: 11, fontWeight: 700
+        }}>
+          Evening
+        </span>
+      )
+    }
+    return null
+  }
+
   const isGoodAttendance = summary.attendancePercentage >= 75
 
   return (
@@ -118,7 +149,7 @@ export default function StudentAttendanceView({ user }) {
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h2 className="reg-admin-title">My Attendance & Sessions</h2>
-          <p className="reg-admin-subtitle">Track your daily class attendance rate, attended lectures, and session history.</p>
+          <p className="reg-admin-subtitle">Track your daily Morning & Evening class attendance rate and session history.</p>
         </div>
         <button
           onClick={() => fetchAttendance(true)}
@@ -173,11 +204,11 @@ export default function StudentAttendanceView({ user }) {
           padding: '18px 20px',
           boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
         }}>
-          <span style={{ fontSize: 12, color: '#64748B', fontWeight: 500 }}>Total Lectures Held</span>
+          <span style={{ fontSize: 12, color: '#64748B', fontWeight: 500 }}>Total Sessions Conducted</span>
           <div style={{ fontSize: 24, fontWeight: 800, color: '#0F172A', marginTop: 4 }}>
             {summary.totalSessions}
           </div>
-          <span style={{ fontSize: 11.5, color: '#64748B' }}>Recorded across all courses</span>
+          <span style={{ fontSize: 11.5, color: '#64748B' }}>Morning & Evening combined</span>
         </div>
 
         {/* Classes Attended */}
@@ -230,7 +261,7 @@ export default function StudentAttendanceView({ user }) {
           marginBottom: 16
         }}>
           <div>
-            <h3 style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', margin: 0 }}>Attendance Log</h3>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', margin: 0 }}>Daily Attendance Log</h3>
             <p style={{ fontSize: 12.5, color: '#64748B', margin: '2px 0 0' }}>Detailed record of past sessions and marked status.</p>
           </div>
 
@@ -294,7 +325,7 @@ export default function StudentAttendanceView({ user }) {
             <table className="reg-admin-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: 'left', padding: '10px 14px' }}>Session / Topic</th>
+                  <th style={{ textAlign: 'left', padding: '10px 14px' }}>Session / Slot</th>
                   <th style={{ textAlign: 'left', padding: '10px 14px' }}>Course</th>
                   <th style={{ textAlign: 'left', padding: '10px 14px' }}>Date & Time</th>
                   <th style={{ textAlign: 'center', padding: '10px 14px' }}>Status</th>
@@ -305,7 +336,10 @@ export default function StudentAttendanceView({ user }) {
                 {filteredHistory.map((item, idx) => (
                   <tr key={item.id || idx} style={{ borderBottom: '1px solid #F1F5F9' }}>
                     <td style={{ padding: '12px 14px', fontWeight: 600, color: '#0F172A' }}>
-                      {item.sessionTitle}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <span>{item.sessionTitle}</span>
+                        {renderSlotBadge(item.sessionType)}
+                      </div>
                     </td>
                     <td style={{ padding: '12px 14px', color: '#475569', fontSize: 13 }}>
                       {item.courseTitle}

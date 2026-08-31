@@ -61,6 +61,23 @@ const AttendanceSession = sequelize.define('AttendanceSession', {
     allowNull: false,
     defaultValue: 'COMPLETED',
   },
+  sessionType: {
+    type: DataTypes.ENUM('MORNING', 'EVENING', 'GENERAL'),
+    allowNull: false,
+    defaultValue: 'MORNING',
+    field: 'session_type',
+  },
+  dayNumber: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    field: 'day_number',
+  },
+  isLocked: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    field: 'is_locked',
+  },
 }, {
   tableName: 'attendance_sessions',
   timestamps: true,
@@ -70,6 +87,7 @@ const AttendanceSession = sequelize.define('AttendanceSession', {
     { fields: ['course_id', 'session_date'] },
     { fields: ['training_id'] },
     { fields: ['trainer_id'] },
+    { fields: ['training_id', 'session_date', 'session_type'] },
   ],
 });
 

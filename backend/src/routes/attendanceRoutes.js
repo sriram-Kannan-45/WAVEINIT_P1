@@ -10,6 +10,7 @@ router.use(authenticateToken);
 router.get('/student/summary', attendanceController.getStudentSummary);
 
 // Trainer & Admin endpoints
+router.post('/trainings/:trainingId/generate', roleMiddleware('TRAINER', 'ADMIN'), attendanceController.generateTrainingSessions);
 router.post('/sessions', roleMiddleware('TRAINER', 'ADMIN'), attendanceController.createSession);
 router.get('/sessions', attendanceController.getSessions);
 router.get('/sessions/:sessionId', attendanceController.getSessionDetail);

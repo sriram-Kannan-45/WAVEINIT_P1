@@ -1,5 +1,6 @@
 const { Training, User, Enrollment, Notification, TrainingTrainerAssignment, Course, CourseTrainerAssignment } = require('../models');
 const { Op } = require('sequelize');
+const { ensureTrainingAttendanceSessions } = require('../services/attendanceAutomationService');
 
 const createTraining = async (req, res) => {
   try {
@@ -65,6 +66,11 @@ const createTraining = async (req, res) => {
       trainerId: tId
     }));
     await CourseTrainerAssignment.bulkCreate(courseAssignments);
+
+    // Automatically generate full duration Morning and Evening attendance sessions
+    await ensureTrainingAttendanceSessions(training.id).catch(err => {
+      console.warn('[createTraining] Failed to pre-generate attendance sessions:', err.message);
+    });
 
     // Notify Trainers
     const io = req.app.get('io');

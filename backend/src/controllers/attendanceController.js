@@ -10,6 +10,11 @@ const {
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/db');
 const logger = require('../utils/logger');
+const {
+  getKolkataDate,
+  calculateSessionStatus,
+  ensureTrainingAttendanceSessions,
+} = require('../services/attendanceAutomationService');
 
 /**
  * Helper to check course ownership / trainer authorization
@@ -27,12 +32,30 @@ async function verifyCourseAccess(courseId, user) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * POST /api/attendance/trainings/:trainingId/generate
+ * Explicitly generate/refresh Morning and Evening sessions for a training
+ */
+const generateTrainingSessions = async (req, res) => {
+  try {
+    const { trainingId } = req.params;
+    const result = await ensureTrainingAttendanceSessions(trainingId);
+    if (!result.success) {
+      return res.status(400).json({ success: false, error: result.error || 'Failed to generate attendance sessions' });
+    }
+    res.json({ success: true, message: `Prepared ${result.count} attendance sessions`, count: result.count });
+  } catch (error) {
+    logger.error('Error generating training attendance sessions', { error: error.message });
+    res.status(500).json({ success: false, error: 'Failed to generate attendance sessions' });
+  }
+};
+
+/**
  * POST /api/attendance/sessions
- * Trainer creates a new class / session
+ * Trainer creates a new class / session (legacy / ad-hoc)
  */
 const createSession = async (req, res) => {
   try {
-    const { courseId, trainingId, title, sessionDate, startTime, endTime, batchName, topic } = req.body;
+    const { courseId, trainingId, title, sessionDate, startTime, endTime, batchName, topic, sessionType } = req.body;
     const trainerId = req.user.id;
 
     if (!title || !sessionDate) {
@@ -54,9 +77,11 @@ const createSession = async (req, res) => {
       sessionDate,
       startTime: startTime || null,
       endTime: endTime || null,
+      sessionType: sessionType || 'MORNING',
       batchName: batchName || null,
       topic: topic || null,
       status: 'COMPLETED',
+      isLocked: false,
     });
 
     res.status(201).json({ success: true, message: 'Class session created', session });
@@ -69,11 +94,23 @@ const createSession = async (req, res) => {
 /**
  * GET /api/attendance/sessions
  * List sessions with optional filters (courseId, date, search, trainerId)
+ * Automatically ensures Morning and Evening sessions exist for the training
  */
 const getSessions = async (req, res) => {
   try {
-    const { courseId, trainingId, date, startDate, endDate, search, page = 1, limit = 20 } = req.query;
+    const { courseId, trainingId, date, startDate, endDate, search, page = 1, limit = 50 } = req.query;
     const user = req.user;
+    const todayIST = getKolkataDate();
+
+    // Auto-generate missing daily sessions for the selected training or course
+    if (trainingId) {
+      await ensureTrainingAttendanceSessions(trainingId).catch(() => {});
+    } else if (courseId) {
+      const courseObj = await Course.findByPk(courseId);
+      if (courseObj?.trainingProgramId) {
+        await ensureTrainingAttendanceSessions(courseObj.trainingProgramId).catch(() => {});
+      }
+    }
 
     const where = {};
     if (courseId) where.courseId = courseId;
@@ -99,6 +136,7 @@ const getSessions = async (req, res) => {
       where,
       include: [
         { model: Course, as: 'course', attributes: ['id', 'title'] },
+        { model: Training, as: 'training', attributes: ['id', 'title', 'startDate', 'endDate'] },
         { model: User, as: 'trainer', attributes: ['id', 'name', 'email'] },
         {
           model: AttendanceRecord,
@@ -106,30 +144,38 @@ const getSessions = async (req, res) => {
           attributes: ['id', 'studentId', 'status'],
         }
       ],
-      order: [['sessionDate', 'DESC'], ['created_at', 'DESC']],
+      order: [['sessionDate', 'DESC'], ['sessionType', 'ASC'], ['created_at', 'DESC']],
       limit: parseInt(limit, 10),
       offset,
       distinct: true,
     });
 
-    // Add quick summary stats to each session
+    // Add quick summary stats & dynamic lock status to each session
     const formatted = sessions.map(s => {
       const records = s.records || [];
       const presentCount = records.filter(r => r.status === 'PRESENT').length;
       const absentCount = records.filter(r => r.status === 'ABSENT').length;
       const lateCount = records.filter(r => r.status === 'LATE').length;
       const excusedCount = records.filter(r => r.status === 'EXCUSED').length;
+
+      const tStart = s.training?.startDate || null;
+      const tEnd = s.training?.endDate || null;
+      const lockStatus = calculateSessionStatus(s.sessionDate, tStart, tEnd, todayIST);
+
       return {
         id: s.id,
         title: s.title,
         sessionDate: s.sessionDate,
         startTime: s.startTime,
         endTime: s.endTime,
+        sessionType: s.sessionType || 'MORNING',
+        dayNumber: s.dayNumber || null,
         batchName: s.batchName,
         topic: s.topic,
         status: s.status,
         courseId: s.courseId,
-        courseTitle: s.course?.title || 'General',
+        trainingId: s.trainingId,
+        courseTitle: s.course?.title || s.training?.title || 'General',
         trainerName: s.trainer?.name || 'Trainer',
         totalMarked: records.length,
         presentCount,
@@ -137,6 +183,11 @@ const getSessions = async (req, res) => {
         lateCount,
         excusedCount,
         attendanceRate: records.length > 0 ? Number(((presentCount / records.length) * 100).toFixed(1)) : 0,
+        isOpen: lockStatus.isOpen,
+        isLocked: lockStatus.isLocked,
+        lockReason: lockStatus.lockReason,
+        lockMessage: lockStatus.lockMessage,
+        todayDate: todayIST,
         createdAt: s.created_at,
       };
     });
@@ -144,6 +195,7 @@ const getSessions = async (req, res) => {
     res.json({
       success: true,
       sessions: formatted,
+      todayDate: todayIST,
       total: count,
       page: parseInt(page, 10),
       totalPages: Math.ceil(count / parseInt(limit, 10)) || 1,
@@ -161,9 +213,12 @@ const getSessions = async (req, res) => {
 const getSessionDetail = async (req, res) => {
   try {
     const { sessionId } = req.params;
+    const todayIST = getKolkataDate();
+
     const session = await AttendanceSession.findByPk(sessionId, {
       include: [
         { model: Course, as: 'course', attributes: ['id', 'title'] },
+        { model: Training, as: 'training', attributes: ['id', 'title', 'startDate', 'endDate'] },
         { model: User, as: 'trainer', attributes: ['id', 'name', 'email'] },
         {
           model: AttendanceRecord,
@@ -176,6 +231,10 @@ const getSessionDetail = async (req, res) => {
     if (!session) {
       return res.status(404).json({ success: false, error: 'Session not found' });
     }
+
+    const tStart = session.training?.startDate || null;
+    const tEnd = session.training?.endDate || null;
+    const lockStatus = calculateSessionStatus(session.sessionDate, tStart, tEnd, todayIST);
 
     // Fetch all enrolled students in this course or training program
     let enrolledStudents = [];
@@ -224,14 +283,26 @@ const getSessionDetail = async (req, res) => {
         sessionDate: session.sessionDate,
         startTime: session.startTime,
         endTime: session.endTime,
+        sessionType: session.sessionType || 'MORNING',
+        dayNumber: session.dayNumber || null,
         batchName: session.batchName,
         topic: session.topic,
         courseId: session.courseId,
-        courseTitle: session.course?.title || 'General',
+        trainingId: session.trainingId,
+        courseTitle: session.course?.title || session.training?.title || 'General',
         trainerId: session.trainerId,
         trainerName: session.trainer?.name,
+        isOpen: lockStatus.isOpen,
+        isLocked: lockStatus.isLocked,
+        lockReason: lockStatus.lockReason,
+        lockMessage: lockStatus.lockMessage,
+        todayDate: todayIST,
       },
       students: studentsWithAttendance,
+      isLocked: lockStatus.isLocked,
+      isOpen: lockStatus.isOpen,
+      lockReason: lockStatus.lockReason,
+      lockMessage: lockStatus.lockMessage,
     });
   } catch (error) {
     logger.error('Error fetching session details', { error: error.message });
@@ -245,7 +316,7 @@ const getSessionDetail = async (req, res) => {
 
 /**
  * POST /api/attendance/sessions/:sessionId/mark
- * Bulk / single attendance marking with automatic duplicate prevention & notification
+ * Bulk / single attendance marking with automatic duplicate prevention & locking rule enforcement
  * Body: { records: [ { studentId, status, remarks } ] }
  */
 const markAttendance = async (req, res) => {
@@ -254,13 +325,21 @@ const markAttendance = async (req, res) => {
     const { sessionId } = req.params;
     const { records = [] } = req.body;
     const markedBy = req.user.id;
+    const todayIST = getKolkataDate();
 
     if (!Array.isArray(records) || records.length === 0) {
       await t.rollback();
       return res.status(400).json({ success: false, error: 'At least one student record is required' });
     }
 
-    const session = await AttendanceSession.findByPk(sessionId, { transaction: t });
+    const session = await AttendanceSession.findByPk(sessionId, {
+      include: [
+        { model: Training, as: 'training', attributes: ['id', 'title', 'startDate', 'endDate'] },
+        { model: Course, as: 'course', attributes: ['id', 'title'] },
+      ],
+      transaction: t,
+    });
+
     if (!session) {
       await t.rollback();
       return res.status(404).json({ success: false, error: 'Session not found' });
@@ -273,6 +352,20 @@ const markAttendance = async (req, res) => {
         await t.rollback();
         return res.status(403).json({ success: false, error: 'Not authorized to mark attendance for this session' });
       }
+    }
+
+    // ── Server-Side Locking Validation ──
+    const tStart = session.training?.startDate || null;
+    const tEnd = session.training?.endDate || null;
+    const lockStatus = calculateSessionStatus(session.sessionDate, tStart, tEnd, todayIST);
+
+    if (lockStatus.isLocked) {
+      await t.rollback();
+      return res.status(403).json({
+        success: false,
+        error: lockStatus.lockMessage || `Attendance is locked. Only the current training day (${todayIST}) can be marked.`,
+        lockReason: lockStatus.lockReason,
+      });
     }
 
     const validStatuses = ['PRESENT', 'ABSENT', 'LATE', 'EXCUSED'];
@@ -324,7 +417,7 @@ const markAttendance = async (req, res) => {
       for (const studentId of absentStudentIds) {
         await NotificationService.createNotification({
           userId: studentId,
-          message: `You were marked ABSENT for session "${session.title}" on ${session.sessionDate}.`,
+          message: `You were marked ABSENT for session "${session.title}" (${session.sessionType || 'Session'}) on ${session.sessionDate}.`,
           type: 'OTHER',
           actionUrl: '/participant?tab=attendance',
         }, io).catch(() => {});
@@ -341,21 +434,44 @@ const markAttendance = async (req, res) => {
 
 /**
  * PUT /api/attendance/sessions/:sessionId/records/:recordId
- * Edit single student attendance record
+ * Edit single student attendance record (enforces locking rule)
  */
 const updateRecord = async (req, res) => {
   try {
-    const { recordId } = req.params;
+    const { recordId, sessionId } = req.params;
     const { status, remarks } = req.body;
     const validStatuses = ['PRESENT', 'ABSENT', 'LATE', 'EXCUSED'];
+    const todayIST = getKolkataDate();
 
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ success: false, error: 'Invalid status' });
     }
 
-    const record = await AttendanceRecord.findByPk(recordId);
+    const record = await AttendanceRecord.findByPk(recordId, {
+      include: [
+        {
+          model: AttendanceSession,
+          as: 'session',
+          include: [{ model: Training, as: 'training', attributes: ['id', 'startDate', 'endDate'] }],
+        },
+      ],
+    });
+
     if (!record) {
       return res.status(404).json({ success: false, error: 'Record not found' });
+    }
+
+    // Server-side lock check
+    const s = record.session;
+    if (s) {
+      const lockStatus = calculateSessionStatus(s.sessionDate, s.training?.startDate, s.training?.endDate, todayIST);
+      if (lockStatus.isLocked) {
+        return res.status(403).json({
+          success: false,
+          error: lockStatus.lockMessage || `Attendance is locked for past or future dates.`,
+          lockReason: lockStatus.lockReason,
+        });
+      }
     }
 
     await record.update({
@@ -394,7 +510,7 @@ const getStudentSummary = async (req, res) => {
         {
           model: AttendanceSession,
           as: 'session',
-          attributes: ['id', 'title', 'sessionDate', 'startTime', 'endTime', 'batchName', 'topic'],
+          attributes: ['id', 'title', 'sessionDate', 'startTime', 'endTime', 'sessionType', 'dayNumber', 'batchName', 'topic'],
           include: [{ model: Course, as: 'course', attributes: ['id', 'title'] }]
         }
       ],
@@ -419,6 +535,8 @@ const getStudentSummary = async (req, res) => {
       courseTitle: r.session?.course?.title || 'General',
       sessionDate: r.session?.sessionDate,
       startTime: r.session?.startTime,
+      sessionType: r.session?.sessionType || 'MORNING',
+      dayNumber: r.session?.dayNumber || null,
       status: r.status,
       remarks: r.remarks,
       markedAt: r.markedAt,
@@ -624,6 +742,7 @@ const getAdminAnalytics = async (req, res) => {
 
 module.exports = {
   createSession,
+  generateTrainingSessions,
   getSessions,
   getSessionDetail,
   markAttendance,
