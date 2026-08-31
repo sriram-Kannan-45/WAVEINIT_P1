@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import AssessmentConsentGate from '../components/ai-quizzes/AssessmentConsentGate'
-import AssessmentQRPairingModal from '../components/assessment/AssessmentQRPairingModal'
 import UnifiedMonitoringWidget from '../components/monitoring/UnifiedMonitoringWidget'
 import { API_BASE, BACKEND_ORIGIN } from '../api/api'
 import { useToast } from '../components/Toast'
@@ -453,29 +452,7 @@ function ParticipantCodingAttemptInner({ user }) {
     return <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', padding: 20, textAlign: 'center' }}><AlertCircle size={32} color="#dc2626" style={{ marginBottom: 12 }} /><div style={{ fontSize: 16, fontWeight: 600, color: '#dc2626', marginBottom: 8 }}>{errorMsg}</div><button onClick={() => navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}` : '/participant?tab=myEnrollments')} style={{ padding: '8px 20px', background: '#0D9488', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Go Back</button></div>
   }
 
-  // Pre-test Step 1: Mobile Camera Pairing via QR Code
-  if (!qrVerified && assessment) {
-    return (
-      <AssessmentQRPairingModal
-        assessmentType="CODING"
-        assessmentId={Number(assessmentId)}
-        attemptId={Number(attemptId)}
-        assessmentTitle={assessment.title || 'Coding Assessment'}
-        participantName={user?.name || 'Participant'}
-        userToken={user?.token}
-        onVerified={(data) => {
-          setVerifSessionInfo(data);
-          setQrVerified(true);
-        }}
-        onCancel={() => {
-          const targetCourseId = assessment?.courseId || trainingId;
-          navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}&subtab=coding` : '/participant?tab=myEnrollments');
-        }}
-      />
-    );
-  }
-
-  // Pre-test Step 2: Assessment Consent, Camera Calibration & Fullscreen Gate
+  // Pre-test Consent, Camera Calibration & Fullscreen Gate
   if (!consented) return (
     <AssessmentConsentGate
       quiz={assessment ? { id: assessment.id, title: assessment.title, description: assessment.description, timeLimit: assessment.timeLimit } : null}

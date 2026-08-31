@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import QuizTaking from '../components/QuizTaking'
 import AssessmentConsentGate from '../components/ai-quizzes/AssessmentConsentGate'
-import AssessmentQRPairingModal from '../components/assessment/AssessmentQRPairingModal'
 import UnifiedMonitoringWidget from '../components/monitoring/UnifiedMonitoringWidget'
 import { API_BASE } from '../api/api'
 import { useToast } from '../components/Toast'
@@ -275,26 +274,7 @@ function ParticipantQuizAttemptPageInner({ user }) {
     )
   }
 
-  // Pre-test Step 1: Mobile Camera Pairing via QR Code
-  if (!qrVerified && quizData) {
-    return (
-      <AssessmentQRPairingModal
-        assessmentType="QUIZ"
-        assessmentId={parseInt(quizId, 10)}
-        attemptId={parseInt(attemptId, 10)}
-        assessmentTitle={quizData.title || 'Quiz Assessment'}
-        participantName={user?.name || 'Participant'}
-        userToken={user?.token}
-        onVerified={(data) => {
-          setVerifSessionInfo(data);
-          setQrVerified(true);
-        }}
-        onCancel={handleCancel}
-      />
-    );
-  }
-
-  // Pre-test Step 2: Assessment Consent, Camera Calibration & Fullscreen Gate
+  // Pre-test Consent, Camera Calibration & Fullscreen Gate
   if (!consented && quizData) {
     return (
       <AssessmentConsentGate
