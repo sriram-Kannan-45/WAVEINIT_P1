@@ -1,53 +1,66 @@
 import PropTypes from 'prop-types';
 import ReactMarkdown from 'react-markdown';
+import {
+  LogIn,
+  CornerDownRight,
+  Shield,
+  Sliders,
+  Lightbulb,
+  FileCode,
+} from 'lucide-react';
 
 const containerStyle = {
   height: '100%',
   overflowY: 'auto',
-  padding: '24px',
-  color: '#E2E8F0',
-  background: '#0B0F19',
+  padding: '24px 28px',
+  color: '#334155',
+  background: '#FFFFFF',
+  fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
 };
 
 const headingStyle = {
-  fontSize: '20px',
+  fontSize: '22px',
   fontWeight: 700,
-  color: '#FFFFFF',
-  marginBottom: '14px',
-  lineHeight: '26px',
-  letterSpacing: '-0.01em',
+  color: '#111827',
+  marginBottom: '12px',
+  lineHeight: '28px',
+  letterSpacing: '-0.02em',
 };
 
 const sectionStyle = {
-  marginBottom: '22px',
+  marginBottom: '24px',
 };
 
 const sectionHeadingStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '8px',
   fontSize: '12px',
   fontWeight: 700,
-  color: '#4ADE80',
+  color: '#15803D',
   textTransform: 'uppercase',
   letterSpacing: '0.6px',
-  marginBottom: '8px',
+  marginBottom: '10px',
 };
 
 const contentStyle = {
-  fontSize: '13.5px',
-  lineHeight: '22px',
-  color: '#CBD5E1',
+  fontSize: '14px',
+  lineHeight: '24px',
+  color: '#334155',
 };
 
 const preStyle = {
   margin: 0,
   whiteSpace: 'pre-wrap',
-  color: '#F8FAFC',
-  background: '#060913',
+  color: '#1E293B',
+  background: '#F8FAF9',
   padding: '10px 14px',
   borderRadius: '8px',
   fontSize: '13px',
   fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
-  border: '1px solid #1E293B',
+  border: '1px solid #E2E8F0',
   overflowX: 'auto',
+  lineHeight: '1.5',
 };
 
 const labelStyle = {
@@ -55,15 +68,15 @@ const labelStyle = {
   fontWeight: 700,
   textTransform: 'uppercase',
   letterSpacing: '0.5px',
-  color: '#94A3B8',
+  color: '#64748B',
   marginBottom: '6px',
   display: 'block',
 };
 
-const ProblemPanel = ({ problem }) => {
+const ProblemPanel = ({ problem, index = 0, total = 1 }) => {
   if (!problem) {
     return (
-      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B', background: '#0B0F19' }}>
+      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B', background: '#FFFFFF' }}>
         No problem selected.
       </div>
     );
@@ -79,65 +92,107 @@ const ProblemPanel = ({ problem }) => {
     sampleInput,
     sampleOutput,
     explanation,
-    difficulty,
-    marks,
+    difficulty = 'EASY',
+    marks = 10,
     testCases = [],
   } = problem;
 
   const description = statement || problemDescription || '';
-  const visibleTestCases = testCases.filter((tc) => !tc.isHidden);
+  const visibleTestCases = testCases && testCases.length > 0 ? testCases.filter((tc) => !tc.isHidden) : [];
 
-  const getDifficultyColor = (d) => {
-    switch (d?.toUpperCase()) {
-      case 'EASY': return '#4ADE80';
-      case 'MEDIUM': return '#FBBF24';
-      case 'HARD': return '#F87171';
-      default: return '#94A3B8';
+  const getDifficultyBadge = (d) => {
+    const diff = d?.toUpperCase() || 'EASY';
+    if (diff === 'HARD') {
+      return { bg: '#FEE2E2', color: '#DC2626', border: '#FECACA' };
     }
+    if (diff === 'MEDIUM') {
+      return { bg: '#FEF3C7', color: '#D97706', border: '#FDE68A' };
+    }
+    return { bg: '#DCFCE7', color: '#15803D', border: '#BBF7D0' };
   };
 
-  const diffColor = getDifficultyColor(difficulty);
+  const diffBadge = getDifficultyBadge(difficulty);
 
   return (
-    <div style={containerStyle}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <h1 style={headingStyle}>{title}</h1>
+    <div style={containerStyle} className="wi-problem-panel">
+      {/* Top Problem Badge */}
+      <div style={{ marginBottom: 14 }}>
+        <span style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '4px 12px',
+          borderRadius: 9999,
+          background: '#DCFCE7',
+          color: '#15803D',
+          border: '1px solid #BBF7D0',
+          fontSize: 12,
+          fontWeight: 600,
+        }}>
+          Problem {index + 1}
+        </span>
       </div>
 
-      <div style={{ display: 'flex', gap: 10, marginBottom: 18 }}>
-        {difficulty && (
+      {/* Problem Title */}
+      <h1 style={headingStyle}>{title}</h1>
+
+      {/* Difficulty & Points Badges */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+        <span style={{
+          padding: '3px 10px',
+          borderRadius: 6,
+          fontSize: 11.5,
+          fontWeight: 700,
+          background: diffBadge.bg,
+          color: diffBadge.color,
+          border: `1px solid ${diffBadge.border}`,
+          textTransform: 'uppercase',
+          letterSpacing: '0.4px',
+        }}>
+          {difficulty}
+        </span>
+
+        {marks != null && (
           <span style={{
-            padding: '3px 10px', borderRadius: 6, fontSize: 11.5, fontWeight: 700,
-            background: `${diffColor}18`,
-            color: diffColor,
-            border: `1px solid ${diffColor}40`,
-          }}>
-            {difficulty}
-          </span>
-        )}
-        {marks && (
-          <span style={{
-            padding: '3px 10px', borderRadius: 6, fontSize: 11.5, fontWeight: 700,
-            background: 'rgba(255, 255, 255, 0.05)', color: '#F8FAFC', border: '1px solid #1E293B',
+            padding: '3px 10px',
+            borderRadius: 6,
+            fontSize: 11.5,
+            fontWeight: 600,
+            background: '#F1F5F9',
+            color: '#475569',
+            border: '1px solid #E2E8F0',
           }}>
             {marks} pts
           </span>
         )}
       </div>
 
+      {/* Problem Statement / Description */}
       {description && (
         <div style={sectionStyle}>
           <div style={contentStyle}>
             <ReactMarkdown
               components={{
-                code: ({ children }) => <code style={{ background: '#060913', color: '#4ADE80', border: '1px solid #1E293B', padding: '2px 6px', borderRadius: 4, fontSize: '12.5px', fontFamily: "'JetBrains Mono', monospace" }}>{children}</code>,
+                code: ({ children }) => (
+                  <code style={{
+                    background: '#F1F5F9',
+                    color: '#0F172A',
+                    border: '1px solid #E2E8F0',
+                    padding: '2px 6px',
+                    borderRadius: 4,
+                    fontSize: '12.5px',
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}>
+                    {children}
+                  </code>
+                ),
                 pre: ({ children }) => <pre style={preStyle}>{children}</pre>,
-                p: ({ children }) => <p style={{ margin: '0 0 10px 0' }}>{children}</p>,
-                ul: ({ children }) => <ul style={{ paddingLeft: 20, margin: '0 0 10px 0' }}>{children}</ul>,
-                ol: ({ children }) => <ol style={{ paddingLeft: 20, margin: '0 0 10px 0' }}>{children}</ol>,
+                p: ({ children }) => <p style={{ margin: '0 0 12px 0' }}>{children}</p>,
+                ul: ({ children }) => <ul style={{ paddingLeft: 22, margin: '0 0 12px 0' }}>{children}</ul>,
+                ol: ({ children }) => <ol style={{ paddingLeft: 22, margin: '0 0 12px 0' }}>{children}</ol>,
                 li: ({ children }) => <li style={{ marginBottom: 4 }}>{children}</li>,
-                h3: ({ children }) => <h3 style={{ fontSize: 14.5, fontWeight: 700, color: '#FFFFFF', margin: '14px 0 6px' }}>{children}</h3>,
-                strong: ({ children }) => <strong style={{ color: '#FFFFFF', fontWeight: 600 }}>{children}</strong>,
+                h3: ({ children }) => <h3 style={{ fontSize: 14.5, fontWeight: 700, color: '#111827', margin: '16px 0 8px' }}>{children}</h3>,
+                strong: ({ children }) => <strong style={{ color: '#111827', fontWeight: 600 }}>{children}</strong>,
               }}
             >
               {description}
@@ -146,13 +201,21 @@ const ProblemPanel = ({ problem }) => {
         </div>
       )}
 
+      {/* Input Format */}
       {inputFormat && (
         <div style={sectionStyle}>
-          <div style={sectionHeadingStyle}>Input Format</div>
+          <div style={sectionHeadingStyle}>
+            <LogIn size={14} color="#15803D" />
+            <span>INPUT FORMAT</span>
+          </div>
           <div style={contentStyle}>
             <ReactMarkdown
               components={{
-                code: ({ children }) => <code style={{ background: '#060913', color: '#4ADE80', border: '1px solid #1E293B', padding: '2px 6px', borderRadius: 4, fontSize: '12.5px', fontFamily: "'JetBrains Mono', monospace" }}>{children}</code>,
+                code: ({ children }) => (
+                  <code style={{ background: '#F1F5F9', color: '#0F172A', border: '1px solid #E2E8F0', padding: '2px 6px', borderRadius: 4, fontSize: '12.5px', fontFamily: "'JetBrains Mono', monospace" }}>
+                    {children}
+                  </code>
+                ),
                 p: ({ children }) => <p style={{ margin: '0 0 8px 0' }}>{children}</p>,
               }}
             >
@@ -162,13 +225,21 @@ const ProblemPanel = ({ problem }) => {
         </div>
       )}
 
+      {/* Output Format */}
       {outputFormat && (
         <div style={sectionStyle}>
-          <div style={sectionHeadingStyle}>Output Format</div>
+          <div style={sectionHeadingStyle}>
+            <CornerDownRight size={14} color="#15803D" />
+            <span>OUTPUT FORMAT</span>
+          </div>
           <div style={contentStyle}>
             <ReactMarkdown
               components={{
-                code: ({ children }) => <code style={{ background: '#060913', color: '#4ADE80', border: '1px solid #1E293B', padding: '2px 6px', borderRadius: 4, fontSize: '12.5px', fontFamily: "'JetBrains Mono', monospace" }}>{children}</code>,
+                code: ({ children }) => (
+                  <code style={{ background: '#F1F5F9', color: '#0F172A', border: '1px solid #E2E8F0', padding: '2px 6px', borderRadius: 4, fontSize: '12.5px', fontFamily: "'JetBrains Mono', monospace" }}>
+                    {children}
+                  </code>
+                ),
                 p: ({ children }) => <p style={{ margin: '0 0 8px 0' }}>{children}</p>,
               }}
             >
@@ -178,15 +249,23 @@ const ProblemPanel = ({ problem }) => {
         </div>
       )}
 
+      {/* Constraints */}
       {constraints && (
         <div style={sectionStyle}>
-          <div style={sectionHeadingStyle}>Constraints</div>
+          <div style={sectionHeadingStyle}>
+            <Shield size={14} color="#15803D" />
+            <span>CONSTRAINTS</span>
+          </div>
           <div style={contentStyle}>
             <ReactMarkdown
               components={{
-                code: ({ children }) => <code style={{ background: '#060913', color: '#4ADE80', border: '1px solid #1E293B', padding: '2px 6px', borderRadius: 4, fontSize: '12.5px', fontFamily: "'JetBrains Mono', monospace" }}>{children}</code>,
+                code: ({ children }) => (
+                  <code style={{ background: '#F1F5F9', color: '#0F172A', border: '1px solid #E2E8F0', padding: '2px 6px', borderRadius: 4, fontSize: '12.5px', fontFamily: "'JetBrains Mono', monospace" }}>
+                    {children}
+                  </code>
+                ),
                 p: ({ children }) => <p style={{ margin: '0 0 8px 0' }}>{children}</p>,
-                ul: ({ children }) => <ul style={{ paddingLeft: 20, margin: '0 0 8px 0' }}>{children}</ul>,
+                ul: ({ children }) => <ul style={{ paddingLeft: 22, margin: '0 0 8px 0' }}>{children}</ul>,
                 li: ({ children }) => <li style={{ marginBottom: 4 }}>{children}</li>,
               }}
             >
@@ -196,45 +275,85 @@ const ProblemPanel = ({ problem }) => {
         </div>
       )}
 
-      {visibleTestCases.length > 0 && (
+      {/* Sample Test Cases */}
+      {(visibleTestCases.length > 0 || sampleInput || sampleOutput) && (
         <div style={sectionStyle}>
-          <div style={sectionHeadingStyle}>Sample Test Cases</div>
-          {visibleTestCases.map((tc, index) => (
+          <div style={sectionHeadingStyle}>
+            <Sliders size={14} color="#15803D" />
+            <span>SAMPLE TEST CASES</span>
+          </div>
+          {visibleTestCases.length > 0 ? (
+            visibleTestCases.map((tc, sIndex) => (
+              <div
+                key={tc.id || sIndex}
+                style={{
+                  background: '#FFFFFF',
+                  border: '1px solid #E2E8F0',
+                  borderRadius: 10,
+                  padding: '16px',
+                  marginBottom: 14,
+                  boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)',
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#111827', marginBottom: 12 }}>
+                  Sample {sIndex + 1}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                  <div>
+                    <span style={labelStyle}>INPUT</span>
+                    <pre style={preStyle}>{tc.input || '(no input)'}</pre>
+                  </div>
+                  <div>
+                    <span style={labelStyle}>EXPECTED OUTPUT</span>
+                    <pre style={preStyle}>{tc.expectedOutput || '(no output)'}</pre>
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
             <div
-              key={tc.id || index}
               style={{
-                background: '#0D1527',
-                border: '1.5px solid #1E293B',
+                background: '#FFFFFF',
+                border: '1px solid #E2E8F0',
                 borderRadius: 10,
-                padding: '14px',
+                padding: '16px',
                 marginBottom: 14,
+                boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)',
               }}
             >
-              <div style={{ fontSize: 12, fontWeight: 700, color: '#4ADE80', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span>Sample {index + 1}</span>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#111827', marginBottom: 12 }}>
+                Sample 1
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                 <div>
-                  <span style={labelStyle}>Input</span>
-                  <pre style={preStyle}>{tc.input}</pre>
+                  <span style={labelStyle}>INPUT</span>
+                  <pre style={preStyle}>{sampleInput || '(no input)'}</pre>
                 </div>
                 <div>
-                  <span style={labelStyle}>Expected Output</span>
-                  <pre style={preStyle}>{tc.expectedOutput}</pre>
+                  <span style={labelStyle}>EXPECTED OUTPUT</span>
+                  <pre style={preStyle}>{sampleOutput || '(no output)'}</pre>
                 </div>
               </div>
             </div>
-          ))}
+          )}
         </div>
       )}
 
+      {/* Explanation */}
       {explanation && (
         <div style={sectionStyle}>
-          <div style={sectionHeadingStyle}>Explanation</div>
+          <div style={sectionHeadingStyle}>
+            <Lightbulb size={14} color="#15803D" />
+            <span>EXPLANATION</span>
+          </div>
           <div style={contentStyle}>
             <ReactMarkdown
               components={{
-                code: ({ children }) => <code style={{ background: '#060913', color: '#4ADE80', border: '1px solid #1E293B', padding: '2px 6px', borderRadius: 4, fontSize: '12.5px', fontFamily: "'JetBrains Mono', monospace" }}>{children}</code>,
+                code: ({ children }) => (
+                  <code style={{ background: '#F1F5F9', color: '#0F172A', border: '1px solid #E2E8F0', padding: '2px 6px', borderRadius: 4, fontSize: '12.5px', fontFamily: "'JetBrains Mono', monospace" }}>
+                    {children}
+                  </code>
+                ),
                 p: ({ children }) => <p style={{ margin: '0 0 8px 0' }}>{children}</p>,
               }}
             >
@@ -269,6 +388,8 @@ ProblemPanel.propTypes = {
       })
     ),
   }),
+  index: PropTypes.number,
+  total: PropTypes.number,
 };
 
 export default ProblemPanel;

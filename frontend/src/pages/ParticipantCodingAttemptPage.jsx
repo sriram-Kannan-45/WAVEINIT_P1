@@ -467,24 +467,25 @@ function ParticipantCodingAttemptInner({ user }) {
       display: 'flex',
       flexDirection: 'column',
       height: '100vh',
-      background: '#0B0F19',
+      background: '#F8FAF9',
       overflow: 'hidden',
-      fontFamily: "'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
     },
     header: {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
-      padding: '10px 20px',
-      background: '#0D1527',
-      borderBottom: '1.5px solid #1E293B',
+      padding: '0 24px',
+      height: 56,
+      background: '#FFFFFF',
+      borderBottom: '1px solid #E2E8F0',
       flexShrink: 0,
       zIndex: 10,
     },
     headerLeft: {
       display: 'flex',
       alignItems: 'center',
-      gap: 14,
+      gap: 12,
     },
     headerRight: {
       display: 'flex',
@@ -492,9 +493,9 @@ function ParticipantCodingAttemptInner({ user }) {
       gap: 14,
     },
     title: {
-      fontSize: 15,
+      fontSize: 14.5,
       fontWeight: 700,
-      color: '#FFFFFF',
+      color: '#111827',
       letterSpacing: '-0.01em',
       display: 'flex',
       alignItems: 'center',
@@ -504,47 +505,55 @@ function ParticipantCodingAttemptInner({ user }) {
       display: 'flex',
       alignItems: 'center',
       gap: 6,
-      padding: '5px 14px',
-      borderRadius: 9999,
-      background: timeLeft < 300 ? 'rgba(239, 68, 68, 0.15)' : 'rgba(22, 163, 74, 0.14)',
-      border: timeLeft < 300 ? '1.5px solid rgba(239, 68, 68, 0.4)' : '1.5px solid rgba(34, 197, 94, 0.4)',
-      color: timeLeft < 300 ? '#F87171' : '#4ADE80',
+      padding: '6px 14px',
+      borderRadius: 8,
+      background: timeLeft < 300 ? '#FEF2F2' : '#FFFFFF',
+      border: timeLeft < 300 ? '1px solid #FECACA' : '1px solid #E2E8F0',
+      color: timeLeft < 300 ? '#DC2626' : '#111827',
       fontWeight: 700,
       fontSize: 13,
       fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-      letterSpacing: '0.3px',
+      letterSpacing: '0.2px',
+      boxShadow: '0 1px 2px rgba(0, 0, 0, 0.04)',
     },
     main: {
       display: 'flex',
       flex: 1,
+      padding: '12px 16px',
+      gap: 12,
       overflow: 'hidden',
+      background: '#F8FAF9',
     },
     leftPanel: {
-      width: '40%',
-      minWidth: 360,
-      maxWidth: 540,
-      overflow: 'auto',
-      borderRight: '1.5px solid #1E293B',
-      background: '#0B0F19',
+      width: '32%',
+      minWidth: 340,
+      maxWidth: 480,
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+      background: '#FFFFFF',
+      border: '1px solid #E2E8F0',
+      borderRadius: 14,
+      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)',
     },
     problemNav: {
       display: 'flex',
       gap: 8,
       padding: '10px 16px',
-      borderBottom: '1.5px solid #1E293B',
-      background: '#0D1527',
+      borderBottom: '1px solid #E2E8F0',
+      background: '#FFFFFF',
       alignItems: 'center',
       overflowX: 'auto',
     },
     problemBtn: (active) => ({
-      padding: '6px 14px',
-      border: active ? '1.5px solid #16A34A' : '1px solid rgba(255, 255, 255, 0.1)',
+      padding: '5px 12px',
+      border: active ? '1px solid #BBF7D0' : '1px solid #E2E8F0',
       borderRadius: 8,
       cursor: 'pointer',
-      fontSize: 12.5,
+      fontSize: 12,
       fontWeight: active ? 700 : 500,
-      background: active ? 'rgba(22, 163, 74, 0.16)' : 'rgba(255, 255, 255, 0.04)',
-      color: active ? '#4ADE80' : '#94A3B8',
+      background: active ? '#DCFCE7' : '#FFFFFF',
+      color: active ? '#15803D' : '#64748B',
       transition: 'all 0.15s ease',
       whiteSpace: 'nowrap',
       display: 'inline-flex',
@@ -555,56 +564,67 @@ function ParticipantCodingAttemptInner({ user }) {
       flex: 1,
       display: 'flex',
       flexDirection: 'column',
+      gap: 12,
       overflow: 'hidden',
-      background: '#0B0F19',
     },
     editorContainer: {
       flex: 1,
       overflow: 'hidden',
-      borderBottom: '1.5px solid #1E293B',
+      background: '#15191F',
+      border: '1px solid #E2E8F0',
+      borderRadius: 14,
+      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)',
     },
     bottomPanel: {
       flex: '0 0 auto',
       maxHeight: '38%',
       display: 'flex',
       flexDirection: 'column',
-      background: '#0D1527',
+      background: '#FFFFFF',
+      border: '1px solid #E2E8F0',
+      borderRadius: 14,
+      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)',
+      overflow: 'hidden',
     },
     tabBar: {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
-      padding: '8px 14px',
-      background: '#0D1527',
-      borderBottom: '1.5px solid #1E293B',
+      padding: '0 16px',
+      height: 42,
+      background: '#FFFFFF',
+      borderBottom: '1px solid #E2E8F0',
     },
     tabLeft: {
       display: 'flex',
       alignItems: 'center',
-      gap: 8,
+      gap: 18,
+      height: '100%',
     },
     tabBtn: (active) => ({
       display: 'inline-flex',
       alignItems: 'center',
       gap: 6,
-      padding: '5px 12px',
-      border: active ? '1px solid rgba(74, 222, 128, 0.3)' : '1px solid transparent',
-      borderRadius: 6,
+      padding: '0 4px',
+      height: '100%',
+      border: 'none',
+      borderBottom: active ? '2px solid #15803D' : '2px solid transparent',
       cursor: 'pointer',
-      fontSize: 12,
+      fontSize: 12.5,
       fontWeight: active ? 700 : 500,
-      background: active ? 'rgba(22, 163, 74, 0.16)' : 'transparent',
-      color: active ? '#4ADE80' : '#94A3B8',
+      background: 'transparent',
+      color: active ? '#111827' : '#64748B',
       transition: 'all 0.15s ease',
+      outline: 'none',
     }),
     actionBtn: {
       display: 'inline-flex',
       alignItems: 'center',
       gap: 5,
-      padding: '5px 10px',
-      background: 'rgba(255, 255, 255, 0.04)',
-      color: '#94A3B8',
-      border: '1px solid #334155',
+      padding: '4px 10px',
+      background: '#F8FAF9',
+      color: '#475569',
+      border: '1px solid #E2E8F0',
       borderRadius: 6,
       cursor: 'pointer',
       fontSize: 11.5,
@@ -615,12 +635,12 @@ function ParticipantCodingAttemptInner({ user }) {
       display: 'inline-flex',
       alignItems: 'center',
       gap: 6,
-      padding: '6px 16px',
-      background: disabled ? '#1E293B' : '#1E293B',
-      color: disabled ? '#64748B' : '#4ADE80',
-      border: disabled ? '1.5px solid #334155' : '1.5px solid rgba(74, 222, 128, 0.4)',
+      padding: '5px 14px',
+      background: disabled ? '#F1F5F9' : '#FFFFFF',
+      color: disabled ? '#94A3B8' : '#111827',
+      border: '1px solid #E2E8F0',
       borderRadius: 8,
-      fontSize: 12.5,
+      fontSize: 12,
       fontWeight: 600,
       cursor: disabled ? 'not-allowed' : 'pointer',
       opacity: disabled ? 0.6 : 1,
@@ -630,16 +650,16 @@ function ParticipantCodingAttemptInner({ user }) {
       display: 'inline-flex',
       alignItems: 'center',
       gap: 6,
-      padding: '6px 18px',
-      background: disabled ? '#334155' : 'linear-gradient(135deg, #16A34A 0%, #15803D 100%)',
+      padding: '5px 16px',
+      background: disabled ? '#94A3B8' : '#15803D',
       color: '#FFFFFF',
       border: 'none',
       borderRadius: 8,
-      fontSize: 12.5,
+      fontSize: 12,
       fontWeight: 700,
       cursor: disabled ? 'not-allowed' : 'pointer',
       opacity: disabled ? 0.6 : 1,
-      boxShadow: disabled ? 'none' : '0 2px 10px rgba(22, 163, 74, 0.35)',
+      boxShadow: disabled ? 'none' : '0 1px 3px rgba(21, 128, 61, 0.25)',
       transition: 'all 0.15s ease',
     }),
     headerSubmitBtn: (disabled) => ({
@@ -647,7 +667,7 @@ function ParticipantCodingAttemptInner({ user }) {
       alignItems: 'center',
       gap: 6,
       padding: '7px 18px',
-      background: disabled ? '#334155' : 'linear-gradient(135deg, #16A34A 0%, #15803D 100%)',
+      background: disabled ? '#94A3B8' : '#15803D',
       color: '#FFFFFF',
       border: 'none',
       borderRadius: 8,
@@ -655,17 +675,16 @@ function ParticipantCodingAttemptInner({ user }) {
       fontWeight: 700,
       cursor: disabled ? 'not-allowed' : 'pointer',
       opacity: disabled ? 0.6 : 1,
-      boxShadow: disabled ? 'none' : '0 3px 12px rgba(22, 163, 74, 0.4)',
+      boxShadow: disabled ? 'none' : '0 1px 4px rgba(21, 128, 61, 0.3)',
       transition: 'all 0.15s ease',
     }),
     outputArea: {
       flex: 1,
       overflow: 'auto',
-      padding: 14,
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
-      fontSize: 13,
-      background: '#060913',
-      color: '#F8FAFC',
+      padding: '12px 16px',
+      background: '#FFFFFF',
+      display: 'flex',
+      flexDirection: 'column',
     },
     verdictBadge: (v) => {
       const isPass = v === 'ACCEPTED';
@@ -673,13 +692,13 @@ function ParticipantCodingAttemptInner({ user }) {
         display: 'inline-flex',
         alignItems: 'center',
         gap: 6,
-        padding: '4px 12px',
+        padding: '3px 10px',
         borderRadius: 6,
-        fontSize: 12.5,
+        fontSize: 12,
         fontWeight: 700,
-        background: isPass ? 'rgba(22, 163, 74, 0.18)' : 'rgba(239, 68, 68, 0.18)',
-        color: isPass ? '#4ADE80' : '#F87171',
-        border: `1.5px solid ${isPass ? '#16A34A' : '#DC2626'}`,
+        background: isPass ? '#DCFCE7' : '#FEE2E2',
+        color: isPass ? '#15803D' : '#DC2626',
+        border: `1px solid ${isPass ? '#BBF7D0' : '#FECACA'}`,
       };
     },
   }
@@ -691,40 +710,78 @@ function ParticipantCodingAttemptInner({ user }) {
       requireScreenShare={false}
     >
       <div style={s.container}>
+        {/* ── TOP HEADER ── */}
         <div style={s.header}>
           <div style={s.headerLeft}>
-            <span style={s.title}>
-              <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#4ADE80', boxShadow: '0 0 8px #4ADE80' }} />
+            {/* WAVE INIT Brand Logo & Text */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <div style={{
+                width: 26,
+                height: 26,
+                borderRadius: 7,
+                background: '#15803D',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#FFFFFF'
+              }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M2 12h2l3 9 4-18 4 18 3-9h4" />
+                </svg>
+              </div>
+              <span style={{ fontSize: 15, fontWeight: 800, color: '#111827', letterSpacing: '-0.02em' }}>
+                WAVE <span style={{ color: '#15803D' }}>INIT</span>
+              </span>
+            </div>
+
+            {/* Status dot + Assessment Title */}
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#15803D', display: 'inline-block' }} />
+            <span style={{ fontSize: 13.5, fontWeight: 700, color: '#111827' }}>
               {assessment?.title || 'Coding Assessment'}
             </span>
-            {saveStatus && <span style={{ fontSize: 11.5, color: '#4ADE80', display: 'flex', alignItems: 'center', gap: 4, fontWeight: 500 }}><Save size={11} /> {saveStatus}</span>}
+
+            {saveStatus && (
+              <span style={{ fontSize: 11, color: '#15803D', display: 'flex', alignItems: 'center', gap: 4, fontWeight: 600, background: '#DCFCE7', padding: '2px 8px', borderRadius: 6 }}>
+                <Save size={10} /> {saveStatus}
+              </span>
+            )}
           </div>
+
           <div style={s.headerRight}>
             {timeLeft != null && (
               <div style={s.timer}>
-                <Clock size={14} />
+                <Clock size={13} color={timeLeft < 300 ? '#DC2626' : '#15803D'} />
                 <span>{formatTime(timeLeft)}</span>
               </div>
             )}
             <button onClick={() => handleSubmit(false)} disabled={submitting || submitted} style={s.headerSubmitBtn(submitting || submitted)}>
-              <Send size={13} />
+              <Send size={12} />
               {submitting ? 'Submitting...' : 'Submit Assessment'}
             </button>
           </div>
         </div>
 
+        {/* ── MAIN 2-COLUMN LAYOUT ── */}
         <div style={s.main}>
+          {/* Left Problem Panel */}
           <div style={s.leftPanel}>
-            <div style={s.problemNav}>
-              {problems.map((p, idx) => (
-                <button key={p.id} onClick={() => setCurrentProblemIndex(idx)} style={s.problemBtn(currentProblemIndex === idx)}>
-                  {`Problem ${idx + 1}`}
-                </button>
-              ))}
-            </div>
-            {currentProblem && <ProblemPanel problem={currentProblem} index={currentProblemIndex} total={problems.length} />}
+            {problems.length > 1 && (
+              <div style={s.problemNav}>
+                {problems.map((p, idx) => (
+                  <button key={p.id} onClick={() => setCurrentProblemIndex(idx)} style={s.problemBtn(currentProblemIndex === idx)}>
+                    {`Problem ${idx + 1}`}
+                  </button>
+                ))}
+              </div>
+            )}
+            {currentProblem && (
+              <div style={{ flex: 1, overflow: 'auto' }}>
+                <ProblemPanel problem={currentProblem} index={currentProblemIndex} total={problems.length} />
+              </div>
+            )}
           </div>
 
+          {/* Right Editor + Output Panel */}
           <div style={s.rightPanel}>
             <div style={s.editorContainer}>
               <CodeEditor
@@ -736,20 +793,24 @@ function ParticipantCodingAttemptInner({ user }) {
               />
             </div>
 
+            {/* Bottom Structured Output Panel */}
             <div style={s.bottomPanel}>
               <div style={s.tabBar}>
                 <div style={s.tabLeft}>
                   <button onClick={() => setActiveTab('output')} style={s.tabBtn(activeTab === 'output')}>
-                    <Terminal size={13} /> Execution Output
+                    Execution Output
                   </button>
-                  <button onClick={() => setShowCustomInput(prev => !prev)} style={s.actionBtn}>
-                    <Bug size={12} /> {showCustomInput ? 'Hide Custom Input' : 'Custom Input'}
+                  <button onClick={() => setShowCustomInput(prev => !prev)} style={s.tabBtn(showCustomInput)}>
+                    Custom Input
                   </button>
+                  <button onClick={() => setActiveTab('testcases')} style={s.tabBtn(activeTab === 'testcases')}>
+                    Test Cases
+                  </button>
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <button onClick={handleResetCode} style={s.actionBtn} title="Reset starter code">
                     <Trash2 size={12} /> Reset
                   </button>
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
                   <button onClick={handleRunCode} disabled={running || submitting || submitted} style={s.runBtn(running || submitting || submitted)}>
                     <Play size={12} /> {running ? 'Running...' : 'Run Code'}
                   </button>
@@ -760,8 +821,8 @@ function ParticipantCodingAttemptInner({ user }) {
               </div>
 
               {showCustomInput && (
-                <div style={{ padding: '10px 14px', background: '#0D1527', borderBottom: '1.5px solid #1E293B' }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 700, color: '#94A3B8', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                <div style={{ padding: '10px 16px', background: '#F8FAF9', borderBottom: '1px solid #E2E8F0' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#64748B', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
                     Custom Input (stdin):
                   </div>
                   <textarea
@@ -769,10 +830,10 @@ function ParticipantCodingAttemptInner({ user }) {
                     onChange={(e) => setCustomInput(e.target.value)}
                     style={{
                       width: '100%',
-                      height: 56,
-                      background: '#060913',
-                      color: '#F8FAFC',
-                      border: '1.5px solid #334155',
+                      height: 52,
+                      background: '#FFFFFF',
+                      color: '#1E293B',
+                      border: '1px solid #CBD5E1',
                       borderRadius: 6,
                       padding: 8,
                       fontSize: 12.5,
@@ -786,24 +847,95 @@ function ParticipantCodingAttemptInner({ user }) {
               )}
 
               <div style={s.outputArea}>
-                {judgeStatus && <div style={{ color: '#FBBF24', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }}><Loader2 size={14} className="animate-spin text-emerald-400" /> {judgeStatus}</div>}
-                {runStatus && (
-                  <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontWeight: 700, color: '#94A3B8' }}>Status:</span>
-                    <span style={{ color: runStatus === 'ACCEPTED' ? '#4ADE80' : '#F87171', fontWeight: 700 }}>{runStatus}</span>
-                    {runTime != null && <span style={{ color: '#64748B', fontSize: 11 }}>({runTime.toFixed(3)}s, {runMemory}MB)</span>}
+                {judgeStatus && (
+                  <div style={{ color: '#D97706', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 12.5, marginBottom: 8 }}>
+                    <Loader2 size={14} className="animate-spin text-emerald-600" /> {judgeStatus}
                   </div>
                 )}
-                {submitVerdict && (
-                  <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={s.verdictBadge(submitVerdict)}>{submitVerdict}</span>
-                    {submitPassed != null && <span style={{ fontSize: 12.5, color: '#CBD5E1', fontWeight: 600 }}>{submitPassed}/{submitTotal} test cases passed ({submitScore}%)</span>}
+
+                {/* Status / Metric Badges */}
+                {(runStatus || submitVerdict || output) && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {(runStatus === 'ACCEPTED' || submitVerdict === 'ACCEPTED') ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#15803D', fontWeight: 700, fontSize: 13 }}>
+                          <CheckCircle2 size={15} color="#15803D" />
+                          <span>Success</span>
+                        </div>
+                      ) : (runStatus || submitVerdict) ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#DC2626', fontWeight: 700, fontSize: 13 }}>
+                          <XCircle size={15} color="#DC2626" />
+                          <span>{runStatus || submitVerdict}</span>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {runTime != null && (
+                        <span style={{
+                          padding: '3px 10px',
+                          borderRadius: 6,
+                          background: '#F1F5F9',
+                          border: '1px solid #E2E8F0',
+                          color: '#334155',
+                          fontSize: 11.5,
+                          fontWeight: 600,
+                        }}>
+                          Time: {runTime.toFixed(2)}s
+                        </span>
+                      )}
+                      {runMemory != null && (
+                        <span style={{
+                          padding: '3px 10px',
+                          borderRadius: 6,
+                          background: '#EFF6FF',
+                          border: '1px solid #DBEAFE',
+                          color: '#1D4ED8',
+                          fontSize: 11.5,
+                          fontWeight: 600,
+                        }}>
+                          Memory: {runMemory} MB
+                        </span>
+                      )}
+                      {submitPassed != null && (
+                        <span style={{ fontSize: 12, color: '#64748B', fontWeight: 600 }}>
+                          {submitPassed}/{submitTotal} test cases passed ({submitScore}%)
+                        </span>
+                      )}
+                    </div>
                   </div>
                 )}
-                {output && <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#E2E8F0', lineHeight: '20px' }}>{output}</pre>}
-                {sampleResults.length > 0 && (
+
+                {/* Dark Terminal Output Area */}
+                {output ? (
+                  <pre style={{
+                    margin: 0,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    background: '#15191F',
+                    color: '#F8FAFC',
+                    padding: '12px 16px',
+                    borderRadius: 8,
+                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                    fontSize: 13,
+                    lineHeight: '1.5',
+                    overflow: 'auto',
+                    flex: 1,
+                  }}>
+                    {output}
+                  </pre>
+                ) : (
+                  !judgeStatus && (
+                    <div style={{ color: '#94A3B8', fontSize: 12.5, fontStyle: 'italic', padding: '8px 0' }}>
+                      Run your code or submit to see execution results.
+                    </div>
+                  )
+                )}
+
+                {/* Test Case Results list (when tab is testcases or multiple results) */}
+                {sampleResults.length > 0 && activeTab === 'testcases' && (
                   <div style={{ marginTop: 10 }}>
-                    <div style={{ fontSize: 11.5, fontWeight: 700, color: '#4ADE80', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>TEST CASE RESULTS:</div>
+                    <div style={{ fontSize: 11.5, fontWeight: 700, color: '#15803D', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>TEST CASE RESULTS:</div>
                     {sampleResults.map((tr, idx) => (
                       <div key={idx} style={{
                         display: 'flex',
@@ -811,18 +943,18 @@ function ParticipantCodingAttemptInner({ user }) {
                         gap: 8,
                         padding: '6px 12px',
                         borderRadius: 6,
-                        background: tr.passed ? 'rgba(22, 163, 74, 0.12)' : 'rgba(239, 68, 68, 0.12)',
-                        border: `1px solid ${tr.passed ? 'rgba(34, 197, 94, 0.35)' : 'rgba(239, 68, 68, 0.35)'}`,
+                        background: tr.passed ? '#F0FDF4' : '#FEF2F2',
+                        border: `1px solid ${tr.passed ? '#BBF7D0' : '#FECACA'}`,
                         marginBottom: 6,
                         fontSize: 12.5,
                       }}>
-                        {tr.passed ? <CheckCircle2 size={14} color="#4ADE80" /> : <XCircle size={14} color="#F87171" />}
-                        <span style={{ fontWeight: 600, color: tr.passed ? '#4ADE80' : '#F87171' }}>{`Test Case ${idx + 1}: ${tr.passed ? 'PASSED' : 'FAILED'}`}</span>
-                        <span style={{ marginLeft: 'auto', color: '#94A3B8', fontSize: 11, fontFamily: 'monospace' }}>{tr.executionTime != null ? `${Number(tr.executionTime).toFixed(3)}s` : ''}</span>
+                        {tr.passed ? <CheckCircle2 size={14} color="#15803D" /> : <XCircle size={14} color="#DC2626" />}
+                        <span style={{ fontWeight: 600, color: tr.passed ? '#15803D' : '#DC2626' }}>{`Test Case ${idx + 1}: ${tr.passed ? 'PASSED' : 'FAILED'}`}</span>
+                        <span style={{ marginLeft: 'auto', color: '#64748B', fontSize: 11, fontFamily: 'monospace' }}>{tr.executionTime != null ? `${Number(tr.executionTime).toFixed(3)}s` : ''}</span>
                       </div>
                     ))}
                     {submitTotal > sampleResults.filter(r => !r.isHidden).length && (
-                      <div style={{ marginTop: 8, fontSize: 12, color: '#94A3B8', fontStyle: 'italic' }}>
+                      <div style={{ marginTop: 8, fontSize: 12, color: '#64748B', fontStyle: 'italic' }}>
                         {submitTotal - sampleResults.filter(r => !r.isHidden).length} hidden test cases were evaluated
                       </div>
                     )}

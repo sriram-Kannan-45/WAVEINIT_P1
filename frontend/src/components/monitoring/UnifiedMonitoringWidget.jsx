@@ -694,9 +694,9 @@ export default function UnifiedMonitoringWidget({
           className="dual-proctor-minimized-pill"
           title="Click to expand monitoring widget"
         >
-          <div className="dual-proctor-live-dot" />
-          <span className="text-xs font-bold text-slate-200">Monitoring Active</span>
-          <Maximize2 size={12} className="text-slate-400" />
+          <Shield size={14} color="#15803D" strokeWidth={2.5} />
+          <span>MONITORING</span>
+          <ChevronUp size={14} color="#15803D" />
         </div>
       )}
 
@@ -707,146 +707,100 @@ export default function UnifiedMonitoringWidget({
         {/* Header */}
         <div className="dual-proctor-header">
           <div className="dual-proctor-title">
-            <div className="dual-proctor-live-dot" />
-            <span>Monitoring Engine</span>
-            {recentViolation && Date.now() - recentViolation.time < 4000 ? (
-              <span className="text-[10px] bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded border border-red-500/40 flex items-center gap-1 font-semibold ml-1 animate-pulse">
-                <AlertTriangle size={10} /> {recentViolation.type?.replace(/_/g, ' ')}
-              </span>
-            ) : (
-              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/30 flex items-center gap-1 font-medium ml-1">
-                <Shield size={10} /> Active
-              </span>
-            )}
+            <Shield size={14} color="#15803D" strokeWidth={2.5} />
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.5px' }}>MONITORING</span>
           </div>
 
           <div className="dual-proctor-actions">
-            <button
-              type="button"
-              onClick={() => setViewLayout((prev) => (prev === 'side_by_side' ? 'pip' : 'side_by_side'))}
-              className="dual-proctor-btn"
-              title={viewLayout === 'side_by_side' ? 'Picture-in-Picture' : 'Side-by-Side'}
-            >
-              <Layers size={13} />
-            </button>
             <button
               type="button"
               onClick={() => setIsMinimized(true)}
               className="dual-proctor-btn"
               title="Minimize Widget"
             >
-              <Minimize2 size={13} />
+              <ChevronDown size={14} />
             </button>
           </div>
         </div>
 
         {/* Body */}
         <div className="dual-proctor-body">
-          {/* Laptop Feed (MediaPipe) */}
-          <div className="dual-proctor-feed">
-            <video
-              ref={(el) => {
-                webcamVideoRef.current = el;
-                if (el && webcamStream && el.srcObject !== webcamStream) {
-                  el.srcObject = webcamStream;
-                  el.play().catch(() => {});
-                }
-              }}
-              autoPlay
-              playsInline
-              muted
-              className="dual-proctor-video transform -scale-x-100"
-              style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000', display: 'block' }}
-            />
-            <div className="dual-proctor-badge">
-              <Camera size={10} /> Laptop
+          {/* Tile 1: Webcam */}
+          <div className="dual-proctor-tile">
+            <div className="dual-proctor-tile-header">
+              <Camera size={12} color="#15803D" />
+              <span>Webcam</span>
             </div>
-            <div className="dual-proctor-status">
-              <CheckCircle2 size={10} /> Active
-            </div>
-          </div>
-
-          {/* Mobile Feed (YOLO11s) */}
-          {mobileEnabled && (
             <div className="dual-proctor-feed">
-              {/* 1. Live WebRTC Video Stream */}
               <video
                 ref={(el) => {
-                  mobileVideoRef.current = el;
-                  if (el && remoteMobileStream && el.srcObject !== remoteMobileStream) {
-                    el.srcObject = remoteMobileStream;
-                    el.play().then(() => setRemoteVideoPlaying(true)).catch(() => {});
+                  webcamVideoRef.current = el;
+                  if (el && webcamStream && el.srcObject !== webcamStream) {
+                    el.srcObject = webcamStream;
+                    el.play().catch(() => {});
                   }
                 }}
                 autoPlay
                 playsInline
                 muted
-                className={`dual-proctor-video ${remoteVideoPlaying ? 'block' : 'hidden'}`}
-                style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
-                onLoadedMetadata={(e) => {
-                  if (e.target.videoWidth > 0) setRemoteVideoPlaying(true);
-                  e.target.play().catch(() => {});
-                }}
-                onPlaying={(e) => {
-                  if (e.target.videoWidth > 0) setRemoteVideoPlaying(true);
-                }}
+                className="dual-proctor-video transform -scale-x-100"
               />
-
-              {/* 2. Direct Fallback Frame Stream (rendered while WebRTC is initializing or as fallback) */}
-              {!remoteVideoPlaying && lastReceivedFrame && (
-                <img
-                  src={lastReceivedFrame}
-                  className="dual-proctor-video"
-                  style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000', display: 'block' }}
-                  alt="Live Mobile Feed"
-                />
-              )}
-
-              {/* 3. Valid status but awaiting initial frame (loading state — never silent black box) */}
-              {!remoteVideoPlaying && !lastReceivedFrame && mobileConnected && (
-                <div className="flex flex-col items-center justify-center h-full text-slate-400 p-2 text-center gap-1.5 bg-slate-900/90 w-full">
-                  <RefreshCw size={18} className="animate-spin text-emerald-400" />
-                  <span className="text-[10.5px] text-emerald-300 font-semibold">
-                    Loading Mobile Feed...
-                  </span>
-                  <span className="text-[8px] text-slate-400">Synchronizing live video stream</span>
-                </div>
-              )}
-
-              {/* 4. Stream disconnected / Grace period active */}
-              {!remoteVideoPlaying && !lastReceivedFrame && !mobileConnected && (
-                <div className="flex flex-col items-center justify-center h-full text-slate-400 p-2 text-center gap-1.5 bg-slate-900/90 w-full">
-                  <Smartphone size={18} className="text-amber-400 animate-pulse" />
-                  <span className="text-[10px] text-amber-300 font-medium flex items-center gap-1">
-                    <RefreshCw size={9} className="animate-spin" /> Side Camera Reconnecting...
-                  </span>
-                  <span className="text-[8px] text-slate-400">Grace period active</span>
-                </div>
-              )}
-
-              <div className="dual-proctor-badge">
-                <Smartphone size={10} /> Mobile
-              </div>
-              <div className="dual-proctor-status">
-                <span
-                  className={`text-[8.5px] font-bold px-1 py-0.2 rounded border ${getCompositionBadgeClass(
-                    mobileMetrics.compositionState
-                  )}`}
-                >
-                  {mobileMetrics.compositionState.replace(/_/g, ' ')}
-                </span>
-              </div>
             </div>
-          )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#16A34A', display: 'inline-block' }} />
+              <span style={{ fontSize: 10, fontWeight: 700, color: '#15803D' }}>Active</span>
+            </div>
+          </div>
+
+          {/* Tile 2: Mobile Camera */}
+          <div className="dual-proctor-tile">
+            <div className="dual-proctor-tile-header">
+              <Smartphone size={12} color="#475569" />
+              <span>Mobile Camera</span>
+            </div>
+            <div className="dual-proctor-tile-box">
+              {mobileConnected || remoteVideoPlaying || lastReceivedFrame ? (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#15803D', fontWeight: 700, fontSize: 11 }}>
+                    <Check size={13} color="#15803D" strokeWidth={3} />
+                    <span>Connected</span>
+                  </div>
+                  <span style={{ fontSize: 9.5, color: '#64748B', marginTop: 4 }}>
+                    Grace period active
+                  </span>
+                </>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#D97706', fontWeight: 600, fontSize: 10.5 }}>
+                    <RefreshCw size={11} className="animate-spin text-amber-500" />
+                    <span>Connecting...</span>
+                  </div>
+                  <span style={{ fontSize: 9, color: '#94A3B8', marginTop: 4 }}>
+                    Waiting for mobile
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
         </div>
 
-        {/* Corrective Guidance Footer */}
-        {mobileMetrics.userMessage && mobileMetrics.compositionState !== 'VALID' && (
-          <div className="px-3 py-1.5 bg-amber-500/10 border-t border-amber-500/20 text-[10px] text-amber-300 flex items-center gap-1.5">
-            <AlertTriangle size={11} className="flex-shrink-0" />
-            <span className="truncate">{mobileMetrics.userMessage}</span>
+        {/* Security Status Banner */}
+        <div className="dual-proctor-security-footer">
+          <div style={{
+            width: 26, height: 26, borderRadius: '50%', background: '#DCFCE7',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+          }}>
+            <Shield size={14} color="#15803D" strokeWidth={2.2} />
           </div>
-        )}
+          <div>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: '#15803D', lineHeight: 1.2 }}>
+              All Systems Normal
+            </div>
+            <div style={{ fontSize: 10, color: '#475569', marginTop: 1 }}>
+              No violations detected
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Live Proctor Grace Warning Banner (First 3 Alerts As On-Screen Warnings) */}

@@ -118,49 +118,88 @@ const CodeEditor = ({
   };
 
   const toolbarStyle = {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    padding: '8px 14px', background: theme === 'vs-dark' ? '#0D1527' : '#F8FAFC',
-    borderBottom: theme === 'vs-dark' ? '1px solid #1E293B' : '1px solid #E2E8F0',
-    flexShrink: 0, gap: 10,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '8px 16px',
+    background: theme === 'vs-dark' ? '#15191F' : '#F8FAFC',
+    borderBottom: theme === 'vs-dark' ? '1px solid #242B35' : '1px solid #E2E8F0',
+    flexShrink: 0,
+    gap: 12,
   };
 
   const selectStyle = {
-    background: theme === 'vs-dark' ? '#0B0F19' : '#FFFFFF',
+    background: theme === 'vs-dark' ? '#1C222B' : '#FFFFFF',
     color: theme === 'vs-dark' ? '#F8FAFC' : '#0F172A',
-    border: theme === 'vs-dark' ? '1px solid #334155' : '1px solid #CBD5E1',
-    borderRadius: 6, padding: '4px 10px', fontSize: 12, fontWeight: 500,
-    cursor: 'pointer', outline: 'none', transition: 'border-color 0.15s ease',
+    border: theme === 'vs-dark' ? '1px solid #2E3744' : '1px solid #CBD5E1',
+    borderRadius: 8,
+    padding: '5px 12px',
+    fontSize: 12.5,
+    fontWeight: 500,
+    cursor: 'pointer',
+    outline: 'none',
+    transition: 'border-color 0.15s ease',
   };
 
   const btnStyle = {
-    display: 'inline-flex', alignItems: 'center', gap: 4,
-    padding: '4px 8px', background: theme === 'vs-dark' ? 'rgba(255, 255, 255, 0.04)' : '#F1F5F9',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 5,
+    padding: '5px 10px',
+    background: theme === 'vs-dark' ? '#1C222B' : '#F1F5F9',
     color: theme === 'vs-dark' ? '#94A3B8' : '#475569',
-    border: theme === 'vs-dark' ? '1px solid #334155' : '1px solid #E2E8F0',
-    borderRadius: 6, cursor: 'pointer',
-    fontSize: 11, fontWeight: 600, transition: 'all 0.15s ease',
+    border: theme === 'vs-dark' ? '1px solid #2E3744' : '1px solid #E2E8F0',
+    borderRadius: 8,
+    cursor: 'pointer',
+    fontSize: 11.5,
+    fontWeight: 600,
+    transition: 'all 0.15s ease',
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: theme === 'vs-dark' ? '#0B0F19' : '#FFFFFF' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: theme === 'vs-dark' ? '#15191F' : '#FFFFFF' }}>
       <div style={toolbarStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Code2 size={16} color={theme === 'vs-dark' ? '#4ADE80' : '#16A34A'} />
-          <select value={currentLang} onChange={handleLanguageChange} style={selectStyle}>
-            {LANGUAGES.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
-          </select>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            background: theme === 'vs-dark' ? '#1C222B' : '#FFFFFF',
+            border: theme === 'vs-dark' ? '1px solid #2E3744' : '1px solid #CBD5E1',
+            borderRadius: 8,
+            padding: '2px 8px 2px 10px',
+          }}>
+            <Code2 size={14} color="#15803D" />
+            <select
+              value={currentLang}
+              onChange={handleLanguageChange}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: theme === 'vs-dark' ? '#F8FAFC' : '#0F172A',
+                fontSize: 12.5,
+                fontWeight: 600,
+                cursor: 'pointer',
+                outline: 'none',
+                padding: '4px 0',
+              }}
+            >
+              {LANGUAGES.map(l => <option key={l.id} value={l.id} style={{ background: '#1C222B', color: '#F8FAFC' }}>{l.label}</option>)}
+            </select>
+          </div>
         </div>
+
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <select value={fontSize} onChange={e => setFontSize(Number(e.target.value))} style={selectStyle}>
-            {FONT_SIZES.map(s => <option key={s} value={s}>{s}px</option>)}
+            {FONT_SIZES.map(s => <option key={s} value={s} style={{ background: '#1C222B', color: '#F8FAFC' }}>{s}px</option>)}
           </select>
-          <select value={theme} onChange={e => setTheme(e.target.value)} style={{ ...selectStyle, fontSize: 11 }}>
-            <option value="vs-dark">Dark</option>
-            <option value="vs">Light</option>
-            <option value="hc-black">High Contrast</option>
+          <select value={theme} onChange={e => setTheme(e.target.value)} style={selectStyle}>
+            <option value="vs-dark" style={{ background: '#1C222B', color: '#F8FAFC' }}>Dark</option>
+            <option value="vs" style={{ background: '#FFFFFF', color: '#0F172A' }}>Light</option>
+            <option value="hc-black" style={{ background: '#000000', color: '#FFFFFF' }}>High Contrast</option>
           </select>
           <button onClick={() => setMinimap(!minimap)} style={btnStyle} title={minimap ? 'Hide minimap' : 'Show minimap'}>
-            {minimap ? <PanelRightClose size={12} /> : <PanelRightOpen size={12} />}
+            {minimap ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
           </button>
           <button onClick={() => setWordWrap(!wordWrap)} style={btnStyle} title={wordWrap ? 'Disable word wrap' : 'Enable word wrap'}>
             <Search size={12} /> {wordWrap ? 'Wrap On' : 'Wrap'}
@@ -169,7 +208,7 @@ const CodeEditor = ({
       </div>
       <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
         {mounting && (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: theme === 'vs-dark' ? '#0B0F19' : '#FFFFFF', zIndex: 10 }}>
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: theme === 'vs-dark' ? '#15191F' : '#FFFFFF', zIndex: 10 }}>
             <Loader2 size={24} className="animate-spin text-emerald-500" color="#16A34A" />
           </div>
         )}
