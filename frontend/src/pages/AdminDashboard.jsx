@@ -81,6 +81,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
   const [trainerTotalPages, setTrainerTotalPages] = useState(1)
   const [selectedTrainerIds, setSelectedTrainerIds] = useState(new Set())
   const [trainersLoading, setTrainersLoading] = useState(false)
+  const [trainersError, setTrainersError] = useState(null)
   const [trainerDetailModal, setTrainerDetailModal] = useState(null)
 
   // Participants pagination & filters & selection
@@ -213,6 +214,8 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       fetchAdminReport()
     } else if (tab === 'trainers') {
       fetchTrainers(trainerPage, trainerLimit, trainerSearch)
+    } else if (tab === 'createTraining' || tab === 'createTrainer') {
+      fetchTrainers(1, 200, '')
     } else if (tab === 'trainings') {
       fetchTrainings(trainingPage, trainingLimit, trainingSearch, trainingStatusFilter)
     } else if (tab === 'participants') {
@@ -297,6 +300,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const fetchTrainers = async (page = trainerPage, limit = trainerLimit, search = trainerSearch) => {
     setTrainersLoading(true)
+    setTrainersError(null)
     try {
       const params = new URLSearchParams()
       params.append('page', page)
@@ -305,12 +309,19 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
       const r = await fetchWithTimeout(`${API_BASE}/admin/trainers?${params.toString()}`, { headers: auth() }, 10000)
       const d = await r.json().catch(() => ({}))
-      const list = d.trainers || (d.data && d.data.trainers) || []
+      if (!r.ok) {
+        throw new Error(d.error || d.message || `Server error (${r.status})`)
+      }
+      const list = d.trainers || (d.data && d.data.trainers) || d.data || []
       setTrainers(list)
       setTrainerTotal(d.total !== undefined ? d.total : list.length)
       setTrainerTotalPages(d.totalPages || Math.ceil((d.total || list.length) / limit) || 1)
+      if (list.length > 0 && limit >= 50) {
+        try { sessionStorage.setItem('admin_all_trainers_cache', JSON.stringify(list)) } catch (_) {}
+      }
     } catch (e) {
       console.error('fetchTrainers error:', e.message)
+      setTrainersError(e.message)
     } finally {
       setTrainersLoading(false)
     }
@@ -1896,6 +1907,10 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
             onDelete={handleDeleteTraining}
             loading={loading}
             onBack={() => handleTabChange('trainings')}
+            token={user?.token}
+            trainersLoading={trainersLoading}
+            trainersError={trainersError}
+            onRetryTrainers={() => fetchTrainers(1, 200, '')}
           />
         </motion.div>
       )}

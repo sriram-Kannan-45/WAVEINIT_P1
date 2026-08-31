@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, CalendarDays, Check, ChevronDown, Loader2, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { ArrowLeft, CalendarDays, Check, ChevronDown, Loader2, RefreshCw, X } from 'lucide-react'
+import { API_BASE } from '../../api/api'
+import { fetchWithTimeout } from '../../api/request'
 
 const labelStyle = { fontSize: 12, fontWeight: 600, color: '#334155', display: 'block', marginBottom: 4 }
 const inputStyle = { width: '100%', height: 40, padding: '0 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13, fontFamily: 'Inter, system-ui, sans-serif', outline: 'none', boxSizing: 'border-box' }
@@ -13,12 +15,37 @@ const cardHeaderStyle = {
   borderBottom: '1px solid #e2e8f0',
 }
 
-function TrainerPicker({ trainers, selectedIds, onChange }) {
+function TrainerPicker({
+  trainers: propTrainers = [],
+  selectedIds = [],
+  onChange,
+  token,
+  trainersLoading: propLoading = false,
+  trainersError: propError = null,
+  onRetryTrainers,
+}) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const rootRef = useRef(null)
   const inputRef = useRef(null)
 
+  // Internal trainer states
+  const [trainers, setTrainers] = useState(() => {
+    if (Array.isArray(propTrainers) && propTrainers.length > 0) return propTrainers
+    try {
+      const cached = sessionStorage.getItem('admin_all_trainers_cache')
+      return cached ? JSON.parse(cached) : []
+    } catch {
+      return []
+    }
+  })
+  const [internalLoading, setInternalLoading] = useState(false)
+  const [internalError, setInternalError] = useState(null)
+  const [trainersLoaded, setTrainersLoaded] = useState(() => {
+    return Array.isArray(propTrainers) && propTrainers.length > 0
+  })
+
+  // Close on outside click
   useEffect(() => {
     const onDocMouseDown = (e) => {
       if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false)
@@ -27,12 +54,87 @@ function TrainerPicker({ trainers, selectedIds, onChange }) {
     return () => document.removeEventListener('mousedown', onDocMouseDown)
   }, [])
 
+  // Self-healing trainer fetcher
+  const loadTrainers = useCallback(async (retryCount = 0) => {
+    const activeToken = token || localStorage.getItem('token') || sessionStorage.getItem('token')
+    if (!activeToken) {
+      console.warn('[TrainerPicker] No auth token available yet')
+      return
+    }
+
+    setInternalLoading(true)
+    setInternalError(null)
+    console.log(`[TrainerPicker] Trainer fetch started (attempt: ${retryCount + 1})`)
+
+    try {
+      const res = await fetchWithTimeout(
+        `${API_BASE}/admin/trainers?limit=200`,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${activeToken}`,
+          },
+        },
+        10000
+      )
+
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || data.message || `Server error (${res.status})`)
+      }
+
+      const list = data.trainers || data.data || []
+      console.log(`[TrainerPicker] Trainer fetch succeeded: ${list.length} trainers received`)
+      setTrainers(list)
+      setTrainersLoaded(true)
+      setInternalError(null)
+      try {
+        sessionStorage.setItem('admin_all_trainers_cache', JSON.stringify(list))
+      } catch {}
+    } catch (err) {
+      console.error('[TrainerPicker] Trainer fetch failed:', err.message)
+      if (retryCount < 2) {
+        const delay = (retryCount + 1) * 1000
+        setTimeout(() => loadTrainers(retryCount + 1), delay)
+      } else {
+        setInternalError(err.message || 'Unable to load trainers. Please try again.')
+        setTrainersLoaded(true)
+      }
+    } finally {
+      setInternalLoading(false)
+    }
+  }, [token])
+
+  // Synchronize when parent passes valid trainer list
+  useEffect(() => {
+    if (Array.isArray(propTrainers) && propTrainers.length > 0) {
+      setTrainers(propTrainers)
+      setTrainersLoaded(true)
+      setInternalError(null)
+    } else if (!trainersLoaded && !internalLoading) {
+      loadTrainers(0)
+    }
+  }, [propTrainers, trainersLoaded, internalLoading, loadTrainers])
+
+  const isLoading = propLoading || internalLoading
+  const errorMsg = propError || internalError
+
+  const handleRetry = (e) => {
+    e?.stopPropagation()
+    if (onRetryTrainers) {
+      onRetryTrainers()
+    }
+    loadTrainers(0)
+  }
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return trainers
     return trainers.filter(t =>
       t.name?.toLowerCase().includes(q) ||
-      t.email?.toLowerCase().includes(q)
+      t.email?.toLowerCase().includes(q) ||
+      t.username?.toLowerCase().includes(q) ||
+      t.employeeId?.toLowerCase().includes(q)
     )
   }, [trainers, query])
 
@@ -141,7 +243,7 @@ function TrainerPicker({ trainers, selectedIds, onChange }) {
         pointerEvents: 'none',
         display: 'flex',
       }} aria-hidden="true">
-        <ChevronDown size={16} />
+        {isLoading ? <Loader2 size={16} className="animate-spin text-emerald-600" /> : <ChevronDown size={16} />}
       </span>
 
       {open && (
@@ -158,14 +260,66 @@ function TrainerPicker({ trainers, selectedIds, onChange }) {
             border: '1px solid #e2e8f0',
             borderRadius: 10,
             boxShadow: '0 10px 30px rgba(15, 23, 42, 0.12)',
-            maxHeight: 200,
+            maxHeight: 220,
             overflowY: 'auto',
             padding: 6,
           }}
         >
-          {filtered.length === 0 ? (
+          {isLoading ? (
             <div style={{
-              padding: '12px 10px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              padding: '16px 12px',
+              fontSize: 13,
+              color: '#64748b',
+              fontFamily: 'Inter, system-ui, sans-serif',
+            }}>
+              <Loader2 size={16} className="animate-spin text-emerald-600" />
+              <span>Loading trainers...</span>
+            </div>
+          ) : errorMsg ? (
+            <div style={{ padding: '14px 12px', textAlign: 'center', fontFamily: 'Inter, system-ui, sans-serif' }}>
+              <div style={{ fontSize: 12.5, color: '#dc2626', marginBottom: 8, fontWeight: 500 }}>
+                Unable to load trainers. Please try again.
+              </div>
+              <button
+                type="button"
+                onClick={handleRetry}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '5px 12px',
+                  background: '#f1f5f9',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: 6,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: '#334155',
+                  cursor: 'pointer',
+                  transition: 'background 0.15s',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = '#e2e8f0' }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = '#f1f5f9' }}
+              >
+                <RefreshCw size={12} /> Retry
+              </button>
+            </div>
+          ) : trainersLoaded && !query.trim() && trainers.length === 0 ? (
+            <div style={{
+              padding: '16px 10px',
+              textAlign: 'center',
+              fontSize: 12.5,
+              color: '#94a3b8',
+              fontFamily: 'Inter, system-ui, sans-serif',
+            }}>
+              No trainers available.
+            </div>
+          ) : trainersLoaded && query.trim() && filtered.length === 0 ? (
+            <div style={{
+              padding: '16px 10px',
               textAlign: 'center',
               fontSize: 12.5,
               color: '#94a3b8',
@@ -173,55 +327,57 @@ function TrainerPicker({ trainers, selectedIds, onChange }) {
             }}>
               No trainers match your search.
             </div>
-          ) : filtered.map(t => {
-            const checked = selectedIds.includes(t.id)
-            return (
-              <button
-                key={t.id}
-                type="button"
-                role="option"
-                aria-selected={checked}
-                onClick={() => toggle(t.id)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  width: '100%',
-                  padding: '7px 10px',
-                  border: 'none',
-                  background: checked ? '#f0fdf4' : 'transparent',
-                  borderRadius: 6,
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  font: 'inherit',
-                  color: '#111827',
-                  transition: 'background 0.15s',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = checked ? '#f0fdf4' : '#f8fafc' }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = checked ? '#f0fdf4' : 'transparent' }}
-              >
-                <span style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  width: 16,
-                  height: 16,
-                  borderRadius: 4,
-                  border: `1px solid ${checked ? '#16A34A' : '#e2e8f0'}`,
-                  background: checked ? '#16A34A' : '#fff',
-                  color: '#fff',
-                  flexShrink: 0,
-                  transition: 'background 0.15s, border-color 0.15s',
-                }} aria-hidden="true">
-                  {checked && <Check size={11} />}
-                </span>
-                <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                  <span style={{ fontSize: 12.5, fontWeight: 600, overflowWrap: 'anywhere' }}>{t.name}</span>
-                  <span style={{ fontSize: 11, color: '#64748b', overflowWrap: 'anywhere' }}>{t.email}</span>
-                </span>
-              </button>
-            )
-          })}
+          ) : (
+            filtered.map(t => {
+              const checked = selectedIds.includes(t.id)
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  role="option"
+                  aria-selected={checked}
+                  onClick={() => toggle(t.id)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                    padding: '7px 10px',
+                    border: 'none',
+                    background: checked ? '#f0fdf4' : 'transparent',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    font: 'inherit',
+                    color: '#111827',
+                    transition: 'background 0.15s',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = checked ? '#f0fdf4' : '#f8fafc' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = checked ? '#f0fdf4' : 'transparent' }}
+                >
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: 16,
+                    height: 16,
+                    borderRadius: 4,
+                    border: `1px solid ${checked ? '#16A34A' : '#e2e8f0'}`,
+                    background: checked ? '#16A34A' : '#fff',
+                    color: '#fff',
+                    flexShrink: 0,
+                    transition: 'background 0.15s, border-color 0.15s',
+                  }} aria-hidden="true">
+                    {checked && <Check size={11} />}
+                  </span>
+                  <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 600, overflowWrap: 'anywhere' }}>{t.name}</span>
+                    <span style={{ fontSize: 11, color: '#64748b', overflowWrap: 'anywhere' }}>{t.email}</span>
+                  </span>
+                </button>
+              )
+            })
+          )}
         </div>
       )}
     </div>
@@ -235,6 +391,10 @@ export default function CreateTrainingModule({
   onSubmit,
   loading = false,
   onBack,
+  token,
+  trainersLoading = false,
+  trainersError = null,
+  onRetryTrainers,
 }) {
   const set = (key) => (e) => onFormChange(p => ({ ...p, [key]: e.target.value }))
   const setTrainerIds = (ids) => onFormChange(p => ({ ...p, trainerIds: ids, trainerId: ids[0] || '' }))
@@ -297,6 +457,10 @@ export default function CreateTrainingModule({
                     trainers={trainers}
                     selectedIds={Array.isArray(form.trainerIds) ? form.trainerIds : []}
                     onChange={setTrainerIds}
+                    token={token}
+                    trainersLoading={trainersLoading}
+                    trainersError={trainersError}
+                    onRetryTrainers={onRetryTrainers}
                   />
                 </div>
 
