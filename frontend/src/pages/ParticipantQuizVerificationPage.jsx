@@ -322,45 +322,67 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
     if (!currentSessionId) return
 
     console.log('[LAPTOP-VERIF] Connecting to Socket.IO for session:', currentSessionId)
-    const socket = io(BACKEND_ORIGIN, {
+    const socket = io(BACKEND_ORIGIN || window.location.origin, {
       path: '/socket.io/',
       transports: ['websocket', 'polling'],
-      reconnectionAttempts: 15,
+      reconnectionAttempts: 20,
       reconnectionDelay: 1000,
     })
     socketRef.current = socket
 
     socket.on('connect', () => {
       console.log('[LAPTOP-VERIF] Connected to verification socket with ID:', socket.id)
-      socket.emit('assessment_verif:join-session', {
+      socket.emit('assessment_verif:join', {
         sessionId: currentSessionId,
         role: 'laptop',
         clientType: 'browser_desktop',
       })
     })
 
-    socket.on('assessment_verif:mobile-scanned', (payload) => {
-      console.log('[LAPTOP-VERIF] Mobile scanned QR:', payload)
+    // 1. Mobile Joined / Scanned
+    socket.on('assessment_verif:mobile_joined', (payload) => {
+      console.log('[LAPTOP-VERIF] Mobile joined:', payload)
       setQrScanned(true)
       setParticipantValidated(true)
-      if (payload.mobileSocketId) {
-        mobileSocketIdRef.current = payload.mobileSocketId
+      if (payload?.socketId) {
+        mobileSocketIdRef.current = payload.socketId
+        // Inform mobile that laptop is active in the room
+        socket.emit('assessment_verif:laptop_joined', {
+          sessionId: currentSessionId,
+          socketId: socket.id,
+        })
       }
     })
 
-    socket.on('assessment_verif:mobile-camera-ready', (payload) => {
-      console.log('[LAPTOP-VERIF] Mobile camera ready:', payload)
+    // 2. Mobile Status Updates
+    socket.on('assessment_verif:mobile_status', (payload) => {
+      console.log('[LAPTOP-VERIF] Mobile status update:', payload)
+      setQrScanned(true)
+      setParticipantValidated(true)
+      if (payload?.cameraStreaming || payload?.status === 'STREAMING' || payload?.mobileReady) {
+        setMobileCameraReady(true)
+        setMobileStreamConnected(true)
+      }
+      if (payload?.socketId) {
+        mobileSocketIdRef.current = payload.socketId
+      }
+    })
+
+    socket.on('assessment_verif:stream_status', (payload) => {
+      console.log('[LAPTOP-VERIF] Stream status update:', payload)
+      if (payload?.cameraStreaming || payload?.status === 'STREAMING' || payload?.mobileReady) {
+        setMobileCameraReady(true)
+        setMobileStreamConnected(true)
+      }
+    })
+
+    // 3. WebRTC Offer from Mobile
+    socket.on('assessment_verif:offer', async ({ offer, fromSocketId, sessionId }) => {
+      console.log('[LAPTOP-VERIF] Received WebRTC offer from mobile:', fromSocketId)
+      if (fromSocketId) mobileSocketIdRef.current = fromSocketId
+      setQrScanned(true)
+      setParticipantValidated(true)
       setMobileCameraReady(true)
-      setQrScanned(true)
-      setParticipantValidated(true)
-      if (payload.mobileSocketId) {
-        mobileSocketIdRef.current = payload.mobileSocketId
-      }
-    })
-
-    socket.on('assessment_verif:webrtc-offer', async ({ offer, mobileSocketId }) => {
-      console.log('[LAPTOP-VERIF] Received WebRTC offer from mobile')
-      if (mobileSocketId) mobileSocketIdRef.current = mobileSocketId
       const pc = getOrCreatePeerConnection()
 
       try {
@@ -373,9 +395,9 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
         const answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
 
-        socket.emit('assessment_verif:webrtc-answer', {
+        socket.emit('assessment_verif:answer', {
           sessionId: currentSessionId,
-          targetSocketId: mobileSocketIdRef.current,
+          targetSocketId: fromSocketId || mobileSocketIdRef.current,
           answer,
         })
       } catch (e) {
@@ -383,6 +405,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
       }
     })
 
+    // 4. ICE Candidates from Mobile
     socket.on('assessment_verif:ice-candidate', async ({ candidate }) => {
       const pc = pcRef.current
       if (pc && candidate) {
@@ -398,25 +421,28 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
       }
     })
 
-    socket.on('assessment_verif:frame-preview', (payload) => {
-      if (payload.frameData) {
-        setLastFrame(payload.frameData)
+    // 5. Fallback Real-time Video Frames
+    socket.on('assessment_verif:frame', (payload) => {
+      const frame = payload?.frame || payload?.frameData
+      if (frame) {
+        setLastFrame(frame)
         setMobileStreamConnected(true)
         setMobileCameraReady(true)
         setQrScanned(true)
         setParticipantValidated(true)
+        setIsFullyVerified(true)
+        setIsDisconnected(false)
       }
     })
 
-    socket.on('assessment_verif:session-status-updated', (payload) => {
-      if (payload.status === 'PAIRED' || payload.status === 'VERIFIED') {
-        setQrScanned(true)
-        setParticipantValidated(true)
-        setMobileCameraReady(true)
-      }
-      if (payload.status === 'VERIFIED') {
-        setIsFullyVerified(true)
-      }
+    // 6. Verification Unlocked
+    socket.on('assessment_verif:unlocked', () => {
+      console.log('[LAPTOP-VERIF] Assessment unlocked by mobile stream')
+      setQrScanned(true)
+      setParticipantValidated(true)
+      setMobileCameraReady(true)
+      setMobileStreamConnected(true)
+      setIsFullyVerified(true)
     })
 
     socket.on('assessment_verif:mobile-disconnected', () => {
@@ -444,25 +470,26 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
       try {
         const res = await fetch(`${API_BASE}/assessment-verification/status/${currentSessionId}`)
         const data = await res.json()
-        if (data.success && data.session) {
-          const s = data.session
-          if (s.qrScanned || s.status === 'PAIRED' || s.status === 'VERIFIED' || s.mobileVerified) {
+        if (data.success) {
+          const s = data.session || data
+          if (s.status === 'PAIRED' || s.status === 'VERIFIED' || s.mobileVerified || s.qrScanned) {
             setQrScanned(true)
             setParticipantValidated(true)
           }
-          if (s.mobileCameraReady) {
+          if (s.mobileCameraReady || s.mobileVerified || s.status === 'VERIFIED') {
             setMobileCameraReady(true)
+            setMobileStreamConnected(true)
           }
-          if (s.status === 'VERIFIED') {
+          if (s.status === 'VERIFIED' || s.isFullyVerified || s.mobileVerified) {
             setIsFullyVerified(true)
           }
-          if (s.lastFramePreview) {
-            setLastFrame(s.lastFramePreview)
+          if (s.lastFramePreview || s.frame) {
+            setLastFrame(s.lastFramePreview || s.frame)
             setMobileStreamConnected(true)
           }
         }
       } catch (_) {}
-    }, 3000)
+    }, 2000)
 
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
