@@ -113,7 +113,7 @@ const getAllTrainings = async (req, res) => {
   try {
     const userId = req.user?.id;
     const userRole = req.user?.role;
-    const { search = '', status = '', page, limit, offset } = req.query;
+    const { search = '', status = '' } = req.query;
 
     console.log('📋 getAllTrainings called, user:', userId, 'role:', userRole, 'query:', req.query);
 
