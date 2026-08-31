@@ -27,6 +27,8 @@ router.post(
   (req, res) => authController.createTrainer(req, res)
 );
 
+const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
+
 // GET /api/admin/trainers - list trainers with profile summary, search, status, and pagination
 router.get(
   '/trainers',
@@ -35,7 +37,8 @@ router.get(
   async (req, res) => {
     try {
       const { Op } = require('sequelize');
-      const { search = '', status = '', page, limit, offset } = req.query;
+      const { search = '', status = '' } = req.query;
+      const { page, limit, offset } = parsePagination(req.query, 10, 100);
 
       const where = { role: 'TRAINER', isDeleted: false };
 
@@ -56,7 +59,7 @@ router.get(
 
       const total = await User.count({ where });
 
-      let findOptions = {
+      const trainers = await User.findAll({
         where,
         attributes: ['id', 'name', 'email', 'username', 'phone', 'employeeId', 'department', 'designation', 'status'],
         include: [{
@@ -65,28 +68,10 @@ router.get(
           attributes: ['phone', 'dob', 'qualification', 'experience', 'imagePath'],
           required: false
         }],
-        order: [['created_at', 'DESC']]
-      };
-
-      let currentPage = 1;
-      let parsedLimit = 10;
-      const isPaginated = !!(page || limit || offset !== undefined);
-
-      if (isPaginated) {
-        parsedLimit = limit ? Math.max(1, Math.min(parseInt(limit, 10), 500)) : 10;
-        let parsedOffset = 0;
-        if (page) {
-          currentPage = Math.max(1, parseInt(page, 10));
-          parsedOffset = (currentPage - 1) * parsedLimit;
-        } else if (offset !== undefined) {
-          parsedOffset = Math.max(0, parseInt(offset, 10));
-          currentPage = Math.floor(parsedOffset / parsedLimit) + 1;
-        }
-        findOptions.limit = parsedLimit;
-        findOptions.offset = parsedOffset;
-      }
-
-      const trainers = await User.findAll(findOptions);
+        order: [['created_at', 'DESC']],
+        limit,
+        offset
+      });
 
       const formattedTrainers = trainers.map(t => ({
         id: t.id, name: t.name, email: t.email, username: t.username,
@@ -95,15 +80,17 @@ router.get(
         profile: t.profile || null
       }));
 
-      const totalPages = Math.ceil(total / parsedLimit) || 1;
+      const paginationMeta = formatPaginationMeta(total, page, limit);
 
       res.json({
         success: true,
         trainers: formattedTrainers,
+        data: formattedTrainers,
+        pagination: paginationMeta,
         total,
-        page: currentPage,
-        limit: parsedLimit,
-        totalPages
+        page,
+        limit,
+        totalPages: paginationMeta.totalPages
       });
     } catch (error) {
       logger.error('Get trainers error:', { error: error.message });
@@ -297,7 +284,8 @@ router.post('/reject-trainer/:id', authenticateToken, roleMiddleware('ADMIN'), (
 router.get('/activity-logs', authenticateToken, roleMiddleware('ADMIN'), async (req, res) => {
   try {
     const { Op } = require('sequelize');
-    const { limit = 50, offset = 0, action, userId, startDate, endDate } = req.query;
+    const { action, userId, startDate, endDate } = req.query;
+    const { page, limit, offset } = parsePagination(req.query, 50, 100);
     
     const where = {};
     if (action) where.action = action;
@@ -309,22 +297,33 @@ router.get('/activity-logs', authenticateToken, roleMiddleware('ADMIN'), async (
     }
 
     const { ActivityLog } = require('../models');
+    const total = await ActivityLog.count({ where });
+
     const logs = await ActivityLog.findAll({
       where,
       order: [['created_at', 'DESC']],
-      limit: parseInt(limit),
-      offset: parseInt(offset)
+      limit,
+      offset
     });
     
-    const total = await ActivityLog.count({ where });
-    
+    const paginationMeta = formatPaginationMeta(total, page, limit);
+
     res.json({
       success: true,
       data: {
         logs,
         total,
-        hasMore: parseInt(offset) + parseInt(limit) < total
-      }
+        hasMore: offset + limit < total,
+        page,
+        limit,
+        totalPages: paginationMeta.totalPages,
+        pagination: paginationMeta
+      },
+      pagination: paginationMeta,
+      total,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
     });
   } catch (error) {
     logger.error('Get activity logs error:', { error: error.message });
@@ -336,7 +335,8 @@ router.get('/activity-logs', authenticateToken, roleMiddleware('ADMIN'), async (
 router.get('/search-participants', authenticateToken, roleMiddleware('ADMIN'), async (req, res) => {
   try {
     const { Op } = require('sequelize');
-    const { q = '', status = '', limit = 20, offset = 0 } = req.query;
+    const { q = '', status = '' } = req.query;
+    const { page, limit, offset } = parsePagination(req.query, 20, 100);
     
     const where = { role: 'PARTICIPANT', isDeleted: false };
     
@@ -354,23 +354,34 @@ router.get('/search-participants', authenticateToken, roleMiddleware('ADMIN'), a
       where.status = status;
     }
 
+    const total = await User.count({ where });
+
     const participants = await User.findAll({
       where,
       attributes: ['id', 'name', 'email', 'phone', 'status', 'created_at'],
       order: [['created_at', 'DESC']],
-      limit: parseInt(limit),
-      offset: parseInt(offset)
+      limit,
+      offset
     });
     
-    const total = await User.count({ where });
-    
+    const paginationMeta = formatPaginationMeta(total, page, limit);
+
     res.json({
       success: true,
       data: {
         participants,
         total,
-        hasMore: parseInt(offset) + parseInt(limit) < total
-      }
+        hasMore: offset + limit < total,
+        page,
+        limit,
+        totalPages: paginationMeta.totalPages,
+        pagination: paginationMeta
+      },
+      pagination: paginationMeta,
+      total,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
     });
   } catch (error) {
     logger.error('Search participants error:', { error: error.message });

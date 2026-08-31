@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Crown, Trophy, Zap, Clock, Target, ChevronDown, ChevronUp, Users } from 'lucide-react'
-import { getTwoLetterInitials } from '../common/UserAvatar'
+import UserAvatar, { getTwoLetterInitials } from '../common/UserAvatar'
 
 /* ──────────────────────────────────────────────
    Mock data — 10 participants
@@ -56,23 +56,23 @@ function Particles() {
   return <canvas ref={canvasRef} className="fixed inset-0 pointer-events-none z-0" />
 }
 
-/* ─── Medal icons ─── */
+/* ─── Rank badge icons ─── */
 const Medal = ({ rank }) => {
-  if (rank === 1) return <span className="text-lg drop-shadow-[0_0_6px_rgba(245,158,11,0.6)]">🥇</span>
-  if (rank === 2) return <span className="text-lg drop-shadow-[0_0_6px_rgba(156,163,175,0.6)]">🥈</span>
-  if (rank === 3) return <span className="text-lg drop-shadow-[0_0_6px_rgba(180,83,9,0.6)]">🥉</span>
+  if (rank === 1) return <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-400/30 shadow-sm">Rank #1</span>
+  if (rank === 2) return <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-slate-400/20 text-slate-200 border border-slate-300/30 shadow-sm">Rank #2</span>
+  if (rank === 3) return <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-700/20 text-orange-300 border border-orange-400/30 shadow-sm">Rank #3</span>
   return null
 }
 
-/* ─── Gradient avatar ─── */
-function AvatarCircle({ name, rank, size = 36 }) {
-  const initials = getTwoLetterInitials(name)
+/* ─── User avatar ─── */
+function AvatarCircle({ name, rank, avatar, profilePic, image, size = 36 }) {
   return (
-    <div className="shrink-0 rounded-full bg-[#16A34A] flex items-center justify-center font-bold text-white shadow-sm"
-      style={{ width: size, height: size, fontSize: size * 0.36, fontFamily: "'Poppins', sans-serif" }}
-    >
-      {initials}
-    </div>
+    <UserAvatar
+      src={avatar || profilePic || image}
+      name={name}
+      size={size}
+      rank={rank}
+    />
   )
 }
 

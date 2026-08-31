@@ -15,6 +15,7 @@ const {
   calculateSessionStatus,
   ensureTrainingAttendanceSessions,
 } = require('../services/attendanceAutomationService');
+const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 
 /**
  * Helper to check course ownership / trainer authorization
@@ -98,7 +99,8 @@ const createSession = async (req, res) => {
  */
 const getSessions = async (req, res) => {
   try {
-    const { courseId, trainingId, date, startDate, endDate, search, page = 1, limit = 50 } = req.query;
+    const { courseId, trainingId, date, startDate, endDate, search } = req.query;
+    const { page, limit, offset } = parsePagination(req.query, 50, 100);
     const user = req.user;
     const todayIST = getKolkataDate();
 
@@ -131,7 +133,6 @@ const getSessions = async (req, res) => {
       ];
     }
 
-    const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
     const { count, rows: sessions } = await AttendanceSession.findAndCountAll({
       where,
       include: [
@@ -145,7 +146,7 @@ const getSessions = async (req, res) => {
         }
       ],
       order: [['sessionDate', 'DESC'], ['sessionType', 'ASC'], ['created_at', 'DESC']],
-      limit: parseInt(limit, 10),
+      limit,
       offset,
       distinct: true,
     });
@@ -192,13 +193,18 @@ const getSessions = async (req, res) => {
       };
     });
 
+    const paginationMeta = formatPaginationMeta(count, page, limit);
+
     res.json({
       success: true,
       sessions: formatted,
+      data: formatted,
+      pagination: paginationMeta,
       todayDate: todayIST,
       total: count,
-      page: parseInt(page, 10),
-      totalPages: Math.ceil(count / parseInt(limit, 10)) || 1,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages,
     });
   } catch (error) {
     logger.error('Error fetching attendance sessions', { error: error.message });

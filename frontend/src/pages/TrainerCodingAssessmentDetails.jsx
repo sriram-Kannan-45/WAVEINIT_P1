@@ -18,6 +18,8 @@ import {
   colors, btnPrimary, btnSuccess, btnDanger, btnOutline, iconBtn,
   lblStyle, inputStyle, selectStyle, textareaStyle,
 } from '../theme/tokens'
+import UserAvatar from '../components/common/UserAvatar'
+import Pagination from '../components/common/Pagination'
 import '../styles/course-tabs.css'
 
 const LANGUAGES = [
@@ -920,6 +922,8 @@ function ParticipantsTab({ assessment, auth, toast }) {
   const [participants, setParticipants] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   useEffect(() => {
     fetch(API.CODING.PARTICIPANTS(assessment.id), { headers: auth() })
@@ -929,6 +933,10 @@ function ParticipantsTab({ assessment, auth, toast }) {
       .finally(() => setLoading(false))
   }, [assessment.id])
 
+  useEffect(() => {
+    setPage(1)
+  }, [search])
+
   const filtered = useMemo(() => {
     if (!search) return participants
     const q = search.toLowerCase()
@@ -937,6 +945,8 @@ function ParticipantsTab({ assessment, auth, toast }) {
       (p.email || '').toLowerCase().includes(q)
     )
   }, [participants, search])
+
+  const pagedParticipants = filtered.slice((page - 1) * pageSize, page * pageSize)
 
   return (
     <div style={{ background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 16, padding: 22 }}>
@@ -971,7 +981,7 @@ function ParticipantsTab({ assessment, auth, toast }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(p => (
+              {pagedParticipants.map(p => (
                 <tr key={p.id || p.participantId} style={{ borderBottom: '1px solid #F8FAFC' }}>
                   <td style={{ padding: '12px 16px', fontWeight: 600, color: '#0F172A' }}>{p.name || 'Participant'}</td>
                   <td style={{ padding: '12px 16px', color: '#64748B', fontSize: 13 }}>{p.email || '—'}</td>
@@ -986,6 +996,15 @@ function ParticipantsTab({ assessment, auth, toast }) {
               ))}
             </tbody>
           </table>
+          <Pagination
+            currentPage={page}
+            totalPages={Math.max(1, Math.ceil(filtered.length / pageSize))}
+            totalItems={filtered.length}
+            pageSize={pageSize}
+            onPageChange={(p) => setPage(p)}
+            onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+            recordLabel="participants"
+          />
         </div>
       )}
     </div>
@@ -999,6 +1018,9 @@ function ResultsTab({ assessment, auth, toast, onRefresh }) {
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedProctorAttempt, setSelectedProctorAttempt] = useState(null)
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   useEffect(() => {
     fetch(API.CODING.RESULTS(assessment.id), { headers: auth() })
@@ -1008,14 +1030,40 @@ function ResultsTab({ assessment, auth, toast, onRefresh }) {
       .finally(() => setLoading(false))
   }, [assessment.id])
 
+  useEffect(() => {
+    setPage(1)
+  }, [search])
+
+  const filtered = useMemo(() => {
+    if (!search) return results
+    const q = search.toLowerCase()
+    return results.filter(r =>
+      (r.participantName || r.name || '').toLowerCase().includes(q) ||
+      (r.participant?.email || r.email || '').toLowerCase().includes(q)
+    )
+  }, [results, search])
+
+  const pagedResults = filtered.slice((page - 1) * pageSize, page * pageSize)
+
   return (
     <div style={{ background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 16, padding: 22 }}>
-      <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: '#0F172A' }}>
-        {results.length} Results
-      </h3>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0F172A' }}>
+          {results.length} Results
+        </h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', border: '1px solid #E2E8F0', borderRadius: 8, width: 240 }}>
+          <Search size={14} color="#94A3B8" />
+          <input
+            value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Search results…"
+            style={{ border: 'none', outline: 'none', fontSize: 12.5, width: '100%', background: 'transparent' }}
+          />
+        </div>
+      </div>
+
       {loading ? (
         <div style={{ padding: 40, textAlign: 'center', color: '#64748B' }}>Loading results…</div>
-      ) : results.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <div style={{ padding: 40, textAlign: 'center', color: '#94A3B8' }}>No submissions yet.</div>
       ) : (
         <div style={{ border: '1px solid #F1F5F9', borderRadius: 12, overflow: 'hidden' }}>
@@ -1030,7 +1078,7 @@ function ResultsTab({ assessment, auth, toast, onRefresh }) {
               </tr>
             </thead>
             <tbody>
-              {results.map((r, i) => (
+              {pagedResults.map((r, i) => (
                 <tr key={i} style={{ borderBottom: '1px solid #F8FAFC' }}>
                   <td style={{ padding: '12px 16px', fontWeight: 600, color: '#0F172A' }}>{r.participantName || r.name || `Participant #${r.participantId}`}</td>
                   <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 700, color: '#16A34A' }}>{r.score ?? '—'}</td>
@@ -1052,6 +1100,15 @@ function ResultsTab({ assessment, auth, toast, onRefresh }) {
               ))}
             </tbody>
           </table>
+          <Pagination
+            currentPage={page}
+            totalPages={Math.max(1, Math.ceil(filtered.length / pageSize))}
+            totalItems={filtered.length}
+            pageSize={pageSize}
+            onPageChange={(p) => setPage(p)}
+            onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+            recordLabel="results"
+          />
         </div>
       )}
 
@@ -1072,6 +1129,8 @@ function ResultsTab({ assessment, auth, toast, onRefresh }) {
 function LeaderboardTab({ assessment, auth }) {
   const [leaderboard, setLeaderboard] = useState([])
   const [loading, setLoading] = useState(true)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   useEffect(() => {
     fetch(API.CODING.LEADERBOARD(assessment.id), { headers: auth() })
@@ -1080,6 +1139,8 @@ function LeaderboardTab({ assessment, auth }) {
       .catch(() => setLeaderboard([]))
       .finally(() => setLoading(false))
   }, [assessment.id])
+
+  const pagedLeaderboard = leaderboard.slice((page - 1) * pageSize, page * pageSize)
 
   return (
     <div style={{ background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 16, padding: 22 }}>
@@ -1102,18 +1163,51 @@ function LeaderboardTab({ assessment, auth }) {
               </tr>
             </thead>
             <tbody>
-              {leaderboard.map((l, i) => (
-                <tr key={i} style={{ borderBottom: '1px solid #F8FAFC' }}>
-                  <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 700, fontSize: 13 }}>
-                    {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`}
-                  </td>
-                  <td style={{ padding: '12px 16px', fontWeight: 600, color: '#0F172A' }}>{l.name || l.participantName || `Participant #${l.participantId}`}</td>
-                  <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 700, color: '#16A34A' }}>{l.score ?? '—'}</td>
-                  <td style={{ padding: '12px 16px', textAlign: 'center', color: '#64748B', fontSize: 12.5 }}>{l.timeTaken ? `${l.timeTaken}s` : '—'}</td>
-                </tr>
-              ))}
+              {pagedLeaderboard.map((l, i) => {
+                const rankNum = (page - 1) * pageSize + i + 1
+                return (
+                  <tr key={i} style={{ borderBottom: '1px solid #F8FAFC' }}>
+                    <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                      {rankNum === 1 ? (
+                        <span style={{ padding: '3px 8px', background: '#FEF3C7', color: '#B45309', borderRadius: 9999, fontWeight: 800, fontSize: 11, border: '1px solid #FCD34D' }}>#1</span>
+                      ) : rankNum === 2 ? (
+                        <span style={{ padding: '3px 8px', background: '#F1F5F9', color: '#475569', borderRadius: 9999, fontWeight: 800, fontSize: 11, border: '1px solid #CBD5E1' }}>#2</span>
+                      ) : rankNum === 3 ? (
+                        <span style={{ padding: '3px 8px', background: '#FFF7ED', color: '#C2410C', borderRadius: 9999, fontWeight: 800, fontSize: 11, border: '1px solid #FDBA74' }}>#3</span>
+                      ) : (
+                        <span style={{ fontWeight: 700, color: '#64748B', fontSize: 12 }}>#{rankNum}</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '12px 16px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <UserAvatar
+                          src={l.avatar || l.profilePic || l.profileImage || l.image}
+                          name={l.name || l.participantName}
+                          size={32}
+                          fontSize={11}
+                          rank={rankNum}
+                        />
+                        <span style={{ fontWeight: 600, color: '#0F172A', fontSize: 13.5 }}>
+                          {l.name || l.participantName || `Participant #${l.participantId}`}
+                        </span>
+                      </div>
+                    </td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 700, color: '#16A34A' }}>{l.score ?? l.percentage ?? '—'}%</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center', color: '#64748B', fontSize: 12.5 }}>{l.timeTaken ? `${l.timeTaken}s` : '—'}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
+          <Pagination
+            currentPage={page}
+            totalPages={Math.max(1, Math.ceil(leaderboard.length / pageSize))}
+            totalItems={leaderboard.length}
+            pageSize={pageSize}
+            onPageChange={(p) => setPage(p)}
+            onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+            recordLabel="performers"
+          />
         </div>
       )}
     </div>

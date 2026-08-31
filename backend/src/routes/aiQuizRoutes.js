@@ -1315,7 +1315,7 @@ router.get('/leaderboard/:quizId',
       const results = await QuizResult.findAll({
         where: { quizId: req.params.quizId, resultPublished: true },
         include: [
-          { model: User, as: 'participant', attributes: ['id', 'name'] }
+          { model: User, as: 'participant', attributes: ['id', 'name', 'profilePic'] }
         ],
         order: [['percentage', 'DESC']]
       });
@@ -1323,7 +1323,12 @@ router.get('/leaderboard/:quizId',
       const leaderboard = results.map((r, idx) => ({
         rank: idx + 1,
         userId: r.participantId,
+        participantId: r.participantId,
         name: r.participant?.name || 'Unknown',
+        participantName: r.participant?.name || 'Unknown',
+        avatar: r.participant?.profilePic || null,
+        profilePic: r.participant?.profilePic || null,
+        profileImage: r.participant?.profilePic || null,
         score: parseFloat(r.percentage),
         totalScore: parseFloat(r.totalScore),
         maxScore: parseFloat(r.maxScore)
@@ -1631,8 +1636,11 @@ router.get('/participant/global-leaderboard',
         ) {
           byUser.set(uid, {
             userId: uid,
+            participantId: uid,
             name: r.participant?.name || 'Unknown',
             avatar: r.participant?.profilePic || null,
+            profilePic: r.participant?.profilePic || null,
+            profileImage: r.participant?.profilePic || null,
             score: Number(score.toFixed(2)),
             accuracy,
             timeTaken,                       // seconds (or null)

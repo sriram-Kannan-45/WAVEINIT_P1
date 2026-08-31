@@ -56,6 +56,11 @@ const Lesson = sequelize.define('Lesson', {
     allowNull: false,
     defaultValue: 0,
     field: 'order_index'
+  },
+  status: {
+    type: DataTypes.ENUM('PENDING', 'IN_PROGRESS', 'COMPLETED'),
+    allowNull: false,
+    defaultValue: 'PENDING'
   }
 }, {
   tableName: 'lessons',

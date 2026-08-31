@@ -21,9 +21,9 @@ import CourseQuizzesTab from '../components/trainer/CourseQuizzesTab'
 import CourseParticipantsTab from '../components/trainer/CourseParticipantsTab'
 import CourseAnalyticsTab from '../components/trainer/CourseAnalyticsTab'
 import DiscussionBoard from '../components/shared/DiscussionBoard'
-import CourseCodingTab from '../components/trainer/CourseCodingTab'
 import AIStructureGenerator from '../components/trainer/AIStructureGenerator'
 import CourseArtwork from '../components/common/CourseArtwork'
+import TrainingProgressBar from '../components/common/TrainingProgressBar'
 import '../styles/trainer-my-trainings.css'
 import '../styles/course-tabs.css'
 
@@ -817,6 +817,19 @@ function CourseDetail({ user, courseId, onBack }) {
               </div>
             ))}
           </div>
+
+          {/* Training Structure Completion Progress */}
+          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #e2e8f0' }}>
+            <TrainingProgressBar
+              percentage={course.structureProgress?.completionPercentage ?? course.completionPercentage ?? 0}
+              completedItems={course.structureProgress?.completedStructureItems ?? 0}
+              totalItems={course.structureProgress?.totalStructureItems ?? 0}
+              inProgressItems={course.structureProgress?.inProgressStructureItems ?? 0}
+              hasStructure={course.structureProgress?.hasStructure ?? ((course.structureProgress?.totalStructureItems || 0) > 0)}
+              title="Course Structure Completion"
+              size="sm"
+            />
+          </div>
         </div>
       </motion.div>
 
@@ -937,7 +950,7 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState({ title: '', description: '', content: '' })
+  const [form, setForm] = useState({ title: '', description: '', content: '', status: 'PENDING' })
   const [materialsFor, setMaterialsFor] = useState(null)
   const [expandedRows, setExpandedRows] = useState({})
   const auth = () => ({ Authorization: `Bearer ${user.token}` })
@@ -968,8 +981,32 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
     if (setParentTab) setParentTab(targetTab);
   }
 
-  const openCreate = () => { setEditing(null); setForm({ title: '', description: '', content: '' }); setShowModal(true) }
-  const openEdit = (l) => { setEditing(l); setForm({ title: l.title || '', description: l.description || '', content: l.content || '' }); setShowModal(true) }
+  const handleToggleLessonStatus = async (lesson, e) => {
+    if (e) e.stopPropagation()
+    const cycle = { PENDING: 'IN_PROGRESS', IN_PROGRESS: 'COMPLETED', COMPLETED: 'PENDING' }
+    const nextStatus = cycle[lesson.status || 'PENDING'] || 'PENDING'
+
+    // Optimistic UI update
+    setLessons(prev => prev.map(item => item.id === lesson.id ? { ...item, status: nextStatus } : item))
+
+    try {
+      const r = await fetch(API.TRAINER_COURSES.UPDATE_LESSON_STATUS(courseId, lesson.id), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...auth() },
+        body: JSON.stringify({ status: nextStatus }),
+      })
+      const d = await r.json()
+      if (!r.ok || d.success === false) throw new Error(d.error || 'Failed to update status')
+      success(`Lesson marked as ${nextStatus.replace('_', ' ')}`)
+      onCountChange?.()
+    } catch (err) {
+      showError(err.message)
+      await fetchLessons()
+    }
+  }
+
+  const openCreate = () => { setEditing(null); setForm({ title: '', description: '', content: '', status: 'PENDING' }); setShowModal(true) }
+  const openEdit = (l) => { setEditing(l); setForm({ title: l.title || '', description: l.description || '', content: l.content || '', status: l.status || 'PENDING' }); setShowModal(true) }
 
   const submit = async (e) => {
     e.preventDefault()
@@ -1040,6 +1077,28 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
         </button>
       </div>
 
+      {/* Progress Header */}
+      {lessons.length > 0 && (
+        <div style={{ marginBottom: 16, padding: '14px 18px', background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0' }}>
+          {(() => {
+            const completedCount = lessons.filter(l => l.status === 'COMPLETED').length
+            const inProgressCount = lessons.filter(l => l.status === 'IN_PROGRESS').length
+            const pct = lessons.length > 0 ? Number(((completedCount / lessons.length) * 100).toFixed(2)) : 0
+            return (
+              <TrainingProgressBar
+                percentage={pct}
+                completedItems={completedCount}
+                totalItems={lessons.length}
+                inProgressItems={inProgressCount}
+                hasStructure={true}
+                title="Learning Content Progress"
+                size="sm"
+              />
+            )
+          })()}
+        </div>
+      )}
+
       {/* Content */}
       {loading ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -1064,6 +1123,12 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
             const tax = getTaxonomyInfo(l.title);
             const isExpanded = !!expandedRows[l.id];
             const matCount = Object.values(l.materialCounts || {}).reduce((a, b) => a + b, 0);
+            const status = l.status || 'PENDING';
+            const statusConfig = {
+              COMPLETED: { label: 'Completed', bg: '#dcfce7', text: '#15803d', border: '#bbf7d0' },
+              IN_PROGRESS: { label: 'In Progress', bg: '#fef3c7', text: '#b45309', border: '#fde68a' },
+              PENDING: { label: 'Pending', bg: '#f1f5f9', text: '#64748b', border: '#e2e8f0' },
+            }[status] || { label: 'Pending', bg: '#f1f5f9', text: '#64748b', border: '#e2e8f0' };
 
             return (
               <div key={l.id} className="wl-module-row">
@@ -1079,6 +1144,31 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
                     {tax.label}
                   </span>
                   <span className="wl-module-title">{l.title}</span>
+
+                  <button
+                    type="button"
+                    onClick={(e) => handleToggleLessonStatus(l, e)}
+                    style={{
+                      marginLeft: 'auto',
+                      marginRight: 10,
+                      background: statusConfig.bg,
+                      color: statusConfig.text,
+                      border: `1px solid ${statusConfig.border}`,
+                      borderRadius: 9999,
+                      padding: '2px 9px',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                    }}
+                    title="Click to toggle status (Pending → In Progress → Completed)"
+                  >
+                    {status === 'COMPLETED' ? <CheckCircle2 size={11} /> : null}
+                    {statusConfig.label}
+                  </button>
+
                   <div className="wl-module-actions" onClick={(e) => e.stopPropagation()}>
                     <button title="Edit" onClick={() => openEdit(l)} className="wl-module-action-btn wl-module-action-btn--edit">
                       <Pencil size={14} />

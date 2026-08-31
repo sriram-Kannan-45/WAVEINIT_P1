@@ -92,6 +92,7 @@ const logger = require('../utils/logger');
 const bcrypt = require('bcryptjs');
 const { validateEmail, validatePassword } = require('../utils/validators');
 const { invalidateSummaryCache } = require('./adminSummaryController');
+const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 
 const updateTraining = async (req, res) => {
   try {
@@ -736,19 +737,8 @@ const getStats = async (req, res) => {
 const getParticipants = async (req, res) => {
   try {
     const { Op } = require('sequelize');
-    const { search = '', status = '', page, limit, offset } = req.query;
-    
-    const parsedLimit = limit ? Math.max(1, Math.min(parseInt(limit, 10), 500)) : 10;
-    let parsedOffset = 0;
-    let currentPage = 1;
-
-    if (page) {
-      currentPage = Math.max(1, parseInt(page, 10));
-      parsedOffset = (currentPage - 1) * parsedLimit;
-    } else if (offset !== undefined) {
-      parsedOffset = Math.max(0, parseInt(offset, 10));
-      currentPage = Math.floor(parsedOffset / parsedLimit) + 1;
-    }
+    const { search = '', status = '' } = req.query;
+    const { page, limit, offset } = parsePagination(req.query, 10, 100);
 
     const where = { role: 'PARTICIPANT', isDeleted: false };
     
@@ -774,8 +764,8 @@ const getParticipants = async (req, res) => {
       where,
       attributes: { exclude: ['password'] },
       order: [['created_at', 'DESC']],
-      limit: parsedLimit,
-      offset: parsedOffset
+      limit,
+      offset
     });
 
     const participantIds = participants.map(p => p.id);
@@ -840,16 +830,18 @@ const getParticipants = async (req, res) => {
       quizScore: avgQuizScoreMap[String(p.id)] || 0
     }));
 
-    const totalPages = Math.ceil(total / parsedLimit) || 1;
+    const paginationMeta = formatPaginationMeta(total, page, limit);
 
     res.json({ 
-      success: true,
+      success: true, 
       participants: formattedParticipants,
+      data: formattedParticipants,
+      pagination: paginationMeta,
       total,
-      page: currentPage,
-      limit: parsedLimit,
-      totalPages,
-      hasMore: parsedOffset + formattedParticipants.length < total
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages,
+      hasMore: offset + formattedParticipants.length < total
     });
 
   } catch (error) {

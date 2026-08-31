@@ -23,6 +23,7 @@ const {
   Enrollment,
   User,
 } = require('../models');
+const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -134,7 +135,9 @@ async function createProgram(req, res) {
 // GET /api/admin/training-programs
 async function listPrograms(req, res) {
   try {
-    const { search = '', page, limit, offset } = req.query;
+    const { search = '' } = req.query;
+    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+
     const where = {};
     if (search && search.trim()) {
       const q = search.trim();
@@ -146,29 +149,12 @@ async function listPrograms(req, res) {
 
     const total = await Training.count({ where });
 
-    let findOptions = {
+    const programs = await Training.findAll({
       where,
       order: [['id', 'DESC']],
-    };
-
-    let currentPage = 1;
-    let parsedLimit = 10;
-
-    if (page || limit || offset !== undefined) {
-      parsedLimit = limit ? Math.max(1, Math.min(parseInt(limit, 10), 500)) : 10;
-      let parsedOffset = 0;
-      if (page) {
-        currentPage = Math.max(1, parseInt(page, 10));
-        parsedOffset = (currentPage - 1) * parsedLimit;
-      } else if (offset !== undefined) {
-        parsedOffset = Math.max(0, parseInt(offset, 10));
-        currentPage = Math.floor(parsedOffset / parsedLimit) + 1;
-      }
-      findOptions.limit = parsedLimit;
-      findOptions.offset = parsedOffset;
-    }
-
-    const programs = await Training.findAll(findOptions);
+      limit,
+      offset,
+    });
 
     // Single grouped count to avoid N+1
     const programIds = programs.map(p => p.id);
@@ -183,15 +169,18 @@ async function listPrograms(req, res) {
       countMap = Object.fromEntries(counts.map(r => [String(r.trainingProgramId), Number(r.cnt)]));
     }
 
-    const totalPages = Math.ceil(total / parsedLimit) || 1;
+    const formattedPrograms = programs.map(p => programDto(p, { coursesCount: countMap[String(p.id)] || 0 }));
+    const paginationMeta = formatPaginationMeta(total, page, limit);
 
     return res.json({
       success: true,
-      programs: programs.map(p => programDto(p, { coursesCount: countMap[String(p.id)] || 0 })),
+      programs: formattedPrograms,
+      data: formattedPrograms,
+      pagination: paginationMeta,
       total,
-      page: currentPage,
-      limit: parsedLimit,
-      totalPages
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
     });
   } catch (e) {
     console.error('listPrograms error:', e.message);
@@ -426,7 +415,9 @@ async function createCourse(req, res) {
 // GET /api/admin/courses
 async function listCourses(req, res) {
   try {
-    const { search = '', status = '', programId = '', trainerId = '', page, limit, offset } = req.query;
+    const { search = '', status = '', programId = '', trainerId = '' } = req.query;
+    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+
     const where = {};
     if (search && search.trim()) {
       const q = search.trim();
@@ -441,43 +432,29 @@ async function listCourses(req, res) {
 
     const total = await Course.count({ where });
 
-    let findOptions = {
+    const courses = await Course.findAll({
       where,
       include: [
         { model: User,     as: 'trainer', attributes: ['id', 'name'] },
         { model: Training, as: 'program', attributes: ['id', 'title'] },
       ],
       order: [['id', 'DESC']],
-    };
+      limit,
+      offset
+    });
 
-    let currentPage = 1;
-    let parsedLimit = 10;
-
-    if (page || limit || offset !== undefined) {
-      parsedLimit = limit ? Math.max(1, Math.min(parseInt(limit, 10), 500)) : 10;
-      let parsedOffset = 0;
-      if (page) {
-        currentPage = Math.max(1, parseInt(page, 10));
-        parsedOffset = (currentPage - 1) * parsedLimit;
-      } else if (offset !== undefined) {
-        parsedOffset = Math.max(0, parseInt(offset, 10));
-        currentPage = Math.floor(parsedOffset / parsedLimit) + 1;
-      }
-      findOptions.limit = parsedLimit;
-      findOptions.offset = parsedOffset;
-    }
-
-    const courses = await Course.findAll(findOptions);
     const dtos = await attachCourseCounts(courses);
-    const totalPages = Math.ceil(total / parsedLimit) || 1;
+    const paginationMeta = formatPaginationMeta(total, page, limit);
 
     return res.json({
       success: true,
       courses: dtos,
+      data: dtos,
+      pagination: paginationMeta,
       total,
-      page: currentPage,
-      limit: parsedLimit,
-      totalPages
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
     });
   } catch (e) {
     console.error('listCourses error:', e.message);

@@ -7,6 +7,7 @@ import {
 import { API } from '../../../api/api'
 import { getAuthHeaders, fetchWithTimeout } from '../../../api/request'
 import { useToast } from '../../Toast'
+import Pagination from '../../common/Pagination'
 
 export default function StudentAttendanceView({ user }) {
   const { error: showError, success: showSuccess } = useToast()
@@ -22,6 +23,8 @@ export default function StudentAttendanceView({ user }) {
   const [history, setHistory] = useState([])
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   const fetchAttendance = useCallback(async (isManual = false) => {
     try {
@@ -49,6 +52,10 @@ export default function StudentAttendanceView({ user }) {
     fetchAttendance()
   }, [fetchAttendance])
 
+  useEffect(() => {
+    setPage(1)
+  }, [statusFilter, search])
+
   const filteredHistory = history.filter(item => {
     const matchStatus = statusFilter === 'ALL' || item.status === statusFilter
     const matchSearch = !search.trim() ||
@@ -56,6 +63,8 @@ export default function StudentAttendanceView({ user }) {
       (item.courseTitle && item.courseTitle.toLowerCase().includes(search.toLowerCase()))
     return matchStatus && matchSearch
   })
+
+  const pagedHistory = filteredHistory.slice((page - 1) * pageSize, page * pageSize)
 
   const getStatusBadge = (status) => {
     switch (status) {
@@ -333,7 +342,7 @@ export default function StudentAttendanceView({ user }) {
                 </tr>
               </thead>
               <tbody>
-                {filteredHistory.map((item, idx) => (
+                {pagedHistory.map((item, idx) => (
                   <tr key={item.id || idx} style={{ borderBottom: '1px solid #F1F5F9' }}>
                     <td style={{ padding: '12px 14px', fontWeight: 600, color: '#0F172A' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -358,6 +367,15 @@ export default function StudentAttendanceView({ user }) {
                 ))}
               </tbody>
             </table>
+            <Pagination
+              currentPage={page}
+              totalPages={Math.max(1, Math.ceil(filteredHistory.length / pageSize))}
+              totalItems={filteredHistory.length}
+              pageSize={pageSize}
+              onPageChange={(p) => setPage(p)}
+              onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+              recordLabel="sessions"
+            />
           </div>
         )}
       </div>

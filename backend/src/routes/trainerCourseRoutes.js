@@ -25,6 +25,7 @@ router.get(  '/programs',                         trainerOrAdmin, c.listAllProgr
 router.post( '/courses',                          trainerOrAdmin, c.createCourse);
 router.get(  '/courses',                          trainerOrAdmin, c.listMyCourses);
 router.get(  '/courses/:courseId',                trainerOrAdmin, c.getCourseDetail);
+router.get(  '/courses/:courseId/progress',       trainerOrAdmin, c.getCourseProgress);
 router.put(  '/courses/:courseId',                trainerOrAdmin, c.updateOwnCourse);
 
 // ── Lessons (NB: /reorder must come before the :lessonId routes so Express
@@ -34,11 +35,13 @@ router.post( '/courses/:courseId/lessons',                   trainerOrAdmin, c.c
 router.get(  '/courses/:courseId/lessons',                   trainerOrAdmin, c.listLessons);
 router.get(  '/courses/:courseId/lessons/:lessonId',         trainerOrAdmin, c.getLesson);
 router.put(  '/courses/:courseId/lessons/:lessonId',         trainerOrAdmin, c.updateLesson);
+router.patch('/courses/:courseId/lessons/:lessonId/status',  trainerOrAdmin, c.updateLessonStatus);
 router.delete('/courses/:courseId/lessons/:lessonId',        trainerOrAdmin, c.deleteLesson);
 
 // ── AI Course Structure Generation & Management ─────────────────────────────
 router.get(   '/courses/:courseId/structure',                         trainerOrAdmin, c.getCourseStructure);
 router.post(  '/courses/:courseId/structure',                         trainerOrAdmin, c.saveCourseStructure);
+router.patch( '/courses/:courseId/structure/status',                  trainerOrAdmin, c.updateStructureItemStatus);
 router.delete('/courses/:courseId/structure',                         trainerOrAdmin, c.clearCourseStructure);
 router.delete('/courses/:courseId/structure/module/:moduleId',         trainerOrAdmin, c.deleteStructureModule);
 router.delete('/courses/:courseId/structure/submodule/:subModuleId',  trainerOrAdmin, c.deleteStructureSubModule);

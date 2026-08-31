@@ -1,5 +1,6 @@
 const LeaderboardService = require('../services/leaderboardService');
 const logger = require('../utils/logger');
+const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 
 /**
  * GET /api/leaderboard/overall
@@ -7,11 +8,24 @@ const logger = require('../utils/logger');
 const getOverallLeaderboard = async (req, res) => {
   try {
     const { timeframe = 'all_time' } = req.query;
+    const { page, limit } = parsePagination(req.query, 10, 100);
     const data = await LeaderboardService.getLeaderboard({
       scope: 'overall',
       timeframe,
     });
-    res.json({ success: true, ...data });
+    const total = data.leaderboard?.length || 0;
+    const paginationMeta = formatPaginationMeta(total, page, limit);
+
+    res.json({
+      success: true,
+      ...data,
+      data: data.leaderboard,
+      pagination: paginationMeta,
+      total,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
+    });
   } catch (error) {
     logger.error('Overall leaderboard controller error', { error: error.message });
     res.status(500).json({ success: false, error: 'Failed to fetch leaderboard' });

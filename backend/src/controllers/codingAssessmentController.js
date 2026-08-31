@@ -5,6 +5,7 @@ const {
   Training, User, QuizRecording, ExamSession
 } = require('../models');
 const logger = require('../utils/logger');
+const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 
 // ── Helpers ──
 // Follow the same response format as aiQuizRoutes / trainerRoutes:
@@ -31,18 +32,44 @@ const normalizeProblemDifficulty = (d) => {
 
 exports.list = async (req, res) => {
   try {
-    const { trainingId } = req.query;
+    const { trainingId, search = '' } = req.query;
+    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+    const isPaginated = !!(req.query.page || req.query.limit || req.query.offset !== undefined);
+
     const where = { trainerId: req.user.id };
     if (trainingId) where.trainingId = trainingId;
-    const assessments = await CodingAssessment.findAll({
+    if (search && search.trim()) {
+      where.title = { [Op.like]: `%${search.trim()}%` };
+    }
+
+    const total = await CodingAssessment.count({ where });
+
+    let findOptions = {
       where,
       include: [
         { model: CodingProblem, as: 'problems', attributes: ['id', 'title', 'difficulty', 'programmingLanguage', 'marks'] },
         { model: Training, as: 'training', attributes: ['id', 'title'] }
       ],
       order: [['created_at', 'DESC']]
+    };
+
+    if (isPaginated) {
+      findOptions.limit = limit;
+      findOptions.offset = offset;
+    }
+
+    const assessments = await CodingAssessment.findAll(findOptions);
+    const paginationMeta = formatPaginationMeta(total, page, limit);
+
+    ok(res, {
+      assessments,
+      data: assessments,
+      pagination: paginationMeta,
+      total,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
     });
-    ok(res, { assessments });
   } catch (err) { fail(res, 500, err.message); }
 };
 
@@ -1032,6 +1059,10 @@ exports.submitAssessment = async (req, res) => {
 
 exports.getResults = async (req, res) => {
   try {
+    const { search = '' } = req.query;
+    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+    const isPaginated = !!(req.query.page || req.query.limit || req.query.offset !== undefined);
+
     const { ProctoringReport, MonitoringSession } = require('../models');
     const results = await CodingResult.findAll({
       where: { assessmentId: req.params.id },
@@ -1049,12 +1080,38 @@ exports.getResults = async (req, res) => {
       ],
       order: [['percentage', 'DESC']]
     });
-    ok(res, { results });
+
+    let formattedResults = results;
+    if (search && search.trim()) {
+      const q = search.toLowerCase().trim();
+      formattedResults = results.filter(r =>
+        (r.participant?.name || '').toLowerCase().includes(q) ||
+        (r.participant?.email || '').toLowerCase().includes(q)
+      );
+    }
+
+    const total = formattedResults.length;
+    const pagedResults = isPaginated ? formattedResults.slice(offset, offset + limit) : formattedResults;
+    const paginationMeta = formatPaginationMeta(total, page, limit);
+
+    ok(res, {
+      results: pagedResults,
+      data: pagedResults,
+      pagination: paginationMeta,
+      total,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
+    });
   } catch (err) { fail(res, 500, err.message); }
 };
 
 exports.getParticipants = async (req, res) => {
   try {
+    const { search = '', status: filterStatus = '' } = req.query;
+    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+    const isPaginated = !!(req.query.page || req.query.limit || req.query.offset !== undefined);
+
     const { Enrollment } = require('../models');
     const assessment = await CodingAssessment.findByPk(req.params.id);
     if (!assessment) return fail(res, 404, 'Assessment not found');
@@ -1075,7 +1132,7 @@ exports.getParticipants = async (req, res) => {
       include: [{ model: CodingResult, as: 'result' }]
     });
 
-    const participants = enrollments.map(e => {
+    let participants = enrollments.map(e => {
       const participantId = e.participantId;
       const attempt = attempts.find(a => a.participantId === participantId);
 
@@ -1102,7 +1159,31 @@ exports.getParticipants = async (req, res) => {
         submittedAt: attempt?.submittedAt || null
       };
     });
-    ok(res, { participants });
+
+    if (filterStatus && filterStatus !== 'ALL') {
+      participants = participants.filter(p => p.status === filterStatus);
+    }
+    if (search && search.trim()) {
+      const q = search.toLowerCase().trim();
+      participants = participants.filter(p =>
+        p.name.toLowerCase().includes(q) ||
+        p.email.toLowerCase().includes(q)
+      );
+    }
+
+    const total = participants.length;
+    const pagedParticipants = isPaginated ? participants.slice(offset, offset + limit) : participants;
+    const paginationMeta = formatPaginationMeta(total, page, limit);
+
+    ok(res, {
+      participants: pagedParticipants,
+      data: pagedParticipants,
+      pagination: paginationMeta,
+      total,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
+    });
   } catch (err) { fail(res, 500, err.message); }
 };
 
@@ -1159,14 +1240,39 @@ exports.getResultsSummary = async (req, res) => {
 
 exports.getRecordings = async (req, res) => {
   try {
+    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+    const isPaginated = !!(req.query.page || req.query.limit || req.query.offset !== undefined);
+
     const assessment = await CodingAssessment.findByPk(req.params.id);
     if (!assessment) return fail(res, 404, 'Assessment not found');
-    const recordings = await QuizRecording.findAll({
+
+    const total = await QuizRecording.count({
+      where: { quizId: req.params.id, assessmentType: 'coding' }
+    });
+
+    let findOptions = {
       where: { quizId: req.params.id, assessmentType: 'coding' },
       include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email'] }],
       order: [['created_at', 'DESC']]
+    };
+
+    if (isPaginated) {
+      findOptions.limit = limit;
+      findOptions.offset = offset;
+    }
+
+    const recordings = await QuizRecording.findAll(findOptions);
+    const paginationMeta = formatPaginationMeta(total, page, limit);
+
+    ok(res, {
+      recordings,
+      data: recordings,
+      pagination: paginationMeta,
+      total,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
     });
-    ok(res, { recordings });
   } catch (err) { fail(res, 500, err.message); }
 };
 
@@ -1203,11 +1309,23 @@ exports.getLeaderboard = async (req, res) => {
   try {
     const results = await CodingResult.findAll({
       where: { assessmentId: req.params.id, resultPublished: true },
-      include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email'] }],
+      include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email', 'profilePic'] }],
       order: [['percentage', 'DESC'], ['passedTestCases', 'DESC']],
       limit: 100
     });
-    const ranked = results.map((r, i) => ({ rank: i + 1, ...r.toJSON() }));
+    const ranked = results.map((r, i) => {
+      const json = r.toJSON();
+      return {
+        rank: i + 1,
+        ...json,
+        participantId: json.participantId || json.participant?.id,
+        participantName: json.participant?.name || 'Participant',
+        name: json.participant?.name || 'Participant',
+        profileImage: json.participant?.profilePic || null,
+        profilePic: json.participant?.profilePic || null,
+        avatar: json.participant?.profilePic || null,
+      };
+    });
     ok(res, { leaderboard: ranked });
   } catch (err) { fail(res, 500, err.message); }
 };

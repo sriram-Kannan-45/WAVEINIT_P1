@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { Search, Filter, Monitor, Video, AlertTriangle, Play, Clock } from 'lucide-react'
 import { API_BASE } from '../api/api'
 import { useToast } from '../components/Toast'
+import Pagination from '../components/common/Pagination'
 import { colors, cardStyle, skeletonStyle, typography } from '../theme/tokens'
 
 const auth = (user) => ({ Authorization: `Bearer ${user.token}` })
@@ -327,52 +328,16 @@ export default function TrainerRecordings({ user }) {
                 </table>
               </div>
 
-              {totalPages > 1 && (
-                <div className="flex items-center justify-between mt-4 px-2" style={{ padding: '12px 16px' }}>
-                  <div className="flex items-center gap-2 text-sm text-gray-500">
-                    <span>Show Data</span>
-                    <select
-                      value={pageSize}
-                      onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }}
-                      className="reg-select"
-                      style={{ width: 70 }}
-                    >
-                      <option value={7}>7</option>
-                      <option value={10}>10</option>
-                      <option value={20}>20</option>
-                    </select>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => setPage(1)} disabled={page === 1}
-                      className="px-2 py-1 rounded text-gray-400 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">«</button>
-                    <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
-                      className="px-2 py-1 rounded text-gray-400 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">‹</button>
-                    {Array.from({ length: Math.min(totalPages, 5) }).map((_, idx) => {
-                      const n = totalPages <= 5 ? idx + 1
-                        : page <= 3 ? idx + 1
-                        : page >= totalPages - 2 ? totalPages - 4 + idx
-                        : page - 2 + idx
-                      return (
-                        <button key={n} onClick={() => setPage(n)}
-                          className={`px-3 py-1 rounded text-sm font-medium ${
-                            n === page ? 'bg-primary-600 text-white' : 'text-gray-500 hover:bg-gray-100'
-                          }`}>{n}</button>
-                      )
-                    })}
-                    {totalPages > 5 && page < totalPages - 2 && (
-                      <>
-                        <span className="px-2 text-gray-400 text-sm">...</span>
-                        <button onClick={() => setPage(totalPages)}
-                          className="px-3 py-1 rounded text-gray-500 hover:bg-gray-100 text-sm">{totalPages}</button>
-                      </>
-                    )}
-                    <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
-                      className="px-2 py-1 rounded text-gray-400 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">›</button>
-                    <button onClick={() => setPage(totalPages)} disabled={page === totalPages}
-                      className="px-2 py-1 rounded text-gray-400 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">»</button>
-                  </div>
-                </div>
-              )}
+              <Pagination
+                currentPage={page}
+                totalPages={totalPages}
+                totalItems={filtered.length}
+                pageSize={pageSize}
+                pageSizeOptions={[7, 10, 20, 50]}
+                onPageChange={(p) => setPage(p)}
+                onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+                recordLabel="recordings"
+              />
             </>
           )}
         </div>

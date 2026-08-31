@@ -5,30 +5,38 @@
 
 const ActivityService = require('../services/activityService');
 const logger = require('../utils/logger');
+const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 
 /**
  * GET /api/feed - Get activity feed with pagination and filters
  */
 const getActivityFeed = async (req, res) => {
   try {
-    const { limit = 20, offset = 0, type, userId, entityType } = req.query;
+    const { type, userId, entityType } = req.query;
+    const { page, limit, offset } = parsePagination(req.query, 20, 100);
 
     const options = {
-      limit: parseInt(limit),
-      offset: parseInt(offset),
+      limit,
+      offset,
       ...(type && { type }),
       ...(userId && { userId: parseInt(userId) }),
       ...(entityType && { entityType }),
     };
 
     const result = await ActivityService.getActivityFeed(options);
+    const total = result.count || 0;
+    const paginationMeta = formatPaginationMeta(total, page, limit);
 
     res.json({
       success: true,
       data: result.activities,
-      total: result.count,
-      limit: result.limit,
-      offset: result.offset,
+      activities: result.activities,
+      pagination: paginationMeta,
+      total,
+      page,
+      limit,
+      offset,
+      totalPages: paginationMeta.totalPages,
     });
   } catch (error) {
     logger.error('Error fetching activity feed', { error: error.message });

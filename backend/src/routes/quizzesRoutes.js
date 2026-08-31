@@ -30,6 +30,7 @@ const authenticateToken = require('../middleware/auth');
 const roleMiddleware = require('../middleware/roles');
 const NotificationService = require('../services/notificationService');
 const { assertTransition } = require('../utils/quizStateMachine');
+const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 
 const router = express.Router();
 
@@ -634,6 +635,10 @@ router.get('/:id/results', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) 
     const hasAccess = await verifyTrainerAccess(req, res, quiz);
     if (!hasAccess) return;
 
+    const { search = '' } = req.query;
+    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+    const isPaginated = !!(req.query.page || req.query.limit || req.query.offset !== undefined);
+
     const { User, QuizAttempt, ProctoringReport, MonitoringSession } = require('../models');
     const results = await QuizResult.findAll({
       where: { quizId: quiz.id },
@@ -652,7 +657,7 @@ router.get('/:id/results', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) 
       order: [['percentage', 'DESC']]
     });
 
-    const participantResults = results.map((r, idx) => {
+    let participantResults = results.map((r, idx) => {
       const pReport = r.attempt?.proctoringReport;
       const mSession = r.attempt?.monitoringSession;
       const riskScore = pReport?.riskScore != null ? parseFloat(pReport.riskScore) : (mSession?.score != null ? parseFloat(mSession.score) : 0);
@@ -679,7 +684,29 @@ router.get('/:id/results', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) 
       };
     });
 
-    res.json({ results: participantResults, quizTitle: quiz.title });
+    if (search && search.trim()) {
+      const q = search.toLowerCase().trim();
+      participantResults = participantResults.filter(pr =>
+        pr.participantName.toLowerCase().includes(q) ||
+        pr.participantEmail.toLowerCase().includes(q)
+      );
+    }
+
+    const total = participantResults.length;
+    const pagedResults = isPaginated ? participantResults.slice(offset, offset + limit) : participantResults;
+    const paginationMeta = formatPaginationMeta(total, page, limit);
+
+    res.json({
+      success: true,
+      results: pagedResults,
+      data: pagedResults,
+      pagination: paginationMeta,
+      quizTitle: quiz.title,
+      total,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
+    });
   } catch (error) {
     console.error('[results] Error:', error.message);
     res.status(500).json({ error: error.message });
@@ -1965,8 +1992,8 @@ router.get('/attempts/:attemptId/violations', async (req, res) => {
  */
 router.get('/', roleMiddleware('ADMIN', 'TRAINER'), async (req, res) => {
   try {
-    const { page = 1, limit = 20, search, status } = req.query;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const { search, status } = req.query;
+    const { page, limit, offset } = parsePagination(req.query, 20, 100);
     const where = {};
 
     if (search) {
@@ -2005,17 +2032,20 @@ router.get('/', roleMiddleware('ADMIN', 'TRAINER'), async (req, res) => {
       ],
       order: [['created_at', 'DESC']],
       offset,
-      limit: parseInt(limit),
+      limit,
     });
 
+    const paginationMeta = formatPaginationMeta(count, page, limit);
+
     res.json({
+      success: true,
       quizzes: rows,
-      pagination: {
-        total: count,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        totalPages: Math.ceil(count / parseInt(limit)),
-      }
+      data: rows,
+      pagination: paginationMeta,
+      total: count,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
     });
   } catch (error) {
     console.error('[GET /api/quizzes] Error:', error.message);

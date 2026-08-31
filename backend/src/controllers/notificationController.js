@@ -6,28 +6,36 @@
 const { Notification } = require('../models');
 const NotificationService = require('../services/notificationService');
 const logger = require('../utils/logger');
+const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 
 /**
  * GET /api/notifications - Get user notifications with pagination
  */
 const getNotifications = async (req, res) => {
   try {
-    const { limit = 10, offset = 0 } = req.query;
+    const { page, limit, offset } = parsePagination(req.query, 10, 100);
     const userId = req.user.id;
 
     const result = await NotificationService.getNotifications(
       userId,
-      parseInt(limit),
-      parseInt(offset)
+      limit,
+      offset
     );
+
+    const total = result.count || 0;
+    const paginationMeta = formatPaginationMeta(total, page, limit);
 
     res.json({
       success: true,
       data: result.notifications,
+      notifications: result.notifications,
       unreadCount: result.unreadCount,
-      total: result.count,
-      limit: parseInt(limit),
-      offset: parseInt(offset),
+      pagination: paginationMeta,
+      total,
+      page,
+      limit,
+      offset,
+      totalPages: paginationMeta.totalPages,
     });
   } catch (error) {
     logger.error('Error fetching notifications', { error: error.message });

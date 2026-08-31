@@ -9,6 +9,7 @@ import {
 import { API } from '../../../api/api'
 import { getAuthHeaders, fetchWithTimeout } from '../../../api/request'
 import { useToast } from '../../Toast'
+import Pagination from '../../common/Pagination'
 
 export default function TrainerAttendanceManagement({ user }) {
   const { error: showError, success: showSuccess } = useToast()
@@ -22,6 +23,8 @@ export default function TrainerAttendanceManagement({ user }) {
   const [summary, setSummary] = useState(null)
   const [sessionFilter, setSessionFilter] = useState('ALL') // ALL | TODAY | PAST | UPCOMING
   const [searchQuery, setSearchQuery] = useState('')
+  const [sessionPage, setSessionPage] = useState(1)
+  const [sessionLimit, setSessionLimit] = useState(10)
 
   // Active Session for Marking / Inspecting
   const [activeSession, setActiveSession] = useState(null)
@@ -129,6 +132,16 @@ export default function TrainerAttendanceManagement({ user }) {
       return true
     })
   }, [sessions, sessionFilter, searchQuery, todayDateStr])
+
+  // Reset pagination when filter or search changes
+  useEffect(() => {
+    setSessionPage(1)
+  }, [sessionFilter, searchQuery, selectedCourseId])
+
+  const pagedSessions = useMemo(() => {
+    const start = (sessionPage - 1) * sessionLimit
+    return filteredSessions.slice(start, start + sessionLimit)
+  }, [filteredSessions, sessionPage, sessionLimit])
 
   // Open Marking / Inspection Sheet
   const handleOpenSession = async (session) => {
@@ -692,7 +705,7 @@ export default function TrainerAttendanceManagement({ user }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredSessions.map(s => {
+                  {pagedSessions.map(s => {
                     const isToday = s.sessionDate === (todayDateStr || new Date().toISOString().split('T')[0])
                     return (
                       <tr
@@ -767,6 +780,15 @@ export default function TrainerAttendanceManagement({ user }) {
                   })}
                 </tbody>
               </table>
+              <Pagination
+                currentPage={sessionPage}
+                totalPages={Math.max(1, Math.ceil(filteredSessions.length / sessionLimit))}
+                totalItems={filteredSessions.length}
+                pageSize={sessionLimit}
+                onPageChange={(p) => setSessionPage(p)}
+                onPageSizeChange={(s) => { setSessionLimit(s); setSessionPage(1); }}
+                recordLabel="sessions"
+              />
             </div>
           )}
         </div>

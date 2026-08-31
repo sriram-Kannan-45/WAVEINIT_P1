@@ -39,6 +39,7 @@ const {
 } = require('../models');
 
 const { gradeAnswer } = require('../utils/gradeAnswer');
+const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helpers
@@ -509,25 +510,40 @@ async function listMyCourses(req, res) {
       cc = Object.fromEntries(coding.map(r => [String(r.courseId || r.course_id), Number(r.cnt || 0)]));
     }
 
+    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+    const isPaginated = !!(req.query.page || req.query.limit || req.query.offset !== undefined);
+
+    const total = courseEntries.length;
+    const pagedEntries = isPaginated ? courseEntries.slice(offset, offset + limit) : courseEntries;
+    const paginationMeta = formatPaginationMeta(total, page, limit);
+
+    const outCourses = pagedEntries.map(({ course, enrollment }) => ({
+      id: course.id,
+      courseId: course.id,
+      title: course.title,
+      description: course.description,
+      thumbnailUrl: course.thumbnailUrl,
+      status: course.status,
+      programTitle: course.program?.title || null,
+      trainerName: course.trainer?.name || course.program?.trainer?.name || null,
+      lessonCount: lc[String(course.id)] || 0,
+      quizCount: qc[String(course.id)] || 0,
+      enrolledCount: ec[String(course.id)] || 0,
+      codingCount: cc[String(course.id)] || 0,
+      progressPercent: Number(enrollment.progressPercent || 0),
+      enrolledAt: enrollment.enrolled_at || enrollment.createdAt,
+      enrollmentStatus: enrollment.status,
+    }));
+
     res.json({
       success: true,
-      courses: courseEntries.map(({ course, enrollment }) => ({
-        id: course.id,
-        courseId: course.id,
-        title: course.title,
-        description: course.description,
-        thumbnailUrl: course.thumbnailUrl,
-        status: course.status,
-        programTitle: course.program?.title || null,
-        trainerName: course.trainer?.name || course.program?.trainer?.name || null,
-        lessonCount: lc[String(course.id)] || 0,
-        quizCount: qc[String(course.id)] || 0,
-        enrolledCount: ec[String(course.id)] || 0,
-        codingCount: cc[String(course.id)] || 0,
-        progressPercent: Number(enrollment.progressPercent || 0),
-        enrolledAt: enrollment.enrolled_at || enrollment.createdAt,
-        enrollmentStatus: enrollment.status,
-      })),
+      courses: outCourses,
+      data: outCourses,
+      pagination: paginationMeta,
+      total,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
     });
   } catch (e) {
     console.error('listMyCourses:', e.message);
@@ -538,6 +554,9 @@ async function listMyCourses(req, res) {
 // GET /api/participant/courses/explore — PUBLISHED courses the participant is NOT enrolled in
 async function explore(req, res) {
   try {
+    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+    const isPaginated = !!(req.query.page || req.query.limit || req.query.offset !== undefined);
+
     const myEnrolled = await Enrollment.findAll({
       where: {
         participantId: req.user.id,
@@ -550,24 +569,43 @@ async function explore(req, res) {
     const where = { status: 'PUBLISHED' };
     if (myIds.length) where.id = { [Op.notIn]: myIds };
 
-    const courses = await Course.findAll({
+    const total = await Course.count({ where });
+
+    let findOptions = {
       where,
       include: [
         { model: Training, as: 'program', attributes: ['id', 'title'] },
         { model: User,     as: 'trainer', attributes: ['id', 'name'] },
       ],
       order: [['id', 'DESC']],
-    });
+    };
+
+    if (isPaginated) {
+      findOptions.limit = limit;
+      findOptions.offset = offset;
+    }
+
+    const courses = await Course.findAll(findOptions);
+    const paginationMeta = formatPaginationMeta(total, page, limit);
+
+    const outCourses = courses.map(c => ({
+      courseId: c.id,
+      title: c.title,
+      description: c.description,
+      thumbnailUrl: c.thumbnailUrl,
+      programTitle: c.program?.title || null,
+      trainerName: c.trainer?.name || null,
+    }));
+
     res.json({
       success: true,
-      courses: courses.map(c => ({
-        courseId: c.id,
-        title: c.title,
-        description: c.description,
-        thumbnailUrl: c.thumbnailUrl,
-        programTitle: c.program?.title || null,
-        trainerName: c.trainer?.name || null,
-      })),
+      courses: outCourses,
+      data: outCourses,
+      pagination: paginationMeta,
+      total,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
     });
   } catch (e) {
     console.error('explore:', e.message);

@@ -16,6 +16,7 @@ import DiscussionBoard from '../components/shared/DiscussionBoard'
 import { Button, Badge, Table, PageHeader, EmptyState, StatCard, ProgressBar } from '../components/ui'
 import { getCourseThumbnail, getThumbnailSVG } from '../config/courseThumbnailMap'
 import CourseArtwork from '../components/common/CourseArtwork'
+import Pagination from '../components/common/Pagination'
 import '../styles/trainer-my-trainings.css'
 import { getTwoLetterInitials } from '../components/common/UserAvatar'
 
@@ -2315,6 +2316,9 @@ function ExploreCatalog({ user, onEnrollSuccess }) {
   const [courses, setCourses] = useState([])
   const [loading, setLoading] = useState(true)
   const [enrollingId, setEnrollingId] = useState(null)
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(6)
 
   const fetchExplore = async () => {
     try {
@@ -2328,6 +2332,10 @@ function ExploreCatalog({ user, onEnrollSuccess }) {
   }
 
   useEffect(() => { fetchExplore() }, [])
+
+  useEffect(() => {
+    setPage(1)
+  }, [search])
 
   const handleEnroll = async (courseId) => {
     try {
@@ -2349,12 +2357,38 @@ function ExploreCatalog({ user, onEnrollSuccess }) {
     finally { setEnrollingId(null) }
   }
 
+  const filteredCourses = useMemo(() => {
+    if (!search) return courses
+    const q = search.toLowerCase()
+    return courses.filter(c =>
+      (c.title || '').toLowerCase().includes(q) ||
+      (c.description || '').toLowerCase().includes(q) ||
+      (c.programTitle || '').toLowerCase().includes(q) ||
+      (c.trainerName || '').toLowerCase().includes(q)
+    )
+  }, [courses, search])
+
+  const pagedCourses = filteredCourses.slice((page - 1) * pageSize, page * pageSize)
+
   return (
     <div className="wl-lessons-surface">
-      <div className="wl-lessons-header">
+      <div className="wl-lessons-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
         <div className="wl-lessons-header-left">
           <h2 className="wl-lessons-title">Explore Trainings</h2>
           <p className="wl-lessons-subtitle">Discover and enroll in published trainings.</p>
+        </div>
+        <div style={{ position: 'relative', width: 240 }}>
+          <Search size={14} style={{ position: 'absolute', left: 10, top: 10, color: '#94a3b8' }} />
+          <input
+            type="text"
+            placeholder="Search trainings…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{
+              width: '100%', padding: '6px 12px 6px 32px', borderRadius: 8,
+              border: '1px solid #e2e8f0', fontSize: 12, outline: 'none'
+            }}
+          />
         </div>
       </div>
 
@@ -2362,59 +2396,73 @@ function ExploreCatalog({ user, onEnrollSuccess }) {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {[1, 2, 3].map(i => <div key={i} className="h-72 bg-slate-100 dark:bg-slate-800 rounded-2xl animate-pulse" />)}
         </div>
-      ) : courses.length === 0 ? (
+      ) : filteredCourses.length === 0 ? (
         <div className="wl-lessons-empty">
           <div className="wl-lessons-empty-icon">
             <BookOpen size={48} />
           </div>
-          <h3>No new trainings to explore</h3>
-          <p>You're already enrolled in all published trainings!</p>
+          <h3>{search ? 'No matching trainings found' : 'No new trainings to explore'}</h3>
+          <p>{search ? 'Try a different search term.' : "You're already enrolled in all published trainings!"}</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {courses.map((c, i) => {
-            const artwork = getCourseArtwork(c.title)
-            const svgContent = getThumbnailSVG(artwork)
-            return (
-              <motion.div
-                key={c.courseId}
-                className="wl-training-card"
-                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.04 }}
-                whileHover={{ y: -4 }}
-              >
-                <div className="wl-training-card-thumb">
-                  <CourseArtwork title={c.title} category={c.category || c.programTitle} />
-                </div>
-                <div className="wl-training-card-body">
-                  <h3 className="wl-training-card-title">{c.title}</h3>
-                  <div className="wl-training-card-meta">
-                    <Folder size={12} /> {c.programTitle || '—'}
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {pagedCourses.map((c, i) => {
+              const artwork = getCourseArtwork(c.title)
+              const svgContent = getThumbnailSVG(artwork)
+              return (
+                <motion.div
+                  key={c.courseId}
+                  className="wl-training-card"
+                  initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.04 }}
+                  whileHover={{ y: -4 }}
+                >
+                  <div className="wl-training-card-thumb">
+                    <CourseArtwork title={c.title} category={c.category || c.programTitle} />
                   </div>
-                  {c.description && (
-                    <p className="wl-training-card-desc">
-                      {c.description}
-                    </p>
-                  )}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#6B7280', fontSize: 11.5, marginTop: 8, marginBottom: 12 }}>
-                    <User size={12} /> <span style={{ fontWeight: 600 }}>{c.trainerName || 'TBA'}</span>
+                  <div className="wl-training-card-body">
+                    <h3 className="wl-training-card-title">{c.title}</h3>
+                    <div className="wl-training-card-meta">
+                      <Folder size={12} /> {c.programTitle || '—'}
+                    </div>
+                    {c.description && (
+                      <p className="wl-training-card-desc">
+                        {c.description}
+                      </p>
+                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#6B7280', fontSize: 11.5, marginTop: 8, marginBottom: 12 }}>
+                      <User size={12} /> <span style={{ fontWeight: 600 }}>{c.trainerName || 'TBA'}</span>
+                    </div>
+                    <button
+                      disabled={enrollingId === c.courseId}
+                      onClick={() => handleEnroll(c.courseId)}
+                      className="wl-btn-primary"
+                      style={{
+                        width: '100%', height: 40,
+                        opacity: enrollingId === c.courseId ? 0.7 : 1,
+                      }}
+                    >
+                      Request Enrollment
+                    </button>
                   </div>
-                  <button
-                    disabled={enrollingId === c.courseId}
-                    onClick={() => handleEnroll(c.courseId)}
-                    className="wl-btn-primary"
-                    style={{
-                      width: '100%', height: 40,
-                      opacity: enrollingId === c.courseId ? 0.7 : 1,
-                    }}
-                  >
-                    Request Enrollment
-                  </button>
-                </div>
-              </motion.div>
-            )
-          })}
-        </div>
+                </motion.div>
+              )
+            })}
+          </div>
+          <div style={{ marginTop: 24 }}>
+            <Pagination
+              currentPage={page}
+              totalPages={Math.max(1, Math.ceil(filteredCourses.length / pageSize))}
+              totalItems={filteredCourses.length}
+              pageSize={pageSize}
+              pageSizeOptions={[6, 12, 24, 48]}
+              onPageChange={(p) => setPage(p)}
+              onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+              recordLabel="trainings"
+            />
+          </div>
+        </>
       )}
     </div>
   )

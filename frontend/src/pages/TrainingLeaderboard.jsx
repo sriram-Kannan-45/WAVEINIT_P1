@@ -10,6 +10,7 @@ import { API } from '../api/api'
 import { getAuthHeaders, fetchWithTimeout } from '../api/request'
 import UserAvatar, { getTwoLetterInitials } from '../components/common/UserAvatar'
 import { useToast } from '../components/Toast'
+import Pagination from '../components/common/Pagination'
 
 export default function TrainingLeaderboard({ user, onLogout }) {
   const { trainingId, id } = useParams()
@@ -28,6 +29,8 @@ export default function TrainingLeaderboard({ user, onLogout }) {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [sortBy, setSortBy] = useState('rank_asc')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   const fetchLeaderboardData = useCallback(async (isManualRefresh = false, signal = null) => {
     if (!currentTrainingId) {
@@ -132,6 +135,15 @@ export default function TrainingLeaderboard({ user, onLogout }) {
     return list
   }, [leaderboard, statusFilter, search, sortBy])
 
+  useEffect(() => {
+    setPage(1)
+  }, [statusFilter, search, sortBy])
+
+  const pagedParticipants = useMemo(() => {
+    const start = (page - 1) * pageSize
+    return filteredParticipants.slice(start, start + pageSize)
+  }, [filteredParticipants, page, pageSize])
+
   // Top 3 for Podium (only from attempted with valid rank)
   const topThree = useMemo(() => {
     const attemptedOnly = leaderboard.filter(p => p.rank != null && p.rank > 0)
@@ -152,28 +164,28 @@ export default function TrainingLeaderboard({ user, onLogout }) {
   const renderRankBadge = (rank) => {
     if (rank === 1) {
       return (
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', background: '#FEF3C7', color: '#B45309', border: '1.5px solid #FCD34D', borderRadius: 9999, fontWeight: 700, fontSize: 13 }}>
-          <span>🥇</span> <span>#1</span>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', background: '#FEF3C7', color: '#B45309', border: '1.5px solid #FCD34D', borderRadius: 9999, fontWeight: 800, fontSize: 12 }}>
+          <span>Rank #1</span>
         </div>
       )
     }
     if (rank === 2) {
       return (
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', background: '#F1F5F9', color: '#475569', border: '1.5px solid #CBD5E1', borderRadius: 9999, fontWeight: 700, fontSize: 13 }}>
-          <span>🥈</span> <span>#2</span>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', background: '#F1F5F9', color: '#475569', border: '1.5px solid #CBD5E1', borderRadius: 9999, fontWeight: 800, fontSize: 12 }}>
+          <span>Rank #2</span>
         </div>
       )
     }
     if (rank === 3) {
       return (
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', background: '#FFF7ED', color: '#C2410C', border: '1.5px solid #FDBA74', borderRadius: 9999, fontWeight: 700, fontSize: 13 }}>
-          <span>🥉</span> <span>#3</span>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', background: '#FFF7ED', color: '#C2410C', border: '1.5px solid #FDBA74', borderRadius: 9999, fontWeight: 800, fontSize: 12 }}>
+          <span>Rank #3</span>
         </div>
       )
     }
     if (rank != null) {
       return (
-        <span style={{ fontWeight: 700, fontSize: 14, color: '#334155' }}>
+        <span style={{ fontWeight: 700, fontSize: 13.5, color: '#334155' }}>
           #{rank}
         </span>
       )
@@ -373,18 +385,17 @@ export default function TrainingLeaderboard({ user, onLogout }) {
               {/* Podium Grid (Left: 2nd, Center: 1st, Right: 3rd) */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 18, alignItems: 'stretch' }}>
                 
-                {/* 🥈 Rank 2 (if exists) */}
+                {/* Rank 2 (if exists) */}
                 {topThree[1] ? (
                   <motion.div
                     whileHover={{ y: -3 }}
                     style={{ background: '#F8FAFC', border: '1.5px solid #CBD5E1', borderRadius: 14, padding: '20px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative' }}
                   >
-                    <div style={{ position: 'absolute', top: 12, right: 14, fontSize: 20 }}>🥈</div>
                     <div style={{ marginBottom: 12 }}>
-                      <UserAvatar name={topThree[1].name} size={64} fontSize={20} />
+                      <UserAvatar src={topThree[1].avatar || topThree[1].profilePic || topThree[1].profileImage} name={topThree[1].name} size={68} fontSize={22} rank={2} />
                     </div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>
-                      2nd Place
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', background: '#F1F5F9', color: '#475569', border: '1px solid #CBD5E1', borderRadius: 9999, fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
+                      Rank #2 · 2nd Place
                     </div>
                     <h3 style={{ margin: '0 0 4px 0', fontSize: 16, fontWeight: 700, color: '#0F172A' }}>
                       {topThree[1].name}
@@ -415,22 +426,21 @@ export default function TrainingLeaderboard({ user, onLogout }) {
                   </div>
                 )}
 
-                {/* 🥇 Rank 1 (Center - Elevated) */}
+                {/* Rank 1 (Center - Elevated) */}
                 {topThree[0] && (
                   <motion.div
                     whileHover={{ y: -4 }}
                     style={{ background: '#FEFDF8', border: '2px solid #F59E0B', borderRadius: 16, padding: '24px 20px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative', boxShadow: '0 8px 24px rgba(245, 158, 11, 0.08)' }}
                   >
-                    <div style={{ position: 'absolute', top: 12, right: 14, fontSize: 24 }}>🥇</div>
                     <div style={{ position: 'absolute', top: -14, left: '50%', transform: 'translateX(-50%)', background: '#F59E0B', color: '#FFFFFF', padding: '2px 14px', borderRadius: 9999, fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', boxShadow: '0 2px 6px rgba(245, 158, 11, 0.3)' }}>
                       Top Performer
                     </div>
 
                     <div style={{ marginBottom: 12, marginTop: 4 }}>
-                      <UserAvatar name={topThree[0].name} size={72} fontSize={24} />
+                      <UserAvatar src={topThree[0].avatar || topThree[0].profilePic || topThree[0].profileImage} name={topThree[0].name} size={76} fontSize={24} rank={1} />
                     </div>
-                    <div style={{ fontSize: 13, fontWeight: 800, color: '#B45309', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>
-                      1st Place · Champion
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', background: '#FEF3C7', color: '#B45309', border: '1px solid #FCD34D', borderRadius: 9999, fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
+                      Rank #1 · Champion
                     </div>
                     <h3 style={{ margin: '0 0 4px 0', fontSize: 18, fontWeight: 800, color: '#0F172A' }}>
                       {topThree[0].name}
@@ -457,18 +467,17 @@ export default function TrainingLeaderboard({ user, onLogout }) {
                   </motion.div>
                 )}
 
-                {/* 🥉 Rank 3 (if exists) */}
+                {/* Rank 3 (if exists) */}
                 {topThree[2] ? (
                   <motion.div
                     whileHover={{ y: -3 }}
                     style={{ background: '#F8FAFC', border: '1.5px solid #CBD5E1', borderRadius: 14, padding: '20px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative' }}
                   >
-                    <div style={{ position: 'absolute', top: 12, right: 14, fontSize: 20 }}>🥉</div>
                     <div style={{ marginBottom: 12 }}>
-                      <UserAvatar name={topThree[2].name} size={64} fontSize={20} />
+                      <UserAvatar src={topThree[2].avatar || topThree[2].profilePic || topThree[2].profileImage} name={topThree[2].name} size={68} fontSize={22} rank={3} />
                     </div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#9A3412', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>
-                      3rd Place
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', background: '#FFF7ED', color: '#C2410C', border: '1px solid #FDBA74', borderRadius: 9999, fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
+                      Rank #3 · 3rd Place
                     </div>
                     <h3 style={{ margin: '0 0 4px 0', fontSize: 16, fontWeight: 700, color: '#0F172A' }}>
                       {topThree[2].name}
@@ -594,7 +603,7 @@ export default function TrainingLeaderboard({ user, onLogout }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredParticipants.map((entry, idx) => {
+                    {pagedParticipants.map((entry, idx) => {
                       const isSelf = entry.participantId === user?.id
                       return (
                         <tr
@@ -613,7 +622,7 @@ export default function TrainingLeaderboard({ user, onLogout }) {
                           {/* PARTICIPANT */}
                           <td style={{ padding: '14px 16px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                              <UserAvatar name={entry.name} size={38} fontSize={13} />
+                              <UserAvatar src={entry.avatar || entry.profilePic || entry.profileImage} name={entry.name} size={40} fontSize={13} rank={entry.rank} />
                               <div style={{ minWidth: 0 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                   <span style={{ fontWeight: 600, fontSize: 14, color: '#0F172A' }}>
@@ -682,6 +691,15 @@ export default function TrainingLeaderboard({ user, onLogout }) {
                     })}
                   </tbody>
                 </table>
+                <Pagination
+                  currentPage={page}
+                  totalPages={Math.max(1, Math.ceil(filteredParticipants.length / pageSize))}
+                  totalItems={filteredParticipants.length}
+                  pageSize={pageSize}
+                  onPageChange={(p) => setPage(p)}
+                  onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+                  recordLabel="participants"
+                />
               </div>
             )}
 

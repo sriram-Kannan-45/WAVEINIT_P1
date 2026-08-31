@@ -15,6 +15,9 @@ router.get('/:id/leaderboard', authenticateToken, (req, res) => trainingLeaderbo
 // GET /api/trainings/:id - Public
 router.get('/:id', (req, res) => trainingController.getTrainingById(req, res));
 
+// GET /api/trainings/:id/progress - Dynamic structure completion metrics
+router.get('/:id/progress', optionalAuth, (req, res) => trainingController.getTrainingProgress(req, res));
+
 // POST /api/trainings - Admin only (create training)
 router.post('/', authenticateToken, (req, res) => trainingController.createTraining(req, res));
 

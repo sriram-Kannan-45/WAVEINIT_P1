@@ -15,6 +15,7 @@ const { User, Training, RegistrationApplication, TrainingTrainerAssignment, Noti
 const { sequelize } = require('../config/db');
 const { sendCredentialsEmail, isEmailConfigured, explainSmtpError, rebuildTransporter } = require('../config/mailer');
 const { validateEmail } = require('../utils/validators');
+const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 
 const BCRYPT_COST = 12;
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
@@ -242,7 +243,9 @@ async function submitApplication(req, res) {
 
 async function getApplications(req, res) {
   try {
-    const { status, search, page = 1, limit = 50 } = req.query;
+    const { status, search } = req.query;
+    const { page, limit, offset } = parsePagination(req.query, 50, 100);
+
     const where = {};
     if (status && status !== 'ALL') where.status = status;
     if (search) {
@@ -254,7 +257,6 @@ async function getApplications(req, res) {
       ];
     }
 
-    const offset = (parseInt(page) - 1) * parseInt(limit);
     const { count, rows } = await RegistrationApplication.findAndCountAll({
       where,
       include: [
@@ -263,7 +265,7 @@ async function getApplications(req, res) {
         { model: User, as: 'trainer', attributes: ['id', 'name'] },
       ],
       order: [['created_at', 'DESC']],
-      limit: parseInt(limit),
+      limit,
       offset,
     });
 
@@ -304,7 +306,18 @@ async function getApplications(req, res) {
       reviewedAt: a.reviewedAt,
     }));
 
-    res.json({ applications, total: count, page: parseInt(page), limit: parseInt(limit) });
+    const paginationMeta = formatPaginationMeta(count, page, limit);
+
+    res.json({
+      success: true,
+      applications,
+      data: applications,
+      pagination: paginationMeta,
+      total: count,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
+    });
   } catch (error) {
     console.error('Get applications error:', error.message);
     res.status(500).json({ error: 'Server error fetching applications.' });

@@ -1,0 +1,133 @@
+/* ── TrainingProgressBar Component Styles ── */
+.tpb-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.tpb-size-sm {
+  gap: 6px;
+}
+
+.tpb-size-lg {
+  gap: 12px;
+}
+
+.tpb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tpb-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tpb-title-icon {
+  color: #0d9488;
+}
+
+.tpb-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+  letter-spacing: -0.01em;
+}
+
+.tpb-size-sm .tpb-title {
+  font-size: 12px;
+}
+
+.tpb-size-lg .tpb-title {
+  font-size: 15px;
+}
+
+.tpb-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  border: 1px solid transparent;
+  letter-spacing: -0.01em;
+  transition: all 0.2s ease;
+}
+
+.tpb-size-lg .tpb-badge {
+  padding: 3px 10px;
+  font-size: 12.5px;
+}
+
+/* Progress Track */
+.tpb-track {
+  width: 100%;
+  height: 7px;
+  background: #f1f5f9;
+  border-radius: 9999px;
+  overflow: hidden;
+  position: relative;
+}
+
+.tpb-size-sm .tpb-track {
+  height: 5px;
+}
+
+.tpb-size-lg .tpb-track {
+  height: 10px;
+}
+
+.tpb-bar {
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Footer / Subtitle */
+.tpb-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tpb-stats-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tpb-stats-text {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.tpb-stats-text strong {
+  color: #1e293b;
+  font-weight: 600;
+}
+
+.tpb-inprogress-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #fef3c7;
+  color: #b45309;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.tpb-empty-notice {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #94a3b8;
+  font-style: italic;
+}

@@ -7,6 +7,8 @@ import {
 import { API } from '../../../api/api'
 import { getAuthHeaders, fetchWithTimeout } from '../../../api/request'
 import { useToast } from '../../Toast'
+import UserAvatar from '../../common/UserAvatar'
+import Pagination from '../../common/Pagination'
 
 export default function StudentLeaderboardView({ user, enrollments = [] }) {
   const { error: showError, success: showSuccess } = useToast()
@@ -15,6 +17,8 @@ export default function StudentLeaderboardView({ user, enrollments = [] }) {
   const [selectedCourseId, setSelectedCourseId] = useState('')
   const [timeframe, setTimeframe] = useState('all_time')
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const [loading, setLoading] = useState(true)
   const [leaderboard, setLeaderboard] = useState([])
   const [summary, setSummary] = useState({ totalParticipants: 0, highestPoints: 0 })
@@ -51,6 +55,10 @@ export default function StudentLeaderboardView({ user, enrollments = [] }) {
     fetchLeaderboard()
   }, [fetchLeaderboard])
 
+  useEffect(() => {
+    setPage(1)
+  }, [search, scope, selectedCourseId, timeframe])
+
   const filteredLeaders = leaderboard.filter(item => {
     if (!search.trim()) return true
     const q = search.toLowerCase().trim()
@@ -61,29 +69,31 @@ export default function StudentLeaderboardView({ user, enrollments = [] }) {
     )
   })
 
+  const pagedLeaders = filteredLeaders.slice((page - 1) * pageSize, page * pageSize)
+
   // Top 3 Podium
   const topThree = leaderboard.slice(0, 3)
 
   const getRankBadge = (rank) => {
     if (rank === 1) {
       return (
-        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: '50%', background: '#DCFCE7', color: '#15803D' }}>
-          <Crown size={16} />
-        </div>
+        <span style={{ padding: '3px 8px', background: '#DCFCE7', color: '#15803D', borderRadius: 9999, fontWeight: 800, fontSize: 11, border: '1px solid #86EFAC' }}>
+          #1
+        </span>
       )
     }
     if (rank === 2) {
       return (
-        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: '50%', background: '#F1F5F9', color: '#0F172A' }}>
-          <Medal size={16} />
-        </div>
+        <span style={{ padding: '3px 8px', background: '#F1F5F9', color: '#475569', borderRadius: 9999, fontWeight: 800, fontSize: 11, border: '1px solid #CBD5E1' }}>
+          #2
+        </span>
       )
     }
     if (rank === 3) {
       return (
-        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: '50%', background: '#E2E8F0', color: '#334155' }}>
-          <Medal size={16} />
-        </div>
+        <span style={{ padding: '3px 8px', background: '#FFF7ED', color: '#C2410C', borderRadius: 9999, fontWeight: 800, fontSize: 11, border: '1px solid #FDBA74' }}>
+          #3
+        </span>
       )
     }
     return (
@@ -222,21 +232,21 @@ export default function StudentLeaderboardView({ user, enrollments = [] }) {
                   position: 'relative'
                 }}
               >
-                {/* Crown Icon */}
-                <div style={{
-                  width: 44, height: 44, borderRadius: '50%',
-                  background: crownBg, color: crownColor,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  marginBottom: 10
-                }}>
-                  {isFirst ? <Crown size={24} /> : <Medal size={22} />}
-                </div>
+                {/* Participant Profile Avatar */}
+                <UserAvatar
+                  src={item.avatar || item.profilePic || item.profileImage || item.image}
+                  name={item.name}
+                  size={64}
+                  fontSize={20}
+                  rank={idx + 1}
+                  style={{ marginBottom: 10 }}
+                />
 
-                <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: crownColor }}>
+                <span style={{ padding: '2px 10px', borderRadius: 9999, background: crownBg, border: `1px solid ${borderColor}`, fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.5, color: crownColor, marginBottom: 6 }}>
                   Rank #{item.rank || idx + 1}
                 </span>
 
-                <h4 style={{ fontSize: 16, fontWeight: 700, color: '#0F172A', margin: '4px 0 2px' }}>
+                <h4 style={{ fontSize: 16, fontWeight: 700, color: '#0F172A', margin: '0 0 2px' }}>
                   {item.name}
                 </h4>
                 <span style={{ fontSize: 12, color: '#64748B' }}>{item.department || item.email}</span>
@@ -289,7 +299,7 @@ export default function StudentLeaderboardView({ user, enrollments = [] }) {
                 </tr>
               </thead>
               <tbody>
-                {filteredLeaders.map(item => {
+                {pagedLeaders.map(item => {
                   const isCurrent = item.userId === user?.id
                   return (
                     <tr
@@ -305,13 +315,13 @@ export default function StudentLeaderboardView({ user, enrollments = [] }) {
                       </td>
                       <td style={{ padding: '12px 14px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <div style={{
-                            width: 32, height: 32, borderRadius: '50%', background: '#E2E8F0',
-                            color: '#334155', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            fontSize: 12, fontWeight: 700
-                          }}>
-                            {(item.name || 'S')[0].toUpperCase()}
-                          </div>
+                          <UserAvatar
+                            src={item.avatar || item.profilePic || item.profileImage || item.image}
+                            name={item.name}
+                            size={34}
+                            fontSize={12}
+                            rank={item.rank}
+                          />
                           <div>
                             <div style={{ color: '#0F172A', fontWeight: 600 }}>{item.name} {isCurrent && '(You)'}</div>
                             <div style={{ fontSize: 11, color: '#64748B' }}>{item.department || item.email}</div>
@@ -342,6 +352,15 @@ export default function StudentLeaderboardView({ user, enrollments = [] }) {
                 })}
               </tbody>
             </table>
+            <Pagination
+              currentPage={page}
+              totalPages={Math.max(1, Math.ceil(filteredLeaders.length / pageSize))}
+              totalItems={filteredLeaders.length}
+              pageSize={pageSize}
+              onPageChange={(p) => setPage(p)}
+              onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+              recordLabel="learners"
+            />
           </div>
         )}
       </div>

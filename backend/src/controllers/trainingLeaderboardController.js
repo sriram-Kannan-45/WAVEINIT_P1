@@ -13,6 +13,7 @@ const {
   CourseTrainerAssignment
 } = require('../models');
 const { Op } = require('sequelize');
+const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 
 /**
  * GET /api/trainings/:id/leaderboard
@@ -269,6 +270,8 @@ const getTrainingLeaderboard = async (req, res) => {
           department: user.department || null,
           designation: user.designation || null,
           avatar: user.profilePic || null,
+          profilePic: user.profilePic || null,
+          profileImage: user.profilePic || null,
           score: null,
           maxScore: totalPossibleMarks > 0 ? totalPossibleMarks : null,
           percentage: null,
@@ -350,6 +353,8 @@ const getTrainingLeaderboard = async (req, res) => {
           department: user.department || null,
           designation: user.designation || null,
           avatar: user.profilePic || null,
+          profilePic: user.profilePic || null,
+          profileImage: user.profilePic || null,
           score: finalScore,
           maxScore: Number((finalMaxScore || 100).toFixed(2)),
           percentage: finalPercentage,
@@ -420,6 +425,9 @@ const getTrainingLeaderboard = async (req, res) => {
       ? assignedTrainers.map(tr => tr.name).join(', ')
       : (training.trainer ? training.trainer.name : 'Unassigned');
 
+    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+    const paginationMeta = formatPaginationMeta(fullLeaderboard.length, page, limit);
+
     res.json({
       success: true,
       training: {
@@ -443,7 +451,13 @@ const getTrainingLeaderboard = async (req, res) => {
         averageScore,
         highestScore
       },
-      leaderboard: fullLeaderboard
+      leaderboard: fullLeaderboard,
+      data: fullLeaderboard,
+      pagination: paginationMeta,
+      total: fullLeaderboard.length,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
     });
   } catch (error) {
     console.error('Error fetching training leaderboard:', error.message, error.stack);

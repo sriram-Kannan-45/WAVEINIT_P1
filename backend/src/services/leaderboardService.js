@@ -160,11 +160,14 @@ class LeaderboardService {
       participants.forEach(p => {
         statsMap.set(p.id, {
           userId: p.id,
+          participantId: p.id,
           name: p.name || 'Student',
           email: p.email,
           employeeId: p.employeeId,
           department: p.department,
           profilePic: p.profilePic,
+          avatar: p.profilePic,
+          profileImage: p.profilePic,
           quizScoreTotal: 0,
           codingScoreTotal: 0,
           lessonsCompleted: 0,

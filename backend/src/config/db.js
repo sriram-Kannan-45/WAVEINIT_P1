@@ -186,6 +186,33 @@ const connectDB = async () => {
     } catch (bootstrapErr) {
       logger.error('⚠️ Error bootstrapping async monitoring schema', { error: bootstrapErr.message });
     }
+
+    // Ensure lesson status column exists for training progress tracking
+    try {
+      if (isPostgres) {
+        await sequelize.query(`
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_lessons_status') THEN
+              CREATE TYPE "enum_lessons_status" AS ENUM ('PENDING', 'IN_PROGRESS', 'COMPLETED');
+            END IF;
+          END$$;
+        `);
+        await sequelize.query(`
+          ALTER TABLE "lessons" ADD COLUMN IF NOT EXISTS "status" "enum_lessons_status" NOT NULL DEFAULT 'PENDING';
+        `);
+      } else {
+        const [cols] = await sequelize.query("SHOW COLUMNS FROM `lessons` WHERE `Field` = 'status'");
+        if (cols.length === 0) {
+          await sequelize.query(
+            "ALTER TABLE `lessons` ADD COLUMN `status` ENUM('PENDING', 'IN_PROGRESS', 'COMPLETED') NOT NULL DEFAULT 'PENDING'"
+          );
+        }
+      }
+      logger.info('✅ Verified lessons.status column');
+    } catch (lpErr) {
+      logger.error('⚠️ Error ensuring lessons.status column', { error: lpErr.message });
+    }
     
     // Manual database migrations for MySQL
     if (!isPostgres) {

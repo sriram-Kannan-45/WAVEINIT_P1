@@ -8,6 +8,8 @@ import {
   Star, Zap, Users, BarChart2, ChevronUp, ChevronDown
 } from 'lucide-react'
 
+import UserAvatar from './common/UserAvatar'
+
 /* ─── Custom Recharts Tooltip ─── */
 const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null
@@ -25,7 +27,7 @@ const PODIUM_HEIGHTS = { 1: 'h-36', 2: 'h-28', 3: 'h-20' }
 /* ─── Rank configs ─── */
 const RANK_CONFIG = {
   1: {
-    medal: '🥇', label: '1st',
+    rankBadge: 'Rank #1', label: '1st Place',
     card: 'border-amber-300 bg-gradient-to-b from-amber-50 to-yellow-50 shadow-xl shadow-amber-100',
     stripe: 'from-yellow-400 to-amber-500',
     avatar: 'from-yellow-400 to-amber-500 shadow-amber-200',
@@ -34,7 +36,7 @@ const RANK_CONFIG = {
     scale: 'sm:scale-105 sm:z-10',
   },
   2: {
-    medal: '🥈', label: '2nd',
+    rankBadge: 'Rank #2', label: '2nd Place',
     card: 'border-slate-300 bg-gradient-to-b from-slate-50 to-white shadow-lg shadow-slate-100',
     stripe: 'from-slate-300 to-slate-400',
     avatar: 'from-slate-400 to-slate-500',
@@ -43,7 +45,7 @@ const RANK_CONFIG = {
     scale: '',
   },
   3: {
-    medal: '🥉', label: '3rd',
+    rankBadge: 'Rank #3', label: '3rd Place',
     card: 'border-orange-200 bg-gradient-to-b from-orange-50 to-white shadow-lg shadow-orange-100',
     stripe: 'from-orange-300 to-orange-400',
     avatar: 'from-orange-400 to-orange-500 shadow-orange-200',
@@ -230,24 +232,22 @@ const Leaderboard = ({ data = [], title = 'Quiz Leaderboard', showChart = true, 
                       {/* Top stripe */}
                       <div className={`h-1.5 bg-gradient-to-r ${cfg.stripe}`} />
 
-                      <div className="p-4 sm:p-5 text-center">
-                        {/* Medal */}
-                        <motion.div
-                          animate={isFirst ? { y: [0, -5, 0] } : {}}
-                          transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
-                          className="text-3xl sm:text-4xl mb-2.5"
-                        >
-                          {cfg.medal}
-                        </motion.div>
-
+                      <div className="p-4 sm:p-5 text-center flex flex-col items-center">
                         {/* Avatar */}
-                        <motion.div
-                          whileHover={{ scale: 1.08, rotate: 4 }}
-                          className={`w-12 h-12 sm:w-14 sm:h-14 mx-auto mb-2.5 rounded-2xl flex items-center justify-center font-black text-base sm:text-lg text-white shadow-lg bg-gradient-to-br ${cfg.avatar}`}
-                          style={{ fontFamily: 'Outfit, sans-serif' }}
-                        >
-                          {(entry.name || 'U').charAt(0).toUpperCase()}
-                        </motion.div>
+                        <div className="mb-2.5">
+                          <UserAvatar
+                            src={entry.avatar || entry.profilePic || entry.profileImage || entry.image}
+                            name={entry.name}
+                            size={isFirst ? 72 : 64}
+                            fontSize={isFirst ? 24 : 20}
+                            rank={rank}
+                          />
+                        </div>
+
+                        {/* Separate Rank Badge */}
+                        <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest mb-2 ${cfg.score} bg-white/90 border border-current/20 shadow-sm`}>
+                          {cfg.rankBadge} · {cfg.label}
+                        </div>
 
                         {/* Name */}
                         <h3
@@ -420,17 +420,13 @@ const Leaderboard = ({ data = [], title = 'Quiz Leaderboard', showChart = true, 
 
                           {/* Participant */}
                           <td className="px-5 py-4">
-                            <div className="flex items-center gap-3">
-                              <div
-                                className={[
-                                  'w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white text-sm shadow-sm flex-shrink-0',
-                                  isCurrentUser
-                                    ? 'bg-gradient-to-br from-primary-500 to-primary-600'
-                                    : 'bg-gradient-to-br from-slate-400 to-slate-500',
-                                ].join(' ')}
-                              >
-                                {(entry.name || 'U').charAt(0).toUpperCase()}
-                              </div>
+                              <UserAvatar
+                                src={entry.avatar || entry.profilePic || entry.profileImage || entry.image}
+                                name={entry.name}
+                                size={36}
+                                fontSize={12}
+                                rank={rank}
+                              />
                               <div>
                                 <p className="font-semibold text-slate-900 text-sm leading-tight">
                                   {entry.name || 'Anonymous'}

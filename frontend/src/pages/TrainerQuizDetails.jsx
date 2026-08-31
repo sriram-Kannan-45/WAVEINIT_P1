@@ -11,6 +11,8 @@ import { useToast } from '../components/Toast'
 import { useConfirm } from '../components/ui/AlertModal'
 import { TrainerProctoringDashboard } from '../proctoring'
 import { SingleAttemptProctoringModal } from '../proctoring/components/TrainerMonitoringReport'
+import UserAvatar from '../components/common/UserAvatar'
+import Pagination from '../components/common/Pagination'
 
 const STATUS_LABELS = {
   DRAFT: 'Draft', PUBLISHED: 'Published', CLOSED: 'Closed',
@@ -475,6 +477,8 @@ function ParticipantsTab({ quiz, auth, toast }) {
   const [participants, setParticipants] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   useEffect(() => {
     (async () => {
@@ -487,10 +491,16 @@ function ParticipantsTab({ quiz, auth, toast }) {
     })()
   }, [quiz.id])
 
+  useEffect(() => {
+    setPage(1)
+  }, [search])
+
   const filtered = participants.filter(p =>
     (p.name || '').toLowerCase().includes(search.toLowerCase()) ||
     (p.email || '').toLowerCase().includes(search.toLowerCase())
   )
+
+  const pagedParticipants = filtered.slice((page - 1) * pageSize, page * pageSize)
 
   return (
     <div>
@@ -537,7 +547,7 @@ function ParticipantsTab({ quiz, auth, toast }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(p => {
+              {pagedParticipants.map(p => {
                 const statusMeta = ATTEMPT_STATUS[p.attemptStatus] || ATTEMPT_STATUS.NOT_STARTED
                 return (
                   <tr key={p.id || p.participantId}>
@@ -562,6 +572,15 @@ function ParticipantsTab({ quiz, auth, toast }) {
               })}
             </tbody>
           </table>
+          <Pagination
+            currentPage={page}
+            totalPages={Math.max(1, Math.ceil(filtered.length / pageSize))}
+            totalItems={filtered.length}
+            pageSize={pageSize}
+            onPageChange={(p) => setPage(p)}
+            onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+            recordLabel="participants"
+          />
         </div>
       )}
     </div>
@@ -573,6 +592,9 @@ function ResultsTab({ quiz, onRefresh, auth, toast }) {
   const [loading, setLoading] = useState(true)
   const [publishing, setPublishing] = useState(false)
   const [selectedProctorAttempt, setSelectedProctorAttempt] = useState(null)
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   const loadResults = async () => {
     setLoading(true)
@@ -585,6 +607,10 @@ function ResultsTab({ quiz, onRefresh, auth, toast }) {
   }
 
   useEffect(() => { loadResults() }, [quiz.id])
+
+  useEffect(() => {
+    setPage(1)
+  }, [search])
 
   const handlePublishResults = async () => {
     setPublishing(true)
@@ -616,13 +642,36 @@ function ResultsTab({ quiz, onRefresh, auth, toast }) {
     finally { setPublishing(false) }
   }
 
+  const filteredResults = results.filter(entry => {
+    const name = entry.participantName || entry.participant?.name || ''
+    const email = entry.participant?.email || ''
+    const q = search.toLowerCase()
+    return name.toLowerCase().includes(q) || email.toLowerCase().includes(q)
+  })
+
+  const pagedResults = filteredResults.slice((page - 1) * pageSize, page * pageSize)
+
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
         <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#111827', fontFamily: 'var(--font-primary)' }}>
           {results.length} Participant Submissions
         </h3>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ position: 'relative', width: 220 }}>
+            <Search size={14} style={{ position: 'absolute', left: 10, top: 10, color: '#94a3b8' }} />
+            <input
+              type="text"
+              placeholder="Search results…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{
+                width: '100%', padding: '6px 12px 6px 32px', borderRadius: 8,
+                border: '1px solid #e2e8f0', fontSize: 12, outline: 'none'
+              }}
+            />
+          </div>
+
           {results.length > 0 && (
             <button
               className="reg-admin-btn"
@@ -659,22 +708,21 @@ function ResultsTab({ quiz, onRefresh, auth, toast }) {
                 gap: 6
               }}
             >
-              <Download size={14} /> Download Excel Marks
+              <Download size={14} /> Export Marks (Excel)
             </button>
           )}
-          {quiz.resultStatus === 'HIDDEN' && results.length > 0 && (
+          {quiz.resultStatus === 'HIDDEN' ? (
             <button
               className="reg-admin-btn reg-admin-btn--primary"
               onClick={handlePublishResults}
               disabled={publishing}
               style={{ cursor: 'pointer' }}
             >
-              <Send size={14} /> Publish All Results
+              <Send size={14} /> Publish Results to Students
             </button>
-          )}
-          {quiz.resultStatus === 'PUBLISHED' && (
+          ) : (
             <button
-              className="reg-admin-btn reg-admin-btn--secondary"
+              className="reg-admin-btn"
               onClick={handleHideResults}
               disabled={publishing}
               style={{ cursor: 'pointer' }}
@@ -690,7 +738,7 @@ function ResultsTab({ quiz, onRefresh, auth, toast }) {
           <Loader2 size={20} className="reg-spin" style={{ margin: '0 auto 8px' }} />
           <p style={{ fontSize: 13 }}>Loading quiz results…</p>
         </div>
-      ) : results.length === 0 ? (
+      ) : filteredResults.length === 0 ? (
         <div className="reg-admin-empty" style={{ border: '2px dashed #e2e8f0', borderRadius: 12 }}>
           <BarChart3 size={32} style={{ opacity: 0.5 }} />
           <h3>No results submitted yet</h3>
@@ -710,7 +758,7 @@ function ResultsTab({ quiz, onRefresh, auth, toast }) {
               </tr>
             </thead>
             <tbody>
-              {results.map((entry, idx) => {
+              {pagedResults.map((entry, idx) => {
                 const pct = entry.percentage
                 const passed = pct != null && pct >= (quiz.passingPercentage || 50)
                 const isDisqualified = entry.attemptStatus === 'disqualified_copy_violation' || entry.attemptStatus === 'disqualified_policy_violation'
@@ -798,6 +846,15 @@ function ResultsTab({ quiz, onRefresh, auth, toast }) {
               })}
             </tbody>
           </table>
+          <Pagination
+            currentPage={page}
+            totalPages={Math.max(1, Math.ceil(filteredResults.length / pageSize))}
+            totalItems={filteredResults.length}
+            pageSize={pageSize}
+            onPageChange={(p) => setPage(p)}
+            onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+            recordLabel="results"
+          />
         </div>
       )}
 
@@ -816,6 +873,8 @@ function ResultsTab({ quiz, onRefresh, auth, toast }) {
 function LeaderboardTab({ quiz, auth }) {
   const [leaders, setLeaders] = useState([])
   const [loading, setLoading] = useState(true)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   useEffect(() => {
     (async () => {
@@ -827,6 +886,8 @@ function LeaderboardTab({ quiz, auth }) {
       finally { setLoading(false) }
     })()
   }, [quiz.id])
+
+  const pagedLeaders = leaders.slice((page - 1) * pageSize, page * pageSize)
 
   return (
     <div>
@@ -854,21 +915,54 @@ function LeaderboardTab({ quiz, auth }) {
               </tr>
             </thead>
             <tbody>
-              {leaders.map((entry, idx) => (
-                <tr key={entry.participantId || idx}>
-                  <td style={{ textAlign: 'center', fontWeight: 800, color: idx < 3 ? PODIUM_COLORS[idx] : '#64748b' }}>
-                    {idx === 0 ? '🥇 1' : idx === 1 ? '🥈 2' : idx === 2 ? '🥉 3' : `#${idx + 1}`}
-                  </td>
-                  <td style={{ fontWeight: 600, color: '#111827' }}>{entry.participantName || `Participant #${entry.participantId}`}</td>
-                  <td style={{ textAlign: 'center', fontWeight: 700, color: '#16a34a' }}>{entry.totalScore}</td>
-                  <td style={{ textAlign: 'center', fontWeight: 700 }}>{Math.round(entry.percentage)}%</td>
-                  <td style={{ textAlign: 'right', color: '#64748b', fontSize: 12 }}>
-                    {entry.timeTaken ? `${entry.timeTaken}s` : '—'}
-                  </td>
-                </tr>
-              ))}
+              {pagedLeaders.map((entry, idx) => {
+                const rankNum = (page - 1) * pageSize + idx + 1
+                return (
+                  <tr key={entry.participantId || idx}>
+                    <td style={{ textAlign: 'center' }}>
+                      {rankNum === 1 ? (
+                        <span style={{ padding: '3px 8px', background: '#FEF3C7', color: '#B45309', borderRadius: 9999, fontWeight: 800, fontSize: 11, border: '1px solid #FCD34D' }}>#1</span>
+                      ) : rankNum === 2 ? (
+                        <span style={{ padding: '3px 8px', background: '#F1F5F9', color: '#475569', borderRadius: 9999, fontWeight: 800, fontSize: 11, border: '1px solid #CBD5E1' }}>#2</span>
+                      ) : rankNum === 3 ? (
+                        <span style={{ padding: '3px 8px', background: '#FFF7ED', color: '#C2410C', borderRadius: 9999, fontWeight: 800, fontSize: 11, border: '1px solid #FDBA74' }}>#3</span>
+                      ) : (
+                        <span style={{ fontWeight: 700, color: '#64748b', fontSize: 12 }}>#{rankNum}</span>
+                      )}
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <UserAvatar
+                          src={entry.avatar || entry.profilePic || entry.profileImage || entry.image}
+                          name={entry.participantName || entry.name}
+                          size={32}
+                          fontSize={11}
+                          rank={rankNum}
+                        />
+                        <span style={{ fontWeight: 600, color: '#111827', fontSize: 13.5 }}>
+                          {entry.participantName || `Participant #${entry.participantId}`}
+                        </span>
+                      </div>
+                    </td>
+                    <td style={{ textAlign: 'center', fontWeight: 700, color: '#16a34a' }}>{entry.totalScore}</td>
+                    <td style={{ textAlign: 'center', fontWeight: 700 }}>{Math.round(entry.percentage)}%</td>
+                    <td style={{ textAlign: 'right', color: '#64748b', fontSize: 12 }}>
+                      {entry.timeTaken ? `${entry.timeTaken}s` : '—'}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
+          <Pagination
+            currentPage={page}
+            totalPages={Math.max(1, Math.ceil(leaders.length / pageSize))}
+            totalItems={leaders.length}
+            pageSize={pageSize}
+            onPageChange={(p) => setPage(p)}
+            onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+            recordLabel="performers"
+          />
         </div>
       )}
     </div>

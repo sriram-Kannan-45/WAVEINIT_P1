@@ -1,13 +1,12 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
 import {
   Upload, FileText, Sparkles, Loader2, Trash2, Pencil, Check, X,
   ChevronRight, GripVertical, AlertCircle, CheckCircle2, RotateCcw,
   ChevronDown, Plus, BookOpen, Clock, FileUp, CheckCircle,
-  HelpCircle, Layers, Folder, RefreshCw
+  HelpCircle, Layers, Folder, RefreshCw, Circle
 } from 'lucide-react'
 import { API, getAuthHeaders } from '../../api/api'
 import { useToast } from '../Toast'
+import TrainingProgressBar from '../common/TrainingProgressBar'
 import './AIStructureGenerator.css'
 
 function formatBytes(bytes) {
@@ -27,21 +26,90 @@ function normalizeStructure(data) {
       title: m.title || `Module ${mi + 1}`,
       duration: m.duration || '',
       description: m.description || '',
+      status: m.status || 'PENDING',
       expanded: mi === 0, // expand first by default
       subModules: (m.subModules || []).map((sm, si) => ({
         id: sm.id || `sub_${Date.now()}_${mi}_${si}`,
         title: sm.title || `Sub Module ${si + 1}`,
         duration: sm.duration || '',
+        status: sm.status || 'PENDING',
         expanded: true,
         topics: (sm.topics || []).map((t, ti) => ({
           id: t.id || `top_${Date.now()}_${mi}_${si}_${ti}`,
           title: t.title || `Topic ${ti + 1}`,
           duration: t.duration || '',
           description: t.description || '',
+          status: t.status || 'PENDING',
         })),
       })),
     })),
   }
+}
+
+function computeStructureMetrics(norm) {
+  if (!norm || !Array.isArray(norm.modules)) {
+    return { totalStructureItems: 0, completedStructureItems: 0, inProgressStructureItems: 0, completionPercentage: 0, hasStructure: false }
+  }
+  let total = 0
+  let completed = 0
+  let inProgress = 0
+  for (const m of norm.modules) {
+    total++
+    if (m.status === 'COMPLETED') completed++
+    else if (m.status === 'IN_PROGRESS') inProgress++
+    for (const sm of (m.subModules || [])) {
+      total++
+      if (sm.status === 'COMPLETED') completed++
+      else if (sm.status === 'IN_PROGRESS') inProgress++
+      for (const t of (sm.topics || [])) {
+        total++
+        if (t.status === 'COMPLETED') completed++
+        else if (t.status === 'IN_PROGRESS') inProgress++
+      }
+    }
+  }
+  return {
+    totalStructureItems: total,
+    completedStructureItems: completed,
+    inProgressStructureItems: inProgress,
+    completionPercentage: total > 0 ? Number(((completed / total) * 100).toFixed(2)) : 0,
+    hasStructure: total > 0,
+  }
+}
+
+function StatusChip({ status = 'PENDING', onClick }) {
+  const cfg = {
+    COMPLETED: { label: 'Completed', bg: '#dcfce7', text: '#15803d', border: '#bbf7d0', icon: <CheckCircle2 size={11} /> },
+    IN_PROGRESS: { label: 'In Progress', bg: '#fef3c7', text: '#b45309', border: '#fde68a', icon: <Clock size={11} /> },
+    PENDING: { label: 'Pending', bg: '#f1f5f9', text: '#64748b', border: '#e2e8f0', icon: <Circle size={10} /> },
+  }[status] || { label: 'Pending', bg: '#f1f5f9', text: '#64748b', border: '#e2e8f0', icon: null }
+
+  return (
+    <button
+      type="button"
+      className="wls-status-chip"
+      style={{
+        background: cfg.bg,
+        color: cfg.text,
+        border: `1px solid ${cfg.border}`,
+        cursor: 'pointer',
+        padding: '2px 8px',
+        borderRadius: 9999,
+        fontSize: '11px',
+        fontWeight: 600,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '4px',
+        transition: 'all 0.15s ease',
+        lineHeight: 1.2,
+      }}
+      onClick={onClick}
+      title="Click to toggle status (Pending → In Progress → Completed)"
+    >
+      {cfg.icon}
+      <span>{cfg.label}</span>
+    </button>
+  )
 }
 
 export default function AIStructureGenerator({ user, courseId, onStructureSaved }) {
@@ -54,7 +122,7 @@ export default function AIStructureGenerator({ user, courseId, onStructureSaved 
   const [dragOver, setDragOver] = useState(false)
   const [error, setError] = useState('')
   const [expandedModules, setExpandedModules] = useState({})
-
+  const [progressMetrics, setProgressMetrics] = useState(null)
 
   const fileRef = useRef(null)
   const dropRef = useRef(null)
@@ -70,11 +138,17 @@ export default function AIStructureGenerator({ user, courseId, onStructureSaved 
       if (d.success && d.structure && d.structure.modules?.length > 0) {
         const norm = normalizeStructure(d.structure)
         setStructure(norm)
+        if (d.structureProgress) {
+          setProgressMetrics(d.structureProgress)
+        } else {
+          setProgressMetrics(computeStructureMetrics(norm))
+        }
         if (norm?.modules?.length > 0) {
           setExpandedModules({ [norm.modules[0].id]: true })
         }
       } else {
         setStructure(null)
+        setProgressMetrics(d.structureProgress || { totalStructureItems: 0, completedStructureItems: 0, completionPercentage: 0, hasStructure: false })
       }
     } catch (e) {
       console.error('fetchStructure error:', e)
@@ -342,6 +416,52 @@ export default function AIStructureGenerator({ user, courseId, onStructureSaved 
   }
 
 
+  const handleToggleStatus = async (itemId, currentStatus, e) => {
+    if (e) e.stopPropagation()
+    const cycle = { PENDING: 'IN_PROGRESS', IN_PROGRESS: 'COMPLETED', COMPLETED: 'PENDING' }
+    const nextStatus = cycle[currentStatus || 'PENDING'] || 'PENDING'
+
+    // Optimistically update local structure & metrics
+    setStructure(prev => {
+      if (!prev) return null
+      const updateList = (items) => (items || []).map(item => {
+        const matches = item.id === itemId
+        const updatedSub = item.subModules ? updateList(item.subModules) : undefined
+        const updatedTop = item.topics ? updateList(item.topics) : undefined
+        return {
+          ...item,
+          status: matches ? nextStatus : item.status,
+          ...(updatedSub ? { subModules: updatedSub } : {}),
+          ...(updatedTop ? { topics: updatedTop } : {}),
+        }
+      })
+      const nextNorm = {
+        ...prev,
+        modules: updateList(prev.modules),
+      }
+      setProgressMetrics(computeStructureMetrics(nextNorm))
+      return nextNorm
+    })
+
+    try {
+      const numericId = typeof itemId === 'number' || (!isNaN(Number(itemId)) && String(itemId).trim() !== '') ? Number(itemId) : null
+      if (numericId) {
+        const r = await fetch(API.TRAINER_COURSES.UPDATE_STRUCTURE_STATUS(courseId), {
+          method: 'PATCH',
+          headers: { ...auth(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: [numericId], status: nextStatus }),
+        })
+        const d = await r.json()
+        if (d.success && d.courseProgress) {
+          setProgressMetrics(d.courseProgress)
+        }
+      }
+      onStructureSaved?.()
+    } catch (err) {
+      console.error('Failed to update structure status:', err)
+    }
+  }
+
   return (
     <div className="wls-structure-workspace">
       {/* ── Main Top Row: Left Generation Panel + Right Info Cards ── */}
@@ -544,6 +664,19 @@ export default function AIStructureGenerator({ user, courseId, onStructureSaved 
       {/* ── Bottom Section: Generated Structure Preview ── */}
       {structure && structure.modules?.length > 0 && (
         <div className="wls-preview-card">
+          {/* Progress Bar Section */}
+          <div style={{ padding: '18px 24px 14px', borderBottom: '1px solid #f1f5f9', background: '#fafafa', borderRadius: '16px 16px 0 0' }}>
+            <TrainingProgressBar
+              percentage={progressMetrics?.completionPercentage ?? computeStructureMetrics(structure).completionPercentage}
+              completedItems={progressMetrics?.completedStructureItems ?? computeStructureMetrics(structure).completedStructureItems}
+              totalItems={progressMetrics?.totalStructureItems ?? computeStructureMetrics(structure).totalStructureItems}
+              inProgressItems={progressMetrics?.inProgressStructureItems ?? computeStructureMetrics(structure).inProgressStructureItems}
+              hasStructure={true}
+              title="Training Structure Progress"
+              size="md"
+            />
+          </div>
+
           {/* Header */}
           <div className="wls-preview-card-header">
             <div className="wls-preview-title-row">
@@ -595,6 +728,10 @@ export default function AIStructureGenerator({ user, courseId, onStructureSaved 
                     </div>
 
                     <div className="wls-accordion-header-right">
+                      <StatusChip
+                        status={m.status || 'PENDING'}
+                        onClick={(e) => handleToggleStatus(m.id, m.status, e)}
+                      />
                       <span className="wls-accordion-stat">{m.subModules?.length || 0} Sub Modules</span>
                       <span className="wls-accordion-stat">{totalTopics} Topics</span>
                       
@@ -635,6 +772,11 @@ export default function AIStructureGenerator({ user, courseId, onStructureSaved 
                                 </span>
                               )}
 
+                              <StatusChip
+                                status={sm.status || 'PENDING'}
+                                onClick={(e) => handleToggleStatus(sm.id, sm.status, e)}
+                              />
+
                               {/* Delete Sub Module Action */}
                               <button
                                 className="wls-delete-btn"
@@ -653,6 +795,11 @@ export default function AIStructureGenerator({ user, courseId, onStructureSaved 
                                   {t.duration && (
                                     <span className="wls-topic-dur">{t.duration}</span>
                                   )}
+
+                                  <StatusChip
+                                    status={t.status || 'PENDING'}
+                                    onClick={(e) => handleToggleStatus(t.id, t.status, e)}
+                                  />
 
                                   {/* Delete Topic Action */}
                                   <button

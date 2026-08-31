@@ -105,6 +105,7 @@ export const API = {
 
   TRAININGS: {
     LIST: `${API_BASE}/trainer/trainings`,
+    PROGRESS: (trainingId) => `${API_BASE}/trainings/${trainingId}/progress`,
     LEADERBOARD: (trainingId) => `${API_BASE}/trainings/${trainingId}/leaderboard`,
   },
 
@@ -163,13 +164,16 @@ export const API = {
   TRAINER_COURSES: {
     LIST:                                 `${API_BASE}/trainer/courses`,
     DETAIL:        (courseId)          => `${API_BASE}/trainer/courses/${courseId}`,
+    PROGRESS:      (courseId)          => `${API_BASE}/trainer/courses/${courseId}/progress`,
 
     LESSONS:       (courseId)          => `${API_BASE}/trainer/courses/${courseId}/lessons`,
     LESSON:        (courseId, lessonId)=> `${API_BASE}/trainer/courses/${courseId}/lessons/${lessonId}`,
+    UPDATE_LESSON_STATUS: (courseId, lessonId) => `${API_BASE}/trainer/courses/${courseId}/lessons/${lessonId}/status`,
     REORDER_LESSONS:(courseId)         => `${API_BASE}/trainer/courses/${courseId}/lessons/reorder`,
 
     STRUCTURE:     (courseId)          => `${API_BASE}/trainer/courses/${courseId}/structure`,
     SAVE_STRUCTURE:(courseId)          => `${API_BASE}/trainer/courses/${courseId}/structure`,
+    UPDATE_STRUCTURE_STATUS:(courseId) => `${API_BASE}/trainer/courses/${courseId}/structure/status`,
     CLEAR_STRUCTURE:(courseId)         => `${API_BASE}/trainer/courses/${courseId}/structure`,
     DELETE_MODULE: (courseId, modId)   => `${API_BASE}/trainer/courses/${courseId}/structure/module/${modId}`,
     DELETE_SUBMODULE:(courseId, subId) => `${API_BASE}/trainer/courses/${courseId}/structure/submodule/${subId}`,

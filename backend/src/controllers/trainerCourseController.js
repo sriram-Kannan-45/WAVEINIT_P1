@@ -48,9 +48,11 @@ const {
   User,
 } = require('../models');
 const { TYPE_LIMITS, ROOT: MATERIALS_ROOT } = require('../middleware/uploadMaterial');
+const { calculateCourseCompletion, calculateTrainingCompletion } = require('../services/trainingProgressService');
 const { getUploadsRoot, resolveUploadsPath } = require('../config/paths');
 const NotificationService = require('../services/notificationService');
 const aiService = require('../services/aiService');
+const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -220,14 +222,39 @@ async function listMyCourses(req, res) {
         [Op.or]: orConditions
       };
     }
-    const courses = await Course.findAll({
+
+    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+    const isPaginated = !!(req.query.page || req.query.limit || req.query.offset !== undefined);
+
+    const total = await Course.count({ where });
+
+    let findOptions = {
       where,
       include: [
         { model: Training, as: 'program', attributes: ['id', 'title'] },
       ],
       order: [['id', 'DESC']],
-    });
-    if (courses.length === 0) return res.json({ success: true, courses: [] });
+    };
+
+    if (isPaginated) {
+      findOptions.limit = limit;
+      findOptions.offset = offset;
+    }
+
+    const courses = await Course.findAll(findOptions);
+    if (courses.length === 0) {
+      const paginationMeta = formatPaginationMeta(total, page, limit);
+      return res.json({
+        success: true,
+        courses: [],
+        data: [],
+        pagination: paginationMeta,
+        total,
+        page,
+        limit,
+        totalPages: paginationMeta.totalPages
+      });
+    }
 
     const ids = courses.map(c => c.id);
     const [lessons, quizzes, enrolled, coding] = await Promise.all([
@@ -256,7 +283,19 @@ async function listMyCourses(req, res) {
       createdAt: c.created_at,
       updatedAt: c.updated_at,
     }));
-    res.json({ success: true, courses: out });
+
+    const paginationMeta = formatPaginationMeta(total, page, limit);
+
+    res.json({
+      success: true,
+      courses: out,
+      data: out,
+      pagination: paginationMeta,
+      total,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
+    });
   } catch (e) {
     console.error('listMyCourses:', e.message);
     res.status(500).json({ error: 'Failed to list courses' });
@@ -319,7 +358,7 @@ async function getCourseDetail(req, res) {
       ? { [Op.or]: [{ courseId: course.id }, { trainingId: course.trainingProgramId }] }
       : { courseId: course.id };
 
-    const [program, lessonCount, quizCount, enrolledCount, codingCount] = await Promise.all([
+    const [program, lessonCount, quizCount, enrolledCount, codingCount, structureProgress] = await Promise.all([
       Training.findByPk(course.trainingProgramId, { attributes: ['id', 'title'] }),
       Lesson.count({ where: courseWhere }),
       AIQuiz.count({ where: courseWhere }),
@@ -332,7 +371,12 @@ async function getCourseDetail(req, res) {
         }
       }),
       CodingAssessment.count({ where: courseWhere }),
+      calculateCourseCompletion(course.id),
     ]);
+
+    const trainingProgress = course.trainingProgramId
+      ? await calculateTrainingCompletion(course.trainingProgramId)
+      : null;
 
     res.json({
       success: true,
@@ -349,6 +393,9 @@ async function getCourseDetail(req, res) {
         quizCount: Number(quizCount || 0),
         enrolledCount: Number(enrolledCount || 0),
         codingCount: Number(codingCount || 0),
+        structureProgress,
+        trainingProgress,
+        completionPercentage: structureProgress.completionPercentage,
         createdAt: course.created_at,
         updatedAt: course.updated_at,
       },
@@ -436,6 +483,7 @@ async function listLessons(req, res) {
         title: l.title,
         description: l.description,
         orderIndex: l.orderIndex,
+        status: l.status || 'PENDING',
         materialCounts: tally,
         hasAssessment: (l.assessments || []).length > 0,
         createdAt: l.created_at,
@@ -476,12 +524,17 @@ async function updateLesson(req, res) {
     const lesson = await Lesson.findOne({ where: { id: req.params.lessonId, courseId: course.id } });
     if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
 
-    const { title, description, content, orderIndex } = req.body;
+    const { title, description, content, orderIndex, status } = req.body;
+    if (status && !['PENDING', 'IN_PROGRESS', 'COMPLETED'].includes(status)) {
+      return res.status(422).json({ error: 'Invalid status. Allowed: PENDING, IN_PROGRESS, COMPLETED' });
+    }
+
     await lesson.update({
       title:       title       ?? lesson.title,
       description: description !== undefined ? description : lesson.description,
       content:     content     !== undefined ? content     : lesson.content,
       orderIndex:  orderIndex  != null ? parseInt(orderIndex, 10) : lesson.orderIndex,
+      status:      status      || lesson.status,
     });
     res.json({ success: true, lesson });
   } catch (e) {
@@ -1118,18 +1171,38 @@ async function listParticipants(req, res) {
     const course = await loadOwnedCourse(req, res, req.params.courseId);
     if (!course) return;
 
+    const { search = '', status = '' } = req.query;
+    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+    const isPaginated = !!(req.query.page || req.query.limit || req.query.offset !== undefined);
+
+    const enrollmentWhere = {
+      courseId: course.id,
+      status: status && status !== 'ALL' ? status : { [Op.in]: ['ENROLLED', 'PENDING'] }
+    };
+
     const enrollments = await Enrollment.findAll({
-      where: {
-        courseId: course.id,
-        status: { [Op.in]: ['ENROLLED', 'PENDING'] }
-      },
+      where: enrollmentWhere,
       include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email'] }],
       order: [['enrolled_at', 'DESC']],
     });
     const totalLessons = await Lesson.count({ where: { courseId: course.id } });
 
-    // Fetch lesson progress + quiz attempts in bulk
-    const participantIds = enrollments.map(e => e.participantId);
+    // Filter by search query if present
+    let filteredEnrollments = enrollments;
+    if (search && search.trim()) {
+      const q = search.toLowerCase().trim();
+      filteredEnrollments = enrollments.filter(e => {
+        const name = (e.participant?.name || '').toLowerCase();
+        const email = (e.participant?.email || '').toLowerCase();
+        return name.includes(q) || email.includes(q);
+      });
+    }
+
+    const total = filteredEnrollments.length;
+    const pagedEnrollments = isPaginated ? filteredEnrollments.slice(offset, offset + limit) : filteredEnrollments;
+
+    // Fetch lesson progress + quiz attempts in bulk for paged participants
+    const participantIds = pagedEnrollments.map(e => e.participantId);
     const lessons = await Lesson.findAll({ where: { courseId: course.id }, attributes: ['id'] });
     const lessonIds = lessons.map(l => l.id);
 
@@ -1159,7 +1232,7 @@ async function listParticipants(req, res) {
       if (r.percentage != null) scoreMap[pid].push(Number(r.percentage));
     });
 
-    const out = enrollments.map(e => {
+    const out = pagedEnrollments.map(e => {
       const pid = String(e.participantId);
       const lessonsDone = doneMap[pid] || 0;
       const scores = scoreMap[pid] || [];
@@ -1176,7 +1249,19 @@ async function listParticipants(req, res) {
         status: e.status,
       };
     });
-    res.json({ success: true, participants: out });
+
+    const paginationMeta = formatPaginationMeta(total, page, limit);
+
+    res.json({
+      success: true,
+      participants: out,
+      data: out,
+      pagination: paginationMeta,
+      total,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
+    });
   } catch (e) {
     console.error('listParticipants:', e.message);
     res.status(500).json({ error: 'Failed to list participants' });
@@ -1798,6 +1883,7 @@ function parseLessonsToStructure(courseTitle, lessons) {
     const content = l.content || '';
     const durationMatch = content.match(/Estimated Duration:\s*([^,\n]+)/i);
     const duration = durationMatch ? durationMatch[1].trim() : '';
+    const itemStatus = l.status || 'PENDING';
 
     if (/^module(\s+\d+)?:\s*/i.test(rawTitle)) {
       const cleanTitle = rawTitle.replace(/^module(\s+\d+)?:\s*/i, '').trim();
@@ -1806,6 +1892,7 @@ function parseLessonsToStructure(courseTitle, lessons) {
         title: cleanTitle || rawTitle,
         description: desc,
         duration: duration,
+        status: itemStatus,
         expanded: true,
         subModules: [],
       };
@@ -1817,11 +1904,12 @@ function parseLessonsToStructure(courseTitle, lessons) {
         id: l.id,
         title: cleanTitle || rawTitle,
         duration: duration,
+        status: itemStatus,
         expanded: true,
         topics: [],
       };
       if (!currentModule) {
-        currentModule = { id: l.id, title: 'Main Module', description: '', duration: '', expanded: true, subModules: [] };
+        currentModule = { id: l.id, title: 'Main Module', description: '', duration: '', status: itemStatus, expanded: true, subModules: [] };
         modules.push(currentModule);
       }
       currentModule.subModules.push(currentSubModule);
@@ -1832,26 +1920,27 @@ function parseLessonsToStructure(courseTitle, lessons) {
         title: cleanTitle || rawTitle,
         duration: duration,
         description: desc,
+        status: itemStatus,
       };
       if (!currentModule) {
-        currentModule = { id: l.id, title: 'Main Module', description: '', duration: '', expanded: true, subModules: [] };
+        currentModule = { id: l.id, title: 'Main Module', description: '', duration: '', status: itemStatus, expanded: true, subModules: [] };
         modules.push(currentModule);
       }
       if (!currentSubModule) {
-        currentSubModule = { id: l.id, title: 'Topics Overview', duration: '', expanded: true, topics: [] };
+        currentSubModule = { id: l.id, title: 'Topics Overview', duration: '', status: itemStatus, expanded: true, topics: [] };
         currentModule.subModules.push(currentSubModule);
       }
       currentSubModule.topics.push(topic);
     } else {
       // Standalone lesson row
       if (!currentModule) {
-        currentModule = { id: l.id, title: rawTitle, description: desc, duration: duration, expanded: true, subModules: [] };
+        currentModule = { id: l.id, title: rawTitle, description: desc, duration: duration, status: itemStatus, expanded: true, subModules: [] };
         modules.push(currentModule);
       } else if (!currentSubModule) {
-        currentSubModule = { id: l.id, title: rawTitle, duration: duration, expanded: true, topics: [] };
+        currentSubModule = { id: l.id, title: rawTitle, duration: duration, status: itemStatus, expanded: true, topics: [] };
         currentModule.subModules.push(currentSubModule);
       } else {
-        currentSubModule.topics.push({ id: l.id, title: rawTitle, duration: duration, description: desc });
+        currentSubModule.topics.push({ id: l.id, title: rawTitle, duration: duration, description: desc, status: itemStatus });
       }
     }
   }
@@ -1995,12 +2084,14 @@ async function getCourseStructure(req, res) {
       order: [['orderIndex', 'ASC'], ['id', 'ASC']],
     });
 
+    const structureProgress = await calculateCourseCompletion(course.id);
+
     if (!lessons || lessons.length === 0) {
-      return res.json({ success: true, structure: null, lessonsCount: 0 });
+      return res.json({ success: true, structure: null, lessonsCount: 0, structureProgress });
     }
 
     const structure = parseLessonsToStructure(course.title, lessons);
-    res.json({ success: true, structure, lessonsCount: lessons.length });
+    res.json({ success: true, structure, lessonsCount: lessons.length, structureProgress });
   } catch (e) {
     console.error('getCourseStructure error:', e.message);
     res.status(500).json({ error: 'Failed to retrieve course structure' });
@@ -2125,6 +2216,92 @@ async function deleteStructureTopic(req, res) {
   }
 }
 
+// PATCH /api/trainer/courses/:courseId/lessons/:lessonId/status
+async function updateLessonStatus(req, res) {
+  try {
+    const course = await loadOwnedCourse(req, res, req.params.courseId);
+    if (!course) return;
+
+    const lesson = await Lesson.findOne({ where: { id: req.params.lessonId, courseId: course.id } });
+    if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+
+    const { status } = req.body;
+    if (!['PENDING', 'IN_PROGRESS', 'COMPLETED'].includes(status)) {
+      return res.status(422).json({ error: 'Invalid status. Allowed values: PENDING, IN_PROGRESS, COMPLETED' });
+    }
+
+    await lesson.update({ status });
+    const courseProgress = await calculateCourseCompletion(course.id);
+    const trainingProgress = course.trainingProgramId ? await calculateTrainingCompletion(course.trainingProgramId) : null;
+
+    res.json({
+      success: true,
+      lesson: { id: lesson.id, title: lesson.title, status: lesson.status },
+      courseProgress,
+      trainingProgress,
+      message: `Status updated to ${status}`,
+    });
+  } catch (e) {
+    console.error('updateLessonStatus:', e.message);
+    res.status(500).json({ error: 'Failed to update lesson status' });
+  }
+}
+
+// PATCH /api/trainer/courses/:courseId/structure/status
+async function updateStructureItemStatus(req, res) {
+  try {
+    const course = await loadOwnedCourse(req, res, req.params.courseId);
+    if (!course) return;
+
+    const { ids, status } = req.body;
+    if (!['PENDING', 'IN_PROGRESS', 'COMPLETED'].includes(status)) {
+      return res.status(422).json({ error: 'Invalid status. Allowed values: PENDING, IN_PROGRESS, COMPLETED' });
+    }
+
+    const targetIds = Array.isArray(ids) ? ids.map(Number).filter(n => !isNaN(n)) : [];
+    if (targetIds.length === 0) {
+      return res.status(422).json({ error: 'ids array is required' });
+    }
+
+    await Lesson.update({ status }, { where: { id: targetIds, courseId: course.id } });
+
+    const courseProgress = await calculateCourseCompletion(course.id);
+    const trainingProgress = course.trainingProgramId ? await calculateTrainingCompletion(course.trainingProgramId) : null;
+
+    res.json({
+      success: true,
+      updatedCount: targetIds.length,
+      status,
+      courseProgress,
+      trainingProgress,
+      message: `Updated status for ${targetIds.length} structure item(s)`,
+    });
+  } catch (e) {
+    console.error('updateStructureItemStatus:', e.message);
+    res.status(500).json({ error: 'Failed to update structure status' });
+  }
+}
+
+// GET /api/trainer/courses/:courseId/progress
+async function getCourseProgress(req, res) {
+  try {
+    const course = await loadOwnedCourse(req, res, req.params.courseId);
+    if (!course) return;
+
+    const courseProgress = await calculateCourseCompletion(course.id);
+    const trainingProgress = course.trainingProgramId ? await calculateTrainingCompletion(course.trainingProgramId) : null;
+
+    res.json({
+      success: true,
+      courseProgress,
+      trainingProgress,
+    });
+  } catch (e) {
+    console.error('getCourseProgress error:', e.message);
+    res.status(500).json({ error: 'Failed to retrieve course progress' });
+  }
+}
+
 module.exports = {
   // Courses
   listMyCourses,
@@ -2132,11 +2309,13 @@ module.exports = {
   listAllPrograms,
   getCourseDetail,
   updateOwnCourse,
+  getCourseProgress,
   // Lessons
   createLesson,
   listLessons,
   getLesson,
   updateLesson,
+  updateLessonStatus,
   deleteLesson,
   reorderLessons,
   // Materials
@@ -2177,6 +2356,7 @@ module.exports = {
   deleteStructureModule,
   deleteStructureSubModule,
   deleteStructureTopic,
+  updateStructureItemStatus,
 };
 
 

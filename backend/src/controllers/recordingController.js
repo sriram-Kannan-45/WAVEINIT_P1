@@ -9,6 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const { Op } = require('sequelize');
 const logger = require('../utils/logger');
+const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 
 const STORAGE_ROOT = path.join(__dirname, '..', '..', 'storage', 'recordings');
 
@@ -84,7 +85,8 @@ exports.upload = async (req, res) => {
 
 exports.list = async (req, res) => {
   try {
-    const { quiz_id, participant_id, role, status, search, date_from, date_to, type, page = 1, limit = 20 } = req.query;
+    const { quiz_id, participant_id, role, status, search, date_from, date_to, type } = req.query;
+    const { page, limit, offset } = parsePagination(req.query, 20, 100);
     const userRole = (req.user.role || '').toUpperCase();
     const userId = req.user.id;
 
@@ -108,7 +110,6 @@ exports.list = async (req, res) => {
       where.participantId = userId;
     }
 
-    const offset = (parseInt(page) - 1) * parseInt(limit);
     const { count, rows } = await QuizRecording.findAndCountAll({
       where,
       include: [
@@ -118,7 +119,7 @@ exports.list = async (req, res) => {
       ],
       order: [['recorded_at', 'DESC']],
       offset,
-      limit: parseInt(limit)
+      limit
     });
 
     const enhancedRecordings = [];
@@ -157,14 +158,16 @@ exports.list = async (req, res) => {
       enhancedRecordings.push(recJson);
     }
 
+    const paginationMeta = formatPaginationMeta(count, page, limit);
+
     return ok(res, {
       recordings: enhancedRecordings,
-      pagination: {
-        total: count,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        totalPages: Math.ceil(count / parseInt(limit))
-      }
+      data: enhancedRecordings,
+      pagination: paginationMeta,
+      total: count,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
     });
   } catch (error) {
     logger.error('[recordingController.list]', { error: error.message });

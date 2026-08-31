@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { getTwoLetterInitials } from '../common/UserAvatar'
+import UserAvatar, { getTwoLetterInitials } from '../common/UserAvatar'
 
 /* ── Mock data (8 participants) ── */
 const MOCK_PARTICIPANTS = [
@@ -435,17 +435,17 @@ export default function AIQuizLeaderboard() {
                       cursor: 'default',
                     }}
                   >
-                    <div style={{ fontSize: 28, marginBottom: 4 }}>{medals[idx]}</div>
-                    <div style={{
-                      width: 52, height: 52, borderRadius: '50%',
-                      background: '#16A34A',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      margin: '0 auto 8px',
-                      fontSize: 16, fontWeight: 700, color: '#fff',
-                      boxShadow: '0 2px 8px rgba(22,163,74,0.3)',
-                      fontFamily: "'Poppins', sans-serif",
-                    }}>
-                      {getTwoLetterInitials(p.name)}
+                    <div style={{ display: 'inline-flex', padding: '2px 8px', borderRadius: 9999, background: 'rgba(255,255,255,0.08)', color: colors[idx], fontSize: 10, fontWeight: 800, textTransform: 'uppercase', marginBottom: 8 }}>
+                      Rank #{idx === 0 ? 1 : idx === 1 ? 2 : 3}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
+                      <UserAvatar
+                        src={p.avatar || p.profilePic || p.profileImage || p.image}
+                        name={p.name}
+                        size={52}
+                        fontSize={16}
+                        rank={idx === 0 ? 1 : idx === 1 ? 2 : 3}
+                      />
                     </div>
                     <div style={{
                       fontSize: 13, fontWeight: 700, color: '#f1f5f9',
@@ -561,24 +561,23 @@ export default function AIQuizLeaderboard() {
                     color: isTop3 ? 'transparent' : '#94a3b8',
                   }}>
                     {isTop3 ? (
-                      <span style={{ fontSize: 16 }}>{['🥇', '🥈', '🥉'][i]}</span>
+                      <span style={{ padding: '2px 6px', borderRadius: 9999, background: i === 0 ? 'rgba(245, 158, 11, 0.2)' : i === 1 ? 'rgba(148, 163, 184, 0.2)' : 'rgba(234, 88, 12, 0.2)', color: i === 0 ? '#F59E0B' : i === 1 ? '#CBD5E1' : '#FB923C', fontWeight: 800, fontSize: 10 }}>
+                        #{i + 1}
+                      </span>
                     ) : (
                       `#${i + 1}`
                     )}
                   </div>
 
                   {/* Name */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{
-                      width: 28, height: 28, borderRadius: '50%',
-                      background: '#16A34A',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 10, fontWeight: 700, color: '#fff',
-                      flexShrink: 0,
-                      fontFamily: "'Poppins', sans-serif",
-                    }}>
-                      {getTwoLetterInitials(p.name)}
-                    </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <UserAvatar
+                      src={p.avatar || p.profilePic || p.profileImage || p.image}
+                      name={p.name}
+                      size={28}
+                      fontSize={10}
+                      rank={i + 1}
+                    />
                     <div>
                       <div style={{
                         fontSize: 13, fontWeight: 600, color: '#f1f5f9',

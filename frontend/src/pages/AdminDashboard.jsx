@@ -2190,6 +2190,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                         <th>Title</th>
                         <th>Program</th>
                         <th>Trainer</th>
+                        <th>Progress</th>
                         <th>Status</th>
                         <th>Actions</th>
                       </tr>
@@ -2197,6 +2198,10 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                     <tbody>
                       {displayCourses.map(c => {
                         const isChecked = selectedCourseIds.has(c.id);
+                        const pct = c.structureProgress?.completionPercentage ?? c.completionPercentage ?? 0;
+                        const total = c.structureProgress?.totalStructureItems ?? c.totalStructureItems ?? 0;
+                        const completed = c.structureProgress?.completedStructureItems ?? c.completedStructureItems ?? 0;
+
                         return (
                           <tr key={c.id} style={{ background: isChecked ? '#f0fdf4' : undefined }}>
                             <td style={{ width: 44, textAlign: 'center', padding: '12px 8px' }}>
@@ -2211,6 +2216,27 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                             <td><span className="reg-admin-name">{c.title}</span></td>
                             <td className="reg-admin-date">{c.programTitle || c.program?.title || '—'}</td>
                             <td className="reg-admin-date">{c.trainerName || c.trainer?.name || 'Unassigned'}</td>
+                            <td style={{ minWidth: 120 }}>
+                              {total === 0 ? (
+                                <span style={{ fontSize: 11.5, color: '#94a3b8', fontStyle: 'italic' }}>0% (No structure)</span>
+                              ) : (
+                                <div>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3, fontWeight: 600 }}>
+                                    <span style={{ color: pct === 100 ? '#15803d' : '#0f766e' }}>{pct}%</span>
+                                    <span style={{ color: '#64748b' }}>{completed}/{total}</span>
+                                  </div>
+                                  <div style={{ height: 5, background: '#f1f5f9', borderRadius: 9999, overflow: 'hidden' }}>
+                                    <div style={{
+                                      height: '100%',
+                                      width: `${Math.min(100, Math.max(0, pct))}%`,
+                                      background: pct === 100 ? '#16a34a' : pct >= 50 ? '#0d9488' : '#3b82f6',
+                                      borderRadius: 9999,
+                                      transition: 'width 0.3s'
+                                    }} />
+                                  </div>
+                                </div>
+                              )}
+                            </td>
                             <td>
                               <span className="reg-admin-status" style={{
                                 background: c.status === 'ACTIVE' ? '#d1fae5' : '#f1f5f9',

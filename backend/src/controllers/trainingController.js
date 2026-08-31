@@ -1,6 +1,8 @@
 const { Training, User, Enrollment, Notification, TrainingTrainerAssignment, Course, CourseTrainerAssignment } = require('../models');
 const { Op } = require('sequelize');
 const { ensureTrainingAttendanceSessions } = require('../services/attendanceAutomationService');
+const { calculateTrainingCompletion, batchCalculateTrainingsCompletion } = require('../services/trainingProgressService');
+const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 
 const createTraining = async (req, res) => {
   try {
@@ -156,22 +158,12 @@ const getAllTrainings = async (req, res) => {
       order: [['id', 'DESC']]
     };
 
-    let currentPage = 1;
-    let parsedLimit = 10;
-    const isPaginated = !!(page || limit || offset !== undefined);
+    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+    const isPaginated = !!(req.query.page || req.query.limit || req.query.offset !== undefined);
 
     if (isPaginated) {
-      parsedLimit = limit ? Math.max(1, Math.min(parseInt(limit, 10), 500)) : 10;
-      let parsedOffset = 0;
-      if (page) {
-        currentPage = Math.max(1, parseInt(page, 10));
-        parsedOffset = (currentPage - 1) * parsedLimit;
-      } else if (offset !== undefined) {
-        parsedOffset = Math.max(0, parseInt(offset, 10));
-        currentPage = Math.floor(parsedOffset / parsedLimit) + 1;
-      }
-      findOptions.limit = parsedLimit;
-      findOptions.offset = parsedOffset;
+      findOptions.limit = limit;
+      findOptions.offset = offset;
     }
 
     const trainings = await Training.findAll(findOptions);
@@ -205,9 +197,26 @@ const getAllTrainings = async (req, res) => {
       }
     }
 
+    let progressMap = new Map();
+    if (trainingIds.length > 0) {
+      try {
+        progressMap = await batchCalculateTrainingsCompletion(trainingIds);
+      } catch (progErr) {
+        console.error('Batch progress calculation error in getAllTrainings:', progErr.message);
+      }
+    }
+
     const formattedTrainings = trainings.map(t => {
       const enrolledCount = countMap[t.id] || 0;
       const isEnrolled = enrolledSet.has(t.id);
+      const progress = progressMap.get(t.id) || {
+        totalStructureItems: 0,
+        completedStructureItems: 0,
+        inProgressStructureItems: 0,
+        pendingStructureItems: 0,
+        completionPercentage: 0,
+        hasStructure: false,
+      };
 
       const assignedTrainers = (t.trainerAssignments || []).map(ta => ta.trainer).filter(Boolean);
       const trainerNames = assignedTrainers.length > 0 ? assignedTrainers.map(tr => tr.name).join(', ') : (t.trainer ? t.trainer.name : null);
@@ -228,20 +237,28 @@ const getAllTrainings = async (req, res) => {
         availableSeats: t.capacity ? (t.capacity - enrolledCount) : null,
         isEnrolled,
         isFull: t.capacity ? enrolledCount >= t.capacity : false,
-        sequentialLearning: t.sequentialLearning || false
+        sequentialLearning: t.sequentialLearning || false,
+        totalStructureItems: progress.totalStructureItems,
+        completedStructureItems: progress.completedStructureItems,
+        inProgressStructureItems: progress.inProgressStructureItems,
+        pendingStructureItems: progress.pendingStructureItems,
+        completionPercentage: progress.completionPercentage,
+        trainingProgress: progress
       };
     });
 
-    const totalPages = Math.ceil(total / parsedLimit) || 1;
+    const paginationMeta = formatPaginationMeta(total, page, limit);
 
     if (isPaginated) {
       return res.json({
         success: true,
         trainings: formattedTrainings,
+        data: formattedTrainings,
+        pagination: paginationMeta,
         total,
-        page: currentPage,
-        limit: parsedLimit,
-        totalPages
+        page,
+        limit,
+        totalPages: paginationMeta.totalPages
       });
     }
 
@@ -273,6 +290,8 @@ const getTrainingById = async (req, res) => {
     const trainerNames = assignedTrainers.length > 0 ? assignedTrainers.map(tr => tr.name).join(', ') : (training.trainer ? training.trainer.name : null);
     const trainerIds = assignedTrainers.length > 0 ? assignedTrainers.map(tr => tr.id) : (training.trainerId ? [training.trainerId] : []);
 
+    const trainingProgress = await calculateTrainingCompletion(training.id);
+
     res.json({
       id: training.id,
       title: training.title,
@@ -283,7 +302,13 @@ const getTrainingById = async (req, res) => {
       startDate: training.startDate,
       endDate: training.endDate,
       capacity: training.capacity,
-      sequentialLearning: training.sequentialLearning || false
+      sequentialLearning: training.sequentialLearning || false,
+      totalStructureItems: trainingProgress.totalStructureItems,
+      completedStructureItems: trainingProgress.completedStructureItems,
+      inProgressStructureItems: trainingProgress.inProgressStructureItems,
+      pendingStructureItems: trainingProgress.pendingStructureItems,
+      completionPercentage: trainingProgress.completionPercentage,
+      trainingProgress
     });
   } catch (error) {
     console.error('Get training by ID error:', error.message);
@@ -681,4 +706,35 @@ const deleteTraining = async (req, res) => {
   }
 };
 
-module.exports = { createTraining, getAllTrainings, getTrainingById, updateTraining, deleteTraining };
+const getTrainingProgress = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const training = await Training.findByPk(id, { attributes: ['id', 'title'] });
+    if (!training) return res.status(404).json({ error: 'Training not found' });
+
+    const progress = await calculateTrainingCompletion(id);
+    res.json({
+      success: true,
+      trainingId: progress.trainingId,
+      totalStructureItems: progress.totalStructureItems,
+      completedStructureItems: progress.completedStructureItems,
+      inProgressStructureItems: progress.inProgressStructureItems,
+      pendingStructureItems: progress.pendingStructureItems,
+      completionPercentage: progress.completionPercentage,
+      hasStructure: progress.hasStructure,
+      progress,
+    });
+  } catch (error) {
+    console.error('getTrainingProgress error:', error.message);
+    res.status(500).json({ error: 'Server error fetching training progress' });
+  }
+};
+
+module.exports = {
+  createTraining,
+  getAllTrainings,
+  getTrainingById,
+  getTrainingProgress,
+  updateTraining,
+  deleteTraining,
+};
