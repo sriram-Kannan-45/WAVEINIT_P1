@@ -1,3 +1,5 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import {
   Upload, FileText, Sparkles, Loader2, Trash2, Pencil, Check, X,
   ChevronRight, GripVertical, AlertCircle, CheckCircle2, RotateCcw,

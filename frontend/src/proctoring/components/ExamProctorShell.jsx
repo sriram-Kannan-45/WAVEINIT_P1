@@ -282,13 +282,14 @@ export default function ExamProctorShell({
     justifyContent: 'center',
     gap: 8,
     padding: '10px 18px',
-    background: '#2563eb',
+    background: '#16a34a',
     color: '#fff',
     border: 'none',
     borderRadius: 8,
     fontSize: 13,
     fontWeight: 600,
     cursor: 'pointer',
+    boxShadow: '0 2px 8px rgba(22, 163, 74, 0.3)',
   };
 
   const btnGhost = {

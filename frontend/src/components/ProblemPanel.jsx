@@ -5,63 +5,65 @@ const containerStyle = {
   height: '100%',
   overflowY: 'auto',
   padding: '24px',
-  color: '#e2e8f0',
+  color: '#E2E8F0',
+  background: '#0B0F19',
 };
 
 const headingStyle = {
-  fontSize: '22px',
+  fontSize: '20px',
   fontWeight: 700,
-  color: '#f1f5f9',
-  marginBottom: '16px',
-  lineHeight: '28px',
+  color: '#FFFFFF',
+  marginBottom: '14px',
+  lineHeight: '26px',
+  letterSpacing: '-0.01em',
 };
 
 const sectionStyle = {
-  marginBottom: '20px',
+  marginBottom: '22px',
 };
 
 const sectionHeadingStyle = {
-  fontSize: '14px',
-  fontWeight: 600,
-  color: '#94a3b8',
+  fontSize: '12px',
+  fontWeight: 700,
+  color: '#4ADE80',
   textTransform: 'uppercase',
-  letterSpacing: '0.5px',
+  letterSpacing: '0.6px',
   marginBottom: '8px',
 };
 
 const contentStyle = {
-  fontSize: '14px',
+  fontSize: '13.5px',
   lineHeight: '22px',
-  color: '#cbd5e1',
+  color: '#CBD5E1',
 };
 
 const preStyle = {
   margin: 0,
   whiteSpace: 'pre-wrap',
-  color: '#e2e8f0',
-  background: '#1e293b',
-  padding: '10px 12px',
-  borderRadius: '6px',
+  color: '#F8FAFC',
+  background: '#060913',
+  padding: '10px 14px',
+  borderRadius: '8px',
   fontSize: '13px',
-  fontFamily: "'Fira Code', 'Consolas', monospace",
-  border: '1px solid #334155',
+  fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+  border: '1px solid #1E293B',
   overflowX: 'auto',
 };
 
 const labelStyle = {
   fontSize: '11px',
-  fontWeight: 600,
+  fontWeight: 700,
   textTransform: 'uppercase',
   letterSpacing: '0.5px',
-  color: '#64748b',
-  marginBottom: '4px',
+  color: '#94A3B8',
+  marginBottom: '6px',
   display: 'block',
 };
 
 const ProblemPanel = ({ problem }) => {
   if (!problem) {
     return (
-      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569' }}>
+      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B', background: '#0B0F19' }}>
         No problem selected.
       </div>
     );
@@ -87,12 +89,14 @@ const ProblemPanel = ({ problem }) => {
 
   const getDifficultyColor = (d) => {
     switch (d?.toUpperCase()) {
-      case 'EASY': return '#4ade80';
-      case 'MEDIUM': return '#fbbf24';
-      case 'HARD': return '#f87171';
-      default: return '#94a3b8';
+      case 'EASY': return '#4ADE80';
+      case 'MEDIUM': return '#FBBF24';
+      case 'HARD': return '#F87171';
+      default: return '#94A3B8';
     }
   };
+
+  const diffColor = getDifficultyColor(difficulty);
 
   return (
     <div style={containerStyle}>
@@ -100,21 +104,21 @@ const ProblemPanel = ({ problem }) => {
         <h1 style={headingStyle}>{title}</h1>
       </div>
 
-      <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 18 }}>
         {difficulty && (
           <span style={{
-            padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
-            background: `${getDifficultyColor(difficulty)}20`,
-            color: getDifficultyColor(difficulty),
-            border: `1px solid ${getDifficultyColor(difficulty)}40`,
+            padding: '3px 10px', borderRadius: 6, fontSize: 11.5, fontWeight: 700,
+            background: `${diffColor}18`,
+            color: diffColor,
+            border: `1px solid ${diffColor}40`,
           }}>
             {difficulty}
           </span>
         )}
         {marks && (
           <span style={{
-            padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
-            background: '#1e293b', color: '#94a3b8', border: '1px solid #334155',
+            padding: '3px 10px', borderRadius: 6, fontSize: 11.5, fontWeight: 700,
+            background: 'rgba(255, 255, 255, 0.05)', color: '#F8FAFC', border: '1px solid #1E293B',
           }}>
             {marks} pts
           </span>
@@ -126,14 +130,14 @@ const ProblemPanel = ({ problem }) => {
           <div style={contentStyle}>
             <ReactMarkdown
               components={{
-                code: ({ children }) => <code style={{ background: '#1e293b', padding: '1px 4px', borderRadius: 3, fontSize: '13px' }}>{children}</code>,
+                code: ({ children }) => <code style={{ background: '#060913', color: '#4ADE80', border: '1px solid #1E293B', padding: '2px 6px', borderRadius: 4, fontSize: '12.5px', fontFamily: "'JetBrains Mono', monospace" }}>{children}</code>,
                 pre: ({ children }) => <pre style={preStyle}>{children}</pre>,
-                p: ({ children }) => <p style={{ margin: '0 0 8px 0' }}>{children}</p>,
-                ul: ({ children }) => <ul style={{ paddingLeft: 20, margin: '0 0 8px 0' }}>{children}</ul>,
-                ol: ({ children }) => <ol style={{ paddingLeft: 20, margin: '0 0 8px 0' }}>{children}</ol>,
-                li: ({ children }) => <li style={{ marginBottom: 2 }}>{children}</li>,
-                h3: ({ children }) => <h3 style={{ fontSize: 15, fontWeight: 600, color: '#f1f5f9', margin: '12px 0 6px' }}>{children}</h3>,
-                strong: ({ children }) => <strong style={{ color: '#e2e8f0' }}>{children}</strong>,
+                p: ({ children }) => <p style={{ margin: '0 0 10px 0' }}>{children}</p>,
+                ul: ({ children }) => <ul style={{ paddingLeft: 20, margin: '0 0 10px 0' }}>{children}</ul>,
+                ol: ({ children }) => <ol style={{ paddingLeft: 20, margin: '0 0 10px 0' }}>{children}</ol>,
+                li: ({ children }) => <li style={{ marginBottom: 4 }}>{children}</li>,
+                h3: ({ children }) => <h3 style={{ fontSize: 14.5, fontWeight: 700, color: '#FFFFFF', margin: '14px 0 6px' }}>{children}</h3>,
+                strong: ({ children }) => <strong style={{ color: '#FFFFFF', fontWeight: 600 }}>{children}</strong>,
               }}
             >
               {description}
@@ -148,8 +152,8 @@ const ProblemPanel = ({ problem }) => {
           <div style={contentStyle}>
             <ReactMarkdown
               components={{
-                code: ({ children }) => <code style={{ background: '#1e293b', padding: '1px 4px', borderRadius: 3, fontSize: '13px' }}>{children}</code>,
-                p: ({ children }) => <p style={{ margin: '0 0 6px 0' }}>{children}</p>,
+                code: ({ children }) => <code style={{ background: '#060913', color: '#4ADE80', border: '1px solid #1E293B', padding: '2px 6px', borderRadius: 4, fontSize: '12.5px', fontFamily: "'JetBrains Mono', monospace" }}>{children}</code>,
+                p: ({ children }) => <p style={{ margin: '0 0 8px 0' }}>{children}</p>,
               }}
             >
               {inputFormat}
@@ -164,8 +168,8 @@ const ProblemPanel = ({ problem }) => {
           <div style={contentStyle}>
             <ReactMarkdown
               components={{
-                code: ({ children }) => <code style={{ background: '#1e293b', padding: '1px 4px', borderRadius: 3, fontSize: '13px' }}>{children}</code>,
-                p: ({ children }) => <p style={{ margin: '0 0 6px 0' }}>{children}</p>,
+                code: ({ children }) => <code style={{ background: '#060913', color: '#4ADE80', border: '1px solid #1E293B', padding: '2px 6px', borderRadius: 4, fontSize: '12.5px', fontFamily: "'JetBrains Mono', monospace" }}>{children}</code>,
+                p: ({ children }) => <p style={{ margin: '0 0 8px 0' }}>{children}</p>,
               }}
             >
               {outputFormat}
@@ -180,10 +184,10 @@ const ProblemPanel = ({ problem }) => {
           <div style={contentStyle}>
             <ReactMarkdown
               components={{
-                code: ({ children }) => <code style={{ background: '#1e293b', padding: '1px 4px', borderRadius: 3, fontSize: '13px' }}>{children}</code>,
-                p: ({ children }) => <p style={{ margin: '0 0 6px 0' }}>{children}</p>,
-                ul: ({ children }) => <ul style={{ paddingLeft: 20, margin: '0 0 6px 0' }}>{children}</ul>,
-                li: ({ children }) => <li style={{ marginBottom: 2 }}>{children}</li>,
+                code: ({ children }) => <code style={{ background: '#060913', color: '#4ADE80', border: '1px solid #1E293B', padding: '2px 6px', borderRadius: 4, fontSize: '12.5px', fontFamily: "'JetBrains Mono', monospace" }}>{children}</code>,
+                p: ({ children }) => <p style={{ margin: '0 0 8px 0' }}>{children}</p>,
+                ul: ({ children }) => <ul style={{ paddingLeft: 20, margin: '0 0 8px 0' }}>{children}</ul>,
+                li: ({ children }) => <li style={{ marginBottom: 4 }}>{children}</li>,
               }}
             >
               {constraints}
@@ -199,15 +203,15 @@ const ProblemPanel = ({ problem }) => {
             <div
               key={tc.id || index}
               style={{
-                background: '#1e293b',
-                border: '1px solid #334155',
-                borderRadius: 8,
-                padding: '12px',
-                marginBottom: 12,
+                background: '#0D1527',
+                border: '1.5px solid #1E293B',
+                borderRadius: 10,
+                padding: '14px',
+                marginBottom: 14,
               }}
             >
-              <div style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 8 }}>
-                Sample {index + 1}
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#4ADE80', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>Sample {index + 1}</span>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
@@ -230,8 +234,8 @@ const ProblemPanel = ({ problem }) => {
           <div style={contentStyle}>
             <ReactMarkdown
               components={{
-                code: ({ children }) => <code style={{ background: '#1e293b', padding: '1px 4px', borderRadius: 3, fontSize: '13px' }}>{children}</code>,
-                p: ({ children }) => <p style={{ margin: '0 0 6px 0' }}>{children}</p>,
+                code: ({ children }) => <code style={{ background: '#060913', color: '#4ADE80', border: '1px solid #1E293B', padding: '2px 6px', borderRadius: 4, fontSize: '12.5px', fontFamily: "'JetBrains Mono', monospace" }}>{children}</code>,
+                p: ({ children }) => <p style={{ margin: '0 0 8px 0' }}>{children}</p>,
               }}
             >
               {explanation}

@@ -662,7 +662,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
         <div className="wi-verif-main-card">
           <div className="wi-verif-split-grid">
             {/* ── LEFT COLUMN: QR Scan ── */}
-            <div>
+            <div className="wi-verif-col">
               <div className="wi-verif-col-header">
                 <span className="wi-verif-num-badge">1</span>
                 <h2 className="wi-verif-col-title">Scan with Mobile Camera</h2>
@@ -672,7 +672,10 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
               </p>
 
               <div className="wi-verif-steps-box">
-                <div className="wi-verif-steps-title">Steps to Follow</div>
+                <div className="wi-verif-steps-title">
+                  <Sparkles size={14} className="wi-verif-steps-icon" />
+                  <span>Steps to Follow</span>
+                </div>
                 <ol className="wi-verif-steps-list">
                   <li>Open camera on your mobile device</li>
                   <li>Scan the QR code shown below</li>
@@ -683,64 +686,73 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
 
               {/* QR Code Container */}
               <div className="wi-verif-qr-wrapper">
-                <div className="wi-verif-qr-inner">
-                  {loading ? (
-                    <div className="wi-verif-qr-loading">
-                      <Loader2 size={32} className="animate-spin text-emerald-600" />
-                      <span>Generating secure QR...</span>
-                    </div>
-                  ) : error ? (
-                    <div className="wi-verif-qr-loading">
-                      <AlertCircle size={32} color="#dc2626" />
-                      <span style={{ color: '#dc2626' }}>{error}</span>
-                      <button onClick={handleRefreshQR} className="wi-verif-retry-btn">
-                        <RefreshCw size={12} /> Retry
-                      </button>
-                    </div>
-                  ) : isExpired ? (
-                    <div className="wi-verif-qr-loading">
-                      <Clock size={32} color="#f59e0b" />
-                      <span style={{ color: '#f59e0b', fontWeight: 600 }}>QR Code Expired</span>
-                      <button onClick={handleRefreshQR} className="wi-verif-retry-btn">
-                        <RefreshCw size={12} /> Refresh QR
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="wi-verif-qr-content">
-                      <QRCodeSVG
-                        value={mobilePairUrl || 'https://waveinit.com'}
-                        size={175}
-                        level="M"
-                        includeMargin={false}
-                      />
-                      {qrScanned && (
-                        <div className="wi-verif-qr-scanned-overlay">
-                          <CheckCircle2 size={40} color="#16a34a" />
-                          <span>QR Scanned!</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                <div className="wi-verif-qr-frame">
+                  <div className="wi-verif-qr-corner wi-verif-qr-corner--tl" />
+                  <div className="wi-verif-qr-corner wi-verif-qr-corner--tr" />
+                  <div className="wi-verif-qr-corner wi-verif-qr-corner--bl" />
+                  <div className="wi-verif-qr-corner wi-verif-qr-corner--br" />
+
+                  <div className="wi-verif-qr-inner">
+                    {loading ? (
+                      <div className="wi-verif-qr-loading">
+                        <Loader2 size={34} className="animate-spin text-emerald-600" />
+                        <span className="wi-verif-qr-loading-text">Generating secure QR...</span>
+                      </div>
+                    ) : error ? (
+                      <div className="wi-verif-qr-loading">
+                        <AlertCircle size={34} color="#dc2626" />
+                        <span style={{ color: '#dc2626', fontWeight: 600, fontSize: 13 }}>{error}</span>
+                        <button onClick={handleRefreshQR} className="wi-verif-retry-btn">
+                          <RefreshCw size={13} /> Retry
+                        </button>
+                      </div>
+                    ) : isExpired ? (
+                      <div className="wi-verif-qr-loading">
+                        <Clock size={34} color="#f59e0b" />
+                        <span style={{ color: '#f59e0b', fontWeight: 600, fontSize: 13 }}>QR Code Expired</span>
+                        <button onClick={handleRefreshQR} className="wi-verif-retry-btn">
+                          <RefreshCw size={13} /> Refresh QR
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="wi-verif-qr-content">
+                        <QRCodeSVG
+                          value={mobilePairUrl || 'https://waveinit.com'}
+                          size={180}
+                          level="M"
+                          includeMargin={false}
+                        />
+                        {qrScanned && (
+                          <div className="wi-verif-qr-scanned-overlay">
+                            <CheckCircle2 size={42} color="#16a34a" />
+                            <span>QR Scanned!</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="wi-verif-qr-footer">
                   <div className="wi-verif-timer-row">
-                    <Clock size={13} />
-                    <span>Expires in <strong>{formattedTimer}</strong></span>
+                    <Clock size={14} className="wi-verif-clock-icon" />
+                    <span>Expires in <strong className="wi-verif-timer-digits">{formattedTimer}</strong></span>
                   </div>
                   <button
                     onClick={handleRefreshQR}
                     disabled={refreshing || loading}
                     className="wi-verif-refresh-btn"
+                    title="Refresh QR Code"
                   >
-                    <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} /> Refresh
+                    <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
+                    <span>Refresh</span>
                   </button>
                 </div>
               </div>
             </div>
 
             {/* ── RIGHT COLUMN: Live Stream & Checklist ── */}
-            <div>
+            <div className="wi-verif-col">
               <div className="wi-verif-col-header">
                 <span className="wi-verif-num-badge">2</span>
                 <h2 className="wi-verif-col-title">Live Mobile Camera Feed</h2>
@@ -750,7 +762,10 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
               </p>
 
               {/* Video Preview Container */}
-              <div ref={previewContainerRef} className="wi-verif-video-box">
+              <div
+                ref={previewContainerRef}
+                className={`wi-verif-video-box ${remoteVideoReady || lastFrame ? 'is-live' : ''}`}
+              >
                 <video
                   ref={videoRef}
                   autoPlay
@@ -774,14 +789,16 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
                     ) : qrScanned ? (
                       <div className="wi-verif-stream-connecting">
                         <RefreshCw size={32} className="animate-spin text-emerald-400" />
-                        <span style={{ fontWeight: 600, color: '#34d399' }}>Connecting WebRTC Stream...</span>
-                        <span style={{ fontSize: 11, color: '#94a3b8' }}>Camera access granted on mobile</span>
+                        <span className="wi-verif-stream-title-connecting">Connecting WebRTC Stream...</span>
+                        <span className="wi-verif-stream-sub-connecting">Camera access granted on mobile</span>
                       </div>
                     ) : (
                       <div className="wi-verif-stream-idle">
-                        <Video size={40} strokeWidth={1.5} color="#64748b" />
-                        <span style={{ fontWeight: 600, color: '#cbd5e1' }}>Awaiting Mobile Camera</span>
-                        <span style={{ fontSize: 11, color: '#94a3b8' }}>Scan QR code on left to connect</span>
+                        <div className="wi-verif-camera-icon-wrap">
+                          <Video size={24} strokeWidth={1.75} />
+                        </div>
+                        <span className="wi-verif-stream-title">Awaiting Mobile Camera</span>
+                        <span className="wi-verif-stream-sub">Scan QR code on left to connect</span>
                       </div>
                     )}
                   </div>
@@ -789,18 +806,18 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
 
                 {/* Status Badges on Video */}
                 <div className="wi-verif-video-overlay-top">
-                  <div className="wi-verif-live-pill">
-                    <Radio size={12} className="animate-pulse" />
+                  <div className={`wi-verif-live-pill ${remoteVideoReady || lastFrame ? 'is-live' : ''}`}>
+                    <Radio size={12} className={remoteVideoReady || lastFrame ? 'animate-pulse text-emerald-400' : ''} />
                     <span>{remoteVideoReady || lastFrame ? 'LIVE FEED' : 'STANDBY'}</span>
                   </div>
-                  <button onClick={toggleFullscreen} className="wi-verif-icon-btn">
+                  <button onClick={toggleFullscreen} className="wi-verif-icon-btn" title="Toggle Fullscreen">
                     {isFullscreenVideo ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
                   </button>
                 </div>
 
                 <div className="wi-verif-video-overlay-bottom">
                   <span className="wi-verif-source-pill">
-                    <Camera size={11} /> Secondary Mobile Feed
+                    <Camera size={12} /> Secondary Mobile Feed
                   </span>
                 </div>
               </div>
@@ -810,58 +827,61 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
                 <div className="wi-verif-checklist-title">Verification Checklist</div>
                 <div className="wi-verif-checklist-items">
                   <div className={`wi-verif-check-item ${qrScanned ? 'is-done' : ''}`}>
-                    <div className="wi-verif-check-circle">
-                      {qrScanned ? <Check size={12} strokeWidth={3} /> : <span className="wi-verif-check-dot" />}
+                    <div className="wi-verif-check-left">
+                      <div className="wi-verif-check-circle">
+                        {qrScanned ? <Check size={13} strokeWidth={3} /> : <span className="wi-verif-check-dot" />}
+                      </div>
+                      <span className="wi-verif-check-text">QR Code Scanned</span>
                     </div>
-                    <span>QR Code Scanned</span>
+                    <span className={`wi-verif-check-pill ${qrScanned ? 'is-done' : ''}`}>
+                      {qrScanned ? '✓ Completed' : 'Waiting...'}
+                    </span>
                   </div>
 
                   <div className={`wi-verif-check-item ${participantValidated ? 'is-done' : ''}`}>
-                    <div className="wi-verif-check-circle">
-                      {participantValidated ? <Check size={12} strokeWidth={3} /> : <span className="wi-verif-check-dot" />}
+                    <div className="wi-verif-check-left">
+                      <div className="wi-verif-check-circle">
+                        {participantValidated ? <Check size={13} strokeWidth={3} /> : <span className="wi-verif-check-dot" />}
+                      </div>
+                      <span className="wi-verif-check-text">Mobile Device Validated</span>
                     </div>
-                    <span>Mobile Device Validated</span>
+                    <span className={`wi-verif-check-pill ${participantValidated ? 'is-done' : ''}`}>
+                      {participantValidated ? '✓ Completed' : 'Waiting...'}
+                    </span>
                   </div>
 
                   <div className={`wi-verif-check-item ${mobileCameraReady ? 'is-done' : ''}`}>
-                    <div className="wi-verif-check-circle">
-                      {mobileCameraReady ? <Check size={12} strokeWidth={3} /> : <span className="wi-verif-check-dot" />}
+                    <div className="wi-verif-check-left">
+                      <div className="wi-verif-check-circle">
+                        {mobileCameraReady ? <Check size={13} strokeWidth={3} /> : <span className="wi-verif-check-dot" />}
+                      </div>
+                      <span className="wi-verif-check-text">Camera Permission Allowed</span>
                     </div>
-                    <span>Camera Permission Allowed</span>
+                    <span className={`wi-verif-check-pill ${mobileCameraReady ? 'is-done' : ''}`}>
+                      {mobileCameraReady ? '✓ Completed' : 'Waiting...'}
+                    </span>
                   </div>
 
                   <div className={`wi-verif-check-item ${remoteVideoReady || lastFrame || webRtcConnected ? 'is-done' : ''}`}>
-                    <div className="wi-verif-check-circle">
-                      {remoteVideoReady || lastFrame || webRtcConnected ? <Check size={12} strokeWidth={3} /> : <span className="wi-verif-check-dot" />}
+                    <div className="wi-verif-check-left">
+                      <div className="wi-verif-check-circle">
+                        {remoteVideoReady || lastFrame || webRtcConnected ? <Check size={13} strokeWidth={3} /> : <span className="wi-verif-check-dot" />}
+                      </div>
+                      <span className="wi-verif-check-text">Live Video Stream Active</span>
                     </div>
-                    <span>Live Video Stream Active</span>
+                    <span className={`wi-verif-check-pill ${remoteVideoReady || lastFrame || webRtcConnected ? 'is-done' : ''}`}>
+                      {remoteVideoReady || lastFrame || webRtcConnected ? '✓ Active' : 'Waiting...'}
+                    </span>
                   </div>
                 </div>
               </div>
 
               {/* Start Assessment CTA Button */}
-              <div style={{ marginTop: 20 }}>
+              <div className="wi-verif-start-btn-wrap">
                 <button
                   onClick={handleStartQuiz}
                   disabled={verifyingStart || loading}
                   className="wi-verif-start-btn"
-                  style={{
-                    width: '100%',
-                    padding: '14px 20px',
-                    borderRadius: 10,
-                    background: '#16a34a',
-                    color: '#ffffff',
-                    border: 'none',
-                    fontWeight: 700,
-                    fontSize: 15,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 10,
-                    boxShadow: '0 4px 14px 0 rgba(22,163,74,0.39)',
-                    transition: 'all 0.2s ease',
-                  }}
                 >
                   {verifyingStart ? (
                     <>

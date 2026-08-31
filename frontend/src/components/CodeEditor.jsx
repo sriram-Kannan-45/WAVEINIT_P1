@@ -119,37 +119,38 @@ const CodeEditor = ({
 
   const toolbarStyle = {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    padding: '6px 12px', background: theme === 'vs-dark' ? '#1e1e1e' : '#f3f3f3',
-    borderBottom: theme === 'vs-dark' ? '1px solid #333' : '1px solid #e5e5e5',
-    flexShrink: 0, gap: 8,
+    padding: '8px 14px', background: theme === 'vs-dark' ? '#0D1527' : '#F8FAFC',
+    borderBottom: theme === 'vs-dark' ? '1px solid #1E293B' : '1px solid #E2E8F0',
+    flexShrink: 0, gap: 10,
   };
 
   const selectStyle = {
-    background: theme === 'vs-dark' ? '#2d2d2d' : '#fff',
-    color: theme === 'vs-dark' ? '#ccc' : '#333',
-    border: theme === 'vs-dark' ? '1px solid #555' : '1px solid #d4d4d4',
-    borderRadius: 4, padding: '2px 8px', fontSize: 12,
-    cursor: 'pointer', outline: 'none',
+    background: theme === 'vs-dark' ? '#0B0F19' : '#FFFFFF',
+    color: theme === 'vs-dark' ? '#F8FAFC' : '#0F172A',
+    border: theme === 'vs-dark' ? '1px solid #334155' : '1px solid #CBD5E1',
+    borderRadius: 6, padding: '4px 10px', fontSize: 12, fontWeight: 500,
+    cursor: 'pointer', outline: 'none', transition: 'border-color 0.15s ease',
   };
 
   const btnStyle = {
     display: 'inline-flex', alignItems: 'center', gap: 4,
-    padding: '2px 8px', background: 'transparent',
-    color: theme === 'vs-dark' ? '#888' : '#666',
-    border: 'none', borderRadius: 4, cursor: 'pointer',
-    fontSize: 11, fontWeight: 600,
+    padding: '4px 8px', background: theme === 'vs-dark' ? 'rgba(255, 255, 255, 0.04)' : '#F1F5F9',
+    color: theme === 'vs-dark' ? '#94A3B8' : '#475569',
+    border: theme === 'vs-dark' ? '1px solid #334155' : '1px solid #E2E8F0',
+    borderRadius: 6, cursor: 'pointer',
+    fontSize: 11, fontWeight: 600, transition: 'all 0.15s ease',
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: theme === 'vs-dark' ? '#1e1e1e' : '#ffffff' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: theme === 'vs-dark' ? '#0B0F19' : '#FFFFFF' }}>
       <div style={toolbarStyle}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Code2 size={14} color={theme === 'vs-dark' ? '#888' : '#666'} />
+          <Code2 size={16} color={theme === 'vs-dark' ? '#4ADE80' : '#16A34A'} />
           <select value={currentLang} onChange={handleLanguageChange} style={selectStyle}>
             {LANGUAGES.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
           </select>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <select value={fontSize} onChange={e => setFontSize(Number(e.target.value))} style={selectStyle}>
             {FONT_SIZES.map(s => <option key={s} value={s}>{s}px</option>)}
           </select>
@@ -168,8 +169,8 @@ const CodeEditor = ({
       </div>
       <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
         {mounting && (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: theme === 'vs-dark' ? '#1e1e1e' : '#ffffff', zIndex: 10 }}>
-            <Loader2 size={20} className="animate-spin" color="#14B8A6" />
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: theme === 'vs-dark' ? '#0B0F19' : '#FFFFFF', zIndex: 10 }}>
+            <Loader2 size={24} className="animate-spin text-emerald-500" color="#16A34A" />
           </div>
         )}
         <Editor height="100%" language={monacoLanguage} value={value} theme={theme} onChange={onChange} onMount={handleEditorDidMount} options={editorOptions} />

@@ -486,29 +486,224 @@ function ParticipantCodingAttemptInner({ user }) {
   )
 
   const s = {
-    container: { display: 'flex', flexDirection: 'column', height: '100vh', background: '#1a1a2e', overflow: 'hidden' },
-    header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', background: '#16213e', borderBottom: '1px solid #0f3460', flexShrink: 0 },
-    headerLeft: { display: 'flex', alignItems: 'center', gap: 12 },
-    headerRight: { display: 'flex', alignItems: 'center', gap: 12 },
-    title: { fontSize: 14, fontWeight: 700, color: '#e0e0e0' },
-    timer: { display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 6, background: timeLeft < 300 ? '#3d0000' : '#1a1a3e', color: timeLeft < 300 ? '#ff4444' : '#8888aa', fontWeight: 700, fontSize: 13, fontFamily: "'Fira Code', monospace" },
-    main: { display: 'flex', flex: 1, overflow: 'hidden' },
-    leftPanel: { width: '40%', minWidth: 340, maxWidth: 520, overflow: 'auto', borderRight: '1px solid #0f3460', background: '#1a1a2e' },
-    problemNav: { display: 'flex', gap: 4, padding: '12px 16px', borderBottom: '1px solid #0f3460', background: '#16213e' },
-    problemBtn: (active) => ({ padding: '4px 12px', border: active ? '1px solid #0D9488' : '1px solid #333', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: active ? 700 : 500, background: active ? '#2d2a5e' : '#1a1a3e', color: active ? '#818cf8' : '#666' }),
-    rightPanel: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
-    editorContainer: { flex: 1, overflow: 'hidden', borderBottom: '1px solid #0f3460' },
-    bottomPanel: { flex: '0 0 auto', maxHeight: '35%', display: 'flex', flexDirection: 'column' },
-    tabBar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 12px', background: '#16213e', borderBottom: '1px solid #0f3460' },
-    tabLeft: { display: 'flex', alignItems: 'center', gap: 4 },
-    tabBtn: (active) => ({ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600, background: active ? '#2d2a5e' : 'transparent', color: active ? '#818cf8' : '#888' }),
-    actionBtn: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'transparent', color: '#888', border: '1px solid #333', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600 },
-    runBtn: (disabled) => ({ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 14px', background: disabled ? '#333' : '#059669', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.6 : 1 }),
-    submitBtn: (disabled) => ({ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 14px', background: disabled ? '#333' : '#0D9488', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.6 : 1 }),
-    outputArea: { flex: 1, overflow: 'auto', padding: 12, fontFamily: "'Fira Code', 'Consolas', monospace", fontSize: 13, background: '#1a1a2e', color: '#e0e0e0' },
+    container: {
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100vh',
+      background: '#0B0F19',
+      overflow: 'hidden',
+      fontFamily: "'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+    },
+    header: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      padding: '10px 20px',
+      background: '#0D1527',
+      borderBottom: '1.5px solid #1E293B',
+      flexShrink: 0,
+      zIndex: 10,
+    },
+    headerLeft: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 14,
+    },
+    headerRight: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 14,
+    },
+    title: {
+      fontSize: 15,
+      fontWeight: 700,
+      color: '#FFFFFF',
+      letterSpacing: '-0.01em',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+    },
+    timer: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6,
+      padding: '5px 14px',
+      borderRadius: 9999,
+      background: timeLeft < 300 ? 'rgba(239, 68, 68, 0.15)' : 'rgba(22, 163, 74, 0.14)',
+      border: timeLeft < 300 ? '1.5px solid rgba(239, 68, 68, 0.4)' : '1.5px solid rgba(34, 197, 94, 0.4)',
+      color: timeLeft < 300 ? '#F87171' : '#4ADE80',
+      fontWeight: 700,
+      fontSize: 13,
+      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      letterSpacing: '0.3px',
+    },
+    main: {
+      display: 'flex',
+      flex: 1,
+      overflow: 'hidden',
+    },
+    leftPanel: {
+      width: '40%',
+      minWidth: 360,
+      maxWidth: 540,
+      overflow: 'auto',
+      borderRight: '1.5px solid #1E293B',
+      background: '#0B0F19',
+    },
+    problemNav: {
+      display: 'flex',
+      gap: 8,
+      padding: '10px 16px',
+      borderBottom: '1.5px solid #1E293B',
+      background: '#0D1527',
+      alignItems: 'center',
+      overflowX: 'auto',
+    },
+    problemBtn: (active) => ({
+      padding: '6px 14px',
+      border: active ? '1.5px solid #16A34A' : '1px solid rgba(255, 255, 255, 0.1)',
+      borderRadius: 8,
+      cursor: 'pointer',
+      fontSize: 12.5,
+      fontWeight: active ? 700 : 500,
+      background: active ? 'rgba(22, 163, 74, 0.16)' : 'rgba(255, 255, 255, 0.04)',
+      color: active ? '#4ADE80' : '#94A3B8',
+      transition: 'all 0.15s ease',
+      whiteSpace: 'nowrap',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+    }),
+    rightPanel: {
+      flex: 1,
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+      background: '#0B0F19',
+    },
+    editorContainer: {
+      flex: 1,
+      overflow: 'hidden',
+      borderBottom: '1.5px solid #1E293B',
+    },
+    bottomPanel: {
+      flex: '0 0 auto',
+      maxHeight: '38%',
+      display: 'flex',
+      flexDirection: 'column',
+      background: '#0D1527',
+    },
+    tabBar: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      padding: '8px 14px',
+      background: '#0D1527',
+      borderBottom: '1.5px solid #1E293B',
+    },
+    tabLeft: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+    },
+    tabBtn: (active) => ({
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      padding: '5px 12px',
+      border: active ? '1px solid rgba(74, 222, 128, 0.3)' : '1px solid transparent',
+      borderRadius: 6,
+      cursor: 'pointer',
+      fontSize: 12,
+      fontWeight: active ? 700 : 500,
+      background: active ? 'rgba(22, 163, 74, 0.16)' : 'transparent',
+      color: active ? '#4ADE80' : '#94A3B8',
+      transition: 'all 0.15s ease',
+    }),
+    actionBtn: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 5,
+      padding: '5px 10px',
+      background: 'rgba(255, 255, 255, 0.04)',
+      color: '#94A3B8',
+      border: '1px solid #334155',
+      borderRadius: 6,
+      cursor: 'pointer',
+      fontSize: 11.5,
+      fontWeight: 600,
+      transition: 'all 0.15s ease',
+    },
+    runBtn: (disabled) => ({
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      padding: '6px 16px',
+      background: disabled ? '#1E293B' : '#1E293B',
+      color: disabled ? '#64748B' : '#4ADE80',
+      border: disabled ? '1.5px solid #334155' : '1.5px solid rgba(74, 222, 128, 0.4)',
+      borderRadius: 8,
+      fontSize: 12.5,
+      fontWeight: 600,
+      cursor: disabled ? 'not-allowed' : 'pointer',
+      opacity: disabled ? 0.6 : 1,
+      transition: 'all 0.15s ease',
+    }),
+    submitBtn: (disabled) => ({
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      padding: '6px 18px',
+      background: disabled ? '#334155' : 'linear-gradient(135deg, #16A34A 0%, #15803D 100%)',
+      color: '#FFFFFF',
+      border: 'none',
+      borderRadius: 8,
+      fontSize: 12.5,
+      fontWeight: 700,
+      cursor: disabled ? 'not-allowed' : 'pointer',
+      opacity: disabled ? 0.6 : 1,
+      boxShadow: disabled ? 'none' : '0 2px 10px rgba(22, 163, 74, 0.35)',
+      transition: 'all 0.15s ease',
+    }),
+    headerSubmitBtn: (disabled) => ({
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      padding: '7px 18px',
+      background: disabled ? '#334155' : 'linear-gradient(135deg, #16A34A 0%, #15803D 100%)',
+      color: '#FFFFFF',
+      border: 'none',
+      borderRadius: 8,
+      fontSize: 13,
+      fontWeight: 700,
+      cursor: disabled ? 'not-allowed' : 'pointer',
+      opacity: disabled ? 0.6 : 1,
+      boxShadow: disabled ? 'none' : '0 3px 12px rgba(22, 163, 74, 0.4)',
+      transition: 'all 0.15s ease',
+    }),
+    outputArea: {
+      flex: 1,
+      overflow: 'auto',
+      padding: 14,
+      fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+      fontSize: 13,
+      background: '#060913',
+      color: '#F8FAFC',
+    },
     verdictBadge: (v) => {
-      const colors = { ACCEPTED: '#059669', WRONG_ANSWER: '#dc2626', COMPILATION_ERROR: '#f59e0b', TIME_LIMIT_EXCEEDED: '#f97316', MEMORY_LIMIT_EXCEEDED: '#f97316', RUNTIME_ERROR: '#ef4444', INTERNAL_ERROR: '#dc2626' }
-      return { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 12px', borderRadius: 6, fontSize: 13, fontWeight: 700, background: `${colors[v] || '#666'}22`, color: colors[v] || '#666', border: `1px solid ${colors[v] || '#666'}44` }
+      const isPass = v === 'ACCEPTED';
+      return {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '4px 12px',
+        borderRadius: 6,
+        fontSize: 12.5,
+        fontWeight: 700,
+        background: isPass ? 'rgba(22, 163, 74, 0.18)' : 'rgba(239, 68, 68, 0.18)',
+        color: isPass ? '#4ADE80' : '#F87171',
+        border: `1.5px solid ${isPass ? '#16A34A' : '#DC2626'}`,
+      };
     },
   }
 
@@ -521,17 +716,20 @@ function ParticipantCodingAttemptInner({ user }) {
       <div style={s.container}>
         <div style={s.header}>
           <div style={s.headerLeft}>
-            <span style={s.title}>{assessment?.title}</span>
-            {saveStatus && <span style={{ fontSize: 11, color: '#16a34a', display: 'flex', alignItems: 'center', gap: 3 }}><Save size={10} /> {saveStatus}</span>}
+            <span style={s.title}>
+              <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#4ADE80', boxShadow: '0 0 8px #4ADE80' }} />
+              {assessment?.title || 'Coding Assessment'}
+            </span>
+            {saveStatus && <span style={{ fontSize: 11.5, color: '#4ADE80', display: 'flex', alignItems: 'center', gap: 4, fontWeight: 500 }}><Save size={11} /> {saveStatus}</span>}
           </div>
           <div style={s.headerRight}>
             {timeLeft != null && (
               <div style={s.timer}>
-                <Clock size={13} />
+                <Clock size={14} />
                 <span>{formatTime(timeLeft)}</span>
               </div>
             )}
-            <button onClick={() => handleSubmit(false)} disabled={submitting || submitted} style={s.submitBtn(submitting || submitted)}>
+            <button onClick={() => handleSubmit(false)} disabled={submitting || submitted} style={s.headerSubmitBtn(submitting || submitted)}>
               <Send size={13} />
               {submitting ? 'Submitting...' : 'Submit Assessment'}
             </button>
@@ -565,7 +763,7 @@ function ParticipantCodingAttemptInner({ user }) {
               <div style={s.tabBar}>
                 <div style={s.tabLeft}>
                   <button onClick={() => setActiveTab('output')} style={s.tabBtn(activeTab === 'output')}>
-                    <Terminal size={12} /> Execution Output
+                    <Terminal size={13} /> Execution Output
                   </button>
                   <button onClick={() => setShowCustomInput(prev => !prev)} style={s.actionBtn}>
                     <Bug size={12} /> {showCustomInput ? 'Hide Custom Input' : 'Custom Input'}
@@ -585,39 +783,69 @@ function ParticipantCodingAttemptInner({ user }) {
               </div>
 
               {showCustomInput && (
-                <div style={{ padding: '8px 12px', background: '#16213e', borderBottom: '1px solid #0f3460' }}>
-                  <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Custom Input (stdin):</div>
+                <div style={{ padding: '10px 14px', background: '#0D1527', borderBottom: '1.5px solid #1E293B' }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 700, color: '#94A3B8', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                    Custom Input (stdin):
+                  </div>
                   <textarea
                     value={customInput}
                     onChange={(e) => setCustomInput(e.target.value)}
-                    style={{ width: '100%', height: 50, background: '#1a1a2e', color: '#e0e0e0', border: '1px solid #333', borderRadius: 4, padding: 6, fontSize: 12, fontFamily: "'Fira Code', monospace" }}
+                    style={{
+                      width: '100%',
+                      height: 56,
+                      background: '#060913',
+                      color: '#F8FAFC',
+                      border: '1.5px solid #334155',
+                      borderRadius: 6,
+                      padding: 8,
+                      fontSize: 12.5,
+                      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                      outline: 'none',
+                      boxSizing: 'border-box'
+                    }}
                     placeholder="Enter custom input here..."
                   />
                 </div>
               )}
 
               <div style={s.outputArea}>
-                {judgeStatus && <div style={{ color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 6 }}><Loader2 size={14} className="animate-spin" /> {judgeStatus}</div>}
-                {runStatus && <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ fontWeight: 700 }}>Status:</span> <span style={{ color: runStatus === 'ACCEPTED' ? '#059669' : '#dc2626', fontWeight: 600 }}>{runStatus}</span>{runTime != null && <span style={{ color: '#888', fontSize: 11 }}>({runTime.toFixed(3)}s, {runMemory}MB)</span>}</div>}
-                {submitVerdict && (
+                {judgeStatus && <div style={{ color: '#FBBF24', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }}><Loader2 size={14} className="animate-spin text-emerald-400" /> {judgeStatus}</div>}
+                {runStatus && (
                   <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={s.verdictBadge(submitVerdict)}>{submitVerdict}</span>
-                    {submitPassed != null && <span style={{ fontSize: 12, color: '#888' }}>{submitPassed}/{submitTotal} test cases passed ({submitScore}%)</span>}
+                    <span style={{ fontWeight: 700, color: '#94A3B8' }}>Status:</span>
+                    <span style={{ color: runStatus === 'ACCEPTED' ? '#4ADE80' : '#F87171', fontWeight: 700 }}>{runStatus}</span>
+                    {runTime != null && <span style={{ color: '#64748B', fontSize: 11 }}>({runTime.toFixed(3)}s, {runMemory}MB)</span>}
                   </div>
                 )}
-                {output && <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{output}</pre>}
+                {submitVerdict && (
+                  <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={s.verdictBadge(submitVerdict)}>{submitVerdict}</span>
+                    {submitPassed != null && <span style={{ fontSize: 12.5, color: '#CBD5E1', fontWeight: 600 }}>{submitPassed}/{submitTotal} test cases passed ({submitScore}%)</span>}
+                  </div>
+                )}
+                {output && <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#E2E8F0', lineHeight: '20px' }}>{output}</pre>}
                 {sampleResults.length > 0 && (
-                  <div style={{ marginTop: 8 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: '#888', marginBottom: 4 }}>TEST CASE RESULTS:</div>
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 11.5, fontWeight: 700, color: '#4ADE80', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>TEST CASE RESULTS:</div>
                     {sampleResults.map((tr, idx) => (
-                      <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderRadius: 4, background: tr.passed ? '#05966911' : '#dc262611', border: `1px solid ${tr.passed ? '#05966933' : '#dc262633'}`, marginBottom: 4, fontSize: 12 }}>
-                        {tr.passed ? <CheckCircle2 size={13} color="#059669" /> : <XCircle size={13} color="#dc2626" />}
-                        <span style={{ fontWeight: 600, color: tr.passed ? '#059669' : '#dc2626' }}>{`Test Case ${idx + 1}: ${tr.passed ? 'PASSED' : 'FAILED'}`}</span>
-                        <span style={{ marginLeft: 'auto', color: '#888', fontSize: 10 }}>{tr.executionTime != null ? `${Number(tr.executionTime).toFixed(3)}s` : ''}</span>
+                      <div key={idx} style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '6px 12px',
+                        borderRadius: 6,
+                        background: tr.passed ? 'rgba(22, 163, 74, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                        border: `1px solid ${tr.passed ? 'rgba(34, 197, 94, 0.35)' : 'rgba(239, 68, 68, 0.35)'}`,
+                        marginBottom: 6,
+                        fontSize: 12.5,
+                      }}>
+                        {tr.passed ? <CheckCircle2 size={14} color="#4ADE80" /> : <XCircle size={14} color="#F87171" />}
+                        <span style={{ fontWeight: 600, color: tr.passed ? '#4ADE80' : '#F87171' }}>{`Test Case ${idx + 1}: ${tr.passed ? 'PASSED' : 'FAILED'}`}</span>
+                        <span style={{ marginLeft: 'auto', color: '#94A3B8', fontSize: 11, fontFamily: 'monospace' }}>{tr.executionTime != null ? `${Number(tr.executionTime).toFixed(3)}s` : ''}</span>
                       </div>
                     ))}
                     {submitTotal > sampleResults.filter(r => !r.isHidden).length && (
-                      <div style={{ marginTop: 8, fontSize: 12, color: '#888', fontStyle: 'italic' }}>
+                      <div style={{ marginTop: 8, fontSize: 12, color: '#94A3B8', fontStyle: 'italic' }}>
                         {submitTotal - sampleResults.filter(r => !r.isHidden).length} hidden test cases were evaluated
                       </div>
                     )}
