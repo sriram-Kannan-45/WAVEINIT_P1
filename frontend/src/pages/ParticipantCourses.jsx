@@ -877,12 +877,12 @@ function CourseView({ user, courseId, onBack, onOpenLesson }) {
           )}
           {tab === 'quizzes' && (
             <div className="wl-detail-content wl-detail-content--full">
-              <QuizzesView user={user} courseId={courseId} trainingId={overview.course.trainingProgramId} />
+              <QuizzesView user={user} courseId={courseId} trainingId={overview.course.trainingProgramId || courseId} />
             </div>
           )}
           {tab === 'coding' && (
             <div className="wl-detail-content wl-detail-content--full">
-              <CodingAssessmentsView user={user} courseId={courseId} trainingId={overview.course.trainingProgramId} />
+              <CodingAssessmentsView user={user} courseId={courseId} trainingId={overview.course.trainingProgramId || courseId} />
             </div>
           )}
           {tab === 'discussions' && (
@@ -1446,17 +1446,23 @@ function CodingAssessmentsView({ user, courseId, trainingId }) {
         headers: auth(token),
         body: JSON.stringify({
           participant_id: user?.id,
-          training_id: trainingId,
+          training_id: trainingId || courseId,
           lesson_id: null,
           coding_assessment_id: assessmentId,
         })
       })
+      const response = await res.json()
+      if (!res.ok || !response.success) {
+        showError(response.error || 'Failed to start coding assessment')
+        return
+      }
+      const targetTrainingId = trainingId || courseId
       const params = new URLSearchParams({
         attemptId: String(response.attemptId),
         sessionToken: response.sessionToken || '',
         monitoringSessionId: response.monitoringSessionId || '',
       })
-      navigate(`/trainings/${trainingId}/coding/${assessmentId}/verification?${params.toString()}`)
+      navigate(`/trainings/${targetTrainingId}/coding/${assessmentId}/verification?${params.toString()}`)
     } catch (err) { showError(err.message) }
   }
 
@@ -1539,7 +1545,7 @@ function CodingAssessmentsView({ user, courseId, trainingId }) {
                 className="wl-btn-primary"
                 style={{
                   height: 32, padding: '0 14px', fontSize: 11,
-                  background: '#2563eb',
+                  background: '#16A34A',
                   opacity: (a.myStatus !== 'NOT_STARTED' && a.myStatus !== 'IN_PROGRESS') ? 0.6 : 1,
                   cursor: (a.myStatus !== 'NOT_STARTED' && a.myStatus !== 'IN_PROGRESS') ? 'default' : 'pointer',
                 }}
