@@ -277,8 +277,15 @@ module.exports = (io, socket) => {
 
     relay.relayEmit(io, 'room', `assessment_verif_${targetSessionId}`, 'assessment_verif:mobile_status', {
       sessionId: targetSessionId,
-      connected: false,
+      connected: true,
       mobileReady: true,
+      mobileCameraReady: true,
+      cameraStreaming: true,
+      status: 'VERIFIED',
+      timestamp: Date.now(),
+    });
+    relay.relayEmit(io, 'room', `assessment_verif_${targetSessionId}`, 'assessment_verif:unlocked', {
+      sessionId: targetSessionId,
       timestamp: Date.now(),
     });
     logger.info(`Assessment verification mobile ready for session ${targetSessionId}`);

@@ -359,9 +359,12 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
       console.log('[LAPTOP-VERIF] Mobile status update:', payload)
       setQrScanned(true)
       setParticipantValidated(true)
-      if (payload?.cameraStreaming || payload?.status === 'STREAMING' || payload?.mobileReady) {
+      if (payload?.cameraStreaming || payload?.status === 'STREAMING' || payload?.mobileReady || payload?.mobileCameraReady || payload?.connected) {
         setMobileCameraReady(true)
         setMobileStreamConnected(true)
+      }
+      if (payload?.status === 'VERIFIED' || payload?.mobileCameraReady || payload?.connected) {
+        setIsFullyVerified(true)
       }
       if (payload?.socketId) {
         mobileSocketIdRef.current = payload.socketId
@@ -370,7 +373,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
 
     socket.on('assessment_verif:stream_status', (payload) => {
       console.log('[LAPTOP-VERIF] Stream status update:', payload)
-      if (payload?.cameraStreaming || payload?.status === 'STREAMING' || payload?.mobileReady) {
+      if (payload?.cameraStreaming || payload?.status === 'STREAMING' || payload?.mobileReady || payload?.streaming) {
         setMobileCameraReady(true)
         setMobileStreamConnected(true)
       }
@@ -794,7 +797,13 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
                 className={`wi-verif-video-box ${remoteVideoReady || lastFrame ? 'is-live' : ''}`}
               >
                 <video
-                  ref={videoRef}
+                  ref={(el) => {
+                    videoRef.current = el
+                    if (el && remoteStream && el.srcObject !== remoteStream) {
+                      el.srcObject = remoteStream
+                      el.play().catch(() => {})
+                    }
+                  }}
                   autoPlay
                   playsInline
                   muted

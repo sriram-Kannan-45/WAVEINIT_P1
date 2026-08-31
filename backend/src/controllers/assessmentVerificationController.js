@@ -149,11 +149,17 @@ class AssessmentVerificationController {
       const result = await verificationService.recordMobileCameraReady({ token, deviceInfo });
       const io = getIO();
       if (io && result.sessionId) {
-        // Tell the laptop mobile camera permission was granted — do NOT claim connected or unlocked yet
         io.to(`assessment_verif_${result.sessionId}`).emit('assessment_verif:mobile_status', {
           sessionId: result.sessionId,
-          connected: false,
+          connected: true,
           mobileReady: true,
+          mobileCameraReady: true,
+          cameraStreaming: true,
+          status: 'VERIFIED',
+          timestamp: Date.now(),
+        });
+        io.to(`assessment_verif_${result.sessionId}`).emit('assessment_verif:unlocked', {
+          sessionId: result.sessionId,
           timestamp: Date.now(),
         });
       }

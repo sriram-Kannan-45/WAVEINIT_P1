@@ -360,6 +360,44 @@ function AssessmentMobileJoinContent() {
     return () => clearInterval(interval);
   }, [token, info, phase, handleSessionClosed]);
 
+  // Frame Streaming Fallback (Guarantees desktop video visibility regardless of NAT/P2P blockers)
+  useEffect(() => {
+    if (phase !== PHASE.STREAMING || !socketRef.current?.connected || !info?.sessionId) {
+      if (frameIntervalRef.current) {
+        clearInterval(frameIntervalRef.current);
+        frameIntervalRef.current = null;
+      }
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 240;
+    const ctx = canvas.getContext('2d');
+
+    frameIntervalRef.current = setInterval(() => {
+      const video = videoRef.current;
+      if (video && video.videoWidth > 0 && video.videoHeight > 0 && socketRef.current?.connected) {
+        try {
+          ctx.drawImage(video, 0, 0, 320, 240);
+          const frame = canvas.toDataURL('image/jpeg', 0.5);
+          socketRef.current.emit('assessment_verif:frame', {
+            sessionId: info.sessionId,
+            frame,
+            participantId: info.participantId,
+          });
+        } catch (e) {}
+      }
+    }, 600); // ~1.6 fps
+
+    return () => {
+      if (frameIntervalRef.current) {
+        clearInterval(frameIntervalRef.current);
+        frameIntervalRef.current = null;
+      }
+    };
+  }, [phase, info?.sessionId, socketConnected]);
+
   // 2. Setup Socket Connection for real-time synchronization with Laptop (Stable lifecycle)
   const sessionId = info?.sessionId;
   const socketToken = info?.socketToken;
@@ -383,9 +421,17 @@ function AssessmentMobileJoinContent() {
         role: 'mobile_camera',
       });
 
-      // If camera stream is already live and laptop is known, start WebRTC
-      if (streamRef.current && laptopSocketIdRef.current) {
+      // If camera stream is already live, immediately start WebRTC offer and notify laptop
+      if (streamRef.current) {
         startWebRTCOffer(laptopSocketIdRef.current);
+        socket.emit('assessment_verif:mobile_ready', {
+          sessionId,
+          token: info?.token || token,
+        });
+        socket.emit('assessment_verif:stream_status', {
+          sessionId,
+          streaming: true,
+        });
       }
     });
 
@@ -544,9 +590,17 @@ function AssessmentMobileJoinContent() {
       setCameraActive(true);
       setPhase(PHASE.STREAMING);
 
-      // Start WebRTC Peer Connection if laptop socket is already known
-      if (socketRef.current?.connected && laptopSocketIdRef.current) {
+      // Start WebRTC Peer Connection and notify room
+      if (socketRef.current?.connected) {
         startWebRTCOffer(laptopSocketIdRef.current);
+        socketRef.current.emit('assessment_verif:mobile_ready', {
+          sessionId: info?.sessionId,
+          token: info?.token || token,
+        });
+        socketRef.current.emit('assessment_verif:stream_status', {
+          sessionId: info?.sessionId,
+          streaming: true,
+        });
       }
 
       // Notify backend via HTTP that mobile camera permission was granted
