@@ -2702,7 +2702,9 @@ class CodingProblemsRequest(BaseModel):
 
 
 CODING_PROBLEMS_SYSTEM = (
-    "You are an expert competitive programming question author. "
+    "You are an expert competitive programming question author and compiler specialist. "
+    "MANDATORY RULE: You must generate problems STRICTLY and SPECIFICALLY based on the user's exact topic/prompt. "
+    "DO NOT generate unrelated algorithms or array transformations unless explicitly requested.\n"
     "Generate a set of coding problems in strict JSON. Return ONLY valid JSON, no markdown.\n"
     "Schema:\n"
     "{\n"
@@ -2720,7 +2722,7 @@ CODING_PROBLEMS_SYSTEM = (
     '      "difficulty": "EASY"|"MEDIUM"|"HARD",\n'
     '      "programmingLanguage": string,\n'
     '      "starterCode": string (boilerplate code template),\n'
-    '      "expectedSolution": string (reference solution),\n'
+    '      "expectedSolution": string (complete runnable reference solution),\n'
     '      "timeLimit": number (seconds, default 5),\n'
     '      "memoryLimit": number (MB, default 256),\n'
     '      "marks": number,\n'
@@ -2736,40 +2738,113 @@ CODING_PROBLEMS_SYSTEM = (
     "    }\n"
     "  ]\n"
     "}\n"
-    "For each problem, generate exactly 2 visible (isHidden=false) and 5 hidden (isHidden=true) test cases. "
-    "Suggest marks by difficulty: EASY=10, MEDIUM=20, HARD=30. "
-    "Distribute problems across the requested languages."
+    "Ensure every reference solution passes all generated test cases. "
+    "Suggest marks by difficulty: EASY=10, MEDIUM=20, HARD=30."
 )
 
 
-def generate_fallback_coding_problems(topic: str, count: int = 2, difficulty: str = "EASY") -> Dict[str, Any]:
+def generate_fallback_coding_problems(topic: str, count: int = 1, difficulty: str = "EASY") -> Dict[str, Any]:
+    norm = topic.strip().lower()
+    is_print = bool(re.search(r'\b(print|echo|output|display|show|hello)\b', norm))
+    
+    target_text = "hi"
+    match = re.search(r'(?:print|echo|output|display|show)\s+["\']?([^"\']+)["\']?', norm)
+    if match and match.group(1):
+        target_text = match.group(1).strip()
+    elif "hello world" in norm:
+        target_text = "Hello, World!"
+    elif not is_print:
+        target_text = topic.strip()
+
+    problems = []
+    for i in range(count):
+        p_title = topic if count == 1 else f"{topic} (Part {i + 1})"
+        
+        if is_print:
+            desc = f"Write a program that prints the exact text \"{target_text}\"."
+            inp_fmt = "No input."
+            out_fmt = f"Print the exact text: {target_text}"
+            s_inp = ""
+            s_out = target_text
+            starter = f"# Print {target_text}\n"
+            expected = f'print("{target_text}")\n'
+            test_cases = [
+                {"input": "", "expectedOutput": target_text, "isHidden": False, "description": f"Print {target_text}"},
+                {"input": "\n", "expectedOutput": target_text, "isHidden": True, "description": "Trailing check"}
+            ]
+        elif "sort" in norm:
+            is_desc = "descending" in norm
+            desc = f"Write a program that takes space-separated numbers and prints them sorted in {'descending' if is_desc else 'ascending'} order."
+            inp_fmt = "Space-separated numbers."
+            out_fmt = "Sorted numbers separated by spaces."
+            s_inp = "4 2 8 1 5"
+            s_out = "8 5 4 2 1" if is_desc else "1 2 4 5 8"
+            starter = "def sort_numbers():\n    pass\n\nif __name__ == '__main__':\n    sort_numbers()\n"
+            expected = f"import sys\n\ndef sort_numbers():\n    nums = [int(x) for x in sys.stdin.read().split()]\n    nums.sort(reverse={'True' if is_desc else 'False'})\n    print(' '.join(str(x) for x in nums))\n\nif __name__ == '__main__':\n    sort_numbers()\n"
+            test_cases = [
+                {"input": "4 2 8 1 5", "expectedOutput": s_out, "isHidden": False, "description": "Basic case"},
+                {"input": "1", "expectedOutput": "1", "isHidden": True, "description": "Single element"}
+            ]
+        elif "reverse" in norm and "string" in norm:
+            desc = "Write a program that takes a string input and prints the reversed string."
+            inp_fmt = "A single string."
+            out_fmt = "The reversed string."
+            s_inp = "hello"
+            s_out = "olleh"
+            starter = "def reverse_string():\n    pass\n\nif __name__ == '__main__':\n    reverse_string()\n"
+            expected = "import sys\n\ndef reverse_string():\n    print(sys.stdin.read().strip()[::-1])\n\nif __name__ == '__main__':\n    reverse_string()\n"
+            test_cases = [
+                {"input": "hello", "expectedOutput": "olleh", "isHidden": False, "description": "Simple string"},
+                {"input": "racecar", "expectedOutput": "racecar", "isHidden": True, "description": "Palindrome"}
+            ]
+        elif "even" in norm or "odd" in norm:
+            desc = "Write a program that reads an integer and prints 'Even' if the number is even, and 'Odd' if odd."
+            inp_fmt = "A single integer."
+            out_fmt = "'Even' or 'Odd'."
+            s_inp = "4"
+            s_out = "Even"
+            starter = "def check_even_odd():\n    pass\n\nif __name__ == '__main__':\n    check_even_odd()\n"
+            expected = "import sys\n\ndef check_even_odd():\n    n = int(sys.stdin.read().strip())\n    print('Even' if n % 2 == 0 else 'Odd')\n\nif __name__ == '__main__':\n    check_even_odd()\n"
+            test_cases = [
+                {"input": "4", "expectedOutput": "Even", "isHidden": False, "description": "Even number"},
+                {"input": "7", "expectedOutput": "Odd", "isHidden": False, "description": "Odd number"},
+                {"input": "0", "expectedOutput": "Even", "isHidden": True, "description": "Zero check"}
+            ]
+        else:
+            desc = f"Write a program to solve: {topic}."
+            inp_fmt = "Standard input."
+            out_fmt = "Expected result."
+            s_inp = "1"
+            s_out = target_text
+            starter = f"# Solution for {topic}\n"
+            expected = f'print("{target_text}")\n'
+            test_cases = [
+                {"input": "1", "expectedOutput": target_text, "isHidden": False, "description": "Sample test case"}
+            ]
+
+        problems.append({
+            "title": p_title,
+            "description": desc,
+            "constraints": "Time Limit: 5.0s, Memory Limit: 256MB",
+            "inputFormat": inp_fmt,
+            "outputFormat": out_fmt,
+            "sampleInput": s_inp,
+            "sampleOutput": s_out,
+            "explanation": f"Produces the output for {topic}.",
+            "difficulty": difficulty.upper(),
+            "programmingLanguage": "python",
+            "starterCode": starter,
+            "expectedSolution": expected,
+            "timeLimit": 5,
+            "memoryLimit": 256,
+            "marks": 10 if difficulty.upper() == 'EASY' else 20,
+            "tags": [topic.lower()[:20]],
+            "testCases": test_cases
+        })
+
     return {
-        "title": f"Coding Assessment: {topic[:60]}",
-        "problems": [
-            {
-                "title": f"Algorithm Problem on {topic}",
-                "description": f"Write an efficient function to solve a problem related to {topic}.",
-                "constraints": "1 <= N <= 10^5",
-                "inputFormat": "Array of integers and target integer",
-                "outputFormat": "Result value",
-                "sampleInput": "[1, 2, 3, 4], target=5",
-                "sampleOutput": "True",
-                "explanation": "Valid solution based on input parameters.",
-                "difficulty": difficulty.upper(),
-                "programmingLanguage": "python",
-                "starterCode": "def solution(data, target):\n    # TODO: Implement solution\n    pass\n",
-                "expectedSolution": "def solution(data, target):\n    return sum(data) >= target\n",
-                "timeLimit": 5,
-                "memoryLimit": 256,
-                "marks": 20,
-                "tags": [topic.lower()[:20], "algorithms"],
-                "testCases": [
-                    {"input": "[1, 2, 3], 5", "expectedOutput": "True", "isHidden": False, "description": "Basic case"},
-                    {"input": "[1], 10", "expectedOutput": "False", "isHidden": False, "description": "Edge case"},
-                    {"input": "[10, 20], 30", "expectedOutput": "True", "isHidden": True, "description": None}
-                ]
-            }
-        ]
+        "title": f"Coding: {topic[:60]}",
+        "problems": problems
     }
 
 
@@ -2795,7 +2870,7 @@ async def generate_coding_problems(req: CodingProblemsRequest):
             log.warning("Coding problems generation attempt %d failed: %s", attempt, e)
             await asyncio.sleep(Config.RETRY_DELAY * attempt)
 
-    log.warning("Coding problems LLM generation failed. Returning resilient fallback.")
+    log.warning("Coding problems LLM generation failed. Returning resilient intent-faithful synthesis.")
     fallback = generate_fallback_coding_problems(req.prompt, req.numProblems, req.difficulty)
     return {
         "title": fallback["title"],

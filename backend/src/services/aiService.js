@@ -524,6 +524,9 @@ Return ONLY valid JSON matching this schema:
   },
 
   async generateCodingProblemsFromPrompt(prompt, numProblems = 5, difficulty = 'MEDIUM', languages = []) {
+    const { analyzePromptIntent } = require('./codingIntentAnalyzer');
+    const { validateGeneratedProblem } = require('./codingProblemValidator');
+
     const cleanPrompt = (prompt || '').toString().trim();
     if (!cleanPrompt) throw new Error('Prompt cannot be empty.');
     const count = Math.min(Math.max(1, parseInt(numProblems, 10) || 1), 20);
@@ -533,31 +536,54 @@ Return ONLY valid JSON matching this schema:
       : ['javascript'];
     const langList = langs.join(', ');
 
-    // 1. Try Direct Google Gemini API with 45s timeout and strict topic constraints
+    // ── STEP 1 & 2: Intent Analysis & Requirement Extraction ──
+    const intentProfile = analyzePromptIntent(cleanPrompt, diffUpper);
+    const requestId = `gen-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+
+    console.log(`[aiService][${requestId}] Intent Analysis:`, {
+      prompt: cleanPrompt,
+      primaryTask: intentProfile.primaryProgrammingTask,
+      literalValues: intentProfile.literalValues,
+      forbiddenConcepts: intentProfile.forbiddenConcepts,
+    });
+
     const apiKey = process.env.GEMINI_API_KEY;
+    const maxRetries = 3;
+    let lastValidationErrors = [];
+
+    // ── STEP 3-11: Structured Generation & Validation Retry Loop ──
     if (apiKey && apiKey !== 'your-gemini-api-key-here') {
-      try {
-        console.log(`[aiService] Fast generating ${count} coding problems via direct Gemini API for: "${cleanPrompt.substring(0, 80)}"`);
-        const systemPrompt = `You are a world-class coding assessment architect.
-CRITICAL MANDATORY RULE: You must generate problems SPECIFICALLY AND STRICTLY based on the trainer's exact topic/prompt below.
-DO NOT generate unrelated algorithms, collections, or array transformations unless explicitly requested.
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          console.log(`[aiService][${requestId}] Generation attempt ${attempt}/${maxRetries} via Gemini API...`);
 
-TRAINER TOPIC/PROMPT: "${cleanPrompt}"
-DIFFICULTY LEVEL: "${diffUpper}"
-SELECTED LANGUAGES: ${langList}
+          const retryFeedback = lastValidationErrors.length > 0
+            ? `\n\nCRITICAL FIX REQUIRED (Previous attempt was rejected):\n- ${lastValidationErrors.join('\n- ')}\nEnsure you fix every error listed above.`
+            : '';
 
-Generate exactly ${count} coding problem(s). For example, if the topic is "Print hi", the problem MUST be about printing "hi" (e.g. title: "Print hi", description: "Write a program that prints the exact text 'hi'.", expected output: "hi").
+          const systemPrompt = `You are a world-class coding assessment architect and compiler expert.
+CRITICAL MANDATORY RULES:
+1. You must generate problems SPECIFICALLY AND STRICTLY based on the trainer's exact intent: "${intentProfile.problemIntent}".
+2. PRIMARY PROGRAMMING TASK: ${intentProfile.primaryProgrammingTask}
+3. INPUT REQUIREMENTS: ${intentProfile.inputRequirements}
+4. OUTPUT REQUIREMENTS: ${intentProfile.outputRequirements}
+5. LITERAL VALUES TO PRESERVE: ${JSON.stringify(intentProfile.literalValues)}
+6. FORBIDDEN CONCEPTS (DO NOT INCLUDE): ${JSON.stringify(intentProfile.forbiddenConcepts)}
+7. I/O FORMAT RULE: Every reference solution MUST be a standalone script that reads test case inputs from standard input (stdin) (e.g. in JavaScript: require('fs').readFileSync(0, 'utf-8').trim(); in Python: sys.stdin.read().strip()) and writes the exact expected output to standard output (stdout) (e.g. console.log(...) in JS, print(...) in Python).
+${retryFeedback}
 
+Generate exactly ${count} coding problem(s).
+Every reference solution MUST be COMPLETE, RUNNABLE, and PASS ALL TEST CASES.
 For EVERY problem, provide:
 1. title: Directly derived from "${cleanPrompt}".
-2. description: Clear task description matching "${cleanPrompt}".
-3. inputFormat & outputFormat: Precise format specifications.
-4. constraints: Problem execution constraints (e.g. "Time Limit: 5.0s, Memory Limit: 256MB").
-5. requiredConcepts: Array of required programming concepts if applicable (e.g. ["for_loop", "function"] or []).
-6. testCases: Array of test cases. Each with input (string), expectedOutput (string matching outputFormat), isHidden (boolean), description.
-7. languageSolutions: An object with a key for EACH language in [${langList}].
-   - starterCode: ONLY a minimal structural skeleton (imports/function/main signature or simple print placeholder). NO algorithm.
-   - referenceSolution: A COMPLETE, correct, runnable solution written in that exact language syntax that reads inputFormat, writes outputFormat, and passes testCases.
+2. description: Clear, unambiguous task description matching "${cleanPrompt}".
+3. inputFormat & outputFormat: Exact specification.
+4. constraints: Problem constraints (e.g. "Time Limit: 5.0s, Memory Limit: 256MB").
+5. requiredConcepts: Array of required programming concepts (e.g. ["for_loop"] or []).
+6. testCases: Array of test cases (input, expectedOutput, isHidden, description). Expected output MUST be exact.
+7. languageSolutions: Key for EACH language in [${langList}].
+   - starterCode: Minimal skeleton (function or main signature).
+   - referenceSolution: COMPLETE, correct, runnable code that reads stdin, computes the result, and writes output matching testCases.
 
 Return ONLY valid JSON matching this schema:
 {
@@ -566,16 +592,16 @@ Return ONLY valid JSON matching this schema:
   "problems": [
     {
       "title": "${cleanPrompt}",
-      "description": "Problem description",
+      "description": "Detailed description",
       "constraints": "Time Limit: 5.0s, Memory Limit: 256MB",
-      "inputFormat": "Input specification",
-      "outputFormat": "Output specification",
-      "sampleInput": "",
-      "sampleOutput": "expected output",
+      "inputFormat": "${intentProfile.inputRequirements}",
+      "outputFormat": "${intentProfile.outputRequirements}",
+      "sampleInput": "${intentProfile.sampleInput || ''}",
+      "sampleOutput": "${intentProfile.sampleOutput || ''}",
       "explanation": "Explanation",
       "difficulty": "${diffUpper}",
       "programmingLanguage": "${langs[0]}",
-      "starterCode": "starter for first language",
+      "starterCode": "starter code for first language",
       "expectedSolution": "reference solution for first language",
       "requiredConcepts": [],
       "languageSolutions": {
@@ -587,8 +613,8 @@ Return ONLY valid JSON matching this schema:
       "tags": ["${cleanPrompt.toLowerCase().slice(0, 15)}"],
       "testCases": [
         {
-          "input": "",
-          "expectedOutput": "expected output",
+          "input": "${intentProfile.sampleInput || ''}",
+          "expectedOutput": "${intentProfile.sampleOutput || ''}",
           "isHidden": false,
           "description": "Sample Case 1"
         }
@@ -597,33 +623,32 @@ Return ONLY valid JSON matching this schema:
   ]
 }`;
 
-        const geminiRes = await axios.post(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-          {
-            contents: [{ parts: [{ text: systemPrompt }] }],
-            generationConfig: {
-              temperature: 0.2,
-              responseMimeType: 'application/json',
-              thinkingConfig: { thinkingBudget: 0 }
-            }
-          },
-          { timeout: 45000, headers: { 'Content-Type': 'application/json' } }
-        );
+          const geminiRes = await axios.post(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+            {
+              contents: [{ parts: [{ text: systemPrompt }] }],
+              generationConfig: {
+                temperature: 0.15,
+                responseMimeType: 'application/json',
+                thinkingConfig: { thinkingBudget: 0 }
+              }
+            },
+            { timeout: 45000, headers: { 'Content-Type': 'application/json' } }
+          );
 
-        const rawText = geminiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (rawText) {
-          const parsed = JSON.parse(rawText);
-          if (parsed && Array.isArray(parsed.problems) && parsed.problems.length > 0) {
-            // Validate generated problems
-            const validProblems = parsed.problems.filter(p => p.title && p.description && Array.isArray(p.testCases) && p.testCases.length > 0);
-            if (validProblems.length > 0) {
-              console.log(`[aiService] Gemini generated ${validProblems.length} topic-specific coding problems successfully.`);
-              // Ensure languageSolutions contains all requested languages
-              for (const p of validProblems) {
+          const rawText = geminiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (rawText) {
+            const parsed = JSON.parse(rawText);
+            if (parsed && Array.isArray(parsed.problems) && parsed.problems.length > 0) {
+              const validatedProblems = [];
+              let allValid = true;
+
+              for (const p of parsed.problems) {
+                // Fill any missing language solutions
                 p.languageSolutions = p.languageSolutions || {};
                 for (const L of langs) {
                   if (!p.languageSolutions[L] || !p.languageSolutions[L].referenceSolution) {
-                    const fallbackCode = this._generateTopicLanguageCode(L, cleanPrompt, p);
+                    const fallbackCode = this._generateTopicLanguageCode(L, cleanPrompt, p, intentProfile);
                     p.languageSolutions[L] = {
                       starterCode: (p.languageSolutions[L] && p.languageSolutions[L].starterCode) || fallbackCode.starterCode,
                       referenceSolution: (p.languageSolutions[L] && p.languageSolutions[L].referenceSolution) || fallbackCode.referenceSolution,
@@ -634,51 +659,57 @@ Return ONLY valid JSON matching this schema:
                 p.programmingLanguage = firstLang;
                 p.starterCode = p.languageSolutions[firstLang].starterCode;
                 p.expectedSolution = p.languageSolutions[firstLang].referenceSolution;
+
+                // Validate with comprehensive validation layer including execution testing
+                const valResult = await validateGeneratedProblem(p, intentProfile, langs, { execute: true });
+                if (!valResult.isValid) {
+                  console.warn(`[aiService][${requestId}] Problem "${p.title}" validation failed:`, valResult.issues);
+                  lastValidationErrors = valResult.issues;
+                  allValid = false;
+                  break;
+                }
+                validatedProblems.push(p);
               }
-              return {
-                title: parsed.title || `${cleanPrompt}`,
-                languages: langs,
-                problems: validProblems,
-              };
+
+              if (allValid && validatedProblems.length > 0) {
+                console.log(`[aiService][${requestId}] Successfully generated and validated ${validatedProblems.length} problem(s).`);
+                return {
+                  title: parsed.title || `${cleanPrompt}`,
+                  languages: langs,
+                  problems: validatedProblems,
+                };
+              }
             }
           }
+        } catch (geminiErr) {
+          console.warn(`[aiService][${requestId}] Attempt ${attempt} error:`, geminiErr.message);
+          lastValidationErrors = [geminiErr.message];
         }
-      } catch (geminiErr) {
-        console.warn('[aiService] Direct Gemini API call failed or timed out:', geminiErr.message);
       }
     }
 
-    // 2. Try Python microservice
-    try {
-      console.log(`[aiService] Querying Python microservice at ${AI_SERVICE_URL}/generate-coding-problems`);
-      const response = await axios.post(`${AI_SERVICE_URL}/generate-coding-problems`, {
-        prompt: cleanPrompt, numProblems: count, difficulty: diffUpper, languages: langs,
-      }, { timeout: 8000, headers: { 'Content-Type': 'application/json' } });
-      if (response.data && Array.isArray(response.data.problems) && response.data.problems.length > 0) {
-        return response.data;
-      }
-    } catch (error) {
-      console.warn('[aiService] Python AI microservice failed:', error.message);
-    }
-
-    // 3. Smart, dynamic topic-aware fallback synthesizer (strictly adheres to trainer prompt)
-    console.log('[aiService] Using dynamic topic-aware problem synthesizer for:', cleanPrompt);
-    return this._generateFallbackCodingProblems(cleanPrompt, count, diffUpper, langs);
+    // ── STEP 12: Intent-Faithful Dynamic Synthesizer (No Generic Array Fallback) ──
+    console.log(`[aiService][${requestId}] Generating intent-faithful problems using dynamic synthesizer for: "${cleanPrompt}"`);
+    return this._generateTopicFaithfulProblems(intentProfile, count, diffUpper, langs);
   },
 
-  _generateTopicLanguageCode(lang, topic, problemDetails = {}) {
+  _generateTopicLanguageCode(lang, topic, problemDetails = {}, intentProfile = null) {
     const norm = (topic || '').trim().toLowerCase();
-    const isPrintTopic = /print|echo|output|display|show/i.test(norm);
+    const isPrintTopic = intentProfile?.primaryProgrammingTask === 'PRINT_OUTPUT' || /print|echo|output|display|show/i.test(norm);
     
     // Extract target string if it's a print topic (e.g. "Print hi" -> "hi")
     let targetText = 'hi';
-    const match = norm.match(/(?:print|echo|output|display|show)\s+["']?([^"']+)["']?/i);
-    if (match && match[1]) {
-      targetText = match[1].trim();
-    } else if (norm.includes('hello world')) {
-      targetText = 'Hello, World!';
-    } else if (problemDetails.sampleOutput) {
-      targetText = String(problemDetails.sampleOutput).trim();
+    if (intentProfile?.literalValues?.length > 0) {
+      targetText = intentProfile.literalValues[0];
+    } else {
+      const match = norm.match(/(?:print|echo|output|display|show)\s+["']?([^"']+)["']?/i);
+      if (match && match[1]) {
+        targetText = match[1].trim();
+      } else if (norm.includes('hello world')) {
+        targetText = 'Hello, World!';
+      } else if (problemDetails.sampleOutput) {
+        targetText = String(problemDetails.sampleOutput).trim();
+      }
     }
 
     const configs = {
@@ -692,9 +723,7 @@ Return ONLY valid JSON matching this schema:
       },
       java: {
         starter: `public class Main {\n    public static void main(String[] args) {\n        // Write your solution here\n    }\n}`,
-        reference: isPrintTopic
-          ? `public class Main {\n    public static void main(String[] args) {\n        System.out.println("${targetText}");\n    }\n}`
-          : `public class Main {\n    public static void main(String[] args) {\n        System.out.println("${targetText}");\n    }\n}`,
+        reference: `public class Main {\n    public static void main(String[] args) {\n        System.out.println("${targetText}");\n    }\n}`,
       },
       cpp: {
         starter: `#include <iostream>\nusing namespace std;\n\nint main() {\n    // Write your solution here\n    return 0;\n}`,
@@ -741,54 +770,187 @@ Return ONLY valid JSON matching this schema:
     };
   },
 
-  _generateFallbackCodingProblems(topic, count, difficulty, languages = []) {
+  _generateTopicFaithfulProblems(intentProfile, count, difficulty, languages = []) {
     const problems = [];
-    const normalizedTopic = topic.trim();
+    const prompt = intentProfile.rawPrompt;
+    const task = intentProfile.primaryProgrammingTask;
     const langs = Array.isArray(languages) && languages.length > 0
       ? [...new Set(languages.map((l) => String(l).toLowerCase()))]
       : ['javascript'];
 
-    const isPrint = /print|echo|output|display|show|hello/i.test(normalizedTopic);
-    let targetText = 'hi';
-    const match = normalizedTopic.match(/(?:print|echo|output|display|show)\s+["']?([^"']+)["']?/i);
-    if (match && match[1]) {
-      targetText = match[1].trim();
-    } else if (/hello\s*world/i.test(normalizedTopic)) {
-      targetText = 'Hello, World!';
-    } else if (!isPrint) {
-      targetText = normalizedTopic;
-    }
-
     for (let i = 0; i < count; i++) {
-      const pTitle = count === 1 ? normalizedTopic : `${normalizedTopic} (Part ${i + 1})`;
-      const desc = isPrint
-        ? `Write a program that prints the exact text "${targetText}".`
-        : `Implement a solution for the topic "${normalizedTopic}". The program must read input as specified and produce the expected output.`;
-
+      const pTitle = count === 1 ? prompt : `${prompt} (Part ${i + 1})`;
+      let desc = `Write a program to ${prompt}.`;
+      let inputFormat = intentProfile.inputRequirements;
+      let outputFormat = intentProfile.outputRequirements;
+      let sampleInput = intentProfile.sampleInput;
+      let sampleOutput = intentProfile.sampleOutput;
+      let testCases = [];
       const languageSolutions = {};
-      for (const L of langs) {
-        languageSolutions[L] = this._generateTopicLanguageCode(L, normalizedTopic, { sampleOutput: targetText });
-      }
 
-      const testCases = isPrint
-        ? [
-            { input: '', expectedOutput: targetText, isHidden: false, description: `Print ${targetText}` },
-            { input: '\n', expectedOutput: targetText, isHidden: true, description: 'Hidden: trailing newline check' },
-          ]
-        : [
-            { input: '1', expectedOutput: targetText, isHidden: false, description: 'Sample Test Case 1' },
-            { input: '2', expectedOutput: targetText, isHidden: true, description: 'Hidden Test Case' },
-          ];
+      if (task === 'PRINT_OUTPUT') {
+        const target = intentProfile.literalValues[0] || (prompt.toLowerCase().includes('hello') ? 'Hello, World!' : 'hi');
+        desc = `Write a program that prints the exact text "${target}".`;
+        inputFormat = 'No input.';
+        outputFormat = `Print the exact text: ${target}`;
+        sampleInput = '';
+        sampleOutput = target;
+        testCases = [
+          { input: '', expectedOutput: target, isHidden: false, description: `Print exact text: ${target}` },
+          { input: '\n', expectedOutput: target, isHidden: true, description: 'Trailing whitespace check' },
+        ];
+        for (const L of langs) {
+          languageSolutions[L] = this._generateTopicLanguageCode(L, prompt, { sampleOutput: target }, intentProfile);
+        }
+      } else if (task === 'SORTING') {
+        const isDesc = /descending/i.test(prompt);
+        desc = `Write a program that takes space-separated integers and prints them sorted in ${isDesc ? 'descending' : 'ascending'} order.`;
+        inputFormat = 'Space-separated integers.';
+        outputFormat = `The sorted integers separated by spaces in ${isDesc ? 'descending' : 'ascending'} order.`;
+        sampleInput = '4 2 8 1 5';
+        sampleOutput = isDesc ? '8 5 4 2 1' : '1 2 4 5 8';
+        testCases = [
+          { input: '4 2 8 1 5', expectedOutput: isDesc ? '8 5 4 2 1' : '1 2 4 5 8', isHidden: false, description: 'Basic array sort' },
+          { input: '10 -2 3 0', expectedOutput: isDesc ? '10 3 0 -2' : '-2 0 3 10', isHidden: false, description: 'Negative and zero values' },
+          { input: '1', expectedOutput: '1', isHidden: true, description: 'Single element array' },
+          { input: '5 4 3 2 1', expectedOutput: isDesc ? '5 4 3 2 1' : '1 2 3 4 5', isHidden: true, description: 'Reversed input' },
+        ];
+        for (const L of langs) {
+          if (L === 'python') {
+            languageSolutions[L] = {
+              starterCode: `def sort_numbers():\n    # Read input and print sorted numbers\n    pass\n\nif __name__ == "__main__":\n    sort_numbers()\n`,
+              referenceSolution: `import sys\n\ndef sort_numbers():\n    line = sys.stdin.read().strip()\n    if not line:\n        return\n    nums = [int(x) for x in line.split()]\n    nums.sort(reverse=${isDesc ? 'True' : 'False'})\n    print(" ".join(str(x) for x in nums))\n\nif __name__ == "__main__":\n    sort_numbers()\n`,
+            };
+          } else {
+            languageSolutions[L] = {
+              starterCode: `const fs = require('fs');\n\nfunction sortNumbers() {\n  // Read input and print sorted numbers\n}\n\nsortNumbers();\n`,
+              referenceSolution: `const fs = require('fs');\n\nfunction sortNumbers() {\n  const input = fs.readFileSync(0, 'utf-8').trim();\n  if (!input) return;\n  const nums = input.split(/\\s+/).map(Number);\n  nums.sort((a, b) => ${isDesc ? 'b - a' : 'a - b'});\n  console.log(nums.join(' '));\n}\n\nsortNumbers();\n`,
+            };
+          }
+        }
+      } else if (task === 'STRING_PROCESSING' && /reverse/i.test(prompt)) {
+        desc = 'Write a program that takes a string input and prints the reversed string.';
+        inputFormat = 'A single string.';
+        outputFormat = 'The reversed string.';
+        sampleInput = 'hello';
+        sampleOutput = 'olleh';
+        testCases = [
+          { input: 'hello', expectedOutput: 'olleh', isHidden: false, description: 'Simple word' },
+          { input: 'racecar', expectedOutput: 'racecar', isHidden: false, description: 'Palindrome string' },
+          { input: 'abc 123', expectedOutput: '321 cba', isHidden: true, description: 'String with spaces and digits' },
+        ];
+        for (const L of langs) {
+          if (L === 'python') {
+            languageSolutions[L] = {
+              starterCode: `def reverse_string():\n    # Write your solution here\n    pass\n\nif __name__ == "__main__":\n    reverse_string()\n`,
+              referenceSolution: `import sys\n\ndef reverse_string():\n    s = sys.stdin.read().strip()\n    print(s[::-1])\n\nif __name__ == "__main__":\n    reverse_string()\n`,
+            };
+          } else {
+            languageSolutions[L] = {
+              starterCode: `const fs = require('fs');\n\nfunction reverseString() {\n  // Write your solution here\n}\n\nreverseString();\n`,
+              referenceSolution: `const fs = require('fs');\n\nfunction reverseString() {\n  const s = fs.readFileSync(0, 'utf-8').trim();\n  console.log(s.split('').reverse().join(''));\n}\n\nreverseString();\n`,
+            };
+          }
+        }
+      } else if (task === 'CONDITIONALS' && /even|odd/i.test(prompt)) {
+        desc = 'Write a program that reads an integer and prints "Even" if the number is even, and "Odd" if the number is odd.';
+        inputFormat = 'A single integer.';
+        outputFormat = '"Even" or "Odd".';
+        sampleInput = '4';
+        sampleOutput = 'Even';
+        testCases = [
+          { input: '4', expectedOutput: 'Even', isHidden: false, description: 'Positive even number' },
+          { input: '7', expectedOutput: 'Odd', isHidden: false, description: 'Positive odd number' },
+          { input: '0', expectedOutput: 'Even', isHidden: true, description: 'Zero is even' },
+          { input: '-3', expectedOutput: 'Odd', isHidden: true, description: 'Negative odd number' },
+        ];
+        for (const L of langs) {
+          if (L === 'python') {
+            languageSolutions[L] = {
+              starterCode: `def check_even_odd():\n    pass\n\nif __name__ == "__main__":\n    check_even_odd()\n`,
+              referenceSolution: `import sys\n\ndef check_even_odd():\n    n = int(sys.stdin.read().strip())\n    print("Even" if n % 2 == 0 else "Odd")\n\nif __name__ == "__main__":\n    check_even_odd()\n`,
+            };
+          } else {
+            languageSolutions[L] = {
+              starterCode: `const fs = require('fs');\n\nfunction checkEvenOdd() {\n  // Write code\n}\n\ncheckEvenOdd();\n`,
+              referenceSolution: `const fs = require('fs');\n\nfunction checkEvenOdd() {\n  const n = parseInt(fs.readFileSync(0, 'utf-8').trim(), 10);\n  console.log(n % 2 === 0 ? 'Even' : 'Odd');\n}\n\ncheckEvenOdd();\n`,
+            };
+          }
+        }
+      } else if (task === 'ARRAY_PROCESSING' && /largest|maximum/i.test(prompt)) {
+        desc = 'Write a program that reads space-separated integers from input and prints the largest number.';
+        inputFormat = 'Space-separated integers.';
+        outputFormat = 'The maximum integer.';
+        sampleInput = '1 9 3 7 5';
+        sampleOutput = '9';
+        testCases = [
+          { input: '1 9 3 7 5', expectedOutput: '9', isHidden: false, description: 'Mixed integers' },
+          { input: '-10 -5 -20 -1', expectedOutput: '-1', isHidden: false, description: 'All negative integers' },
+          { input: '42', expectedOutput: '42', isHidden: true, description: 'Single element' },
+        ];
+        for (const L of langs) {
+          if (L === 'python') {
+            languageSolutions[L] = {
+              starterCode: `def find_largest():\n    pass\n\nif __name__ == "__main__":\n    find_largest()\n`,
+              referenceSolution: `import sys\n\ndef find_largest():\n    line = sys.stdin.read().strip()\n    nums = [int(x) for x in line.split()]\n    print(max(nums))\n\nif __name__ == "__main__":\n    find_largest()\n`,
+            };
+          } else {
+            languageSolutions[L] = {
+              starterCode: `const fs = require('fs');\n\nfunction findLargest() {\n  // Write code\n}\n\nfindLargest();\n`,
+              referenceSolution: `const fs = require('fs');\n\nfunction findLargest() {\n  const nums = fs.readFileSync(0, 'utf-8').trim().split(/\\s+/).map(Number);\n  console.log(Math.max(...nums));\n}\n\nfindLargest();\n`,
+            };
+          }
+        }
+      } else if (task === 'MATH' && /factorial/i.test(prompt)) {
+        desc = 'Write a program that reads a non-negative integer n and prints its factorial (n!).';
+        inputFormat = 'A single non-negative integer n.';
+        outputFormat = 'The factorial of n.';
+        sampleInput = '5';
+        sampleOutput = '120';
+        testCases = [
+          { input: '5', expectedOutput: '120', isHidden: false, description: 'Factorial of 5' },
+          { input: '0', expectedOutput: '1', isHidden: false, description: 'Factorial of 0 is 1' },
+          { input: '1', expectedOutput: '1', isHidden: true, description: 'Factorial of 1 is 1' },
+          { input: '6', expectedOutput: '720', isHidden: true, description: 'Factorial of 6' },
+        ];
+        for (const L of langs) {
+          if (L === 'python') {
+            languageSolutions[L] = {
+              starterCode: `def calculate_factorial():\n    pass\n\nif __name__ == "__main__":\n    calculate_factorial()\n`,
+              referenceSolution: `import sys\nimport math\n\ndef calculate_factorial():\n    n = int(sys.stdin.read().strip())\n    print(math.factorial(n))\n\nif __name__ == "__main__":\n    calculate_factorial()\n`,
+            };
+          } else {
+            languageSolutions[L] = {
+              starterCode: `const fs = require('fs');\n\nfunction calculateFactorial() {\n  // Write code\n}\n\ncalculateFactorial();\n`,
+              referenceSolution: `const fs = require('fs');\n\nfunction factorial(n) {\n  let res = 1;\n  for (let i = 2; i <= n; i++) res *= i;\n  return res;\n}\n\nconst n = parseInt(fs.readFileSync(0, 'utf-8').trim(), 10);\nconsole.log(factorial(n));\n`,
+            };
+          }
+        }
+      } else {
+        const target = intentProfile.literalValues[0] || 'result';
+        desc = `Write a program to solve: ${prompt}.`;
+        inputFormat = 'Standard input.';
+        outputFormat = 'Expected output computed from input.';
+        sampleInput = '1';
+        sampleOutput = target;
+        testCases = [
+          { input: '1', expectedOutput: target, isHidden: false, description: 'Sample Test Case' },
+          { input: '2', expectedOutput: target, isHidden: true, description: 'Hidden Test Case' },
+        ];
+        for (const L of langs) {
+          languageSolutions[L] = this._generateTopicLanguageCode(L, prompt, { sampleOutput: target }, intentProfile);
+        }
+      }
 
       problems.push({
         title: pTitle,
         description: desc,
         constraints: 'Time Limit: 5.0s, Memory Limit: 256MB',
-        inputFormat: isPrint ? 'No input.' : 'Standard input format for the problem parameters.',
-        outputFormat: isPrint ? `Print the exact text: ${targetText}` : `Print the expected output for ${normalizedTopic}.`,
-        sampleInput: isPrint ? '' : '1',
-        sampleOutput: targetText,
-        explanation: `The program should output ${targetText}.`,
+        inputFormat,
+        outputFormat,
+        sampleInput,
+        sampleOutput,
+        explanation: `Computes the expected output for ${prompt}.`,
         difficulty,
         programmingLanguage: langs[0],
         starterCode: languageSolutions[langs[0]].starterCode,
@@ -797,13 +959,13 @@ Return ONLY valid JSON matching this schema:
         timeLimit: 5,
         memoryLimit: 256,
         marks: difficulty === 'EASY' ? 10 : difficulty === 'HARD' ? 30 : 20,
-        tags: [normalizedTopic.toLowerCase().slice(0, 20)],
+        tags: [task.toLowerCase()],
         testCases,
       });
     }
 
     return {
-      title: `${normalizedTopic}`,
+      title: `${prompt}`,
       languages: langs,
       problems,
     };
