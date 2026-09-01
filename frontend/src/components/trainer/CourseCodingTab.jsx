@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Plus, Pencil, Trash2, Eye, Send, Sparkles, Code, X, BookOpen,
   BarChart3, Trophy, Check, AlertTriangle, ChevronDown, ChevronUp, Search, Clock,
+  Loader2, RefreshCw,
 } from 'lucide-react'
 import { CodingAssessmentDetailModal } from '../../pages/TrainerCodingAssessmentDetails'
 import { API } from '../../api/api'
@@ -14,6 +15,121 @@ import {
   lblStyle, lblTiny, inputStyle, th, td, skeletonStyle, typography, DIFF_BADGE,
 } from '../../theme/tokens'
 import '../../styles/course-tabs.css'
+
+// Stable internal IDs match the judge engine runtimes; labels are friendly names.
+const WIZARD_LANGUAGES = [
+  { value: 'javascript', label: 'JavaScript' },
+  { value: 'python', label: 'Python' },
+  { value: 'java', label: 'Java' },
+  { value: 'cpp', label: 'C++' },
+  { value: 'c', label: 'C' },
+  { value: 'csharp', label: 'C#' },
+  { value: 'typescript', label: 'TypeScript' },
+  { value: 'go', label: 'Go' },
+  { value: 'rust', label: 'Rust' },
+  { value: 'php', label: 'PHP' },
+  { value: 'kotlin', label: 'Kotlin' },
+  { value: 'swift', label: 'Swift' },
+]
+const wizardLangLabel = (id) => (WIZARD_LANGUAGES.find((l) => l.value === id) || {}).label || id
+
+function LanguageMultiSelect({ value, onChange }) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const ref = useRef(null)
+
+  const toggle = (id) => {
+    const next = value.includes(id) ? value.filter((v) => v !== id) : [...value, id]
+    onChange(next.length > 0 ? next : ['javascript'])
+  }
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const filtered = WIZARD_LANGUAGES.filter((l) =>
+    !query || l.label.toLowerCase().includes(query.toLowerCase())
+  )
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <div
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          border: `1px solid ${colors.border.default}`, borderRadius: 10, minHeight: 44,
+          padding: '6px 10px', cursor: 'pointer', display: 'flex', flexWrap: 'wrap',
+          gap: 6, alignItems: 'center', background: colors.surface.primary,
+        }}
+      >
+        {value.map((id) => (
+          <span key={id} style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px',
+            borderRadius: 999, background: colors.primary[50], color: colors.primary[700],
+            fontSize: 12, fontWeight: 600,
+          }}>
+            {wizardLangLabel(id)}
+            <span
+              onClick={(e) => { e.stopPropagation(); toggle(id) }}
+              style={{ cursor: 'pointer', display: 'inline-flex' }}
+            >
+              <X size={12} />
+            </span>
+          </span>
+        ))}
+        <span style={{ fontSize: 12.5, color: colors.slate[400], marginLeft: value.length ? 4 : 0 }}>
+          {value.length ? '' : 'Select languages'}
+        </span>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', color: colors.slate[400] }}>
+          <ChevronDown size={16} />
+        </span>
+      </div>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 30,
+          background: colors.surface.primary, borderRadius: 10, boxShadow: '0 12px 30px -8px rgba(0,0,0,0.25)',
+          border: `1px solid ${colors.border.default}`, overflow: 'hidden',
+        }}>
+          <div style={{ padding: 8, borderBottom: `1px solid ${colors.border.default}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: colors.slate[50], borderRadius: 8, padding: '6px 9px' }}>
+              <Search size={14} style={{ color: colors.slate[400] }} />
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search languages..."
+                style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: 13, color: colors.slate[900], width: '100%' }}
+              />
+            </div>
+          </div>
+          <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+            {filtered.length === 0 && (
+              <div style={{ padding: '12px 14px', fontSize: 12.5, color: colors.slate[400] }}>No languages found</div>
+            )}
+            {filtered.map((l) => {
+              const selected = value.includes(l.value)
+              return (
+                <div
+                  key={l.value}
+                  onClick={() => toggle(l.value)}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '9px 14px', cursor: 'pointer', background: selected ? colors.primary[50] : 'transparent',
+                  }}
+                >
+                  <span style={{ fontSize: 13.5, fontWeight: selected ? 600 : 400, color: colors.slate[900] }}>{l.label}</span>
+                  {selected && <Check size={16} style={{ color: colors.primary[600] }} />}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 function StatCard({ label, value, color, bg }) {
   return (
@@ -408,12 +524,34 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
   const [problemCount, setProblemCount] = useState(3)
   const [difficulty, setDifficulty] = useState('MEDIUM')
   const [timeLimit, setTimeLimit] = useState(60)
-  const [languages, setLanguages] = useState('javascript, python')
+  const [languages, setLanguages] = useState(['javascript', 'python'])
   const [generating, setGenerating] = useState(false)
+  const [genStep, setGenStep] = useState(0)
+  const [genError, setGenError] = useState('')
+
+  const genSteps = useMemo(() => {
+    const base = [
+      'Generating problem statements & test cases',
+      ...languages.map((l) => `Generating ${wizardLangLabel(l)} starter code + reference solution`),
+      'Validating every language solution',
+    ]
+    return base
+  }, [languages])
+
+  useEffect(() => {
+    if (!generating) return
+    setGenStep(0)
+    const id = setInterval(() => {
+      setGenStep((s) => Math.min(s + 1, genSteps.length - 1))
+    }, 1400)
+    return () => clearInterval(id)
+  }, [generating, genSteps.length])
 
   const handleGenerate = async (e) => {
     e.preventDefault()
     if (!promptText.trim()) { showError('Please enter a topic or prompt'); return }
+    if (languages.length === 0) { showError('Please select at least one language'); return }
+    setGenError('')
     setGenerating(true)
     try {
       const r = await fetch(API.CODING.GENERATE, {
@@ -428,7 +566,7 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
           problemCount: parseInt(problemCount, 10) || 3,
           difficulty: difficulty.toUpperCase(),
           timeLimit: parseInt(timeLimit, 10) || 60,
-          languages: languages.split(',').map(s => s.trim()).filter(Boolean),
+          languages,
         }),
       })
       const d = await r.json()
@@ -436,7 +574,7 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
       success('Coding assessment created successfully')
       onGenerated?.()
       onClose()
-    } catch (err) { showError(err.message) }
+    } catch (err) { setGenError(err.message); showError(err.message) }
     finally { setGenerating(false) }
   }
 
@@ -474,8 +612,8 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
 
         {generating ? (
           <div style={{
-            padding: '40px 20px', textAlign: 'center', display: 'flex',
-            flexDirection: 'column', alignItems: 'center', gap: 12,
+            padding: '36px 28px', textAlign: 'center', display: 'flex',
+            flexDirection: 'column', alignItems: 'center', gap: 16,
           }}>
             <div style={{
               width: 40, height: 40, border: '4px solid #f3f3f3',
@@ -483,9 +621,41 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
               animation: 'spin 1s linear infinite',
             }} />
             <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
-            <div style={{ fontWeight: 700, fontSize: 15, color: colors.slate[900] }}>AI is crafting your coding assessment...</div>
-            <div style={{ fontSize: 13, color: colors.slate[400], maxWidth: 360 }}>
-              Generating problems with test cases, starter code, and reference solutions.
+            <div style={{ fontWeight: 700, fontSize: 15, color: colors.slate[900] }}>
+              AI is crafting your coding assessment...
+            </div>
+            <div style={{ width: '100%', maxWidth: 360, textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {genSteps.map((step, i) => {
+                const done = i < genStep
+                const active = i === genStep
+                return (
+                  <div key={step} style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 13 }}>
+                    <span style={{
+                      width: 18, height: 18, borderRadius: '50%', display: 'inline-flex',
+                      alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                      background: done ? colors.success[600] : active ? colors.primary[50] : colors.slate[100],
+                      color: done ? '#fff' : active ? colors.primary[600] : colors.slate[400],
+                    }}>
+                      {done ? <Check size={11} /> : active ? <Loader2 size={11} className="animate-spin" /> : <span style={{ fontSize: 10 }}>{i + 1}</span>}
+                    </span>
+                    <span style={{ color: done ? colors.success[600] : active ? colors.slate[900] : colors.slate[400], fontWeight: done || active ? 600 : 400 }}>
+                      {step}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        ) : genError ? (
+          <div style={{ padding: '32px 24px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+            <AlertTriangle size={34} style={{ color: colors.warning[500] }} />
+            <div style={{ fontWeight: 700, fontSize: 15, color: colors.slate[900] }}>Generation failed</div>
+            <div style={{ fontSize: 13, color: colors.slate[500], maxWidth: 380, wordBreak: 'break-word' }}>{genError}</div>
+            <div style={{ display: 'flex', gap: 10, paddingTop: 8 }}>
+              <button type="button" onClick={onClose} style={btnSecondary}>Close</button>
+              <button type="button" onClick={handleGenerate} style={{ ...btnPrimary, background: `linear-gradient(135deg, ${colors.primary[400]}, ${colors.primary[600]})` }}>
+                <RefreshCw size={14} style={{ marginRight: 6 }} /> Retry Generation
+              </button>
             </div>
           </div>
         ) : (
@@ -544,13 +714,13 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
             </div>
 
             <div style={{ marginBottom: 20 }}>
-              <label style={{ ...lblStyle, marginTop: 0 }}>Languages (comma-separated)</label>
-              <input
-                value={languages}
-                onChange={(e) => setLanguages(e.target.value)}
-                placeholder="e.g. javascript, python, java, cpp"
-                style={inputStyle}
-              />
+              <label style={{ ...lblStyle, marginTop: 0 }}>
+                Languages <span style={{ color: colors.danger[600] }}>*</span>
+              </label>
+              <LanguageMultiSelect value={languages} onChange={setLanguages} />
+              <div style={{ fontSize: 11, color: colors.slate[400], marginTop: 4 }}>
+                AI generates a starter template and a reference solution for every selected language.
+              </div>
             </div>
 
             <div style={{
@@ -763,7 +933,7 @@ export default function CourseCodingTab({ user, courseId, onCountChange }) {
                     )}
                   </td>
                   <td className="cct-cell-muted">
-                    {a.lessonTitle || (Array.isArray(a.languages) && a.languages.length > 0 ? a.languages.join(', ') : '— Course-level —')}
+                    {a.lessonTitle || (Array.isArray(a.languages) && a.languages.length > 0 ? a.languages.map(wizardLangLabel).join(', ') : '— Course-level —')}
                   </td>
                   <td className="cct-cell-num">{a.problemCount ?? a.problems?.length ?? a.numProblems ?? 0}</td>
                   <td>

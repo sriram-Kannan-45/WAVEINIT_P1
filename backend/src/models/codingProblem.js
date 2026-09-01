@@ -95,6 +95,28 @@ const CodingProblem = sequelize.define('CodingProblem', {
   order: {
     type: DataTypes.INTEGER,
     defaultValue: 0
+  },
+  source: {
+    type: DataTypes.ENUM('MANUAL', 'AI'),
+    allowNull: false,
+    defaultValue: 'MANUAL'
+  },
+  aiValidationStatus: {
+    type: DataTypes.ENUM('AI_GENERATED', 'VALIDATING', 'VALIDATED', 'VALIDATION_FAILED', 'NEEDS_TRAINER_REVIEW', 'PUBLISHED'),
+    allowNull: false,
+    defaultValue: 'PUBLISHED',
+    field: 'ai_validation_status'
+  },
+  aiValidationMessage: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    field: 'ai_validation_message'
+  },
+  requiredConcepts: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    field: 'required_concepts',
+    comment: 'Structured list of required coding concepts a participant MUST use (e.g. ["for_loop", "function"]). Stored separately from problem constraints.'
   }
 }, {
   tableName: 'coding_problems',

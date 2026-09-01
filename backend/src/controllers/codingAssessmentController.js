@@ -1,11 +1,13 @@
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/db');
 const {
-  CodingAssessment, CodingProblem, CodingTestCase, CodingAttempt, CodingSubmission, CodingResult,
+  CodingAssessment, CodingProblem, CodingProblemLanguage, CodingTestCase, CodingAttempt, CodingSubmission, CodingResult,
   Training, User, QuizRecording, ExamSession
 } = require('../models');
 const logger = require('../utils/logger');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
+const { LANGUAGES: JUDGE_LANGUAGES } = require('../judge/languageConfig');
+const { getDefaultStarterCode, getDefaultReferenceSolution } = require('../utils/languageTemplates');
 
 // ── Helpers ──
 // Follow the same response format as aiQuizRoutes / trainerRoutes:
@@ -27,6 +29,158 @@ const normalizeProblemDifficulty = (d) => {
   if (['EASY', 'MEDIUM', 'HARD'].includes(u)) return u;
   return 'MEDIUM';
 };
+
+// ── Multi-language problem helpers ──
+// The list of runtimes supported by the judge engine (single source of truth).
+const SUPPORTED_LANGUAGE_IDS = new Set((JUDGE_LANGUAGES || []).map(l => String(l.id).toLowerCase()));
+
+/**
+ * Validate + normalize a languages[] payload.
+ * Each entry may carry: language, starterCode, referenceSolution, timeLimit, memoryLimit.
+ * Also accepts legacy single-language shape: { programmingLanguage, starterCode, expectedSolution }.
+ * Throws {status, message} on validation failure.
+ */
+function normalizeProblemLanguages(input, legacy, problemContext = {}) {
+  let source = null;
+
+  if (Array.isArray(input) && input.length > 0) {
+    source = input;
+  } else if (legacy && (legacy.languages || legacy.languageSolutions)) {
+    if (Array.isArray(legacy.languages) && legacy.languages.length > 0) {
+      source = legacy.languages;
+    } else if (typeof legacy.languageSolutions === 'object') {
+      source = Object.entries(legacy.languageSolutions).map(([lang, s]) => ({
+        language: lang,
+        starterCode: s?.starterCode,
+        referenceSolution: s?.referenceSolution,
+      }));
+    }
+  } else if (legacy && legacy.programmingLanguage) {
+    source = [{
+      language: legacy.programmingLanguage,
+      starterCode: legacy.starterCode ?? legacy.starter_code ?? null,
+      referenceSolution: legacy.expectedSolution ?? legacy.referenceSolution ?? null,
+    }];
+  }
+
+  if (!source || source.length === 0) {
+    source = [{ language: 'javascript' }];
+  }
+
+  const seen = new Set();
+  const ctx = { ...legacy, ...problemContext };
+  return source.map((entry, index) => {
+    const raw = entry?.language || entry?.id || (entry?.programmingLanguage) || (entry?.programming_language);
+    const language = String(raw || '').trim().toLowerCase();
+    if (!language) {
+      const err = new Error('Each language configuration requires a language.');
+      err.status = 400;
+      throw err;
+    }
+    if (!SUPPORTED_LANGUAGE_IDS.has(language)) {
+      const err = new Error(`Unsupported programming language: "${language}". Supported: ${Array.from(SUPPORTED_LANGUAGE_IDS).sort().join(', ')}`);
+      err.status = 400;
+      throw err;
+    }
+    if (seen.has(language)) {
+      const err = new Error(`Duplicate programming language: "${language}". Each language can be configured only once.`);
+      err.status = 400;
+      throw err;
+    }
+    seen.add(language);
+
+    const starter = (entry?.starterCode != null && String(entry.starterCode).trim())
+      ? String(entry.starterCode)
+      : (entry?.starter_code != null && String(entry.starter_code).trim())
+        ? String(entry.starter_code)
+        : getDefaultStarterCode(language, ctx);
+
+    const ref = (entry?.referenceSolution != null && String(entry.referenceSolution).trim())
+      ? String(entry.referenceSolution)
+      : (entry?.expectedSolution != null && String(entry.expectedSolution).trim())
+        ? String(entry.expectedSolution)
+        : getDefaultReferenceSolution(language, ctx);
+
+    return {
+      language,
+      starterCode: starter,
+      referenceSolution: ref,
+      starterCodeSource: entry?.starterCodeSource === 'generated' ? 'generated' : 'manual',
+      referenceSolutionSource: entry?.referenceSolutionSource === 'generated' ? 'generated' : 'manual',
+      generationStatus: ['pending', 'generating', 'completed'].includes(entry?.generationStatus)
+        ? entry.generationStatus
+        : (ref ? 'completed' : 'pending'),
+      timeLimit: entry?.timeLimit != null ? parseInt(entry.timeLimit, 10) : null,
+      memoryLimit: entry?.memoryLimit != null ? parseInt(entry.memoryLimit, 10) : null,
+      order: index,
+    };
+  });
+}
+
+/**
+ * Build a trainer-safe language list from a problem (including reference solutions).
+ * Falls back to the legacy single-language scalar columns when no per-language
+ * rows exist yet (old problems), so nothing breaks for pre-existing questions.
+ */
+function getProblemLanguages(problem, { includeReference = true, legacyOnly = false } = {}) {
+  const rows = (!legacyOnly && Array.isArray(problem.languages) && problem.languages.length > 0)
+    ? problem.languages
+    : [];
+
+  const ctx = {
+    title: problem.title,
+    description: problem.description,
+    sampleOutput: problem.sampleOutput,
+    testCases: problem.testCases,
+  };
+
+  if (rows.length === 0 && problem.programmingLanguage) {
+    const lang = String(problem.programmingLanguage).toLowerCase();
+    const starter = (problem.starterCode != null && String(problem.starterCode).trim())
+      ? problem.starterCode
+      : getDefaultStarterCode(lang, ctx);
+    const ref = (problem.expectedSolution != null && String(problem.expectedSolution).trim())
+      ? problem.expectedSolution
+      : getDefaultReferenceSolution(lang, ctx);
+
+    return [{
+      language: lang,
+      starterCode: starter,
+      ...(includeReference ? { referenceSolution: ref } : {}),
+      ...(includeReference ? {
+        starterCodeSource: 'manual',
+        referenceSolutionSource: 'manual',
+        generationStatus: ref ? 'completed' : 'pending',
+      } : {}),
+      timeLimit: null,
+      memoryLimit: null,
+    }];
+  }
+
+  return rows.map(l => {
+    const lang = String(l.language).toLowerCase();
+    const starter = (l.starterCode != null && String(l.starterCode).trim())
+      ? l.starterCode
+      : getDefaultStarterCode(lang, ctx);
+    const ref = (l.referenceSolution != null && String(l.referenceSolution).trim())
+      ? l.referenceSolution
+      : getDefaultReferenceSolution(lang, ctx);
+
+    return {
+      language: lang,
+      starterCode: starter,
+      ...(includeReference ? { referenceSolution: ref } : {}),
+      ...(includeReference ? {
+        starterCodeSource: l.starterCodeSource || 'manual',
+        referenceSolutionSource: l.referenceSolutionSource || 'manual',
+        generationStatus: l.generationStatus || (ref ? 'completed' : 'pending'),
+      } : {}),
+      timeLimit: l.timeLimit || null,
+      memoryLimit: l.memoryLimit || null,
+    };
+  });
+}
+
 
 // ── TRAINER: CRUD Assessments ──
 
@@ -81,11 +235,15 @@ exports.getOne = async (req, res) => {
         {
           model: CodingProblem,
           as: 'problems',
-          include: [{
-            model: CodingTestCase,
-            as: 'testCases',
-            ...(isParticipant ? { where: { isHidden: false }, required: false } : {})
-          }]
+          include: [
+            { model: CodingProblemLanguage, as: 'languages', order: [['order', 'ASC']] },
+            {
+              model: CodingTestCase,
+              as: 'testCases',
+              order: [['order', 'ASC']],
+              ...(isParticipant ? { where: { isHidden: false }, required: false } : {})
+            }
+          ]
         },
         { model: Training, as: 'training', attributes: ['id', 'title'] }
       ]
@@ -113,15 +271,40 @@ exports.getOne = async (req, res) => {
 
       const problemsJson = [];
       for (const problem of assessment.problems || []) {
+        // Participant-safe: only language + starter code (NO reference solution).
+        const langConfigs = getProblemLanguages(problem, { includeReference: false });
         const pJson = problem.toJSON();
         delete pJson.expectedSolution;
+        pJson.languages = langConfigs;
+        pJson.allowedLanguages = langConfigs.map(l => l.language);
+        pJson.programmingLanguage = langConfigs[0]?.language || pJson.programmingLanguage || 'javascript';
+        pJson.starterCode = langConfigs[0]?.starterCode || null;
 
+        // A participant may save per-language drafts. Pull the latest submission
+        // across any language, and also collect per-language drafts when present.
         const latestSub = await CodingSubmission.findOne({
           where: { attemptId: attempt.id, problemId: problem.id },
           order: [['created_at', 'DESC']]
         });
         if (latestSub) {
-          pJson.starterCode = latestSub.code;
+          pJson.lastLanguage = latestSub.language || pJson.programmingLanguage;
+          pJson.latestSubmission = {
+            id: latestSub.id,
+            status: latestSub.status,
+            score: latestSub.score != null ? Number(latestSub.score) : 0,
+            totalTestCases: latestSub.totalTestCases || 0,
+            passedTestCases: latestSub.passedTestCases || 0,
+            executionTime: latestSub.executionTime,
+            memoryUsed: latestSub.memoryUsed,
+            language: latestSub.language,
+            code: latestSub.code,
+            compilerOutput: latestSub.compilerOutput,
+            errorMessage: latestSub.errorMessage,
+            results: Array.isArray(latestSub.output) ? latestSub.output.filter(r => !r.isHidden) : [],
+          };
+        } else {
+          pJson.lastLanguage = pJson.programmingLanguage;
+          pJson.latestSubmission = null;
         }
         problemsJson.push(pJson);
       }
@@ -131,7 +314,22 @@ exports.getOne = async (req, res) => {
       return ok(res, { assessment: assessmentJson });
     }
 
-    ok(res, { assessment });
+    // Trainer / admin: expose full per-language config (including reference solutions).
+    const assessmentJson = assessment.toJSON();
+    for (const p of assessmentJson.problems || []) {
+      p.languages = getProblemLanguages(p);
+      p.languageSolutions = {};
+      for (const l of p.languages) {
+        p.languageSolutions[l.language] = {
+          starterCode: l.starterCode,
+          referenceSolution: l.referenceSolution,
+        };
+      }
+      p.allowedLanguages = p.languages.map(l => l.language);
+      p.programmingLanguage = p.languages[0]?.language || p.programmingLanguage || 'javascript';
+      p.starterCode = p.languages[0]?.starterCode || p.starterCode || null;
+    }
+    ok(res, { assessment: assessmentJson });
   } catch (err) { fail(res, 500, err.message); }
 };
 
@@ -154,7 +352,7 @@ exports.update = async (req, res) => {
   try {
     const assessment = await CodingAssessment.findOne({ where: { id: req.params.id, trainerId: req.user.id } });
     if (!assessment) return fail(res, 404, 'Assessment not found');
-    const allowed = ['title', 'description', 'timeLimit', 'difficulty', 'status', 'startTime', 'endTime', 'showResultImmediately', 'allowMultipleAttempts', 'maxAttempts', 'proctoringEnabled', 'proctoringLevel', 'gracePeriodMinutes', 'maxCopyWarnings'];
+    const allowed = ['title', 'description', 'timeLimit', 'difficulty', 'status', 'startTime', 'endTime', 'showResultImmediately', 'allowMultipleAttempts', 'maxAttempts', 'proctoringEnabled', 'proctoringLevel', 'gracePeriodMinutes', 'maxCopyWarnings', 'aiHelpLimit', 'aiAssistantEnabled'];
     const updates = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) {
@@ -176,6 +374,7 @@ exports.destroy = async (req, res) => {
     if (!assessment) return fail(res, 404, 'Assessment not found');
     const problems = await CodingProblem.findAll({ where: { assessmentId: assessment.id } });
     for (const p of problems) {
+      await CodingProblemLanguage.destroy({ where: { problemId: p.id } });
       await CodingTestCase.destroy({ where: { problemId: p.id } });
       await CodingSubmission.destroy({ where: { problemId: p.id } });
     }
@@ -212,15 +411,76 @@ const normalizeTestCase = (tc, problemId, index = 0) => {
 
 // ── TRAINER: Problems CRUD ──
 
+async function replaceProblemLanguages(problemId, langs, transaction) {
+  await CodingProblemLanguage.destroy({ where: { problemId }, transaction });
+  for (const l of langs) {
+    await CodingProblemLanguage.create({ problemId, ...l }, { transaction });
+  }
+}
+
+// Load a problem and reshape it into the trainer API shape (includes reference
+// solutions + all test cases + per-language configuration).
+async function loadProblemForResponse(problemId) {
+  const dbProblem = await CodingProblem.findByPk(problemId, {
+    include: [
+      { model: CodingProblemLanguage, as: 'languages', order: [['order', 'ASC']] },
+      { model: CodingTestCase, as: 'testCases', order: [['order', 'ASC']] },
+    ],
+  });
+  if (!dbProblem) return null;
+  const json = dbProblem.toJSON();
+  json.languages = getProblemLanguages(dbProblem);
+  json.languageSolutions = {};
+  for (const l of json.languages) {
+    json.languageSolutions[l.language] = {
+      starterCode: l.starterCode,
+      referenceSolution: l.referenceSolution,
+    };
+  }
+  return json;
+}
+
+// Validate test-cases payload: at least one test case, all required fields valid.
+function validateTestCasesPayload(testCases) {
+  if (Array.isArray(testCases)) {
+    if (testCases.length === 0) {
+      const err = new Error('At least one test case is required.');
+      err.status = 400;
+      throw err;
+    }
+    testCases.forEach((tc, i) => {
+      if (!Object.prototype.hasOwnProperty.call(tc, 'expectedOutput')) {
+        const err = new Error(`Test case ${i + 1} is missing Expected Output.`);
+        err.status = 400;
+        throw err;
+      }
+    });
+    return true;
+  }
+  return false;
+}
+
 exports.createProblem = async (req, res) => {
   try {
     const assessment = await CodingAssessment.findOne({ where: { id: req.params.id, trainerId: req.user.id } });
     if (!assessment) return fail(res, 404, 'Assessment not found');
-    const { title, description, constraints, inputFormat, outputFormat, sampleInput, sampleOutput, explanation, difficulty, programmingLanguage, starterCode, expectedSolution, timeLimit, memoryLimit, marks, tags, testCases } = req.body;
+    const { title, description, constraints, inputFormat, outputFormat, sampleInput, sampleOutput, explanation, difficulty, timeLimit, memoryLimit, marks, tags, testCases, requiredConcepts } = req.body;
+
+    const languages = normalizeProblemLanguages(req.body.languages, req.body);
+    const firstLang = languages[0];
+
     const problem = await CodingProblem.create({
-      assessmentId: assessment.id, title, description, constraints, inputFormat, outputFormat, sampleInput, sampleOutput, explanation, difficulty, programmingLanguage, starterCode, expectedSolution, timeLimit, memoryLimit, marks, tags
+      assessmentId: assessment.id, title, description, constraints, inputFormat, outputFormat, sampleInput, sampleOutput, explanation, difficulty,
+      programmingLanguage: firstLang.language,
+      starterCode: firstLang.starterCode,
+      expectedSolution: firstLang.referenceSolution,
+      timeLimit, memoryLimit, marks, tags,
+      requiredConcepts: Array.isArray(requiredConcepts) ? requiredConcepts : [],
     });
-    if (testCases && Array.isArray(testCases) && testCases.length > 0) {
+
+    const hasTests = Array.isArray(testCases) && testCases.length > 0;
+    await replaceProblemLanguages(problem.id, languages, null);
+    if (hasTests) {
       for (let i = 0; i < testCases.length; i++) {
         await CodingTestCase.create(normalizeTestCase(testCases[i], problem.id, i));
       }
@@ -234,9 +494,13 @@ exports.createProblem = async (req, res) => {
         order: 0,
       });
     }
-    const full = await CodingProblem.findByPk(problem.id, { include: [{ model: CodingTestCase, as: 'testCases' }] });
+
+    const full = await loadProblemForResponse(problem.id);
     ok(res, { problem: full });
-  } catch (err) { fail(res, 500, err.message); }
+  } catch (err) {
+    if (err.status) return fail(res, err.status, err.message);
+    fail(res, 500, err.message);
+  }
 };
 
 exports.updateProblem = async (req, res) => {
@@ -245,21 +509,45 @@ exports.updateProblem = async (req, res) => {
       include: [{ model: CodingAssessment, as: 'assessment', where: { trainerId: req.user.id } }]
     });
     if (!problem) return fail(res, 404, 'Problem not found');
-    const allowed = ['title', 'description', 'constraints', 'inputFormat', 'outputFormat', 'sampleInput', 'sampleOutput', 'explanation', 'difficulty', 'programmingLanguage', 'starterCode', 'expectedSolution', 'timeLimit', 'memoryLimit', 'marks', 'tags'];
+
+    const allowed = ['title', 'description', 'constraints', 'inputFormat', 'outputFormat', 'sampleInput', 'sampleOutput', 'explanation', 'difficulty', 'timeLimit', 'memoryLimit', 'marks', 'tags', 'requiredConcepts'];
     const updates = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
     }
-    await problem.update(updates);
-    if (req.body.testCases && Array.isArray(req.body.testCases)) {
-      await CodingTestCase.destroy({ where: { problemId: problem.id } });
-      for (let i = 0; i < req.body.testCases.length; i++) {
-        await CodingTestCase.create(normalizeTestCase(req.body.testCases[i], problem.id, i));
+
+    const result = await sequelize.transaction(async (t) => {
+      await problem.update(updates, { transaction: t });
+
+      // Multi-language configuration (replaces prior languages for the problem).
+      if (req.body.languages !== undefined) {
+        const languages = normalizeProblemLanguages(req.body.languages, req.body);
+        const firstLang = languages[0];
+        // Keep the legacy scalar columns in sync with the first language so old
+        // code paths reading programmingLanguage/starterCode/expectedSolution still work.
+        await problem.update({
+          programmingLanguage: firstLang.language,
+          starterCode: firstLang.starterCode,
+          expectedSolution: firstLang.referenceSolution,
+        }, { transaction: t });
+        await replaceProblemLanguages(problem.id, languages, t);
       }
-    }
-    const full = await CodingProblem.findByPk(problem.id, { include: [{ model: CodingTestCase, as: 'testCases' }] });
+
+      if (req.body.testCases !== undefined && Array.isArray(req.body.testCases)) {
+        validateTestCasesPayload(req.body.testCases);
+        await CodingTestCase.destroy({ where: { problemId: problem.id }, transaction: t });
+        for (let i = 0; i < req.body.testCases.length; i++) {
+          await CodingTestCase.create(normalizeTestCase(req.body.testCases[i], problem.id, i), { transaction: t });
+        }
+      }
+    });
+
+    const full = await loadProblemForResponse(problem.id);
     ok(res, { problem: full });
-  } catch (err) { fail(res, 500, err.message); }
+  } catch (err) {
+    if (err.status) return fail(res, err.status, err.message);
+    fail(res, 500, err.message);
+  }
 };
 
 exports.deleteProblem = async (req, res) => {
@@ -268,6 +556,7 @@ exports.deleteProblem = async (req, res) => {
       include: [{ model: CodingAssessment, as: 'assessment', where: { trainerId: req.user.id } }]
     });
     if (!problem) return fail(res, 404, 'Problem not found');
+    await CodingProblemLanguage.destroy({ where: { problemId: problem.id } });
     await CodingTestCase.destroy({ where: { problemId: problem.id } });
     await CodingSubmission.destroy({ where: { problemId: problem.id } });
     await problem.destroy();
@@ -279,37 +568,115 @@ exports.deleteProblem = async (req, res) => {
 
 exports.generateFromPrompt = async (req, res) => {
   try {
-    const { prompt, difficulty = 'MEDIUM', problemCount = 5, courseId, trainingId, languages } = req.body;
+    const { prompt, difficulty = 'MEDIUM', problemCount = 1, courseId, trainingId, languages } = req.body;
     if (!prompt) return fail(res, 400, 'Prompt is required');
-    const count = parseInt(problemCount, 10) || 5;
+    const count = parseInt(problemCount, 10) || 1;
     const normDiff = normalizeAssessmentDifficulty(difficulty);
     const aiService = require('../services/aiService');
-    const result = await aiService.generateCodingProblemsFromPrompt(prompt, count, normDiff);
+    // Prefer structured array; also accept legacy comma-separated string.
+    const rawLangs = Array.isArray(languages)
+      ? languages
+      : (typeof languages === 'string' ? languages.split(',').map((s) => s.trim()).filter(Boolean) : []);
+    const aiLangs = [...new Set(
+      rawLangs
+        .map((l) => String(l).trim().toLowerCase())
+        .filter((l) => SUPPORTED_LANGUAGE_IDS.has(l))
+    )];
+    const result = await aiService.generateCodingProblemsFromPrompt(prompt, count, normDiff, aiLangs);
     if (!result.problems || result.problems.length === 0) {
       return fail(res, 502, 'AI returned no problems');
     }
     const resolvedCourseId = courseId && courseId !== 'undefined' && courseId !== 'null' ? courseId : null;
     const resolvedTrainingId = trainingId && trainingId !== 'undefined' && trainingId !== 'null' ? trainingId : null;
-    const lang = Array.isArray(languages) ? languages : (result.languages || ['javascript']);
+
+    // Normalize + validate the selected languages (multi-select array). Stable IDs.
+    const requestedLangs = Array.isArray(languages)
+      ? languages
+      : (Array.isArray(result.languages) ? result.languages : []);
+    const langs = [...new Set(
+      requestedLangs
+        .map((l) => String(l).trim().toLowerCase())
+        .filter((l) => SUPPORTED_LANGUAGE_IDS.has(l))
+    )];
+    if (langs.length === 0) {
+      langs.push('javascript');
+    }
+
     const assessmentTimeLimit = parseInt(req.body.timeLimit || req.body.time_limit, 10) || 60;
+
+    // PHASE 1 — Prepare + validate EVERY problem's per-language code BEFORE any DB write.
+    const prepared = [];
+    for (let i = 0; i < result.problems.length; i++) {
+      const p = result.problems[i];
+      const problemDetails = {
+        title: p.title,
+        description: p.description,
+        inputFormat: p.inputFormat,
+        outputFormat: p.outputFormat,
+        constraints: p.constraints,
+      };
+      const langConfigs = [];
+      for (const L of langs) {
+        let starterCode = '';
+        let referenceSolution = '';
+        const fromAI = (p.languageSolutions && p.languageSolutions[L]) || null;
+        if (fromAI) {
+          starterCode = String(fromAI.starterCode || '').trim();
+          referenceSolution = String(fromAI.referenceSolution || '').trim();
+        }
+        // If the AI returned blank (or no explicit per-language entry), generate code for this language.
+        if (!starterCode || !referenceSolution) {
+          const filled = await aiService.generateLanguageCode(L, problemDetails);
+          if (filled) {
+            if (!starterCode && filled.starterCode) starterCode = String(filled.starterCode).trim();
+            if (!referenceSolution && filled.referenceSolution) referenceSolution = String(filled.referenceSolution).trim();
+          }
+        }
+        if (!starterCode || !referenceSolution) {
+          starterCode = `// Write your ${L} solution here\n`;
+          referenceSolution = `// Solution for ${p.title || prompt}\n`;
+        }
+        langConfigs.push({ language: L, starterCode, referenceSolution });
+      }
+      prepared.push({ raw: p, langConfigs });
+    }
+
+    // PHASE 2 — All code is guaranteed non-blank; persist everything.
     const assessment = await CodingAssessment.create({
       trainerId: req.user.id, trainingId: resolvedTrainingId, courseId: resolvedCourseId,
       title: result.title || `Coding: ${prompt.substring(0, 60)}`,
       timeLimit: assessmentTimeLimit,
       numProblems: result.problems.length, difficulty: normDiff, status: 'DRAFT',
-      languages: Array.isArray(lang) ? lang : ['javascript'],
+      languages: langs,
     });
-    for (let i = 0; i < result.problems.length; i++) {
-      const p = result.problems[i];
+    for (let i = 0; i < prepared.length; i++) {
+      const { raw: p, langConfigs } = prepared[i];
+      const first = langConfigs[0];
       const problem = await CodingProblem.create({
         assessmentId: assessment.id, title: p.title, description: p.description,
         constraints: p.constraints, inputFormat: p.inputFormat, outputFormat: p.outputFormat,
         sampleInput: p.sampleInput, sampleOutput: p.sampleOutput, explanation: p.explanation,
-        difficulty: normalizeProblemDifficulty(p.difficulty || normDiff), programmingLanguage: p.programmingLanguage || 'javascript',
-        starterCode: p.starterCode, expectedSolution: p.expectedSolution,
+        difficulty: normalizeProblemDifficulty(p.difficulty || normDiff),
+        programmingLanguage: first.language,
+        starterCode: first.starterCode, expectedSolution: first.referenceSolution,
         timeLimit: p.timeLimit || 5, memoryLimit: p.memoryLimit || 256, marks: p.marks || 10,
-        tags: p.tags || [], order: i
+        tags: p.tags || [], order: i,
+        requiredConcepts: Array.isArray(p.requiredConcepts) ? p.requiredConcepts : [],
+        source: 'AI', aiValidationStatus: 'AI_GENERATED',
+        aiValidationMessage: 'AI-generated question waiting for validation.',
       });
+      // Persist a per-language row for EVERY selected language (all non-blank).
+      await replaceProblemLanguages(problem.id, langConfigs.map((lc, idx) => ({
+        language: lc.language,
+        starterCode: lc.starterCode,
+        referenceSolution: lc.referenceSolution,
+        starterCodeSource: 'generated',
+        referenceSolutionSource: 'generated',
+        generationStatus: 'completed',
+        timeLimit: null,
+        memoryLimit: null,
+        order: idx,
+      })), null);
       const rawTestCases = Array.isArray(p.testCases) ? p.testCases : [];
       if (rawTestCases.length > 0) {
         for (let j = 0; j < rawTestCases.length; j++) {
@@ -333,18 +700,195 @@ exports.generateFromPrompt = async (req, res) => {
   } catch (err) { fail(res, 500, err.message); }
 };
 
-// ── PUBLISHING ──
+// TRAINER: Generate and add AI problems directly into an existing assessment
+exports.generateProblemsForAssessment = async (req, res) => {
+  try {
+    const assessment = await CodingAssessment.findOne({ where: { id: req.params.id, trainerId: req.user.id } });
+    if (!assessment) return fail(res, 404, 'Assessment not found');
+    const { prompt, difficulty = 'MEDIUM', problemCount = 1, languages } = req.body;
+    if (!prompt) return fail(res, 400, 'Prompt is required');
+    const count = parseInt(problemCount, 10) || 1;
+    const normDiff = normalizeAssessmentDifficulty(difficulty);
+    const aiService = require('../services/aiService');
+
+    const requestedLangs = Array.isArray(languages) && languages.length > 0
+      ? languages
+      : (Array.isArray(assessment.languages) && assessment.languages.length > 0 ? assessment.languages : ['javascript']);
+    const langs = [...new Set(
+      requestedLangs
+        .map((l) => String(l).trim().toLowerCase())
+        .filter((l) => SUPPORTED_LANGUAGE_IDS.has(l))
+    )];
+    if (langs.length === 0) langs.push('javascript');
+
+    const result = await aiService.generateCodingProblemsFromPrompt(prompt, count, normDiff, langs);
+    if (!result.problems || result.problems.length === 0) {
+      return fail(res, 502, 'AI returned no problems');
+    }
+
+    const currentCount = await CodingProblem.count({ where: { assessmentId: assessment.id } });
+    const createdProblems = [];
+
+    for (let i = 0; i < result.problems.length; i++) {
+      const p = result.problems[i];
+      const langConfigs = [];
+      for (const L of langs) {
+        let starterCode = '';
+        let referenceSolution = '';
+        const fromAI = (p.languageSolutions && p.languageSolutions[L]) || null;
+        if (fromAI) {
+          starterCode = String(fromAI.starterCode || '').trim();
+          referenceSolution = String(fromAI.referenceSolution || '').trim();
+        }
+        if (!starterCode || !referenceSolution) {
+          const filled = await aiService.generateLanguageCode(L, {
+            title: p.title, description: p.description, inputFormat: p.inputFormat, outputFormat: p.outputFormat, constraints: p.constraints
+          });
+          if (filled) {
+            if (!starterCode && filled.starterCode) starterCode = String(filled.starterCode).trim();
+            if (!referenceSolution && filled.referenceSolution) referenceSolution = String(filled.referenceSolution).trim();
+          }
+        }
+        if (!starterCode || !referenceSolution) {
+          starterCode = `// Write your ${L} solution here\n`;
+          referenceSolution = `// Solution for ${p.title || prompt}\n`;
+        }
+        langConfigs.push({ language: L, starterCode, referenceSolution });
+      }
+
+      const first = langConfigs[0];
+      const problem = await CodingProblem.create({
+        assessmentId: assessment.id,
+        title: p.title,
+        description: p.description,
+        constraints: p.constraints,
+        inputFormat: p.inputFormat,
+        outputFormat: p.outputFormat,
+        sampleInput: p.sampleInput,
+        sampleOutput: p.sampleOutput,
+        explanation: p.explanation,
+        difficulty: normalizeProblemDifficulty(p.difficulty || normDiff),
+        programmingLanguage: first.language,
+        starterCode: first.starterCode,
+        expectedSolution: first.referenceSolution,
+        timeLimit: p.timeLimit || 5,
+        memoryLimit: p.memoryLimit || 256,
+        marks: p.marks || (normDiff === 'EASY' ? 10 : normDiff === 'HARD' ? 30 : 20),
+        tags: p.tags || [],
+        order: currentCount + i,
+        requiredConcepts: Array.isArray(p.requiredConcepts) ? p.requiredConcepts : [],
+        source: 'AI',
+        aiValidationStatus: 'AI_GENERATED',
+        aiValidationMessage: 'AI-generated question waiting for validation.',
+      });
+
+      await replaceProblemLanguages(problem.id, langConfigs.map((lc, idx) => ({
+        language: lc.language,
+        starterCode: lc.starterCode,
+        referenceSolution: lc.referenceSolution,
+        starterCodeSource: 'generated',
+        referenceSolutionSource: 'generated',
+        generationStatus: 'completed',
+        timeLimit: null,
+        memoryLimit: null,
+        order: idx,
+      })), null);
+
+      const rawTestCases = Array.isArray(p.testCases) ? p.testCases : [];
+      if (rawTestCases.length > 0) {
+        for (let j = 0; j < rawTestCases.length; j++) {
+          await CodingTestCase.create(normalizeTestCase(rawTestCases[j], problem.id, j));
+        }
+      } else if (p.sampleInput != null || p.sampleOutput != null) {
+        await CodingTestCase.create({
+          problemId: problem.id,
+          input: p.sampleInput != null ? String(p.sampleInput) : '',
+          expectedOutput: p.sampleOutput != null ? String(p.sampleOutput) : '',
+          isHidden: false,
+          description: 'Sample Test Case',
+          order: 0,
+        });
+      }
+
+      createdProblems.push(problem);
+    }
+
+    const updatedAssessment = await CodingAssessment.findByPk(assessment.id, {
+      include: [
+        {
+          model: CodingProblem, as: 'problems',
+          include: [
+            { model: CodingProblemLanguage, as: 'languages', order: [['order', 'ASC']] },
+            { model: CodingTestCase, as: 'testCases', order: [['order', 'ASC']] }
+          ]
+        }
+      ]
+    });
+
+    ok(res, { assessment: updatedAssessment, createdProblems });
+  } catch (err) { fail(res, 500, err.message); }
+};
+
+// TRAINER: generate language-specific starter code + reference solution for a coding problem
+exports.generateLanguageCode = async (req, res) => {
+  try {
+    const { language, problem } = req.body;
+    if (!language) return fail(res, 400, 'language is required');
+    if (!SUPPORTED_LANGUAGE_IDS.has(String(language).toLowerCase())) {
+      return fail(res, 400, `Unsupported language: "${language}"`);
+    }
+    const details = {
+      title: problem?.title,
+      description: problem?.description,
+      inputFormat: problem?.inputFormat,
+      outputFormat: problem?.outputFormat,
+      constraints: problem?.constraints,
+    };
+    const aiService = require('../services/aiService');
+    const result = await aiService.generateLanguageCode(language, details);
+    ok(res, { language: String(language).toLowerCase(), ...result });
+  } catch (err) { fail(res, 500, err.message); }
+};
 
 exports.publish = async (req, res) => {
   try {
     const assessment = await CodingAssessment.findOne({ where: { id: req.params.id, trainerId: req.user.id } });
     if (!assessment) return fail(res, 404, 'Assessment not found');
     if (assessment.status !== 'DRAFT') return fail(res, 400, 'Assessment is not in DRAFT status');
-    const problems = await CodingProblem.findAll({ where: { assessmentId: assessment.id } });
+    const problems = await CodingProblem.findAll({
+      where: { assessmentId: assessment.id },
+      include: [
+        { model: CodingProblemLanguage, as: 'languages' },
+        { model: CodingTestCase, as: 'testCases' }
+      ]
+    });
     if (problems.length === 0) return fail(res, 400, 'Cannot publish: no problems defined');
+
+    // Pre-Publishing Validation: Validate all reference solutions against test cases.
+    const { validateProblem: runValidation } = require('../services/codingValidationService');
+    const validationErrors = [];
+    for (const p of problems) {
+      const report = await runValidation(p);
+      if (report.recommendedStatus === 'VALIDATION_FAILED' || report.issues.length > 0) {
+        const failureDetails = report.issues.join('; ');
+        validationErrors.push(`• Problem "${p.title}": ${failureDetails}`);
+      }
+    }
+
+    if (validationErrors.length > 0) {
+      return res.status(400).json({
+        error: 'Cannot publish: Reference solution(s) failed test case verification. Please fix them before publishing.',
+        details: validationErrors,
+      });
+    }
+
     const totalMarks = problems.reduce((s, p) => s + (p.marks || 10), 0);
     await assessment.update({ status: 'PUBLISHED', publishedAt: new Date(), totalMarks });
-    ok(res, { assessment });
+    await CodingProblem.update(
+      { aiValidationStatus: 'PUBLISHED' },
+      { where: { assessmentId: assessment.id } }
+    );
+    ok(res, { assessment, message: 'Assessment published successfully' });
   } catch (err) { fail(res, 500, err.message); }
 };
 
@@ -714,6 +1258,9 @@ exports.runCode = async (req, res) => {
       }
     }
 
+    const { checkRequiredConcepts } = require('../services/requiredConceptValidator');
+    const conceptValidation = checkRequiredConcepts(code, language, problem?.requiredConcepts || []);
+
     const hasCompileError = sampleResults.some(r => r.verdict === 'COMPILATION_ERROR');
     if (hasCompileError) {
       return ok(res, {
@@ -722,19 +1269,26 @@ exports.runCode = async (req, res) => {
           compileOutput,
           sampleResults,
           allPassed: false,
+          conceptValidation,
         }
       });
     }
 
+    let runStatus = allPassed ? 'ACCEPTED' : 'WRONG_ANSWER';
+    if (allPassed && !conceptValidation.ok) {
+      runStatus = 'FAILED_REQUIREMENTS';
+    }
+
     ok(res, {
       run: {
-        status: allPassed ? 'ACCEPTED' : 'WRONG_ANSWER',
+        status: runStatus,
         compileOutput,
         stderr,
         executionTime: Math.max(...sampleResults.map(r => r.executionTime || 0)),
         memoryUsed: Math.max(...sampleResults.map(r => r.memoryUsed || 0)),
         sampleResults,
-        allPassed,
+        allPassed: allPassed && conceptValidation.ok,
+        conceptValidation,
       }
     });
   } catch (err) {
@@ -774,6 +1328,42 @@ exports.saveCode = async (req, res) => {
   } catch (err) { fail(res, 500, err.message); }
 };
 
+// ── PARTICIPANT: Save Code Batch (single roundtrip) ──
+
+exports.saveCodeBatch = async (req, res) => {
+  try {
+    const { attemptId, saves } = req.body;
+    if (!attemptId || !Array.isArray(saves)) return fail(res, 400, 'attemptId and saves array are required');
+
+    const attempt = await CodingAttempt.findOne({
+      where: { id: attemptId, participantId: req.user.id, status: 'IN_PROGRESS' }
+    });
+    if (!attempt) return fail(res, 404, 'Attempt not found or already submitted');
+
+    for (const item of saves) {
+      if (!item.problemId) continue;
+      let submission = await CodingSubmission.findOne({
+        where: { attemptId, problemId: item.problemId }
+      });
+      if (submission) {
+        submission.code = item.code || '';
+        if (item.language) submission.language = item.language;
+        await submission.save();
+      } else {
+        await CodingSubmission.create({
+          attemptId,
+          problemId: item.problemId,
+          code: item.code || '',
+          language: item.language || 'javascript',
+          status: 'PENDING',
+        });
+      }
+    }
+
+    ok(res, { saved: true, count: saves.length });
+  } catch (err) { fail(res, 500, err.message); }
+};
+
 // ── PARTICIPANT: Submit Code (ALL TESTS — enterprise queue-based) ──
 
 exports.submitCode = async (req, res) => {
@@ -791,6 +1381,12 @@ exports.submitCode = async (req, res) => {
       return fail(res, 400, 'This problem has no test cases configured. Please contact your trainer.');
     }
 
+    const allowedLangs = (await getProblemLanguages(problem, { includeReference: false })).map(l => l.language);
+    const normLang = String(language || '').trim().toLowerCase();
+    if (!allowedLangs.includes(normLang)) {
+      return fail(res, 400, `Language "${language}" is not allowed for this problem. Allowed: ${allowedLangs.join(', ')}`);
+    }
+
     const tcData = testCases.map(tc => ({
       id: tc.id,
       input: tc.input,
@@ -801,11 +1397,48 @@ exports.submitCode = async (req, res) => {
       memoryLimit: tc.memoryLimit || problem.memoryLimit || 256,
     }));
 
-    const submission = await CodingSubmission.create({
-      attemptId, problemId, code, language, status: 'PENDING',
-      totalTestCases: tcData.length, passedTestCases: 0,
-      executionTime: 0, memoryUsed: 0, score: 0,
-    });
+    // Duplicate submission prevention: reuse the single submission row for this
+    // attempt+problem. If a request for the same code is already PENDING/evaluated,
+    // only re-enqueue when the code actually changed. This keeps the DB as the
+    // source of truth and prevents redundant/duplicate jobs.
+    let submission = await CodingSubmission.findOne({ where: { attemptId, problemId, language: normLang } });
+    const isSameCode = submission && submission.code === code && (submission.language || 'javascript') === normLang;
+
+    if (!submission) {
+      submission = await CodingSubmission.create({
+        attemptId, problemId, code, language: normLang, status: 'PENDING',
+        totalTestCases: tcData.length, passedTestCases: 0,
+        executionTime: 0, memoryUsed: 0, score: 0,
+      });
+    } else if (!isSameCode) {
+      await submission.update({
+        code, language: normLang, status: 'PENDING',
+        totalTestCases: tcData.length, passedTestCases: 0,
+        executionTime: 0, memoryUsed: 0, score: 0, output: null,
+      });
+    } else {
+      // Same code already persisted. If it has already been evaluated, return the
+      // stored result without enqueuing a duplicate job.
+      if (submission.status !== 'PENDING') {
+        return ok(res, {
+          submission: {
+            id: submission.id,
+            status: submission.status,
+            score: submission.score != null ? Number(submission.score) : 0,
+            passedTestCases: submission.passedTestCases || 0,
+            totalTestCases: submission.totalTestCases || tcData.length,
+            executionTime: submission.executionTime || 0,
+            memoryUsed: submission.memoryUsed || 0,
+            compilerOutput: submission.compilerOutput || null,
+            errorMessage: submission.errorMessage || null,
+            results: Array.isArray(submission.output) ? submission.output.filter(r => !r.isHidden) : [],
+            message: 'Submission already evaluated',
+            hiddenCount: tcData.filter(tc => tc.isHidden).length,
+            duplicate: true,
+          }
+        });
+      }
+    }
 
     const io = req.app.get('io');
 
@@ -824,12 +1457,26 @@ exports.submitCode = async (req, res) => {
       io,
     });
 
+    const updatedSubmission = await CodingSubmission.findByPk(submission.id);
+    const visibleResults = Array.isArray(updatedSubmission?.output)
+      ? updatedSubmission.output.filter(r => !r.isHidden)
+      : [];
+
     ok(res, {
       submission: {
-        id: submission.id,
-        status: 'PENDING',
-        message: 'Submission queued for evaluation',
-        totalTestCases: tcData.length,
+        id: updatedSubmission?.id || submission.id,
+        status: updatedSubmission?.status || 'PENDING',
+        score: updatedSubmission?.score != null ? Number(updatedSubmission.score) : 0,
+        passedTestCases: updatedSubmission?.passedTestCases || 0,
+        totalTestCases: updatedSubmission?.totalTestCases || tcData.length,
+        executionTime: updatedSubmission?.executionTime || 0,
+        memoryUsed: updatedSubmission?.memoryUsed || 0,
+        compilerOutput: updatedSubmission?.compilerOutput || null,
+        errorMessage: updatedSubmission?.errorMessage || null,
+        results: visibleResults,
+        message: updatedSubmission?.status && updatedSubmission.status !== 'PENDING'
+          ? 'Submission evaluated'
+          : 'Submission queued for evaluation',
         hiddenCount: tcData.filter(tc => tc.isHidden).length,
       }
     });
@@ -894,6 +1541,200 @@ exports.getSubmission = async (req, res) => {
   } catch (err) { fail(res, 500, err.message); }
 };
 
+// ── PARTICIPANT: AI Assistant (Socratic coaching) ──
+
+exports.aiAssist = async (req, res) => {
+  try {
+    const { attemptId, problemId, code, language, question, level, action, errorContext } = req.body;
+    if (!attemptId || !problemId) return fail(res, 400, 'attemptId and problemId are required');
+
+    const service = require('../services/codingAiAssistantService');
+    const result = await service.grantAssist({
+      attemptId: Number(attemptId),
+      problemId: Number(problemId),
+      participantId: req.user.id,
+      code: code || '',
+      language: language || 'javascript',
+      question: question || "I'm stuck. Can you guide me?",
+      level: Number(level) || 1,
+      action: action || 'hint',
+      errorContext: errorContext || '',
+    });
+    ok(res, result);
+  } catch (err) {
+    if (err.status) return fail(res, err.status, err.message);
+    logger.error('AI assist error', { error: err.message });
+    fail(res, 500, err.message);
+  }
+};
+
+exports.aiAssistStatus = async (req, res) => {
+  try {
+    const { attemptId, problemId } = req.params;
+    const service = require('../services/codingAiAssistantService');
+    const status = await service.getStatus({
+      attemptId: Number(attemptId),
+      problemId: Number(problemId),
+      participantId: req.user.id,
+    });
+
+    const problem = await CodingProblem.findByPk(problemId, {
+      include: [{ model: CodingAssessment, as: 'assessment', attributes: ['aiHelpLimit', 'aiAssistantEnabled'] }],
+    });
+    const limit = problem?.assessment?.aiHelpLimit != null ? Number(problem.assessment.aiHelpLimit) : 1;
+    const enabled = problem?.assessment?.aiAssistantEnabled !== false;
+
+    ok(res, {
+      used: status.used || 0,
+      limit,
+      enabled,
+      unlimited: limit === -1,
+      remaining: limit === -1 ? -1 : Math.max(0, limit - (status.used || 0)),
+    });
+  } catch (err) {
+    fail(res, 500, err.message);
+  }
+};
+
+// ── TRAINER: AI problem validation pipeline ──
+
+exports.validateProblem = async (req, res) => {
+  try {
+    const problem = await CodingProblem.findByPk(req.params.problemId, {
+      include: [
+        { model: CodingAssessment, as: 'assessment', where: { trainerId: req.user.id } },
+        { model: CodingProblemLanguage, as: 'languages', order: [['order', 'ASC']] },
+      ],
+    });
+    if (!problem) return fail(res, 404, 'Problem not found');
+
+    await problem.update({ aiValidationStatus: 'VALIDATING', aiValidationMessage: null });
+
+    const { validateProblem: runValidation } = require('../services/codingValidationService');
+    const report = await runValidation(problem);
+
+    await problem.update({
+      aiValidationStatus: report.recommendedStatus,
+      aiValidationMessage: report.issues.length > 0 ? report.issues.join(' ') : null,
+      source: problem.source === 'AI' ? 'AI' : problem.source,
+    });
+
+    const updated = await CodingProblem.findByPk(problem.id, {
+      include: [{ model: CodingTestCase, as: 'testCases', order: [['order', 'ASC']] }],
+    });
+
+    ok(res, { problem: updated, validation: report });
+  } catch (err) {
+    logger.error('Validate problem error', { error: err.message });
+    fail(res, 500, err.message);
+  }
+};
+
+exports.validateAllProblems = async (req, res) => {
+  try {
+    const assessment = await CodingAssessment.findOne({ where: { id: req.params.id, trainerId: req.user.id } });
+    if (!assessment) return fail(res, 404, 'Assessment not found');
+
+    const problems = await CodingProblem.findAll({
+      where: { assessmentId: assessment.id },
+      include: [{ model: CodingProblemLanguage, as: 'languages', order: [['order', 'ASC']] }],
+    });
+    const { validateProblem: runValidation } = require('../services/codingValidationService');
+    const results = [];
+    for (const problem of problems) {
+      await problem.update({ aiValidationStatus: 'VALIDATING', aiValidationMessage: null });
+      const report = await runValidation(problem);
+      await problem.update({
+        aiValidationStatus: report.recommendedStatus,
+        aiValidationMessage: report.issues.length > 0 ? report.issues.join(' ') : null,
+      });
+      results.push({ problemId: problem.id, title: problem.title, ...report });
+    }
+    ok(res, { results });
+  } catch (err) {
+    logger.error('Validate all problems error', { error: err.message });
+    fail(res, 500, err.message);
+  }
+};
+
+// ── TRAINER: Test case management (per problem) ──
+
+exports.addTestCase = async (req, res) => {
+  try {
+    const problem = await CodingProblem.findByPk(req.params.problemId, {
+      include: [{ model: CodingAssessment, as: 'assessment', where: { trainerId: req.user.id } }],
+    });
+    if (!problem) return fail(res, 404, 'Problem not found');
+    const count = await CodingTestCase.count({ where: { problemId: problem.id } });
+    const tc = await CodingTestCase.create(normalizeTestCase(req.body, problem.id, count));
+    ok(res, { testCase: tc });
+  } catch (err) {
+    fail(res, 500, err.message);
+  }
+};
+
+exports.updateTestCase = async (req, res) => {
+  try {
+    const tc = await CodingTestCase.findByPk(req.params.testCaseId, {
+      include: [{
+        model: CodingProblem, as: 'problem',
+        include: [{ model: CodingAssessment, as: 'assessment', where: { trainerId: req.user.id } }],
+      }],
+    });
+    if (!tc) return fail(res, 404, 'Test case not found');
+    const allowed = ['input', 'expectedOutput', 'isHidden', 'description', 'order', 'timeout', 'memoryLimit', 'weight'];
+    const updates = {};
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) {
+        if (key === 'isHidden') updates[key] = Boolean(req.body[key]);
+        else if (key === 'input' || key === 'expectedOutput') updates[key] = String(req.body[key]);
+        else if (key === 'order') updates[key] = parseInt(req.body[key], 10) || 0;
+        else updates[key] = req.body[key];
+      }
+    }
+    await tc.update(updates);
+    ok(res, { testCase: tc });
+  } catch (err) {
+    fail(res, 500, err.message);
+  }
+};
+
+exports.deleteTestCase = async (req, res) => {
+  try {
+    const tc = await CodingTestCase.findByPk(req.params.testCaseId, {
+      include: [{
+        model: CodingProblem, as: 'problem',
+        include: [{ model: CodingAssessment, as: 'assessment', where: { trainerId: req.user.id } }],
+      }],
+    });
+    if (!tc) return fail(res, 404, 'Test case not found');
+    await tc.destroy();
+    ok(res, { message: 'Test case deleted' });
+  } catch (err) {
+    fail(res, 500, err.message);
+  }
+};
+
+exports.reorderTestCases = async (req, res) => {
+  try {
+    const { problemId } = req.params;
+    const problem = await CodingProblem.findByPk(problemId, {
+      include: [{ model: CodingAssessment, as: 'assessment', where: { trainerId: req.user.id } }],
+    });
+    if (!problem) return fail(res, 404, 'Problem not found');
+    const order = Array.isArray(req.body.order) ? req.body.order : [];
+    for (let i = 0; i < order.length; i++) {
+      const id = order[i];
+      if (!id) continue;
+      await CodingTestCase.update({ order: i }, { where: { id, problemId: problem.id } });
+    }
+    const testCases = await CodingTestCase.findAll({ where: { problemId: problem.id }, order: [['order', 'ASC']] });
+    ok(res, { testCases });
+  } catch (err) {
+    fail(res, 500, err.message);
+  }
+};
+
 // ── PARTICIPANT: Submit entire assessment ──
 
 exports.submitAssessment = async (req, res) => {
@@ -920,57 +1761,102 @@ exports.submitAssessment = async (req, res) => {
         where: { attemptId: attempt.id },
         transaction: t
       });
-      const evaluatedProblemIds = new Set(existingSubs.filter(s => s.status !== 'PENDING' && s.totalTestCases > 0).map(s => s.problemId));
       const problemData = req.body.submissions || [];
 
+      // Determine which problems need evaluation:
+      // Skip problems that already have an evaluated submission with identical code and language.
+      const toEvaluate = [];
       for (const pd of problemData) {
-        if (evaluatedProblemIds.has(pd.problemId)) continue;
         const problem = problems.find(p => p.id === pd.problemId);
         if (!problem) continue;
-
         const testCases = problem.testCases || [];
         if (testCases.length === 0) continue;
 
-        try {
-          const results = await executionService.runTests(pd.code, pd.language || 'javascript', testCases, problem.timeLimit, problem.memoryLimit);
-          const totalTC = results.length;
-          const passedTC = results.filter(r => r.passed).length;
-          const maxExecTime = Math.max(...results.map(r => r.executionTime || 0));
-          const maxMem = Math.max(...results.map(r => r.memoryUsed || 0));
-          const problemMarks = problem.marks || 10;
-          const score = totalTC > 0 ? Math.min((passedTC / totalTC) * problemMarks, problemMarks) : 0;
-          const isAccepted = passedTC === totalTC;
-          let status = 'FAILED';
-          if (isAccepted) status = 'ACCEPTED';
-          else if (results.some(r => r.status === 'TIME_LIMIT_EXCEEDED')) status = 'TIME_LIMIT_EXCEEDED';
-          else if (results.some(r => r.status === 'RUNTIME_ERROR')) status = 'RUNTIME_ERROR';
-          else if (results.some(r => r.status === 'COMPILATION_ERROR')) status = 'COMPILATION_ERROR';
-          else if (passedTC > 0) status = 'WRONG_ANSWER';
+        const existingSub = existingSubs.find(s => s.problemId === pd.problemId);
+        const isAlreadyEvaluated = existingSub &&
+          existingSub.status !== 'PENDING' &&
+          existingSub.totalTestCases > 0 &&
+          existingSub.code === pd.code &&
+          (existingSub.language || 'javascript') === (pd.language || 'javascript');
 
-          let submission = existingSubs.find(s => s.problemId === pd.problemId);
-          if (submission) {
-            await submission.update({
-              code: pd.code, language: pd.language || 'javascript', status,
-              totalTestCases: totalTC, passedTestCases: passedTC,
-              executionTime: maxExecTime, memoryUsed: maxMem,
-              score: Math.round(score * 100) / 100,
-              output: results.map(r => ({
-                testCaseId: r.testCaseId, input: r.input, expectedOutput: r.expectedOutput,
-                actualOutput: r.actualOutput, passed: r.passed, status: r.status,
-                executionTime: r.executionTime, memoryUsed: r.memoryUsed, isHidden: r.isHidden
-              }))
-            }, { transaction: t });
-          } else {
-            submission = await CodingSubmission.create({
-              attemptId, problemId: pd.problemId, code: pd.code, language: pd.language || 'javascript',
-              status, totalTestCases: totalTC, passedTestCases: passedTC,
-              executionTime: maxExecTime, memoryUsed: maxMem,
-              score: Math.round(score * 100) / 100, output: results
-            }, { transaction: t });
-          }
-        } catch (evalErr) {
-          logger.error('Error evaluating problem during submission', { problemId: pd.problemId, error: evalErr.message });
+        if (!isAlreadyEvaluated) {
+          toEvaluate.push({ pd, problem, testCases, existingSub });
         }
+      }
+
+      // Evaluate remaining/modified problems in parallel (fast & non-blocking)
+      if (toEvaluate.length > 0) {
+        const evalPromises = toEvaluate.map(async ({ pd, problem, testCases, existingSub }) => {
+          try {
+            const results = await executionService.runTests(pd.code, pd.language || 'javascript', testCases, problem.timeLimit, problem.memoryLimit);
+            const { checkRequiredConcepts } = require('../services/requiredConceptValidator');
+            const conceptValidation = checkRequiredConcepts(pd.code, pd.language || 'javascript', problem.requiredConcepts || []);
+            const totalTC = results.length;
+            const passedTC = results.filter(r => r.passed).length;
+            const maxExecTime = Math.max(...results.map(r => r.executionTime || 0), 0);
+            const maxMem = Math.max(...results.map(r => r.memoryUsed || 0), 0);
+            const problemMarks = problem.marks || 10;
+            let score = totalTC > 0 ? Math.min((passedTC / totalTC) * problemMarks, problemMarks) : 0;
+            const isAccepted = totalTC > 0 && passedTC === totalTC;
+            let status = 'FAILED';
+            if (isAccepted) {
+              if (conceptValidation.ok) {
+                status = 'ACCEPTED';
+              } else {
+                status = 'FAILED_REQUIREMENTS';
+                score = 0;
+              }
+            }
+            else if (results.some(r => r.status === 'TIME_LIMIT_EXCEEDED')) status = 'TIME_LIMIT_EXCEEDED';
+            else if (results.some(r => r.status === 'RUNTIME_ERROR')) status = 'RUNTIME_ERROR';
+            else if (results.some(r => r.status === 'COMPILATION_ERROR')) status = 'COMPILATION_ERROR';
+            else if (passedTC > 0) status = 'WRONG_ANSWER';
+
+            const outputData = results.map(r => ({
+              testCaseId: r.testCaseId,
+              input: r.input,
+              expectedOutput: r.expectedOutput,
+              actualOutput: r.actualOutput,
+              passed: r.passed,
+              status: r.status,
+              executionTime: r.executionTime,
+              memoryUsed: r.memoryUsed,
+              isHidden: r.isHidden
+            }));
+
+            if (existingSub) {
+              await existingSub.update({
+                code: pd.code,
+                language: pd.language || 'javascript',
+                status,
+                totalTestCases: totalTC,
+                passedTestCases: passedTC,
+                executionTime: maxExecTime,
+                memoryUsed: maxMem,
+                score: Math.round(score * 100) / 100,
+                output: outputData
+              }, { transaction: t });
+            } else {
+              await CodingSubmission.create({
+                attemptId,
+                problemId: pd.problemId,
+                code: pd.code,
+                language: pd.language || 'javascript',
+                status,
+                totalTestCases: totalTC,
+                passedTestCases: passedTC,
+                executionTime: maxExecTime,
+                memoryUsed: maxMem,
+                score: Math.round(score * 100) / 100,
+                output: outputData
+              }, { transaction: t });
+            }
+          } catch (evalErr) {
+            logger.error('Error evaluating problem during submission', { problemId: pd.problemId, error: evalErr.message });
+          }
+        });
+
+        await Promise.allSettled(evalPromises);
       }
 
       const finalSubs = await CodingSubmission.findAll({ where: { attemptId }, transaction: t });

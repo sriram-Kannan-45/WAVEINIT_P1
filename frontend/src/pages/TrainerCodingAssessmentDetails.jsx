@@ -2,18 +2,21 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useParams, useNavigate } from 'react-router-dom'
+import Editor from '@monaco-editor/react'
 import {
   ArrowLeft, Settings, Users, BarChart3, Trophy, FileText,
   Plus, Pencil, Trash2, Save, X, Check, Send, Loader2, Star,
   Search, Clock, Calendar, AlertCircle, RefreshCw,
   Code, Shield, ShieldCheck, Copy, Info, BarChart2, Sparkles,
-  Eye, MoreVertical
+  Eye, MoreVertical, ChevronDown, ChevronUp, GripVertical
 } from 'lucide-react'
 import { SingleAttemptProctoringModal } from '../proctoring/components/TrainerMonitoringReport'
 import { API } from '../api/api'
+import { getAuthHeaders } from '../api/request'
 import { useToast } from '../components/Toast'
 import { useConfirm } from '../components/ui/AlertModal'
 import CodeEditor from '../components/CodeEditor'
+import { getDefaultStarterCode, getDefaultReferenceSolution } from '../utils/languageTemplates'
 import {
   colors, btnPrimary, btnSuccess, btnDanger, btnOutline, iconBtn,
   lblStyle, inputStyle, selectStyle, textareaStyle,
@@ -36,6 +39,48 @@ const LANGUAGES = [
   { value: 'php', label: 'PHP' },
 ]
 
+const LANGUAGE_MONACO_MAP = {
+  javascript: 'javascript', python: 'python', java: 'java', cpp: 'cpp',
+  c: 'c', csharp: 'csharp', typescript: 'typescript', go: 'go',
+  kotlin: 'kotlin', rust: 'rust', php: 'php',
+}
+
+const languageLabel = (id) => (LANGUAGES.find(l => l.value === id) || {}).label || id
+
+function MonoField({ language, value, onChange, readOnly = false, height = 160 }) {
+  return (
+    <div style={{ border: '1px solid #E2E8F0', borderRadius: 10, overflow: 'hidden', background: '#1E1E1E' }}>
+      <div style={{ height }}>
+        <Editor
+          key={`${language}_${readOnly ? 'ro' : 'rw'}`}
+          height="100%"
+          language={LANGUAGE_MONACO_MAP[language] || 'javascript'}
+          value={value ?? ''}
+          onChange={onChange}
+          theme="vs-dark"
+          options={{
+            fontSize: 13,
+            readOnly,
+            minimap: { enabled: false },
+            scrollBeyondLastLine: false,
+            automaticLayout: true,
+            tabSize: 4,
+            insertSpaces: true,
+            wordWrap: 'on',
+            padding: { top: 8, bottom: 8 },
+            scrollbar: {
+              alwaysConsumeMouseWheel: false,
+              vertical: 'auto',
+              horizontal: 'auto',
+            },
+            overviewRulerLanes: 0,
+          }}
+        />
+      </div>
+    </div>
+  )
+}
+
 export default function TrainerCodingAssessmentDetails({ user }) {
   const { assessmentId } = useParams()
   const navigate = useNavigate()
@@ -56,7 +101,10 @@ export default function TrainerCodingAssessmentDetails({ user }) {
 export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRefresh, isFullPageRoute }) {
   const toast = useToast()
   const confirm = useConfirm()
-  const auth = () => ({ Authorization: `Bearer ${user?.token}`, 'Content-Type': 'application/json' })
+  const auth = useCallback(() => ({
+    'Content-Type': 'application/json',
+    ...getAuthHeaders(user),
+  }), [user])
 
   const [assessment, setAssessment] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -111,7 +159,11 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
     try {
       const r = await fetch(API.CODING.PUBLISH(assessmentId), { method: 'POST', headers: auth() })
       const d = await r.json()
-      if (!r.ok) throw new Error(d.error || 'Publish failed')
+      if (!r.ok) {
+        const list = d.unvalidated?.map(u => `• ${u.title} (${u.status})`).join('\n') || ''
+        toast.error((d.error || 'Publish failed') + (list ? `\n${list}` : ''))
+        return
+      }
       toast.success('Coding assessment published successfully')
       fetchAssessment()
       onRefresh?.()
@@ -731,9 +783,68 @@ function ProblemsTab({ assessment, onRefresh, auth, toast }) {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingProblem, setEditingProblem] = useState(null)
   const [showAIWizard, setShowAIWizard] = useState(false)
+  const [validatingId, setValidatingId] = useState(null)
+  const [validatingAll, setValidatingAll] = useState(false)
   const problems = assessment.problems || []
 
+  const aiStatusStyle = (status) => {
+    const map = {
+      VALIDATED: { bg: '#EAF8F0', color: '#16A34A', label: 'Validated' },
+      PUBLISHED: { bg: '#EAF8F0', color: '#16A34A', label: 'Published' },
+      AI_GENERATED: { bg: '#EFF6FF', color: '#2563EB', label: 'AI Generated' },
+      VALIDATING: { bg: '#FEF3C7', color: '#D97706', label: 'Validating…' },
+      VALIDATION_FAILED: { bg: '#FEF2F2', color: '#DC2626', label: 'Validation Failed' },
+      NEEDS_TRAINER_REVIEW: { bg: '#FEF3C7', color: '#B45309', label: 'Needs Review' },
+    }
+    return map[status] || { bg: '#F1F5F9', color: '#64748B', label: status || '—' }
+  }
+
+  const handleValidate = async (probId) => {
+    if (!probId) {
+      toast.error('Problem ID is missing')
+      return
+    }
+    setValidatingId(probId)
+    try {
+      const endpoint = API.CODING.VALIDATE_PROBLEM(probId)
+      const r = await fetch(endpoint, { method: 'POST', headers: auth() })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok || data.success === false) throw new Error(data.error || data.message || 'Validation failed')
+      toast.success(data.validation?.recommendedStatus === 'VALIDATED' ? 'Problem validated successfully' : `Validation outcome: ${data.validation?.recommendedStatus}`)
+      if (data.validation?.issues?.length) toast.error(data.validation.issues.join(' ').slice(0, 300))
+      onRefresh()
+    } catch (e) { toast.error(e.message) } finally { setValidatingId(null) }
+  }
+
+  const handleValidateAll = async () => {
+    if (!assessment?.id) {
+      toast.error('Assessment ID is missing')
+      return
+    }
+    const ok = await confirm({
+      title: 'Validate All Questions',
+      message: 'Run the reference solution against every test case for all questions? AI-generated questions must pass validation before publishing.',
+      type: 'warning',
+      confirmText: 'Validate All',
+    })
+    if (!ok) return
+    setValidatingAll(true)
+    try {
+      const endpoint = API.CODING.VALIDATE_ALL(assessment.id)
+      const r = await fetch(endpoint, { method: 'POST', headers: auth() })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok || data.success === false) throw new Error(data.error || data.message || 'Validation failed')
+      const failed = (data.results || []).filter(x => x.recommendedStatus !== 'VALIDATED').length
+      toast.success(failed === 0 ? 'All questions validated ✓' : `${data.results?.length} validated, ${failed} need attention`)
+      onRefresh()
+    } catch (e) { toast.error(e.message) } finally { setValidatingAll(false) }
+  }
+
   const handleDeleteProblem = async (probId) => {
+    if (!probId) {
+      toast.error('Problem ID is missing')
+      return
+    }
     const ok = await confirm({
       title: 'Delete Problem',
       message: 'Are you sure you want to delete this problem?',
@@ -742,8 +853,10 @@ function ProblemsTab({ assessment, onRefresh, auth, toast }) {
     })
     if (!ok) return
     try {
-      const r = await fetch(API.CODING.DELETE_PROBLEM(probId), { method: 'DELETE', headers: auth() })
-      if (!r.ok) throw new Error('Delete failed')
+      const endpoint = API.CODING.DELETE_PROBLEM(probId)
+      const r = await fetch(endpoint, { method: 'DELETE', headers: auth() })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok || data.success === false) throw new Error(data.error || data.message || 'Delete failed')
       toast.success('Problem deleted')
       onRefresh()
     } catch (e) { toast.error(e.message) }
@@ -758,6 +871,10 @@ function ProblemsTab({ assessment, onRefresh, auth, toast }) {
         <div style={{ display: 'flex', gap: 10 }}>
           <button onClick={() => setShowAIWizard(true)} style={{ ...btnOutline, padding: '7px 14px', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <Sparkles size={13} color="#16A34A" /> Generate with AI
+          </button>
+          <button onClick={handleValidateAll} disabled={validatingAll} style={{ ...btnOutline, padding: '7px 14px', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            {validatingAll ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} color="#7C3AED" />}
+            {validatingAll ? 'Validating…' : 'Validate All'}
           </button>
           <button onClick={() => { setEditingProblem(null); setModalOpen(true) }} style={{ ...btnPrimary, padding: '7px 16px', fontSize: 13 }}>
             <Plus size={13} style={{ marginRight: 4 }} /> Add Problem
@@ -779,7 +896,8 @@ function ProblemsTab({ assessment, onRefresh, auth, toast }) {
                 <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B', width: 110 }}>DIFFICULTY</th>
                 <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B', width: 80, textAlign: 'center' }}>MARKS</th>
                 <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B', width: 90, textAlign: 'center' }}>TEST CASES</th>
-                <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B', width: 100, textAlign: 'center' }}>ACTIONS</th>
+                <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B', width: 130 }}>VALIDATION</th>
+                <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B', width: 120, textAlign: 'center' }}>ACTIONS</th>
               </tr>
             </thead>
             <tbody>
@@ -806,6 +924,27 @@ function ProblemsTab({ assessment, onRefresh, auth, toast }) {
                   </td>
                   <td style={{ padding: '12px 16px', textAlign: 'center', fontSize: 12.5, color: '#64748B' }}>
                     {p.testCases?.length || 0}
+                  </td>
+                  <td style={{ padding: '12px 16px' }}>
+                    {(() => {
+                      const st = aiStatusStyle(p.aiValidationStatus || (p.source === 'AI' ? 'AI_GENERATED' : 'PUBLISHED'))
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ padding: '3px 8px', borderRadius: 6, fontSize: 10.5, fontWeight: 700, background: st.bg, color: st.color, whiteSpace: 'nowrap' }}>
+                            {st.label}
+                          </span>
+                          {p.source === 'AI' && <Sparkles size={11} color="#16A34A" />}
+                          <button
+                            onClick={() => handleValidate(p.id)}
+                            disabled={validatingId === p.id}
+                            title="Validate with AI (runs reference solution against all test cases)"
+                            style={{ ...iconBtn('#F5F3FF', '#7C3AED'), width: 24, height: 24 }}
+                          >
+                            {validatingId === p.id ? <Loader2 size={11} className="animate-spin" /> : <ShieldCheck size={11} />}
+                          </button>
+                        </div>
+                      )
+                    })()}
                   </td>
                   <td style={{ padding: '12px 16px', textAlign: 'center' }}>
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
@@ -834,6 +973,246 @@ function ProblemsTab({ assessment, onRefresh, auth, toast }) {
           toast={toast}
         />
       )}
+
+      {showAIWizard && (
+        <AIProblemWizardModal
+          assessmentId={assessment.id}
+          initialLanguages={assessment.languages || ['javascript']}
+          onClose={() => setShowAIWizard(false)}
+          onSuccess={() => { setShowAIWizard(false); onRefresh() }}
+          auth={auth}
+          toast={toast}
+        />
+      )}
+    </div>
+  )
+}
+
+function AIProblemWizardModal({ assessmentId, initialLanguages = ['javascript'], onClose, onSuccess, auth, toast }) {
+  const [topic, setTopic] = useState('')
+  const [difficulty, setDifficulty] = useState('EASY')
+  const [problemCount, setProblemCount] = useState(1)
+  const [selectedLangs, setSelectedLangs] = useState(initialLanguages.length > 0 ? initialLanguages : ['python', 'javascript'])
+  const [langDropdownOpen, setLangDropdownOpen] = useState(false)
+  const [langSearch, setLangSearch] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [loadingStep, setLoadingStep] = useState('')
+  const [error, setError] = useState(null)
+
+  const toggleLang = (id) => {
+    setSelectedLangs(prev => {
+      if (prev.includes(id)) {
+        if (prev.length === 1) return prev
+        return prev.filter(l => l !== id)
+      }
+      return [...prev, id]
+    })
+  }
+
+  const handleGenerate = async (e) => {
+    if (e) e.preventDefault()
+    if (!topic.trim()) {
+      toast.error('Please enter a topic or prompt')
+      return
+    }
+    if (selectedLangs.length === 0) {
+      toast.error('Select at least one programming language')
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+    setLoadingStep(`Generating problem specification for "${topic.trim()}"...`)
+
+    try {
+      const stepTimer1 = setTimeout(() => {
+        setLoadingStep(`Generating ${selectedLangs.map(l => languageLabel(l)).join(', ')} starter & reference solutions...`)
+      }, 1500)
+      const stepTimer2 = setTimeout(() => {
+        setLoadingStep('Synthesizing test cases and running validation checks...')
+      }, 4500)
+
+      const res = await fetch(API.CODING.GENERATE_FOR_ASSESSMENT ? API.CODING.GENERATE_FOR_ASSESSMENT(assessmentId) : `${API.CODING.LIST}/${assessmentId}/generate-problems`, {
+        method: 'POST',
+        headers: auth(),
+        body: JSON.stringify({
+          prompt: topic.trim(),
+          difficulty,
+          problemCount,
+          languages: selectedLangs,
+        }),
+      })
+
+      clearTimeout(stepTimer1)
+      clearTimeout(stepTimer2)
+
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || data.message || 'AI Problem Generation failed')
+
+      toast.success(`Successfully generated ${problemCount} problem${problemCount > 1 ? 's' : ''} for "${topic.trim()}"`)
+      onSuccess()
+    } catch (err) {
+      setError(err.message || 'AI Generation failed. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const availableLangs = LANGUAGES.filter(l => !selectedLangs.includes(l.value))
+  const filteredAvailable = availableLangs.filter(l =>
+    l.label.toLowerCase().includes(langSearch.toLowerCase()) ||
+    l.value.toLowerCase().includes(langSearch.toLowerCase())
+  )
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 1000003,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+    }}>
+      <div style={{
+        background: '#FFFFFF', borderRadius: 16, width: '100%', maxWidth: 580,
+        boxShadow: '0 25px 60px rgba(0,0,0,0.3)', overflow: 'hidden',
+        display: 'flex', flexDirection: 'column', maxHeight: '90vh',
+      }}>
+        <div style={{
+          padding: '18px 24px 14px', borderBottom: '1px solid #F1F5F9',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: '#F0FDF4', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Sparkles size={18} color="#16A34A" />
+            </div>
+            <div>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0F172A' }}>Generate Problem with AI</h3>
+              <p style={{ margin: 0, fontSize: 12, color: '#64748B' }}>Topic-strict generation for all selected languages</p>
+            </div>
+          </div>
+          <button onClick={onClose} disabled={loading} style={iconBtn('#F1F5F9', '#64748B')}><X size={14} /></button>
+        </div>
+
+        <form onSubmit={handleGenerate} style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto' }}>
+          <div>
+            <label style={lblStyle}>Topic or Prompt *</label>
+            <input
+              style={{ ...inputStyle, fontSize: 13.5, padding: '9px 12px' }}
+              required
+              disabled={loading}
+              placeholder='e.g. "Print hi", "Fibonacci sequence", "Palindrome check"'
+              value={topic}
+              onChange={e => setTopic(e.target.value)}
+            />
+            <span style={{ fontSize: 11.5, color: '#64748B', marginTop: 4, display: 'block' }}>
+              The problem title, description, and test cases will be specifically focused on this topic.
+            </span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={lblStyle}>Difficulty</label>
+              <select style={selectStyle} disabled={loading} value={difficulty} onChange={e => setDifficulty(e.target.value)}>
+                <option value="EASY">Easy</option>
+                <option value="MEDIUM">Medium</option>
+                <option value="HARD">Hard</option>
+              </select>
+            </div>
+            <div>
+              <label style={lblStyle}>Number of Problems</label>
+              <select style={selectStyle} disabled={loading} value={problemCount} onChange={e => setProblemCount(parseInt(e.target.value) || 1)}>
+                <option value={1}>1 Problem</option>
+                <option value={2}>2 Problems</option>
+                <option value={3}>3 Problems</option>
+                <option value={5}>5 Problems</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label style={lblStyle}>Languages * ({selectedLangs.length} selected)</label>
+            <div style={{ position: 'relative' }}>
+              <div
+                style={{
+                  display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center',
+                  border: '1px solid #CBD5E1', borderRadius: 10, padding: '8px 10px',
+                  background: '#FFFFFF', minHeight: 42, cursor: loading ? 'not-allowed' : 'pointer',
+                }}
+                onClick={() => !loading && setLangDropdownOpen(o => !o)}
+              >
+                {selectedLangs.map(id => (
+                  <span key={id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#F5F3FF', color: '#6D28D9', border: '1px solid #DDD6FE', borderRadius: 999, padding: '3px 7px 3px 9px', fontSize: 11.5, fontWeight: 600 }}>
+                    {languageLabel(id)}
+                    {selectedLangs.length > 1 && (
+                      <button type="button" disabled={loading} style={{ background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', padding: 2, color: '#6D28D9' }} onClick={(e) => { e.stopPropagation(); toggleLang(id) }} title="Remove language">
+                        <X size={11} />
+                      </button>
+                    )}
+                  </span>
+                ))}
+                <span style={{ marginLeft: 'auto', display: 'flex', color: '#64748B' }}><ChevronDown size={14} /></span>
+              </div>
+
+              {langDropdownOpen && (
+                <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 25, background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 10, boxShadow: '0 12px 30px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', borderBottom: '1px solid #F1F5F9', background: '#F8FAFC' }}>
+                    <Search size={13} color="#94A3B8" />
+                    <input
+                      autoFocus
+                      value={langSearch}
+                      onChange={e => setLangSearch(e.target.value)}
+                      placeholder="Search languages to add…"
+                      style={{ border: 'none', outline: 'none', fontSize: 12.5, width: '100%', background: 'transparent' }}
+                    />
+                  </div>
+                  <div style={{ maxHeight: 180, overflowY: 'auto' }}>
+                    {filteredAvailable.length === 0 ? (
+                      <div style={{ padding: 12, textAlign: 'center', color: '#94A3B8', fontSize: 12 }}>All languages selected or none found.</div>
+                    ) : (
+                      filteredAvailable.map(l => (
+                        <button
+                          key={l.value}
+                          type="button"
+                          onClick={() => { toggleLang(l.value); setLangSearch('') }}
+                          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', borderBottom: '1px solid #F8FAFC', background: '#FFFFFF', cursor: 'pointer', fontSize: 12.5, color: '#0F172A' }}
+                        >
+                          {l.label}
+                          <Plus size={13} color="#94A3B8" />
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {loading && (
+            <div style={{ padding: '14px 16px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Loader2 size={18} className="animate-spin" color="#16A34A" />
+              <div style={{ fontSize: 12.5, color: '#166534', fontWeight: 600 }}>
+                {loadingStep || 'Generating problem with AI...'}
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div style={{ padding: '12px 16px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+              <AlertCircle size={16} color="#DC2626" style={{ marginTop: 2, flexShrink: 0 }} />
+              <div style={{ fontSize: 12.5, color: '#991B1B' }}>
+                <div><strong>Generation Error:</strong> {error}</div>
+                <button type="button" onClick={handleGenerate} style={{ marginTop: 6, background: '#DC2626', color: '#FFFFFF', border: 'none', borderRadius: 6, padding: '4px 10px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>
+                  Retry Generation
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
+            <button type="button" onClick={onClose} disabled={loading} style={btnOutline}>Cancel</button>
+            <button type="submit" disabled={loading || !topic.trim()} style={{ ...btnPrimary, background: '#16A34A', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              {loading ? <><Loader2 size={14} className="animate-spin" /> Generating…</> : <><Sparkles size={14} /> Generate with AI</>}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   )
 }
@@ -846,41 +1225,244 @@ function ProblemFormModal({ assessmentId, existingProblem, onClose, onSaved, aut
     marks: existingProblem?.marks || 10,
     timeLimit: existingProblem?.timeLimit || 2,
     memoryLimit: existingProblem?.memoryLimit || 256,
+    constraints: existingProblem?.constraints || '',
+    inputFormat: existingProblem?.inputFormat || '',
+    outputFormat: existingProblem?.outputFormat || '',
+    explanation: existingProblem?.explanation || '',
   })
+
+  const [requiredConcepts, setRequiredConcepts] = useState(() => {
+    if (Array.isArray(existingProblem?.requiredConcepts)) {
+      return existingProblem.requiredConcepts
+    }
+    return []
+  })
+
+  const [customConcept, setCustomConcept] = useState('')
+
+  const [languages, setLanguages] = useState(() => {
+    if (existingProblem?.languages && existingProblem.languages.length) {
+      return existingProblem.languages.map(l => ({
+        language: l.language,
+        starterCode: (l.starterCode != null && String(l.starterCode).trim())
+          ? l.starterCode
+          : getDefaultStarterCode(l.language, existingProblem),
+        referenceSolution: (l.referenceSolution != null && String(l.referenceSolution).trim())
+          ? l.referenceSolution
+          : getDefaultReferenceSolution(l.language, existingProblem),
+      }))
+    }
+    if (existingProblem?.languageSolutions && typeof existingProblem.languageSolutions === 'object') {
+      const entries = Object.entries(existingProblem.languageSolutions)
+      if (entries.length > 0) {
+        return entries.map(([lang, sol]) => ({
+          language: lang,
+          starterCode: (sol?.starterCode != null && String(sol.starterCode).trim())
+            ? sol.starterCode
+            : getDefaultStarterCode(lang, existingProblem),
+          referenceSolution: (sol?.referenceSolution != null && String(sol.referenceSolution).trim())
+            ? sol.referenceSolution
+            : getDefaultReferenceSolution(lang, existingProblem),
+        }))
+      }
+    }
+    const legacy = existingProblem?.programmingLanguage || 'javascript'
+    return [{
+      language: legacy,
+      starterCode: (existingProblem?.starterCode != null && String(existingProblem.starterCode).trim())
+        ? existingProblem.starterCode
+        : getDefaultStarterCode(legacy, existingProblem),
+      referenceSolution: (existingProblem?.expectedSolution != null && String(existingProblem.expectedSolution).trim())
+        ? existingProblem.expectedSolution
+        : getDefaultReferenceSolution(legacy, existingProblem),
+    }]
+  })
+  const [activeLangTab, setActiveLangTab] = useState(null)
+  const [langSearch, setLangSearch] = useState('')
+  const [langDropdownOpen, setLangDropdownOpen] = useState(false)
+  const [testCases, setTestCases] = useState(
+    (existingProblem?.testCases || []).map(tc => ({
+      input: tc.input || '',
+      expectedOutput: tc.expectedOutput || '',
+      isHidden: Boolean(tc.isHidden),
+      description: tc.description || '',
+    }))
+  )
   const [saving, setSaving] = useState(false)
+
+  const selectedLangIds = languages.map(l => l.language)
+  const activeLang = activeLangTab || languages[0]?.language || null
+  const availableLangs = LANGUAGES.filter(l => !selectedLangIds.includes(l.value))
+  const activeLangObj = languages.find(l => l.language === activeLang)
+  const filteredAvailable = availableLangs.filter(l =>
+    l.label.toLowerCase().includes(langSearch.toLowerCase()) ||
+    l.value.toLowerCase().includes(langSearch.toLowerCase())
+  )
+
+  const toggleConcept = (id) => {
+    setRequiredConcepts(prev => {
+      const exists = prev.some(c => (typeof c === 'string' ? c === id : c.id === id))
+      if (exists) {
+        return prev.filter(c => (typeof c === 'string' ? c !== id : c.id !== id))
+      }
+      return [...prev, id]
+    })
+  }
+
+  const addCustomConcept = () => {
+    if (!customConcept.trim()) return
+    const query = customConcept.trim()
+    setRequiredConcepts(prev => [...prev, { id: 'custom', mode: 'contains', query, label: query }])
+    setCustomConcept('')
+  }
+
+  const removeConceptByIndex = (idx) => {
+    setRequiredConcepts(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  const isConceptActive = (id) => {
+    return requiredConcepts.some(c => (typeof c === 'string' ? c === id : c.id === id))
+  }
+
+  const updateActiveLang = (field, val) => {
+    if (!activeLang) return
+    setLanguages(prev => prev.map(l => (l.language === activeLang ? { ...l, [field]: val } : l)))
+  }
+
+  const selectLangTab = (langId) => {
+    setActiveLangTab(langId)
+  }
+
+  const toggleLang = (id) => {
+    if (selectedLangIds.includes(id)) {
+      if (languages.length === 1) {
+        toast.error('At least one language is required')
+        return
+      }
+      setLanguages(prev => prev.filter(l => l.language !== id))
+      if (activeLang === id) setActiveLangTab(null)
+    } else {
+      const newStarter = getDefaultStarterCode(id, form)
+      const newRef = getDefaultReferenceSolution(id, form)
+      setLanguages(prev => [...prev, {
+        language: id,
+        starterCode: newStarter,
+        referenceSolution: newRef,
+      }])
+      setActiveLangTab(id)
+    }
+  }
+
+  const updateTc = (i, key, val) => {
+    setTestCases(prev => prev.map((tc, idx) => (idx === i ? { ...tc, [key]: val } : tc)))
+  }
+  const addTc = () => setTestCases(prev => [...prev, { input: '', expectedOutput: '', isHidden: false, description: '' }])
+  const removeTc = (i) => setTestCases(prev => prev.filter((_, idx) => idx !== i))
+  const moveTc = (i, dir) => {
+    setTestCases(prev => {
+      const j = i + dir
+      if (j < 0 || j >= prev.length) return prev
+      const copy = [...prev]
+      const [item] = copy.splice(i, 1)
+      copy.splice(j, 0, item)
+      return copy
+    })
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    if (!languages.length) {
+      toast.error('Select at least one language')
+      return
+    }
+    if (languages.some(l => !l.referenceSolution.trim())) {
+      toast.error('Provide a reference solution for every selected language')
+      return
+    }
     setSaving(true)
     try {
+      const languageSolutions = {}
+      for (const l of languages) {
+        languageSolutions[l.language] = {
+          starterCode: l.starterCode,
+          referenceSolution: l.referenceSolution,
+        }
+      }
+
+      const payload = {
+        ...form,
+        requiredConcepts,
+        languages: languages.map(l => ({
+          language: l.language,
+          starterCode: l.starterCode,
+          referenceSolution: l.referenceSolution,
+          starterCodeSource: 'manual',
+          referenceSolutionSource: 'manual',
+          generationStatus: 'completed',
+        })),
+        languageSolutions,
+        testCases,
+      }
+      if (!existingProblem && !assessmentId) {
+        throw new Error('Assessment ID is required')
+      }
       const url = existingProblem
         ? API.CODING.UPDATE_PROBLEM(existingProblem.id)
-        : API.CODING.ADD_PROBLEM(assessmentId)
+        : API.CODING.CREATE_PROBLEM(assessmentId)
       const r = await fetch(url, {
         method: existingProblem ? 'PUT' : 'POST',
-        headers: auth(),
-        body: JSON.stringify(form),
+        headers: auth ? auth() : { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify(payload),
       })
-      if (!r.ok) throw new Error('Save failed')
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok || d.success === false) {
+        throw new Error(d.message || d.error || 'Save failed')
+      }
       toast.success(existingProblem ? 'Problem updated' : 'Problem created')
       onSaved()
-    } catch (e) { toast.error(e.message) }
-    finally { setSaving(false) }
+      onClose()
+    } catch (err) {
+      toast.error(err.message)
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)',
-      zIndex: 1000002, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16
-    }}>
-      <div style={{ background: '#FFFFFF', borderRadius: 16, width: '100%', maxWidth: 640, padding: 24, boxShadow: '0 25px 60px rgba(0,0,0,0.3)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 1000002,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+      }}
+    >
+      {/* Modal: flex column; content area has contained scrolling. Header stays fixed. */}
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: '#FFFFFF', borderRadius: 16, width: '100%', maxWidth: 980,
+          maxHeight: '92vh', display: 'flex', flexDirection: 'column', minHeight: 0,
+          boxShadow: '0 25px 60px rgba(0,0,0,0.3)', overflow: 'hidden',
+        }}
+      >
+        <div style={{
+          flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '18px 24px 14px', borderBottom: '1px solid #F1F5F9', background: '#FFFFFF',
+        }}>
           <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: '#0F172A' }}>
             {existingProblem ? 'Edit Problem' : 'Add Problem'}
           </h3>
-          <button onClick={onClose} style={iconBtn('#F1F5F9', '#64748B')}><X size={14} /></button>
+          <button type="button" onClick={onClose} style={iconBtn('#F1F5F9', '#64748B')} title="Close"><X size={14} /></button>
         </div>
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+        <form
+          onSubmit={handleSubmit}
+          style={{
+            flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden',
+            overscrollBehavior: 'contain',
+            padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14,
+          }}
+        >
           <div>
             <label style={lblStyle}>Title *</label>
             <input style={inputStyle} required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} />
@@ -889,7 +1471,7 @@ function ProblemFormModal({ assessmentId, existingProblem, onClose, onSaved, aut
             <label style={lblStyle}>Description *</label>
             <textarea style={textareaStyle} rows={4} required value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
             <div>
               <label style={lblStyle}>Difficulty</label>
               <select style={selectStyle} value={form.difficulty} onChange={e => setForm({ ...form, difficulty: e.target.value })}>
@@ -902,7 +1484,272 @@ function ProblemFormModal({ assessmentId, existingProblem, onClose, onSaved, aut
               <label style={lblStyle}>Marks</label>
               <input style={inputStyle} type="number" min={1} value={form.marks} onChange={e => setForm({ ...form, marks: parseInt(e.target.value) || 10 })} />
             </div>
+            <div>
+              <label style={lblStyle}>Time / Memory Limit (defaults)</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input style={inputStyle} type="number" min={1} value={form.timeLimit} onChange={e => setForm({ ...form, timeLimit: parseInt(e.target.value) || 2 })} title="Time limit (seconds)" />
+                <input style={inputStyle} type="number" min={32} value={form.memoryLimit} onChange={e => setForm({ ...form, memoryLimit: parseInt(e.target.value) || 256 })} title="Memory limit (MB)" />
+              </div>
+            </div>
           </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={lblStyle}>Problem Constraints (Time/Memory/Bounds)</label>
+              <textarea style={textareaStyle} rows={2} placeholder="e.g. 1 <= N <= 10^5, Time Limit: 5.0s, Memory Limit: 256MB" value={form.constraints} onChange={e => setForm({ ...form, constraints: e.target.value })} />
+            </div>
+            <div>
+              <label style={lblStyle}>Input Format</label>
+              <textarea style={textareaStyle} rows={2} value={form.inputFormat} onChange={e => setForm({ ...form, inputFormat: e.target.value })} />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={lblStyle}>Output Format</label>
+              <textarea style={textareaStyle} rows={2} value={form.outputFormat} onChange={e => setForm({ ...form, outputFormat: e.target.value })} />
+            </div>
+            <div>
+              <label style={lblStyle}>Explanation (optional)</label>
+              <textarea style={textareaStyle} rows={2} value={form.explanation} onChange={e => setForm({ ...form, explanation: e.target.value })} />
+            </div>
+          </div>
+
+          {/* ── Required Concepts / Code Requirements (Separated from Constraints) ── */}
+          <div style={{ border: '1px solid #E0E7FF', borderRadius: 12, padding: 14, background: '#EEF2FF' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <label style={{ ...lblStyle, margin: 0, color: '#3730A3', fontSize: 13 }}>
+                Required Concepts / Code Requirements
+              </label>
+              <span style={{ fontSize: 11, color: '#6366F1', fontWeight: 600 }}>Language-aware AST / Syntax validation</span>
+            </div>
+            <p style={{ margin: '0 0 10px', fontSize: 12, color: '#4338CA' }}>
+              Participant submissions will be checked for these required concepts. If missing, submission verdict will be <strong>FAILED REQUIREMENTS</strong>.
+            </p>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+              {[
+                { id: 'for_loop', label: 'for loop' },
+                { id: 'while_loop', label: 'while loop' },
+                { id: 'if_else', label: 'if/else' },
+                { id: 'function', label: 'function' },
+                { id: 'recursion', label: 'recursion' },
+                { id: 'array', label: 'array / list' },
+                { id: 'class', label: 'class' },
+              ].map(c => {
+                const active = isConceptActive(c.id)
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => toggleConcept(c.id)}
+                    style={{
+                      padding: '5px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600,
+                      cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5,
+                      background: active ? '#4F46E5' : '#FFFFFF',
+                      color: active ? '#FFFFFF' : '#4338CA',
+                      border: active ? '1px solid #4338CA' : '1px solid #C7D2FE',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    {active ? <Check size={12} /> : <Plus size={12} />}
+                    Must use {c.label}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Custom concept input */}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+              <input
+                style={{ ...inputStyle, background: '#FFFFFF', flex: 1, fontSize: 12.5 }}
+                placeholder='Custom code requirement (e.g. "import math", "sort()")'
+                value={customConcept}
+                onChange={e => setCustomConcept(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCustomConcept() } }}
+              />
+              <button
+                type="button"
+                onClick={addCustomConcept}
+                style={{ ...btnOutline, padding: '7px 12px', fontSize: 12, background: '#FFFFFF', color: '#4338CA', borderColor: '#C7D2FE' }}
+              >
+                <Plus size={12} style={{ marginRight: 4 }} /> Add Requirement
+              </button>
+            </div>
+
+            {/* Active custom concepts */}
+            {requiredConcepts.filter(c => typeof c === 'object' || !['for_loop', 'while_loop', 'if_else', 'function', 'recursion', 'array', 'class'].includes(c)).length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                {requiredConcepts.map((c, idx) => {
+                  const isBuiltin = typeof c === 'string' && ['for_loop', 'while_loop', 'if_else', 'function', 'recursion', 'array', 'class'].includes(c)
+                  if (isBuiltin) return null
+                  const labelText = typeof c === 'object' ? (c.label || c.query || c.value) : c
+                  return (
+                    <span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#FFFFFF', color: '#4338CA', border: '1px solid #C7D2FE', borderRadius: 999, padding: '3px 8px', fontSize: 11.5, fontWeight: 600 }}>
+                      Requirement: {labelText}
+                      <button type="button" onClick={() => removeConceptByIndex(idx)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 1, color: '#DC2626' }}>
+                        <X size={11} />
+                      </button>
+                    </span>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* ── Languages multi-select ── */}
+          <div>
+            <label style={lblStyle}>Languages * ({languages.length} selected)</label>
+            <div style={{ position: 'relative' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', border: '1px solid #CBD5E1', borderRadius: 10, padding: '8px 10px', background: '#FFFFFF', minHeight: 42, cursor: 'pointer' }} onClick={() => setLangDropdownOpen(o => !o)}>
+                {selectedLangIds.length === 0 ? (
+                  <span style={{ fontSize: 12.5, color: '#94A3B8' }}>Select one or more languages…</span>
+                ) : (
+                  selectedLangIds.map(id => (
+                    <span key={id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#F5F3FF', color: '#6D28D9', border: '1px solid #DDD6FE', borderRadius: 999, padding: '3px 6px 3px 9px', fontSize: 11.5, fontWeight: 600 }}>
+                      {languageLabel(id)}
+                      <button type="button" style={{ background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', padding: 2, color: '#6D28D9' }} onClick={(e) => { e.stopPropagation(); toggleLang(id) }} title="Remove language">
+                        <X size={11} />
+                      </button>
+                    </span>
+                  ))
+                )}
+                <span style={{ marginLeft: 'auto', display: 'flex', color: '#64748B' }}><ChevronDown size={14} /></span>
+              </div>
+
+              {langDropdownOpen && (
+                <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 20, background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 10, boxShadow: '0 12px 30px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', borderBottom: '1px solid #F1F5F9', background: '#F8FAFC' }}>
+                    <Search size={13} color="#94A3B8" />
+                    <input
+                      autoFocus
+                      value={langSearch}
+                      onChange={e => setLangSearch(e.target.value)}
+                      placeholder="Search languages…"
+                      style={{ border: 'none', outline: 'none', fontSize: 12.5, width: '100%', background: 'transparent' }}
+                    />
+                  </div>
+                  <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                    {filteredAvailable.length === 0 ? (
+                      <div style={{ padding: 12, textAlign: 'center', color: '#94A3B8', fontSize: 12.5 }}>No languages found.</div>
+                    ) : (
+                      filteredAvailable.map(l => (
+                        <button
+                          key={l.value}
+                          type="button"
+                          onClick={() => { toggleLang(l.value); setLangSearch('') }}
+                          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', padding: '9px 12px', textAlign: 'left', border: 'none', borderBottom: '1px solid #F8FAFC', background: '#FFFFFF', cursor: 'pointer', fontSize: 13, color: '#0F172A' }}
+                        >
+                          {l.label}
+                          <Plus size={13} color="#94A3B8" />
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Per-language tabs ── */}
+          {languages.length > 0 && (
+            <div style={{ border: '1px solid #E2E8F0', borderRadius: 12, padding: 14, background: '#FAFBFD' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                {languages.map(l => (
+                  <button
+                    key={l.language}
+                    type="button"
+                    onClick={() => selectLangTab(l.language)}
+                    style={{
+                      padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                      background: activeLang === l.language ? '#6D28D9' : '#F1F5F9',
+                      color: activeLang === l.language ? '#FFFFFF' : '#334155',
+                      border: activeLang === l.language ? '1px solid #6D28D9' : '1px solid #E2E8F0',
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                    }}
+                  >
+                    {languageLabel(l.language)}
+                    {l.generating ? <Loader2 size={11} className="animate-spin" /> : (!l.referenceSolution.trim() && <span style={{ marginLeft: 2, color: activeLang === l.language ? '#FDE68A' : '#F59E0B' }}>*</span>)}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div>
+                  <label style={{ ...lblStyle, marginBottom: 6, fontSize: 12.5 }}>Starter Code ({languageLabel(activeLang)})</label>
+                  <div style={{ marginTop: 4 }}>
+                    <MonoField
+                      key={`${activeLang}_starter`}
+                      language={activeLang}
+                      value={activeLangObj?.starterCode || ''}
+                      onChange={(v) => updateActiveLang('starterCode', v || '')}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ ...lblStyle, marginBottom: 6, fontSize: 12.5 }}>
+                    Reference Solution ({languageLabel(activeLang)}) * — used to auto-validate the problem
+                  </label>
+                  <div style={{ marginTop: 4 }}>
+                    <MonoField
+                      key={`${activeLang}_ref`}
+                      language={activeLang}
+                      value={activeLangObj?.referenceSolution || ''}
+                      onChange={(v) => updateActiveLang('referenceSolution', v || '')}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 12, fontSize: 11.5, color: '#64748B', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Info size={13} /> Starter code is an optional template participants may rewrite. Reference solution stays server-side (never visible to participants). Test cases are shared across all languages; each language&apos;s reference must pass them before publishing.
+              </div>
+            </div>
+          )}
+
+          {/* ── Test case manager ── */}
+          <div style={{ border: '1px solid #E2E8F0', borderRadius: 12, padding: 14, background: '#F8FAFC' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <label style={{ ...lblStyle, margin: 0, fontSize: 13 }}>Test Cases ({testCases.length})</label>
+              <button type="button" onClick={addTc} style={{ ...btnOutline, padding: '5px 12px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                <Plus size={13} /> Add Test Case
+              </button>
+            </div>
+            <div style={{ fontSize: 11.5, color: '#64748B', marginBottom: 10 }}>
+              Hidden test cases are never shown to participants. Mark them with <ShieldCheck size={12} style={{ verticalAlign: 'middle', display: 'inline' }} /> Hidden.
+            </div>
+            {testCases.length === 0 ? (
+              <div style={{ textAlign: 'center', color: '#94A3B8', fontSize: 12.5, padding: 16 }}>
+                No test cases yet. Add at least one visible (sample) and a few hidden cases.
+              </div>
+            ) : (
+              testCases.map((tc, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'flex-start' }}>
+                  <div style={{ width: 26, textAlign: 'center', paddingTop: 8, fontWeight: 700, color: '#94A3B8', fontSize: 12 }}>{i + 1}</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div style={{ display: 'flex', gap: 2 }}>
+                      <button type="button" onClick={() => moveTc(i, -1)} disabled={i === 0} style={{ ...iconBtn('#F1F5F9', '#64748B'), width: 24, height: 24, opacity: i === 0 ? 0.4 : 1 }} title="Move up"><ChevronUp size={12} /></button>
+                      <button type="button" onClick={() => moveTc(i, 1)} disabled={i === testCases.length - 1} style={{ ...iconBtn('#F1F5F9', '#64748B'), width: 24, height: 24, opacity: i === testCases.length - 1 ? 0.4 : 1 }} title="Move down"><ChevronDown size={12} /></button>
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    <textarea style={{ ...inputStyle, fontFamily: 'monospace', minHeight: 34, height: 34, resize: 'vertical' }} rows={1} placeholder="Input" value={tc.input} onChange={e => updateTc(i, 'input', e.target.value)} />
+                    <textarea style={{ ...inputStyle, fontFamily: 'monospace', minHeight: 34, height: 34, resize: 'vertical' }} rows={1} placeholder="Expected output" value={tc.expectedOutput} onChange={e => updateTc(i, 'expectedOutput', e.target.value)} />
+                    <input style={inputStyle} placeholder="Description (e.g. Edge case)" value={tc.description} onChange={e => updateTc(i, 'description', e.target.value)} />
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 600, color: tc.isHidden ? '#7C3AED' : '#64748B', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={tc.isHidden} onChange={e => updateTc(i, 'isHidden', e.target.checked)} />
+                        <ShieldCheck size={12} /> Hidden
+                      </label>
+                      <button type="button" onClick={() => removeTc(i)} style={iconBtn('#FEF2F2', '#DC2626')} title="Remove test case"><Trash2 size={13} /></button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 12 }}>
             <button type="button" onClick={onClose} style={btnOutline}>Cancel</button>
             <button type="submit" disabled={saving} style={btnPrimary}>
@@ -1266,6 +2113,8 @@ function SettingsTab({ assessment, onRefresh, auth, toast }) {
     timeLimit: assessment.timeLimit || 120,
     maxAttempts: assessment.maxAttempts || 1,
     passingMarks: assessment.passingMarks || 50,
+    aiAssistantEnabled: assessment.aiAssistantEnabled !== false,
+    aiHelpLimit: assessment.aiHelpLimit ?? 1,
   })
 
   const handleSave = async (e) => {
@@ -1303,6 +2152,27 @@ function SettingsTab({ assessment, onRefresh, auth, toast }) {
             <input style={inputStyle} type="number" min={1} value={form.maxAttempts} onChange={e => setForm({ ...form, maxAttempts: parseInt(e.target.value) || 1 })} />
           </div>
         </div>
+
+        {/* ── AI Student Assistant settings ── */}
+        <div style={{ border: '1px solid #E2E8F0', borderRadius: 12, padding: 14, background: '#FAFBFD' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#0F172A', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Sparkles size={14} color="#7C3AED" /> AI Student Assistant
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: '#334155', cursor: 'pointer' }}>
+              <input type="checkbox" checked={form.aiAssistantEnabled} onChange={e => setForm({ ...form, aiAssistantEnabled: e.target.checked })} />
+              Enable AI hints for participants
+            </label>
+            <div>
+              <label style={{ ...lblStyle, margin: 0, fontSize: 12.5 }}>Hints allowed per question (0 = disabled, -1 = unlimited)</label>
+              <input style={inputStyle} type="number" min={-1} value={form.aiHelpLimit} onChange={e => setForm({ ...form, aiHelpLimit: parseInt(e.target.value) || 0 })} />
+              <div style={{ fontSize: 11.5, color: '#64748B', marginTop: 4 }}>
+                Hints are Socratic (guided questions, never full solutions). When exhausted, participants are blocked.
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div style={{ marginTop: 8 }}>
           <button type="submit" disabled={saving} style={btnPrimary}>
             {saving ? 'Saving…' : 'Save Settings'}

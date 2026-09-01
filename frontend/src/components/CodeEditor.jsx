@@ -32,6 +32,7 @@ const CodeEditor = ({
   onLanguageChange,
   readOnly = false,
   theme: initialTheme = 'dark',
+  supportedLanguages,
 }) => {
   const [theme, setTheme] = useState(initialTheme === 'dark' ? 'vs-dark' : 'vs');
   const [fontSize, setFontSize] = useState(14);
@@ -170,22 +171,30 @@ const CodeEditor = ({
             padding: '2px 8px 2px 10px',
           }}>
             <Code2 size={14} color="#15803D" />
-            <select
-              value={currentLang}
-              onChange={handleLanguageChange}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: theme === 'vs-dark' ? '#F8FAFC' : '#0F172A',
-                fontSize: 12.5,
-                fontWeight: 600,
-                cursor: 'pointer',
-                outline: 'none',
-                padding: '4px 0',
-              }}
-            >
-              {LANGUAGES.map(l => <option key={l.id} value={l.id} style={{ background: '#1C222B', color: '#F8FAFC' }}>{l.label}</option>)}
-            </select>
+              {(() => {
+                const langs = supportedLanguages && supportedLanguages.length
+                  ? LANGUAGES.filter(l => supportedLanguages.includes(l.id))
+                  : LANGUAGES;
+                if (langs.length === 0) return null;
+                return (
+                  <select
+                    value={currentLang}
+                    onChange={handleLanguageChange}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: theme === 'vs-dark' ? '#F8FAFC' : '#0F172A',
+                      fontSize: 12.5,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      outline: 'none',
+                      padding: '4px 0',
+                    }}
+                  >
+                    {langs.map(l => <option key={l.id} value={l.id} style={{ background: '#1C222B', color: '#F8FAFC' }}>{l.label}</option>)}
+                  </select>
+                );
+              })()}
           </div>
         </div>
 

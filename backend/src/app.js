@@ -739,13 +739,15 @@ const startServer = async () => {
 
     // Coding Assessment tables
     try {
-      const { CodingAssessment, CodingProblem, CodingTestCase, CodingAttempt, CodingSubmission, CodingResult } = require('./models');
+      const { CodingAssessment, CodingProblem, CodingProblemLanguage, CodingTestCase, CodingAttempt, CodingSubmission, CodingResult, CodingAiHelp } = require('./models');
       await CodingAssessment.sync({ alter: true });
       await CodingProblem.sync({ alter: true });
+      await CodingProblemLanguage.sync({ alter: true });
       await CodingTestCase.sync({ alter: true });
       await CodingAttempt.sync({ alter: true });
       await CodingSubmission.sync({ alter: true });
       await CodingResult.sync({ alter: true });
+      await CodingAiHelp.sync({ alter: true });
       logger.info('coding_assessment tables ready');
     } catch (e) {
       logger.error('Could not sync coding_assessment tables', { error: e.message });

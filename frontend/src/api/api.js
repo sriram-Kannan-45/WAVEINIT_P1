@@ -250,7 +250,14 @@ export const API = {
     CREATE_PROBLEM:(id) => `${API_BASE}/coding/assessments/${id}/problems`,
     UPDATE_PROBLEM:(id) => `${API_BASE}/coding/problems/${id}`,
     DELETE_PROBLEM:(id) => `${API_BASE}/coding/problems/${id}`,
+    ADD_TEST_CASE:   (problemId) => `${API_BASE}/coding/problems/${problemId}/test-cases`,
+    UPDATE_TEST_CASE:(id) => `${API_BASE}/coding/test-cases/${id}`,
+    DELETE_TEST_CASE:(id) => `${API_BASE}/coding/test-cases/${id}`,
+    REORDER_TEST_CASES:(problemId) => `${API_BASE}/coding/problems/${problemId}/reorder-test-cases`,
+    VALIDATE_PROBLEM:(problemId) => `${API_BASE}/coding/problems/${problemId}/validate`,
+    VALIDATE_ALL:    (id) => `${API_BASE}/coding/assessments/${id}/validate-all`,
     GENERATE:              `${API_BASE}/coding/generate-from-prompt`,
+    GENERATE_LANGUAGE_CODE: `${API_BASE}/coding/generate-language-code`,
     PUBLISH:       (id) => `${API_BASE}/coding/assessments/${id}/publish`,
     CLOSE:         (id) => `${API_BASE}/coding/assessments/${id}/close`,
     PUBLISH_RESULT:(id) => `${API_BASE}/coding/assessments/${id}/publish-result`,
@@ -268,6 +275,9 @@ export const API = {
     SUBMISSION:    (id) => `${API_BASE}/coding/participant/submission/${id}`,
     SUBMIT:        (id) => `${API_BASE}/coding/participant/submit/${id}`,
     PARTICIPANT_RESULT: (id) => `${API_BASE}/coding/participant/assessments/${id}/result`,
+    // AI assistant
+    ASSIST:                `${API_BASE}/coding/participant/assist`,
+    ASSIST_STATUS: (attemptId, problemId) => `${API_BASE}/coding/participant/assist/status/${attemptId}/${problemId}`,
   },
 
   /** Coding Assessment module (Judge0 sandbox + AI gen/review + plagiarism) */

@@ -275,6 +275,37 @@ const ProblemPanel = ({ problem, index = 0, total = 1 }) => {
         </div>
       )}
 
+      {/* Required Concepts / Code Requirements */}
+      {problem.requiredConcepts && Array.isArray(problem.requiredConcepts) && problem.requiredConcepts.length > 0 && (
+        <div style={sectionStyle}>
+          <div style={{ ...sectionHeadingStyle, color: '#4338CA' }}>
+            <FileCode size={14} color="#4338CA" />
+            <span>REQUIRED CODING CONCEPTS</span>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {problem.requiredConcepts.map((c, i) => {
+              const label = typeof c === 'object' ? (c.label || c.query || c.value) : c.replace(/_/g, ' ');
+              return (
+                <span
+                  key={i}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    background: '#EEF2FF',
+                    color: '#4338CA',
+                    border: '1px solid #C7D2FE',
+                  }}
+                >
+                  Must use {label}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Sample Test Cases */}
       {(visibleTestCases.length > 0 || sampleInput || sampleOutput) && (
         <div style={sectionStyle}>

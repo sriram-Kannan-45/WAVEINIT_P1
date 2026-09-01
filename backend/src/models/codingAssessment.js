@@ -134,6 +134,19 @@ const CodingAssessment = sequelize.define('CodingAssessment', {
     type: DataTypes.DATE,
     allowNull: true,
     field: 'result_published_at'
+  },
+  aiHelpLimit: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1,
+    field: 'ai_help_limit',
+    comment: 'Number of AI assistant hints allowed per question. 0 = disabled, -1 = unlimited.'
+  },
+  aiAssistantEnabled: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: true,
+    field: 'ai_assistant_enabled'
   }
 }, {
   tableName: 'coding_assessments',

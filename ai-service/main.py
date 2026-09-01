@@ -2862,6 +2862,68 @@ async def review_code(req: CodeReviewRequest):
     return {"review": fallback_review}
 
 
+class CodingAssistRequest(BaseModel):
+    title: str = "Coding Problem"
+    problem_statement: str = ""
+    constraints: str = ""
+    language: str = "python"
+    code: str = ""
+    question: str = ""
+    usage_number: int = 1
+
+
+CODING_ASSIST_SYSTEM = (
+    "You are a Socratic coding tutor embedded inside a proctored coding assessment. "
+    "Your ONLY job is to help the student reason toward a solution using questions, "
+    "hints, and conceptual guidance. STRICT RULES:\n"
+    "1. NEVER provide a full, copy-paste ready solution, code block, or the reference/expected solution.\n"
+    "2. Never reveal hidden test cases, the expected output of hidden cases, or the official answer.\n"
+    "3. Ask guiding questions, point out which concept to apply, suggest what to check first, "
+    "   and help the student debug their own logic one step at a time.\n"
+    "4. Reference the student's own code only to ask targeted questions about it.\n"
+    "5. Keep responses concise (2-5 sentences) and supportive.\n"
+    "6. Do not be helpful beyond coaching: no full algorithms written out verbatim without reasoning steps.\n"
+    "Return ONLY the coaching text, no markdown code fences, no JSON."
+)
+
+
+@app.post("/coding/assist")
+async def coding_assist(req: CodingAssistRequest):
+    prompt = (
+        CODING_ASSIST_SYSTEM
+        + "\n\nPROBLEM TITLE: " + req.title
+        + "\nPROBLEM STATEMENT: " + req.problem_statement
+        + "\nCONSTRAINTS: " + (req.constraints or "Not specified")
+        + "\nLANGUAGE: " + (req.language or "python")
+        + "\nSTUDENT'S CURRENT CODE:\n" + (req.code or "(none yet)")
+        + "\n\nSTUDENT QUESTION (hint #" + str(req.usage_number) + "): " + req.question
+    )
+    try:
+        if gemini_client and gemini_client.api_key:
+            raw = gemini_client.generate_content(prompt, temperature=0.3, response_json=False)
+            if raw and raw.strip():
+                return {"assist": raw.strip()}
+    except Exception as e:
+        log.warning("Coding assist direct Gemini call failed: %s", e)
+
+    if llm is not None:
+        try:
+            response = llm.invoke(prompt)
+            text = response.content if hasattr(response, "content") else str(response)
+            if text and text.strip():
+                return {"assist": text.strip()}
+        except Exception as e:
+            log.warning("Coding assist LangChain invoke failed: %s", e)
+
+    fallback = (
+        "Let's break this down together. First, what inputs can the function receive, "
+        "and what is the expected output for the simplest possible input? "
+        "Think about which data structure or pattern from this topic's constraints fits here — "
+        "then try describing, in words only, the steps you would take before writing code."
+    )
+    return {"assist": fallback}
+
+
 def check_and_resolve_port(port: int) -> int:
     """Check if the port is in use; try to terminate any previous instance, else fallback to next available ports."""
     import socket

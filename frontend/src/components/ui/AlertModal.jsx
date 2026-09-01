@@ -384,7 +384,23 @@ export function AlertModalProvider({ children }) {
 export function useAlertModal() {
   const ctx = useContext(AlertModalContext)
   if (!ctx) {
-    throw new Error('useAlertModal must be used within an AlertModalProvider')
+    return {
+      confirm: async (optionsOrMessage, extraOptions = {}) => {
+        let msg = 'Are you sure you want to proceed?'
+        if (typeof optionsOrMessage === 'string') msg = optionsOrMessage
+        else if (optionsOrMessage?.message) msg = optionsOrMessage.message
+        return window.confirm(msg)
+      },
+      alert: async (optionsOrMessage) => {
+        const msg = typeof optionsOrMessage === 'string' ? optionsOrMessage : (optionsOrMessage?.message || '')
+        window.alert(msg)
+      },
+      prompt: async (optionsOrMessage) => {
+        const msg = typeof optionsOrMessage === 'string' ? optionsOrMessage : (optionsOrMessage?.message || '')
+        const def = typeof optionsOrMessage === 'object' ? (optionsOrMessage?.defaultValue || '') : ''
+        return window.prompt(msg, def)
+      },
+    }
   }
   return ctx
 }

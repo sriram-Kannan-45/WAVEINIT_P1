@@ -50,6 +50,13 @@ const CodingAttempt = sequelize.define('CodingAttempt', {
     allowNull: true,
     field: 'monitoring_session_id',
     comment: 'Linked ProctoringSession.session_id'
+  },
+  aiHelpUsage: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: {},
+    field: 'ai_help_usage',
+    comment: 'JSON map of { problemId: number_of_ai_hints_used }'
   }
 }, {
   tableName: 'coding_attempts',

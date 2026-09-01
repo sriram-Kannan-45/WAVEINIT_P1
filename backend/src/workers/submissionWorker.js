@@ -3,6 +3,7 @@ const { JudgeEngine } = require('../judge/engine');
 const { VERDICTS } = require('../judge/verdicts');
 const { sequelize } = require('../config/db');
 const { CodingSubmission, CodingProblem, CodingTestCase } = require('../models');
+const { checkRequiredConcepts } = require('../services/requiredConceptValidator');
 const relay = require('../socket/crossInstance');
 const logger = require('../utils/logger');
 
@@ -35,8 +36,9 @@ async function evaluateSubmission({ submissionId, attemptId, problemId, code, la
     const compileError = evalResult.results.find(r => r.verdict === VERDICTS.COMPILATION_ERROR)?.error || '';
     const runtimeError = evalResult.results.find(r => r.verdict === VERDICTS.RUNTIME_ERROR)?.error || '';
 
-    const problem = problemId ? await CodingProblem.findByPk(problemId, { attributes: ['marks'], transaction: t }) : null;
+    const problem = problemId ? await CodingProblem.findByPk(problemId, { attributes: ['marks', 'requiredConcepts'], transaction: t }) : null;
     const problemMarks = problem?.marks || 10;
+    const conceptValidation = checkRequiredConcepts(code, language, problem?.requiredConcepts || []);
 
     let score = 0;
     if (totalTestCases > 0) {
@@ -49,17 +51,25 @@ async function evaluateSubmission({ submissionId, attemptId, problemId, code, la
       score = totalWeight > 0 ? Math.min(Math.round((earnedWeight / totalWeight) * problemMarks * 100) / 100, problemMarks) : 0;
     }
 
+    let finalVerdict = evalResult.verdict;
+    let finalError = runtimeError;
+    if (evalResult.verdict === VERDICTS.ACCEPTED && !conceptValidation.ok) {
+      finalVerdict = 'FAILED_REQUIREMENTS';
+      score = 0;
+      finalError = conceptValidation.message || 'Required concept missing from solution';
+    }
+
     const outputResults = evalResult.results.map((r, i) => ({
       testCaseId: testCases[i]?.id || null,
       input: testCases[i]?.isHidden ? '[Hidden]' : (testCases[i]?.input || ''),
       expectedOutput: testCases[i]?.isHidden ? '[Hidden]' : (testCases[i]?.expectedOutput || ''),
       actualOutput: testCases[i]?.isHidden ? (r.verdict === VERDICTS.ACCEPTED ? '[Passed]' : '[Failed]') : (r.actualOutput || ''),
-      verdict: r.verdict,
-      passed: r.verdict === VERDICTS.ACCEPTED,
+      verdict: (!conceptValidation.ok && r.verdict === VERDICTS.ACCEPTED) ? 'FAILED_REQUIREMENTS' : r.verdict,
+      passed: r.verdict === VERDICTS.ACCEPTED && conceptValidation.ok,
       executionTime: r.executionTime,
       memoryUsed: r.memoryUsed,
       isHidden: testCases[i]?.isHidden || false,
-      error: r.error || null,
+      error: r.error || (!conceptValidation.ok ? conceptValidation.message : null),
       compileOutput: r.compileOutput || null,
     }));
 
@@ -73,25 +83,32 @@ async function evaluateSubmission({ submissionId, attemptId, problemId, code, la
     const failedIndex = outputResults.findIndex(r => !r.passed);
 
     await submission.update({
-      status: evalResult.verdict,
+      status: finalVerdict,
       totalTestCases,
-      passedTestCases,
+      passedTestCases: conceptValidation.ok ? passedTestCases : 0,
       executionTime: evalResult.maxExecutionTime,
       memoryUsed: evalResult.maxMemory,
       score,
       output: outputResults,
       compilerOutput: compileOutput || compileError || null,
-      errorMessage: runtimeError || null,
+      errorMessage: finalError || null,
       failedTestCase: failedIndex >= 0 ? failedIndex + 1 : null,
     }, { transaction: t });
 
     await t.commit();
 
     await emitProgress(io, submissionId, {
-      status: evalResult.verdict,
-      message: `Evaluation complete: ${evalResult.verdict}`,
+      status: finalVerdict,
+      message: !conceptValidation.ok ? finalError : `Evaluation complete: ${finalVerdict}`,
       testCase: totalTestCases,
       totalTestCases,
+      passedTestCases: conceptValidation.ok ? passedTestCases : 0,
+      score,
+      executionTime: evalResult.maxExecutionTime,
+      memoryUsed: evalResult.maxMemory,
+      results: outputResults,
+      conceptValidation,
+    });
       passedTestCases,
       score,
       executionTime: evalResult.maxExecutionTime,

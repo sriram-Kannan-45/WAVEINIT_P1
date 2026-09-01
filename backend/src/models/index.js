@@ -93,10 +93,12 @@ const QuizRecording = require('./quizRecording');
 // Coding Assessment module
 const CodingAssessment = require('./codingAssessment');
 const CodingProblem = require('./codingProblem');
+const CodingProblemLanguage = require('./codingProblemLanguage');
 const CodingTestCase = require('./codingTestCase');
 const CodingAttempt = require('./codingAttempt');
 const CodingSubmission = require('./codingSubmission');
 const CodingResult = require('./codingResult');
+const CodingAiHelp = require('./codingAiHelp');
 
 // Registration Application module
 const RegistrationApplication = require('./registrationApplication');
@@ -410,8 +412,11 @@ CodingAssessment.hasMany(CodingAttempt, { foreignKey: 'assessmentId', as: 'attem
 CodingAssessment.hasMany(CodingResult, { foreignKey: 'assessmentId', as: 'results' });
 
 CodingProblem.belongsTo(CodingAssessment, { foreignKey: 'assessmentId', as: 'assessment' });
+CodingProblem.hasMany(CodingProblemLanguage, { foreignKey: 'problemId', as: 'languages' });
 CodingProblem.hasMany(CodingTestCase, { foreignKey: 'problemId', as: 'testCases' });
 CodingProblem.hasMany(CodingSubmission, { foreignKey: 'problemId', as: 'submissions' });
+
+CodingProblemLanguage.belongsTo(CodingProblem, { foreignKey: 'problemId', as: 'problem' });
 
 CodingTestCase.belongsTo(CodingProblem, { foreignKey: 'problemId', as: 'problem' });
 
@@ -422,6 +427,12 @@ CodingAttempt.hasOne(CodingResult, { foreignKey: 'attemptId', as: 'result' });
 
 CodingSubmission.belongsTo(CodingAttempt, { foreignKey: 'attemptId', as: 'attempt' });
 CodingSubmission.belongsTo(CodingProblem, { foreignKey: 'problemId', as: 'problem' });
+
+CodingAiHelp.belongsTo(CodingAttempt, { foreignKey: 'attemptId', as: 'attempt' });
+CodingAiHelp.belongsTo(CodingProblem, { foreignKey: 'problemId', as: 'problem' });
+CodingAiHelp.belongsTo(User, { foreignKey: 'participantId', as: 'participant' });
+CodingAttempt.hasMany(CodingAiHelp, { foreignKey: 'attemptId', as: 'aiHelps' });
+CodingProblem.hasMany(CodingAiHelp, { foreignKey: 'problemId', as: 'aiHelps' });
 
 CodingResult.belongsTo(CodingAttempt, { foreignKey: 'attemptId', as: 'attempt' });
 CodingResult.belongsTo(CodingAssessment, { foreignKey: 'assessmentId', as: 'assessment' });
@@ -596,10 +607,12 @@ module.exports = {
   // Coding Assessment module
   CodingAssessment,
   CodingProblem,
+  CodingProblemLanguage,
   CodingTestCase,
   CodingAttempt,
   CodingSubmission,
   CodingResult,
+  CodingAiHelp,
   RegistrationApplication,
   // User Profile module
   UserProfile,

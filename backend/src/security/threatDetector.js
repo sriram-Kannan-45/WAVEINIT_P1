@@ -19,13 +19,14 @@ const { logAudit, ACTIONS } = require('./auditLogger');
 const SQL_INJECTION_PATTERNS = [
   /(\bUNION\s+(ALL\s+)?SELECT\b)/i,
   /(\b(DROP|TRUNCATE|ALTER)\s+(TABLE|DATABASE|SCHEMA)\b)/i,
-  /(\bINSERT\s+INTO\b)/i,
+  /(\bINSERT\s+INTO\s+[`"']?\w+[`"']?\s*(?:\([^)]+\))?\s*VALUES\b)/i,
   /(\bSELECT\b[\s\S]+\bFROM\b[\s\S]+\b(WHERE|JOIN|GROUP\s+BY|ORDER\s+BY)\b)/i,
-  /(\bUPDATE\b[\s\S]+\bSET\b[\s\S]+\bWHERE\b)/i,
-  /(\bDELETE\s+FROM\b)/i,
-  /(--|;|\/\*|\*\/|xp_|sp_executesql)/i,
+  /(\bUPDATE\b\s+[`"']?\w+[`"']?\s+SET\b[\s\S]+\bWHERE\b)/i,
+  /(\bDELETE\s+FROM\s+[`"']?\w+[`"']?\s+WHERE\b)/i,
+  /(;\s*(SELECT|INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|EXEC|UNION)\b)/i,
+  /(\b(xp_cmdshell|sp_executesql)\b)/i,
   /('(\s*--|\s*#|\s*\/\*))/,
-  /(\bOR\b\s+['"\d]+\s*=\s*['"\d]+)/i,
+  /(\b(OR|AND)\b\s+['"\d]+\s*=\s*['"\d]+)/i,
   /(CHAR\(|CONCAT\(|0x[0-9a-f]+)/i,
 ];
 
@@ -105,7 +106,21 @@ function recordThreat(ip, type, details = {}) {
   }
 }
 
-const SENSITIVE_AUTH_FIELDS = new Set(['password', 'newPassword', 'oldPassword', 'confirmPassword', 'currentPassword']);
+const EXEMPT_CODE_FIELDS = new Set([
+  'password', 'newPassword', 'oldPassword', 'confirmPassword', 'currentPassword',
+  'starterCode', 'referenceSolution', 'expectedSolution', 'code', 'sourceCode',
+  'submissionCode', 'customConcept', 'testCases', 'input', 'output', 'expectedOutput',
+  'sampleInput', 'sampleOutput', 'compilerOutput', 'prompt', 'explanation',
+  'description', 'instructions', 'content', 'solution', 'solutions',
+  'languageSolutions', 'languages', 'requiredConcepts', 'errorContext', 'studentCode',
+  'codeSnippet', 'starter_code', 'reference_solution', 'expected_solution', 'topic',
+  'body', 'question', 'options', 'test_cases', 'testCase', 'test_case',
+]);
+
+const isCodingRoute = (url = '') => {
+  if (!url) return false;
+  return /^\/api\/(?:coding|judge|interview|ai-quiz|quiz|exam)/i.test(url);
+};
 
 // Base64-encoded media payloads (webcam frames, recordings, uploads) are treated
 // as opaque binary blobs. Their byte sequences can legitimately contain substrings
@@ -120,6 +135,10 @@ function isBinaryPayload(str) {
 
 // ── Middleware: SQL injection detection ─────────────────────────────────────
 function detectSqlInjection(req, res, next) {
+  if (isCodingRoute(req.originalUrl || req.baseUrl || req.path)) {
+    return next();
+  }
+
   const checkString = (str) => {
     if (typeof str !== 'string') return false;
     if (isBinaryPayload(str)) return false;
@@ -129,7 +148,7 @@ function detectSqlInjection(req, res, next) {
   const checkObject = (obj) => {
     if (!obj || typeof obj !== 'object') return false;
     for (const [key, value] of Object.entries(obj)) {
-      if (SENSITIVE_AUTH_FIELDS.has(key)) continue; // Never check raw password payloads
+      if (EXEMPT_CODE_FIELDS.has(key)) continue;
       if (typeof value === 'string' && checkString(value)) return true;
       if (typeof value === 'object' && checkObject(value)) return true;
     }
@@ -161,6 +180,10 @@ function detectSqlInjection(req, res, next) {
 
 // ── Middleware: XSS detection ──────────────────────────────────────────────
 function detectXss(req, res, next) {
+  if (isCodingRoute(req.originalUrl || req.baseUrl || req.path)) {
+    return next();
+  }
+
   const checkString = (str) => {
     if (typeof str !== 'string') return false;
     return XSS_PATTERNS.some(p => p.test(str));
@@ -169,7 +192,7 @@ function detectXss(req, res, next) {
   const checkObject = (obj) => {
     if (!obj || typeof obj !== 'object') return false;
     for (const [key, value] of Object.entries(obj)) {
-      if (SENSITIVE_AUTH_FIELDS.has(key)) continue; // Never check raw password payloads
+      if (EXEMPT_CODE_FIELDS.has(key)) continue;
       if (typeof value === 'string' && checkString(value)) return true;
       if (typeof value === 'object' && checkObject(value)) return true;
     }

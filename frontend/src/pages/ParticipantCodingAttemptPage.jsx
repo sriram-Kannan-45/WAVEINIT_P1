@@ -7,17 +7,36 @@ import { useToast } from '../components/Toast'
 import { useConfirm } from '../components/ui/AlertModal'
 import { ProctorProvider, useProctor } from '../proctoring/ProctorContext'
 import useDeviceFingerprint from '../proctoring/hooks/useDeviceFingerprint'
-import { Loader2, AlertCircle, Play, Check, Clock, Send, Save, Terminal, Bug, Trash2, CheckCircle2, XCircle } from 'lucide-react'
+import { Loader2, AlertCircle, Play, Check, Clock, Send, Save, Terminal, Bug, Trash2, CheckCircle2, XCircle, ChevronRight, Award, Sparkles } from 'lucide-react'
 import CodeEditor from '../components/CodeEditor'
 import ProblemPanel from '../components/ProblemPanel'
+import CodingAiAssistant from '../components/CodingAiAssistant'
 import ExamProctorShell from '../proctoring/components/ExamProctorShell'
 import monitoringClient from '../proctoring/engine/MonitoringEngineClient'
 import { io as socketIO } from 'socket.io-client'
 
-const STORAGE_PREFIX = 'coding_attempt_'
+const STORAGE_PREFIX = 'coding_attempt_state_'
 const AUTO_SAVE_INTERVAL = 10000
 const SERVER_SAVE_INTERVAL = 30000
 const WS_URL = BACKEND_ORIGIN
+
+// ── Structured Debug Logger ──
+const DEBUG_PREFIX = '[CodingAssessment Debug]'
+let apiCallCounter = 0
+let debugEnabled = false
+const setDebugLogEnabled = (v) => { debugEnabled = v }
+const debugLog = {
+  info: (...args) => { if (debugEnabled) console.log(`%c${DEBUG_PREFIX}`, 'color: #10B981; font-weight: bold;', ...args) },
+  warn: (...args) => { if (debugEnabled) console.warn(`%c${DEBUG_PREFIX}`, 'color: #F59E0B; font-weight: bold;', ...args) },
+  error: (...args) => { if (debugEnabled) console.error(`%c${DEBUG_PREFIX}`, 'color: #EF4444; font-weight: bold;', ...args) },
+  api: (action, details) => {
+    if (!debugEnabled) return
+    apiCallCounter++
+    console.log(`%c${DEBUG_PREFIX} [API Call #${apiCallCounter}]`, 'color: #3B82F6; font-weight: bold;', action, details || '')
+  },
+  nav: (from, to, reason) => { if (debugEnabled) console.log(`%c${DEBUG_PREFIX} [NAVIGATION]`, 'color: #8B5CF6; font-weight: bold;', `Question ${from} ➔ Question ${to}`, reason ? `(${reason})` : '') },
+  perf: (label, durationMs) => { if (debugEnabled) console.log(`%c${DEBUG_PREFIX} [PERFORMANCE]`, 'color: #EC4899; font-weight: bold;', `${label}: ${(durationMs / 1000).toFixed(2)}s (${durationMs.toFixed(0)}ms)`) },
+}
 
 const authHeaders = (token) => ({
   'Content-Type': 'application/json',
@@ -43,6 +62,60 @@ const LANGUAGE_MAP = {
   rust: 'rust', php: 'php', kotlin: 'kotlin',
 }
 
+const LANGUAGE_LABELS = {
+  javascript: 'JavaScript', python: 'Python', java: 'Java', cpp: 'C++',
+  c: 'C', csharp: 'C#', typescript: 'TypeScript', go: 'Go',
+  rust: 'Rust', php: 'PHP', kotlin: 'Kotlin',
+}
+
+const languageLabel = (id) => LANGUAGE_LABELS[id] || id || ''
+
+function createInitialQuestionState(problem, saved = null, latestSub = null) {
+  const langConfigs = Array.isArray(problem?.languages) ? problem.languages : []
+  const langMap = {}
+  langConfigs.forEach(l => { langMap[l.language] = l.starterCode || '' })
+  const starterFor = (lang) => langMap[lang] ?? problem?.starterCode ?? ''
+
+  const lang = saved?.language || latestSub?.language || problem?.allowedLanguages?.[0] || problem?.programmingLanguage || problem?.language || 'javascript'
+  const code = saved?.code ?? (latestSub?.code || starterFor(lang))
+  const lastSubmittedCode = latestSub?.code || (saved?.isCompleted ? saved.lastSubmittedCode || code : '')
+  const isCompleted = Boolean(latestSub?.status && latestSub.status !== 'PENDING' && latestSub.totalTestCases > 0) || Boolean(saved?.isCompleted)
+  const isModified = Boolean(isCompleted && code && lastSubmittedCode && code !== lastSubmittedCode)
+  const status = isCompleted ? (isModified ? 'in_progress' : 'completed') : (saved?.status || (code && code !== starterFor(lang) ? 'in_progress' : 'not_started'))
+
+  return {
+    id: problem.id,
+    code,
+    savedCode: code,
+    lastSubmittedCode,
+    language: lang,
+    drafts: saved?.drafts || {},
+    status,
+    isCompleted,
+    isSubmitting: false,
+    isModified,
+    output: saved?.output || latestSub?.compilerOutput || latestSub?.errorMessage || '',
+    sampleResults: saved?.sampleResults || latestSub?.results || [],
+    runStatus: saved?.runStatus || '',
+    runTime: saved?.runTime ?? latestSub?.executionTime ?? null,
+    runMemory: saved?.runMemory ?? latestSub?.memoryUsed ?? null,
+    submitVerdict: saved?.submitVerdict || latestSub?.status || null,
+    submitScore: saved?.submitScore ?? (latestSub?.score != null ? latestSub.score : null),
+    submitPassed: saved?.submitPassed ?? (latestSub?.passedTestCases != null ? latestSub.passedTestCases : null),
+    submitTotal: saved?.submitTotal ?? (latestSub?.totalTestCases != null ? latestSub.totalTestCases : null),
+    submissionId: saved?.submissionId || latestSub?.id || null,
+    judgeStatus: null,
+    activeTab: saved?.activeTab || 'output',
+    customInput: saved?.customInput || '',
+  }
+}
+
+function getLangStarter(problem, lang) {
+  const langConfigs = Array.isArray(problem?.languages) ? problem.languages : []
+  const found = langConfigs.find(l => l.language === lang)
+  return (found && found.starterCode) || problem?.starterCode || ''
+}
+
 function ParticipantCodingAttemptInner({ user }) {
   const navigate = useNavigate()
   const { trainingId, assessmentId } = useParams()
@@ -63,10 +136,10 @@ function ParticipantCodingAttemptInner({ user }) {
       const cached = sessionStorage.getItem(storageKey)
       if (cached) {
         try {
-          const p = JSON.parse(cached);
-          attemptId = attemptId || p.attemptId;
-          sessionToken = sessionToken || p.sessionToken;
-          monitoringSessionId = monitoringSessionId || p.monitoringSessionId;
+          const p = JSON.parse(cached)
+          attemptId = attemptId || p.attemptId
+          sessionToken = sessionToken || p.sessionToken
+          monitoringSessionId = monitoringSessionId || p.monitoringSessionId
         } catch {}
       }
     }
@@ -78,50 +151,50 @@ function ParticipantCodingAttemptInner({ user }) {
   const [errorMsg, setErrorMsg] = useState(null)
   const [assessment, setAssessment] = useState(null)
   const [problems, setProblems] = useState([])
-  const [qrVerified, setQrVerified] = useState(false)
-  const [verifSessionInfo, setVerifSessionInfo] = useState(null)
   const [consented, setConsented] = useState(false)
   const [sharedCamStream, setSharedCamStream] = useState(null)
   const [resolvedMonitoringSessionId, setResolvedMonitoringSessionId] = useState(monitoringSessionId || null)
 
   const [currentProblemIndex, setCurrentProblemIndex] = useState(0)
-  const [codeByProblem, setCodeByProblem] = useState({})
-  const [languageByProblem, setLanguageByProblem] = useState({})
-  const [output, setOutput] = useState('')
-  const [sampleResults, setSampleResults] = useState([])
-  const [runStatus, setRunStatus] = useState('')
-  const [runTime, setRunTime] = useState(null)
-  const [runMemory, setRunMemory] = useState(null)
-  const [submitVerdict, setSubmitVerdict] = useState(null)
-  const [submitScore, setSubmitScore] = useState(null)
-  const [submitPassed, setSubmitPassed] = useState(null)
-  const [submitTotal, setSubmitTotal] = useState(null)
-  const [submissionId, setSubmissionId] = useState(null)
+  const [questionState, setQuestionState] = useState({})
   const [running, setRunning] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [submitAllProgress, setSubmitAllProgress] = useState(null)
   const [submitted, setSubmitted] = useState(false)
   const [timeLeft, setTimeLeft] = useState(null)
   const [saveStatus, setSaveStatus] = useState('')
-  const [restoring, setRestoring] = useState(false)
-  const [customInput, setCustomInput] = useState('')
   const [showCustomInput, setShowCustomInput] = useState(false)
-  const [activeTab, setActiveTab] = useState('output')
-  const [judgeStatus, setJudgeStatus] = useState(null)
+  const [debugMode, setDebugMode] = useState(() => {
+    try { return sessionStorage.getItem('coding_debug_mode') === '1' } catch { return false }
+  })
 
   const timerRef = useRef(null)
   const autoSaveRef = useRef(null)
   const serverSaveRef = useRef(null)
-  const codeByProblemRef = useRef(codeByProblem)
+  const questionStateRef = useRef(questionState)
   const socketRef = useRef(null)
   const startTimeRef = useRef(null)
   const runningRef = useRef(false)
   const submittingRef = useRef(false)
   const submittedRef = useRef(false)
+  const activeSubmissionPollingRef = useRef({})
 
-  useEffect(() => { codeByProblemRef.current = codeByProblem }, [codeByProblem])
+  useEffect(() => { questionStateRef.current = questionState }, [questionState])
   useEffect(() => { submittedRef.current = submitted }, [submitted])
+  useEffect(() => { setDebugLogEnabled(Boolean(debugMode)) }, [debugMode])
 
-  // Socket.IO connection for submission progress
+  const currentProblem = problems[currentProblemIndex] || null
+  const currentQState = currentProblem ? questionState[currentProblem.id] || {} : {}
+
+  const updateQuestion = useCallback((problemId, updates) => {
+    setQuestionState(prev => {
+      const existing = prev[problemId] || {}
+      const merged = { ...existing, ...updates }
+      return { ...prev, [problemId]: merged }
+    })
+  }, [])
+
+  // ── Socket.IO Connection & Live Updates ──
   useEffect(() => {
     if (!user?.token) return
     try {
@@ -130,194 +203,567 @@ function ParticipantCodingAttemptInner({ user }) {
         transports: ['websocket', 'polling'],
       })
       sock.on('connect', () => {
-        console.log('[Coding WS] Connected')
+        debugLog.info('WebSocket connected for coding evaluation')
         if (attemptId) sock.emit('coding:join', { assessmentId, participantId: user.id })
       })
+
       sock.on('submission:progress', (data) => {
-        if (data.submissionId === submissionId || !submissionId) {
-          if (data.status === 'PENDING' || data.status === 'QUEUED') setJudgeStatus('Queued...')
-          else if (data.status === 'COMPILING') setJudgeStatus('Compiling...')
-          else if (data.status === 'RUNNING') setJudgeStatus(data.message || 'Running...')
-          else if (data.status && ['ACCEPTED', 'WRONG_ANSWER', 'TIME_LIMIT_EXCEEDED', 'MEMORY_LIMIT_EXCEEDED', 'RUNTIME_ERROR', 'COMPILATION_ERROR', 'INTERNAL_ERROR'].includes(data.status)) {
-            setJudgeStatus(null)
-            setSubmitVerdict(data.status)
-            setSubmitPassed(data.passedTestCases)
-            setSubmitTotal(data.totalTestCases)
-            setSubmitScore(data.score)
-            if (data.results) setSampleResults(data.results.filter(r => !r.isHidden))
+        if (!data?.submissionId) return
+        debugLog.info('WebSocket progress received:', data)
+
+        setQuestionState(prev => {
+          let targetProblemId = null
+          for (const [pId, q] of Object.entries(prev)) {
+            if (q.submissionId === data.submissionId || q.isSubmitting) {
+              targetProblemId = Number(pId)
+              break
+            }
           }
-        }
+          if (!targetProblemId) return prev
+
+          const currentQ = prev[targetProblemId]
+          const isDone = data.status && ['ACCEPTED', 'WRONG_ANSWER', 'TIME_LIMIT_EXCEEDED', 'MEMORY_LIMIT_EXCEEDED', 'RUNTIME_ERROR', 'COMPILATION_ERROR', 'INTERNAL_ERROR', 'FAILED'].includes(data.status)
+
+          let judgeStatus = null
+          if (!isDone) {
+            if (data.status === 'PENDING' || data.status === 'QUEUED') judgeStatus = 'Queued...'
+            else if (data.status === 'COMPILING') judgeStatus = 'Compiling...'
+            else if (data.status === 'RUNNING') judgeStatus = data.message || 'Running test cases...'
+          }
+
+          const updatedQ = {
+            ...currentQ,
+            judgeStatus,
+            ...(isDone ? {
+              isSubmitting: false,
+              isCompleted: true,
+              status: 'completed',
+              isModified: false,
+              lastSubmittedCode: currentQ.code,
+              submitVerdict: data.status,
+              submitPassed: data.passedTestCases ?? currentQ.submitPassed,
+              submitTotal: data.totalTestCases ?? currentQ.submitTotal,
+              submitScore: data.score ?? currentQ.submitScore,
+              sampleResults: data.results ? data.results.filter(r => !r.isHidden) : currentQ.sampleResults,
+              output: data.compilerOutput || data.errorMessage || currentQ.output,
+            } : {})
+          }
+
+          if (isDone) {
+            debugLog.info(`Evaluation completed via WebSocket for Problem ${targetProblemId}: Verdict ${data.status}`)
+          }
+
+          return { ...prev, [targetProblemId]: updatedQ }
+        })
       })
-      sock.on('coding:result-update', (data) => {
-        console.log('[Coding WS] Result update', data)
-      })
-      sock.on('disconnect', () => console.log('[Coding WS] Disconnected'))
+
+      sock.on('disconnect', () => debugLog.warn('WebSocket disconnected'))
       socketRef.current = sock
-    } catch (e) { console.warn('[Coding WS] Failed to connect', e) }
-    return () => { if (socketRef.current) { socketRef.current.disconnect(); socketRef.current = null } }
-  }, [user?.token, assessmentId, user?.id, submissionId, attemptId])
-
-  useEffect(() => {
-    if (submissionId && socketRef.current?.connected) {
-      socketRef.current.emit('submission:subscribe', { submissionId })
-      return () => socketRef.current?.emit('submission:unsubscribe', { submissionId })
+    } catch (e) {
+      debugLog.warn('Failed to connect WebSocket', e)
     }
-  }, [submissionId])
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect()
+        socketRef.current = null
+      }
+    }
+  }, [user?.token, assessmentId, user?.id, attemptId])
 
+  // ── Load Assessment & Initialize Per-Question State ──
   useEffect(() => {
     if (!assessmentId || !attemptId) {
-      setErrorMsg('Invalid assessment or attempt identifiers.'); setLoading(false); return
+      setErrorMsg('Invalid assessment or attempt identifiers.')
+      setLoading(false)
+      return
     }
     let aborted = false
     const fetchAssessment = async () => {
       try {
         setLoading(true)
-        const res = await fetch(`${API_BASE}/coding/assessments/${assessmentId}`, { headers: { Authorization: `Bearer ${user.token}` } })
+        debugLog.api('GET /coding/assessments/:id', { assessmentId })
+        const res = await fetch(`${API_BASE}/coding/assessments/${assessmentId}`, {
+          headers: { Authorization: `Bearer ${user.token}` }
+        })
         const data = await res.json()
         if (aborted) return
-        if (!res.ok) { setErrorMsg(data.error || 'Failed to load assessment.'); setLoading(false); return }
-        const a = data.assessment; setAssessment(a); setProblems(a.problems || [])
-        const savedState = loadSavedState(attemptId); const savedCodes = {}; const savedLanguages = {}; const now = Date.now()
-        ;(a.problems || []).forEach(p => {
-          const existing = savedState?.codes?.[p.id]
-          savedCodes[p.id] = existing || p.starterCode || ''
-          savedLanguages[p.id] = savedState?.languages?.[p.id] || p.programmingLanguage || p.language || 'javascript'
+        if (!res.ok) {
+          setErrorMsg(data.error || 'Failed to load assessment.')
+          setLoading(false)
+          return
+        }
+
+        const a = data.assessment
+        const problemList = a.problems || []
+        setAssessment(a)
+        setProblems(problemList)
+
+        // Load saved state from localStorage
+        const savedState = loadSavedState(attemptId)
+        const initialQState = {}
+
+        problemList.forEach(p => {
+          const savedQ = savedState?.questions?.[p.id] || null
+          const latestSub = p.latestSubmission || null
+          initialQState[p.id] = createInitialQuestionState(p, savedQ, latestSub)
         })
-        setCodeByProblem(savedCodes); setLanguageByProblem(savedLanguages)
-        if (savedState?.startedAt) { startTimeRef.current = savedState.startedAt; const elapsed = Math.floor((now - savedState.startedAt) / 1000); const total = (a.timeLimit || 60) * 60; setTimeLeft(Math.max(0, total - elapsed)) }
-        else { startTimeRef.current = now; setTimeLeft((a.timeLimit || 60) * 60) }
-        setCurrentProblemIndex(savedState?.currentProblem ?? 0)
-        setLoading(false); setRestoring(false)
-      } catch (err) { if (!aborted) { setErrorMsg(err.message || 'Server error loading assessment.'); setLoading(false) } }
+
+        setQuestionState(initialQState)
+        debugLog.info(`Loaded ${problemList.length} questions into state`, initialQState)
+
+        const now = Date.now()
+        if (savedState?.startedAt) {
+          startTimeRef.current = savedState.startedAt
+          const elapsed = Math.floor((now - savedState.startedAt) / 1000)
+          const total = (a.timeLimit || 60) * 60
+          setTimeLeft(Math.max(0, total - elapsed))
+        } else {
+          startTimeRef.current = now
+          setTimeLeft((a.timeLimit || 60) * 60)
+        }
+
+        // Determine starting problem index: first incomplete problem or saved index
+        let startingIdx = 0
+        if (savedState?.currentProblemIndex != null && savedState.currentProblemIndex < problemList.length) {
+          startingIdx = savedState.currentProblemIndex
+        } else {
+          const firstIncomplete = problemList.findIndex(p => !initialQState[p.id]?.isCompleted)
+          startingIdx = firstIncomplete !== -1 ? firstIncomplete : 0
+        }
+        setCurrentProblemIndex(startingIdx)
+        debugLog.info(`Starting at Question index ${startingIdx + 1}`)
+
+        setLoading(false)
+      } catch (err) {
+        if (!aborted) {
+          setErrorMsg(err.message || 'Server error loading assessment.')
+          setLoading(false)
+        }
+      }
     }
     fetchAssessment()
     return () => { aborted = true }
   }, [assessmentId, attemptId, user.token])
 
-  function loadSavedState(attId) { try { const raw = localStorage.getItem(getStorageKey(attId)); return raw ? JSON.parse(raw) : null } catch { return null } }
+  function loadSavedState(attId) {
+    try {
+      const raw = localStorage.getItem(getStorageKey(attId))
+      return raw ? JSON.parse(raw) : null
+    } catch {
+      return null
+    }
+  }
+
   function persistState() {
     if (!attemptId) return
-    try { localStorage.setItem(getStorageKey(attemptId), JSON.stringify({ codes: codeByProblemRef.current, languages: languageByProblem, currentProblem: currentProblemIndex, startedAt: startTimeRef.current || Date.now(), updatedAt: Date.now() })) } catch {}
+    try {
+      localStorage.setItem(getStorageKey(attemptId), JSON.stringify({
+        questions: questionStateRef.current,
+        currentProblemIndex,
+        startedAt: startTimeRef.current || Date.now(),
+        updatedAt: Date.now()
+      }))
+    } catch {}
   }
-  const autoSaveCallback = useCallback(() => { persistState(); setSaveStatus('Saved'); setTimeout(() => setSaveStatus(prev => prev === 'Saved' ? '' : prev), 2000) }, [attemptId, currentProblemIndex, languageByProblem])
-  useEffect(() => { if (!attemptId || submitted) return; autoSaveRef.current = setInterval(autoSaveCallback, AUTO_SAVE_INTERVAL); return () => clearInterval(autoSaveRef.current) }, [attemptId, submitted, autoSaveCallback])
 
-  const saveToServer = useCallback(async () => {
-    if (!attemptId || !user?.token || submittingRef.current || submittedRef.current) return
-    for (const [problemId, code] of Object.entries(codeByProblemRef.current)) {
-      try {
-        const headers = { ...authHeaders(user.token), 'Content-Type': 'application/json' }
-        if (sessionToken) headers['X-Assessment-Session'] = sessionToken
-        await fetch(`${API_BASE}/coding/participant/save`, { method: 'POST', headers, body: JSON.stringify({ attemptId: Number(attemptId), problemId: Number(problemId), code, language: languageByProblem[Number(problemId)] || problems.find(p => p.id === Number(problemId))?.programmingLanguage || 'javascript' }) })
-      } catch {}
-    }
-  }, [attemptId, user?.token, sessionToken, problems, languageByProblem])
-  useEffect(() => { if (!attemptId || submitted) return; serverSaveRef.current = setInterval(saveToServer, SERVER_SAVE_INTERVAL); return () => clearInterval(serverSaveRef.current) }, [attemptId, submitted, saveToServer])
+  const autoSaveCallback = useCallback(() => {
+    persistState()
+    setSaveStatus('Saved')
+    setTimeout(() => setSaveStatus(prev => prev === 'Saved' ? '' : prev), 2000)
+  }, [attemptId, currentProblemIndex])
 
   useEffect(() => {
+    if (!attemptId || submitted) return
+    autoSaveRef.current = setInterval(autoSaveCallback, AUTO_SAVE_INTERVAL)
+    return () => clearInterval(autoSaveRef.current)
+  }, [attemptId, submitted, autoSaveCallback])
+
+  // ── Optimized Batch Save to Server ──
+  const saveToServer = useCallback(async () => {
+    if (!attemptId || !user?.token || submittingRef.current || submittedRef.current) return
+    const saves = []
+    for (const [problemId, q] of Object.entries(questionStateRef.current)) {
+      if (q.code) {
+        saves.push({
+          problemId: Number(problemId),
+          code: q.code,
+          language: q.language || 'javascript'
+        })
+      }
+    }
+    if (saves.length === 0) return
+
+    try {
+      const headers = { ...authHeaders(user.token), 'Content-Type': 'application/json' }
+      if (sessionToken) headers['X-Assessment-Session'] = sessionToken
+
+      debugLog.api('POST /coding/participant/save-batch', { count: saves.length })
+      await fetch(`${API_BASE}/coding/participant/save-batch`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ attemptId: Number(attemptId), saves })
+      })
+    } catch (err) {
+      debugLog.warn('Background save error:', err.message)
+    }
+  }, [attemptId, user?.token, sessionToken])
+
+  useEffect(() => {
+    if (!attemptId || submitted) return
+    serverSaveRef.current = setInterval(saveToServer, SERVER_SAVE_INTERVAL)
+    return () => clearInterval(serverSaveRef.current)
+  }, [attemptId, submitted, saveToServer])
+
+  // ── Timer & Auto-Submit on Expiry ──
+  useEffect(() => {
     if (timeLeft == null || submitted) return
-    timerRef.current = setInterval(() => { setTimeLeft(prev => { if (prev <= 1) { clearInterval(timerRef.current); return 0 } return prev - 1 }) }, 1000)
+    timerRef.current = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(timerRef.current)
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
     return () => clearInterval(timerRef.current)
   }, [timeLeft, submitted])
 
-  useEffect(() => { if (timeLeft === 0 && !submitted && !submittedRef.current) handleSubmit(true) }, [timeLeft])
+  useEffect(() => {
+    if (timeLeft === 0 && !submitted && !submittedRef.current) {
+      debugLog.warn('Time limit reached. Auto-submitting assessment...')
+      handleSubmit(true)
+    }
+  }, [timeLeft])
 
-  const formatTime = (s) => { const m = Math.floor(s / 60); const sec = s % 60; return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}` }
+  const formatTime = (s) => {
+    const m = Math.floor(s / 60)
+    const sec = s % 60
+    return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
+  }
 
   const [testStartedAt, setTestStartedAt] = useState(() => {
     try {
-      const cached = sessionStorage.getItem(`coding_${assessmentId}_test_start_${attemptId}`);
-      return cached ? parseInt(cached, 10) : null;
+      const cached = sessionStorage.getItem(`coding_${assessmentId}_test_start_${attemptId}`)
+      return cached ? parseInt(cached, 10) : null
     } catch {
-      return null;
+      return null
     }
-  });
+  })
 
   const handleConsented = useCallback((stream) => {
-    if (stream) setSharedCamStream(stream);
-    const start = Date.now();
-    setTestStartedAt(start);
+    if (stream) setSharedCamStream(stream)
+    const start = Date.now()
+    setTestStartedAt(start)
     try {
-      sessionStorage.setItem(`coding_${assessmentId}_test_start_${attemptId}`, String(start));
+      sessionStorage.setItem(`coding_${assessmentId}_test_start_${attemptId}`, String(start))
     } catch {}
     if (attemptId) {
-      monitoringClient.startActiveTestTimer(attemptId, (assessment?.timeLimit || 60) * 60);
+      monitoringClient.startActiveTestTimer(attemptId, (assessment?.timeLimit || 60) * 60)
     }
-    setConsented(true);
+    setConsented(true)
   }, [assessmentId, attemptId, assessment?.timeLimit])
 
   // Watch for focus/blur to pause/resume active duration tracking
   useEffect(() => {
-    if (!consented || submitted) return;
+    if (!consented || submitted) return
+    const onBlur = () => monitoringClient.pauseActiveTestTimer('TAB_SWITCH')
+    const onFocus = () => monitoringClient.resumeActiveTestTimer('RESUMED')
 
-    const onBlur = () => {
-      monitoringClient.pauseActiveTestTimer('TAB_SWITCH');
-    };
-    const onFocus = () => {
-      monitoringClient.resumeActiveTestTimer('RESUMED');
-    };
-
-    window.addEventListener('blur', onBlur);
-    window.addEventListener('focus', onFocus);
+    window.addEventListener('blur', onBlur)
+    window.addEventListener('focus', onFocus)
     return () => {
-      window.removeEventListener('blur', onBlur);
-      window.removeEventListener('focus', onFocus);
-    };
-  }, [consented, submitted]);
+      window.removeEventListener('blur', onBlur)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [consented, submitted])
 
   const handleCancel = useCallback(() => {
     const targetCourseId = assessment?.courseId || trainingId
     navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}&subtab=coding` : '/participant?tab=myEnrollments')
   }, [navigate, assessment, trainingId])
 
-  const currentProblem = problems[currentProblemIndex]
-  const handleCodeChange = (value) => { if (!currentProblem) return; setCodeByProblem(prev => ({ ...prev, [currentProblem.id]: value || '' })) }
-  const handleLanguageChange = (lang) => { if (!currentProblem) return; setLanguageByProblem(prev => ({ ...prev, [currentProblem.id]: lang })); persistState() }
+  // ── Code & Language Change Handlers ──
+  const handleCodeChange = (newCode) => {
+    if (!currentProblem) return
+    const pId = currentProblem.id
+    const existing = questionState[pId] || {}
+    const isModified = Boolean(existing.isCompleted && existing.lastSubmittedCode && newCode !== existing.lastSubmittedCode)
+    const status = isModified ? 'in_progress' : existing.status
 
-  // ── RUN CODE ──
+    updateQuestion(pId, {
+      code: newCode || '',
+      isModified,
+      status: status === 'not_started' ? 'in_progress' : status
+    })
+    persistState()
+  }
+
+  const handleLanguageChange = async (lang) => {
+    if (!currentProblem) return
+    const pId = currentProblem.id
+    const q = questionState[pId] || {}
+    const fromLang = q.language || currentProblem.programmingLanguage || 'javascript'
+    if (!lang || lang === fromLang) return
+
+    // Confirmation when switching would discard an unsaved draft in the new language.
+    const targetDraft = q.drafts?.[lang]
+    const hasUnsavedFromLang = Boolean(q.code && q.code !== getLangStarter(currentProblem, fromLang))
+    const confirmed = await confirm({
+      title: 'Switch Language',
+      message: `Switching to ${languageLabel(lang)}.${
+        targetDraft != null
+          ? ' Your previously saved draft for this language will be restored.'
+          : ' A new starter template will be loaded.'
+      }${hasUnsavedFromLang ? ' Your current code is preserved as a draft for ' + languageLabel(fromLang) + '.' : ''}`,
+      type: 'info',
+      confirmText: 'Switch',
+    })
+    if (!confirmed) return
+
+    const drafts = { ...(q.drafts || {}) }
+    drafts[fromLang] = q.code || ''
+    const newCode = targetDraft != null ? targetDraft : getLangStarter(currentProblem, lang)
+
+    updateQuestion(pId, {
+      language: lang,
+      drafts,
+      code: newCode || '',
+      savedCode: newCode || '',
+      // Results/verdict are language-specific; clear them on switch.
+      sampleResults: [],
+      runStatus: '',
+      runTime: null,
+      runMemory: null,
+      submitVerdict: null,
+      submitPassed: null,
+      submitTotal: null,
+      submitScore: null,
+      output: '',
+      judgeStatus: null,
+    })
+    persistState()
+  }
+
+  // ── RUN CODE (Sample Tests Only) ──
   const handleRunCode = async () => {
-    if (!currentProblem || runningRef.current || submittingRef.current || submittedRef.current) return
+    if (!currentProblem || runningRef.current || currentQState.isSubmitting || submittingRef.current || submittedRef.current) return
+    const pId = currentProblem.id
+    const q = questionState[pId] || {}
+
     runningRef.current = true
-    setRunning(true); setSampleResults([]); setRunStatus(''); setRunTime(null); setRunMemory(null)
-    setSubmitVerdict(null); setJudgeStatus('Running...'); setActiveTab('output')
-    await saveToServer()
+    setRunning(true)
+    updateQuestion(pId, {
+      sampleResults: [],
+      runStatus: '',
+      runTime: null,
+      runMemory: null,
+      submitVerdict: null,
+      judgeStatus: 'Running sample tests...',
+      activeTab: 'output'
+    })
+
+    const runStartTime = performance.now()
+    debugLog.api('POST /coding/participant/run', { problemId: pId, language: q.language })
+
     try {
       const headers = { ...authHeaders(user.token), 'Content-Type': 'application/json' }
       if (sessionToken) headers['X-Assessment-Session'] = sessionToken
+
       const res = await fetch(`${API_BASE}/coding/participant/run`, {
-        method: 'POST', headers,
-        body: JSON.stringify({ attemptId: Number(attemptId), problemId: currentProblem.id, code: codeByProblem[currentProblem.id] || '', language: languageByProblem[currentProblem.id] || currentProblem.programmingLanguage || 'javascript', timeLimit: currentProblem.timeLimit || 5, memoryLimit: currentProblem.memoryLimit || 256, input: showCustomInput ? customInput : undefined })
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          attemptId: Number(attemptId),
+          problemId: pId,
+          code: q.code || '',
+          language: q.language || currentProblem.programmingLanguage || 'javascript',
+          timeLimit: currentProblem.timeLimit || 5,
+          memoryLimit: currentProblem.memoryLimit || 256,
+          input: showCustomInput ? q.customInput : undefined
+        })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Code execution failed')
+
       const r = data.run
-      setSampleResults(r.sampleResults || [])
-      setRunStatus(r.status || '')
-      setRunTime(r.executionTime || 0)
-      setRunMemory(r.memoryUsed || 0)
-      setJudgeStatus(null)
+      const execDuration = performance.now() - runStartTime
+      debugLog.perf(`Question ${currentProblemIndex + 1} Run`, execDuration)
+
+      let outputText = ''
       if (r.compileOutput) {
-        setOutput(r.compileOutput)
+        outputText = r.compileOutput
       } else if (r.sampleResults?.length === 1 && !r.sampleResults[0].expectedOutput) {
-        setOutput(r.sampleResults[0].actualOutput || '')
+        outputText = r.sampleResults[0].actualOutput || ''
       }
-    } catch (err) { setJudgeStatus(null); setOutput(`Error: ${err.message}`) }
-    finally { runningRef.current = false; setRunning(false) }
+
+      updateQuestion(pId, {
+        sampleResults: r.sampleResults || [],
+        runStatus: r.status || '',
+        runTime: r.executionTime || 0,
+        runMemory: r.memoryUsed || 0,
+        judgeStatus: null,
+        output: outputText,
+        conceptValidation: r.conceptValidation || null,
+      })
+    } catch (err) {
+      updateQuestion(pId, {
+        judgeStatus: null,
+        output: `Error: ${err.message}`
+      })
+      showError?.(err.message || 'Run failed')
+    } finally {
+      runningRef.current = false
+      setRunning(false)
+    }
   }
 
-  // ── SUBMIT CODE (individual problem) ──
+  // ── Helper: Trigger Smooth Auto-Navigation ──
+  const triggerAutoNavigation = useCallback((submittedProblemId, latestQuestionsState) => {
+    const qStateMap = latestQuestionsState || questionStateRef.current
+    const totalCount = problems.length
+
+    // Find the next incomplete problem (check after current index first, then wrap around)
+    let nextIdx = -1
+    for (let i = currentProblemIndex + 1; i < totalCount; i++) {
+      const pid = problems[i].id
+      if (!qStateMap[pid]?.isCompleted) {
+        nextIdx = i
+        break
+      }
+    }
+
+    if (nextIdx === -1) {
+      for (let i = 0; i < currentProblemIndex; i++) {
+        const pid = problems[i].id
+        if (!qStateMap[pid]?.isCompleted) {
+          nextIdx = i
+          break
+        }
+      }
+    }
+
+    if (nextIdx !== -1 && nextIdx !== currentProblemIndex) {
+      debugLog.nav(currentProblemIndex + 1, nextIdx + 1, 'Automatic navigation to next unanswered question')
+      showSuccess?.(`Question ${currentProblemIndex + 1} submitted! Moving to Question ${nextIdx + 1}...`)
+      setTimeout(() => {
+        setCurrentProblemIndex(nextIdx)
+        persistState()
+      }, 650)
+    } else {
+      debugLog.info(`All ${totalCount} questions are completed! Remaining on current question.`)
+      showSuccess?.(`All questions completed! You can review your solutions or click "Submit Assessment".`)
+    }
+  }, [problems, currentProblemIndex, showSuccess])
+
+  // ── Helper: Poll for Submission Status Fallback ──
+  const pollSubmissionResult = useCallback(async (subId, pId, startT) => {
+    if (activeSubmissionPollingRef.current[pId]) return
+    activeSubmissionPollingRef.current[pId] = true
+
+    let attempts = 0
+    const maxAttempts = 15
+    const pollInterval = 1500
+
+    const pollTimer = setInterval(async () => {
+      attempts++
+      if (attempts > maxAttempts || submittedRef.current) {
+        clearInterval(pollTimer)
+        activeSubmissionPollingRef.current[pId] = false
+        updateQuestion(pId, { isSubmitting: false, judgeStatus: null })
+        return
+      }
+
+      try {
+        debugLog.api(`GET /coding/participant/submission/${subId} (Poll #${attempts})`)
+        const res = await fetch(`${API_BASE}/coding/participant/submission/${subId}`, {
+          headers: authHeaders(user.token)
+        })
+        const data = await res.json()
+        if (!res.ok || !data.submission) return
+
+        const s = data.submission
+        if (s.status && s.status !== 'PENDING') {
+          clearInterval(pollTimer)
+          activeSubmissionPollingRef.current[pId] = false
+
+          const durationMs = performance.now() - startT
+          debugLog.perf(`Question ${currentProblemIndex + 1} Evaluation (Polled)`, durationMs)
+          debugLog.info(`Submission Result for Problem ${pId}:`, s.status, `Passed: ${s.passedTestCases}/${s.totalTestCases}`)
+
+          const updatedQState = {
+            ...questionStateRef.current[pId],
+            isSubmitting: false,
+            isCompleted: true,
+            status: 'completed',
+            isModified: false,
+            lastSubmittedCode: questionStateRef.current[pId]?.code || '',
+            judgeStatus: null,
+            submitVerdict: s.status,
+            submitPassed: s.passedTestCases,
+            submitTotal: s.totalTestCases,
+            submitScore: s.score,
+            sampleResults: s.results || [],
+            output: s.compilerOutput || s.errorMessage || '',
+            conceptValidation: s.conceptValidation || null,
+          }
+
+          setQuestionState(prev => {
+            const nextState = { ...prev, [pId]: updatedQState }
+            triggerAutoNavigation(pId, nextState)
+            return nextState
+          })
+          persistState()
+        }
+      } catch (e) {
+        debugLog.warn('Submission polling error:', e.message)
+      }
+    }, pollInterval)
+  }, [user.token, currentProblemIndex, triggerAutoNavigation, updateQuestion])
+
+  // ── SUBMIT CODE (Single Question Only) ──
   const handleSubmitCode = async () => {
-    if (!currentProblem || submittingRef.current || submittedRef.current) return
-    submittingRef.current = true
-    setSubmitting(true); setSampleResults([]); setSubmitVerdict(null); setSubmitPassed(null); setSubmitTotal(null); setSubmitScore(null); setJudgeStatus('Queued...'); setActiveTab('output')
-    await saveToServer()
+    if (!currentProblem) return
+    const pId = currentProblem.id
+    const q = questionState[pId] || {}
+
+    // Strict duplicate submission prevention
+    if (q.isSubmitting || submittingRef.current || submittedRef.current) {
+      debugLog.warn(`Duplicate submit prevented for Question ${currentProblemIndex + 1} (Problem ID: ${pId})`)
+      return
+    }
+
+    debugLog.info(`Submitting Question ${currentProblemIndex + 1} (Problem ID: ${pId}, Title: "${currentProblem.title}")...`)
+    const submitStartTime = performance.now()
+
+    updateQuestion(pId, {
+      isSubmitting: true,
+      status: 'submitting',
+      judgeStatus: 'Queued for evaluation...',
+      sampleResults: [],
+      submitVerdict: null,
+      submitPassed: null,
+      submitTotal: null,
+      submitScore: null,
+      activeTab: 'output'
+    })
+
     try {
       const headers = { ...authHeaders(user.token), 'Content-Type': 'application/json' }
       if (sessionToken) headers['X-Assessment-Session'] = sessionToken
+
+      debugLog.api('POST /coding/participant/submit-code', { problemId: pId })
       const res = await fetch(`${API_BASE}/coding/participant/submit-code`, {
-        method: 'POST', headers,
-        body: JSON.stringify({ attemptId: Number(attemptId), problemId: currentProblem.id, code: codeByProblem[currentProblem.id] || '', language: languageByProblem[currentProblem.id] || currentProblem.programmingLanguage || 'javascript' })
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          attemptId: Number(attemptId),
+          problemId: pId,
+          code: q.code || '',
+          language: q.language || currentProblem.programmingLanguage || 'javascript'
+        })
       })
+
       const data = await res.json()
       if (!res.ok) {
         if (res.status === 404 || res.status === 409) {
@@ -325,23 +771,65 @@ function ParticipantCodingAttemptInner({ user }) {
           setTimeout(() => navigate(trainingId ? `/participant?tab=myEnrollments&courseId=${trainingId}` : '/participant?tab=myEnrollments'), 1500)
           return
         }
-        throw new Error(data.error || 'Submit failed')
+        throw new Error(data.error || 'Submission failed')
       }
-      if (data.submission) {
-        setSubmissionId(data.submission.id)
-        if (data.submission.status !== 'PENDING') {
-          setJudgeStatus(null)
-          setSubmitVerdict(data.submission.status)
-          setSubmitPassed(data.submission.passedTestCases)
-          setSubmitTotal(data.submission.totalTestCases)
+
+      const sub = data.submission
+      if (!sub) throw new Error('Invalid response from submission API')
+
+      // Case A: Evaluated immediately (synchronous fallback)
+      if (sub.status && sub.status !== 'PENDING') {
+        const durationMs = performance.now() - submitStartTime
+        debugLog.perf(`Question ${currentProblemIndex + 1} Direct Evaluation`, durationMs)
+        debugLog.info(`Submission Result for Problem ${pId}:`, sub.status, `Passed: ${sub.passedTestCases}/${sub.totalTestCases}`)
+
+        const updatedQState = {
+          ...q,
+          isSubmitting: false,
+          isCompleted: true,
+          status: 'completed',
+          isModified: false,
+          lastSubmittedCode: q.code,
+          submissionId: sub.id,
+          judgeStatus: null,
+          submitVerdict: sub.status,
+          submitPassed: sub.passedTestCases,
+          submitTotal: sub.totalTestCases,
+          submitScore: sub.score,
+          sampleResults: sub.results || [],
+          output: sub.compilerOutput || sub.errorMessage || '',
+          conceptValidation: sub.conceptValidation || null,
         }
+
+        setQuestionState(prev => {
+          const nextState = { ...prev, [pId]: updatedQState }
+          triggerAutoNavigation(pId, nextState)
+          return nextState
+        })
+        persistState()
+      } else {
+        // Case B: Queued asynchronously (BullMQ / Socket progress / Polling fallback)
+        updateQuestion(pId, {
+          submissionId: sub.id,
+          judgeStatus: 'Queued...'
+        })
+        pollSubmissionResult(sub.id, pId, submitStartTime)
       }
-    } catch (err) { setJudgeStatus(null); showError?.(err.message || 'Submit failed') }
-    finally { setSubmitting(false); submittingRef.current = false }
+    } catch (err) {
+      debugLog.error(`Submission failed for Problem ${pId}:`, err.message)
+      updateQuestion(pId, {
+        isSubmitting: false,
+        judgeStatus: null,
+        status: q.isCompleted ? 'completed' : 'failed',
+        output: `Error: ${err.message}`
+      })
+      showError?.(err.message || 'Submit failed')
+    }
   }
 
   const handleResetCode = async () => {
     if (!currentProblem) return
+    const q = questionState[currentProblem.id] || {}
     const ok = await confirm({
       title: 'Reset Code Template',
       message: 'Reset your code to the initial starter template? Your current edits will be cleared.',
@@ -349,12 +837,23 @@ function ParticipantCodingAttemptInner({ user }) {
       confirmText: 'Yes, Reset',
     })
     if (!ok) return
-    setCodeByProblem(prev => ({ ...prev, [currentProblem.id]: currentProblem.starterCode || '' }))
-    setSampleResults([]); setRunStatus(''); setRunTime(null); setRunMemory(null); setSubmitVerdict(null); setOutput('')
+
+    updateQuestion(currentProblem.id, {
+      code: getLangStarter(currentProblem, q.language || currentProblem.programmingLanguage || 'javascript') || '',
+      sampleResults: [],
+      runStatus: '',
+      runTime: null,
+      runMemory: null,
+      submitVerdict: null,
+      output: '',
+      judgeStatus: null,
+      isModified: true
+    })
+    persistState()
   }
 
   const endVerificationSession = useCallback(() => {
-    const sId = verifSessionInfo?.sessionId;
+    const sId = resolvedMonitoringSessionId
     if (sId) {
       fetch(`${API_BASE}/assessment-verification/end`, {
         method: 'POST',
@@ -363,65 +862,90 @@ function ParticipantCodingAttemptInner({ user }) {
           ...(user?.token ? { Authorization: `Bearer ${user.token}` } : {}),
         },
         body: JSON.stringify({ sessionId: sId }),
-      }).catch(() => {});
+      }).catch(() => {})
     }
-  }, [verifSessionInfo, user?.token]);
+  }, [resolvedMonitoringSessionId, user?.token])
 
-  // ── Exit fullscreen & cleanup ──
+  // ── Exit Fullscreen & Cleanup ──
   const handleRecordingCleanup = useCallback(async () => {
     try {
       if (sharedCamStream) {
-        sharedCamStream.getTracks().forEach(t => t.stop());
+        sharedCamStream.getTracks().forEach(t => t.stop())
       }
     } catch (_) {}
-    try {
-      await monitoringClient.finishSession();
-    } catch (_) {}
-    try {
-      await monitoringClient.stopAndUploadRecording();
-    } catch (_) {}
-    try {
-      monitoringClient.destroy();
-    } catch (_) {}
-    endVerificationSession();
+    try { await monitoringClient.finishSession() } catch (_) {}
+    try { await monitoringClient.stopAndUploadRecording() } catch (_) {}
+    try { monitoringClient.destroy() } catch (_) {}
+    endVerificationSession()
     if (fsApi.element()) {
       try { await fsApi.exit() } catch {}
     }
-  }, [endVerificationSession, sharedCamStream]);
+  }, [endVerificationSession, sharedCamStream])
 
   useEffect(() => {
     return () => {
-      try {
-        monitoringClient.destroy();
-      } catch (_) {}
-    };
-  }, []);
+      try { monitoringClient.destroy() } catch (_) {}
+    }
+  }, [])
 
-  // ── SUBMIT ASSESSMENT ──
+  // ── FAST SUBMIT ALL (Assessment Final Submission) ──
   const handleSubmit = async (isTimeout) => {
-    if (submittingRef.current || submittedRef.current) return
+    if (submittingRef.current || submittedRef.current) {
+      debugLog.warn('Duplicate Submit All prevented')
+      return
+    }
+
+    const uncompletedCount = problems.filter(p => !questionState[p.id]?.isCompleted || questionState[p.id]?.isModified).length
+
     if (!isTimeout) {
       const ok = await confirm({
         title: 'Submit Assessment',
-        message: 'Are you sure you want to submit your coding assessment? You will not be able to make further changes.',
+        message: uncompletedCount === 0
+          ? `All ${problems.length} questions are completed! Submit your assessment to finalize your results?`
+          : `You have ${uncompletedCount} unsubmitted or modified question(s). Submit entire assessment now?`,
         type: 'submit',
-        confirmText: 'Yes, Submit',
+        confirmText: 'Yes, Submit Assessment',
       })
       if (!ok) return
     }
+
     submittingRef.current = true
     setSubmitting(true)
+    setSubmitAllProgress('Submitting assessment and evaluating answers...')
+
+    const submitAllStartTime = performance.now()
+    debugLog.info(`Submit All started for ${problems.length} questions (${uncompletedCount} need evaluation)`)
+
     try {
-      await saveToServer()
-      const activeDurationSec = monitoringClient.getActiveDurationSeconds();
-      const submissions = problems.map(p => ({ problemId: p.id, code: codeByProblem[p.id] || '', language: languageByProblem[p.id] || p.programmingLanguage || 'javascript' }))
+      const activeDurationSec = monitoringClient.getActiveDurationSeconds()
+      const submissions = problems.map(p => ({
+        problemId: p.id,
+        code: questionState[p.id]?.code || '',
+        language: questionState[p.id]?.language || p.programmingLanguage || 'javascript',
+        isModified: questionState[p.id]?.isModified || false,
+        isCompleted: questionState[p.id]?.isCompleted || false
+      }))
+
       const headers = { ...authHeaders(user.token), 'Content-Type': 'application/json' }
       if (sessionToken) headers['X-Assessment-Session'] = sessionToken
+
+      // 30s timeout controller
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 35000)
+
+      debugLog.api(`POST /coding/participant/submit/${attemptId}`, { count: submissions.length })
       const res = await fetch(`${API_BASE}/coding/participant/submit/${attemptId}`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ submissions, timeTaken: activeDurationSec, actualTestDurationSeconds: activeDurationSec })
+        signal: controller.signal,
+        body: JSON.stringify({
+          submissions,
+          timeTaken: activeDurationSec,
+          actualTestDurationSeconds: activeDurationSec
+        })
       })
+      clearTimeout(timeoutId)
+
       const data = await res.json()
       if (!res.ok) {
         if (res.status === 409 || res.status === 404) {
@@ -430,37 +954,72 @@ function ParticipantCodingAttemptInner({ user }) {
           throw new Error(data.error || 'Submit failed')
         }
       } else {
+        const totalDuration = performance.now() - submitAllStartTime
+        debugLog.perf('Submit All Completed Successfully', totalDuration)
         showSuccess?.('Coding assessment submitted successfully')
       }
-      setSubmitted(true); clearInterval(timerRef.current)
+
+      setSubmitted(true)
+      clearInterval(timerRef.current)
 
       // Exit fullscreen & cleanup
       await handleRecordingCleanup()
 
-      localStorage.removeItem(getStorageKey(attemptId)); sessionStorage.removeItem(storageKey)
+      localStorage.removeItem(getStorageKey(attemptId))
+      sessionStorage.removeItem(storageKey)
+
       const targetCourseId = assessment?.courseId || trainingId
       navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}&subtab=coding` : '/participant?tab=myEnrollments')
-    } catch (err) { showError?.(err.message || 'Submit failed') }
-    finally { setSubmitting(false); submittingRef.current = false }
+    } catch (err) {
+      debugLog.error('Submit All error:', err.message)
+      showError?.(err.name === 'AbortError' ? 'Submission timed out. Please try again.' : (err.message || 'Submit failed'))
+    } finally {
+      setSubmitting(false)
+      setSubmitAllProgress(null)
+      submittingRef.current = false
+    }
   }
 
-  const currentLanguage = languageByProblem[currentProblem?.id] || currentProblem?.programmingLanguage || 'javascript'
+  const currentLanguage = currentQState.language || currentProblem?.programmingLanguage || 'javascript'
+  const allProblemsCompleted = problems.length > 0 && problems.every(p => questionState[p.id]?.isCompleted && !questionState[p.id]?.isModified)
+  const completedCount = problems.filter(p => questionState[p.id]?.isCompleted && !questionState[p.id]?.isModified).length
 
-  if (loading || restoring) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: '#94a3b8' }}><Loader2 size={24} className="animate-spin" /></div>
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', color: '#64748B', gap: 12, background: '#F8FAF9' }}>
+        <Loader2 size={32} className="animate-spin text-emerald-600" />
+        <span style={{ fontSize: 14, fontWeight: 600 }}>Loading coding assessment...</span>
+      </div>
+    )
+  }
+
   if (errorMsg) {
     const targetCourseId = assessment?.courseId || trainingId
-    return <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', padding: 20, textAlign: 'center' }}><AlertCircle size={32} color="#dc2626" style={{ marginBottom: 12 }} /><div style={{ fontSize: 16, fontWeight: 600, color: '#dc2626', marginBottom: 8 }}>{errorMsg}</div><button onClick={() => navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}` : '/participant?tab=myEnrollments')} style={{ padding: '8px 20px', background: '#0D9488', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Go Back</button></div>
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', padding: 20, textAlign: 'center', background: '#F8FAF9' }}>
+        <AlertCircle size={36} color="#DC2626" style={{ marginBottom: 12 }} />
+        <div style={{ fontSize: 16, fontWeight: 700, color: '#DC2626', marginBottom: 8 }}>{errorMsg}</div>
+        <button
+          onClick={() => navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}` : '/participant?tab=myEnrollments')}
+          style={{ padding: '8px 20px', background: '#15803D', color: '#FFFFFF', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+        >
+          Go Back
+        </button>
+      </div>
+    )
   }
 
-  // Pre-test Consent, Camera Calibration & Fullscreen Gate
-  if (!consented) return (
-    <AssessmentConsentGate
-      quiz={assessment ? { id: assessment.id, title: assessment.title, description: assessment.description, timeLimit: assessment.timeLimit } : null}
-      attemptId={Number(attemptId)}
-      onConsented={handleConsented}
-      onCancel={handleCancel}
-    />
-  )
+  // Pre-test Consent Gate
+  if (!consented) {
+    return (
+      <AssessmentConsentGate
+        quiz={assessment ? { id: assessment.id, title: assessment.title, description: assessment.description, timeLimit: assessment.timeLimit } : null}
+        attemptId={Number(attemptId)}
+        onConsented={handleConsented}
+        onCancel={handleCancel}
+      />
+    )
+  }
 
   const s = {
     container: {
@@ -492,15 +1051,6 @@ function ParticipantCodingAttemptInner({ user }) {
       alignItems: 'center',
       gap: 14,
     },
-    title: {
-      fontSize: 14.5,
-      fontWeight: 700,
-      color: '#111827',
-      letterSpacing: '-0.01em',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 8,
-    },
     timer: {
       display: 'flex',
       alignItems: 'center',
@@ -525,9 +1075,9 @@ function ParticipantCodingAttemptInner({ user }) {
       background: '#F8FAF9',
     },
     leftPanel: {
-      width: '32%',
+      width: '34%',
       minWidth: 340,
-      maxWidth: 480,
+      maxWidth: 500,
       display: 'flex',
       flexDirection: 'column',
       overflow: 'hidden',
@@ -539,26 +1089,43 @@ function ParticipantCodingAttemptInner({ user }) {
     problemNav: {
       display: 'flex',
       gap: 8,
-      padding: '10px 16px',
+      padding: '10px 14px',
       borderBottom: '1px solid #E2E8F0',
       background: '#FFFFFF',
       alignItems: 'center',
       overflowX: 'auto',
     },
-    problemBtn: (active) => ({
-      padding: '5px 12px',
-      border: active ? '1px solid #BBF7D0' : '1px solid #E2E8F0',
+    problemBtn: (active, completed, modified) => ({
+      padding: '6px 12px',
+      border: active
+        ? '1.5px solid #15803D'
+        : (completed ? '1px solid #BBF7D0' : (modified ? '1px solid #FDE68A' : '1px solid #E2E8F0')),
       borderRadius: 8,
       cursor: 'pointer',
       fontSize: 12,
       fontWeight: active ? 700 : 500,
-      background: active ? '#DCFCE7' : '#FFFFFF',
-      color: active ? '#15803D' : '#64748B',
+      background: active
+        ? (completed ? '#DCFCE7' : '#F0FDF4')
+        : (completed ? '#F0FDF4' : (modified ? '#FFFBEB' : '#FFFFFF')),
+      color: active ? '#15803D' : (completed ? '#166534' : '#475569'),
       transition: 'all 0.15s ease',
       whiteSpace: 'nowrap',
       display: 'inline-flex',
       alignItems: 'center',
       gap: 6,
+      boxShadow: active ? '0 1px 3px rgba(21, 128, 61, 0.15)' : 'none',
+    }),
+    badgeCompleted: (modified) => ({
+      fontSize: 10.5,
+      fontWeight: 700,
+      padding: '1px 6px',
+      borderRadius: 4,
+      background: modified ? '#FEF3C7' : '#DCFCE7',
+      color: modified ? '#B45309' : '#15803D',
+      border: modified ? '1px solid #FDE68A' : '1px solid #BBF7D0',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 3,
     }),
     rightPanel: {
       flex: 1,
@@ -646,7 +1213,7 @@ function ParticipantCodingAttemptInner({ user }) {
       opacity: disabled ? 0.6 : 1,
       transition: 'all 0.15s ease',
     }),
-    submitBtn: (disabled) => ({
+    submitCodeBtn: (disabled) => ({
       display: 'inline-flex',
       alignItems: 'center',
       gap: 6,
@@ -686,22 +1253,22 @@ function ParticipantCodingAttemptInner({ user }) {
       display: 'flex',
       flexDirection: 'column',
     },
-    verdictBadge: (v) => {
-      const isPass = v === 'ACCEPTED';
-      return {
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '3px 10px',
-        borderRadius: 6,
-        fontSize: 12,
-        fontWeight: 700,
-        background: isPass ? '#DCFCE7' : '#FEE2E2',
-        color: isPass ? '#15803D' : '#DC2626',
-        border: `1px solid ${isPass ? '#BBF7D0' : '#FECACA'}`,
-      };
-    },
+    allDoneBanner: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      padding: '8px 14px',
+      background: '#DCFCE7',
+      border: '1px solid #BBF7D0',
+      borderRadius: 8,
+      color: '#15803D',
+      fontSize: 12.5,
+      fontWeight: 600,
+      marginBottom: 8,
+    }
   }
+
+  const isCurrentSubmitting = Boolean(currentQState.isSubmitting)
 
   return (
     <ExamProctorShell
@@ -740,6 +1307,25 @@ function ParticipantCodingAttemptInner({ user }) {
               {assessment?.title || 'Coding Assessment'}
             </span>
 
+            {/* Completion Counter */}
+            {problems.length > 0 && (
+              <span style={{
+                fontSize: 11.5,
+                fontWeight: 600,
+                color: allProblemsCompleted ? '#15803D' : '#64748B',
+                background: allProblemsCompleted ? '#DCFCE7' : '#F1F5F9',
+                padding: '2px 8px',
+                borderRadius: 6,
+                border: `1px solid ${allProblemsCompleted ? '#BBF7D0' : '#E2E8F0'}`,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4
+              }}>
+                {allProblemsCompleted ? <CheckCircle2 size={11} color="#15803D" /> : null}
+                {completedCount}/{problems.length} Completed
+              </span>
+            )}
+
             {saveStatus && (
               <span style={{ fontSize: 11, color: '#15803D', display: 'flex', alignItems: 'center', gap: 4, fontWeight: 600, background: '#DCFCE7', padding: '2px 8px', borderRadius: 6 }}>
                 <Save size={10} /> {saveStatus}
@@ -754,9 +1340,23 @@ function ParticipantCodingAttemptInner({ user }) {
                 <span>{formatTime(timeLeft)}</span>
               </div>
             )}
-            <button onClick={() => handleSubmit(false)} disabled={submitting || submitted} style={s.headerSubmitBtn(submitting || submitted)}>
-              <Send size={12} />
-              {submitting ? 'Submitting...' : 'Submit Assessment'}
+            <button
+              onClick={() => handleSubmit(false)}
+              disabled={submitting || submitted}
+              style={s.headerSubmitBtn(submitting || submitted)}
+              title="Submit all completed code and finalize assessment"
+            >
+              {submitting ? (
+                <>
+                  <Loader2 size={13} className="animate-spin" />
+                  <span>{submitAllProgress || 'Submitting...'}</span>
+                </>
+              ) : (
+                <>
+                  <Send size={12} />
+                  <span>Submit Assessment</span>
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -767,13 +1367,40 @@ function ParticipantCodingAttemptInner({ user }) {
           <div style={s.leftPanel}>
             {problems.length > 1 && (
               <div style={s.problemNav}>
-                {problems.map((p, idx) => (
-                  <button key={p.id} onClick={() => setCurrentProblemIndex(idx)} style={s.problemBtn(currentProblemIndex === idx)}>
-                    {`Problem ${idx + 1}`}
-                  </button>
-                ))}
+                {problems.map((p, idx) => {
+                  const q = questionState[p.id] || {}
+                  const isCurrent = currentProblemIndex === idx
+                  const isComp = q.isCompleted
+                  const isMod = q.isModified
+                  const isSub = q.isSubmitting
+
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        debugLog.nav(currentProblemIndex + 1, idx + 1, 'Manual tab switch')
+                        setCurrentProblemIndex(idx)
+                        persistState()
+                      }}
+                      style={s.problemBtn(isCurrent, isComp, isMod)}
+                      title={`Question ${idx + 1}: ${p.title || ''}`}
+                    >
+                      <span>{`Q${idx + 1}`}</span>
+                      {isSub ? (
+                        <Loader2 size={11} className="animate-spin text-emerald-600" />
+                      ) : isComp ? (
+                        <span style={s.badgeCompleted(isMod)}>
+                          {isMod ? '● Modified' : '✓ Done'}
+                        </span>
+                      ) : (
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#CBD5E1' }} />
+                      )}
+                    </button>
+                  )
+                })}
               </div>
             )}
+
             {currentProblem && (
               <div style={{ flex: 1, overflow: 'auto' }}>
                 <ProblemPanel problem={currentProblem} index={currentProblemIndex} total={problems.length} />
@@ -783,13 +1410,25 @@ function ParticipantCodingAttemptInner({ user }) {
 
           {/* Right Editor + Output Panel */}
           <div style={s.rightPanel}>
+            {/* All Questions Completed Notification Banner */}
+            {allProblemsCompleted && (
+              <div style={s.allDoneBanner}>
+                <Sparkles size={15} color="#15803D" />
+                <span>Great work! All {problems.length} questions are completed. You can review your code or click <strong>&quot;Submit Assessment&quot;</strong> in the top header to finalize.</span>
+              </div>
+            )}
+
             <div style={s.editorContainer}>
               <CodeEditor
-                code={codeByProblem[currentProblem?.id] || ''}
+                value={currentQState.code || ''}
                 language={currentLanguage}
                 onChange={handleCodeChange}
                 onLanguageChange={handleLanguageChange}
-                supportedLanguages={currentProblem?.allowedLanguages || Object.keys(LANGUAGE_MAP)}
+                supportedLanguages={
+                  (Array.isArray(currentProblem?.allowedLanguages) && currentProblem.allowedLanguages.length > 0)
+                    ? currentProblem.allowedLanguages
+                    : ((Array.isArray(assessment?.languages) && assessment.languages.length > 0) ? assessment.languages : ['javascript', 'python'])
+                }
               />
             </div>
 
@@ -797,25 +1436,70 @@ function ParticipantCodingAttemptInner({ user }) {
             <div style={s.bottomPanel}>
               <div style={s.tabBar}>
                 <div style={s.tabLeft}>
-                  <button onClick={() => setActiveTab('output')} style={s.tabBtn(activeTab === 'output')}>
+                  <button
+                    onClick={() => updateQuestion(currentProblem?.id, { activeTab: 'output' })}
+                    style={s.tabBtn((currentQState.activeTab || 'output') === 'output')}
+                  >
                     Execution Output
                   </button>
-                  <button onClick={() => setShowCustomInput(prev => !prev)} style={s.tabBtn(showCustomInput)}>
+                  <button
+                    onClick={() => setShowCustomInput(prev => !prev)}
+                    style={s.tabBtn(showCustomInput)}
+                  >
                     Custom Input
                   </button>
-                  <button onClick={() => setActiveTab('testcases')} style={s.tabBtn(activeTab === 'testcases')}>
-                    Test Cases
+                  <button
+                    onClick={() => updateQuestion(currentProblem?.id, { activeTab: 'testcases' })}
+                    style={s.tabBtn(currentQState.activeTab === 'testcases')}
+                  >
+                    Test Cases {(currentQState.sampleResults?.length > 0) ? `(${currentQState.sampleResults.length})` : ''}
+                  </button>
+                  <button
+                    onClick={() => updateQuestion(currentProblem?.id, { activeTab: currentQState.activeTab === 'ai' ? 'output' : 'ai' })}
+                    style={{
+                      ...s.tabBtn(currentQState.activeTab === 'ai'),
+                      background: currentQState.activeTab === 'ai' ? '#7C3AED' : '#F5F3FF',
+                      color: currentQState.activeTab === 'ai' ? '#FFFFFF' : '#6D28D9',
+                      border: currentQState.activeTab === 'ai' ? '1px solid #7C3AED' : '1px solid #DDD6FE',
+                      fontWeight: 600,
+                    }}
+                    title="AI Coding Assistant (Socratic hints & approach)"
+                  >
+                    <Sparkles size={13} color={currentQState.activeTab === 'ai' ? '#FFFFFF' : '#7C3AED'} />
+                    <span>✨ AI Coding Assistant</span>
                   </button>
                 </div>
+
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <button onClick={handleResetCode} style={s.actionBtn} title="Reset starter code">
+                  <button
+                    onClick={() => setDebugMode(prev => !prev)}
+                    style={{ ...s.actionBtn, color: debugMode ? '#7C3AED' : '#64748B', borderColor: debugMode ? '#C4B5FD' : '#E2E8F0' }}
+                    title="Toggle debug console overlay"
+                  >
+                    <Bug size={12} /> {debugMode ? 'Debug ON' : 'Debug'}
+                  </button>
+                  <button onClick={handleResetCode} style={s.actionBtn} title="Reset starter code for this question">
                     <Trash2 size={12} /> Reset
                   </button>
-                  <button onClick={handleRunCode} disabled={running || submitting || submitted} style={s.runBtn(running || submitting || submitted)}>
-                    <Play size={12} /> {running ? 'Running...' : 'Run Code'}
+
+                  <button
+                    onClick={handleRunCode}
+                    disabled={running || isCurrentSubmitting || submitting || submitted}
+                    style={s.runBtn(running || isCurrentSubmitting || submitting || submitted)}
+                    title="Run sample test cases"
+                  >
+                    {running ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
+                    <span>{running ? 'Running...' : 'Run Code'}</span>
                   </button>
-                  <button onClick={handleSubmitCode} disabled={submitting || running || submitted} style={s.submitBtn(submitting || running || submitted)}>
-                    <Check size={12} /> {submitting ? 'Submitting...' : 'Submit Code'}
+
+                  <button
+                    onClick={handleSubmitCode}
+                    disabled={isCurrentSubmitting || running || submitting || submitted}
+                    style={s.submitCodeBtn(isCurrentSubmitting || running || submitting || submitted)}
+                    title="Submit and evaluate this question"
+                  >
+                    {isCurrentSubmitting ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                    <span>{isCurrentSubmitting ? 'Evaluating...' : 'Submit Code'}</span>
                   </button>
                 </div>
               </div>
@@ -826,8 +1510,8 @@ function ParticipantCodingAttemptInner({ user }) {
                     Custom Input (stdin):
                   </div>
                   <textarea
-                    value={customInput}
-                    onChange={(e) => setCustomInput(e.target.value)}
+                    value={currentQState.customInput || ''}
+                    onChange={(e) => updateQuestion(currentProblem?.id, { customInput: e.target.value })}
                     style={{
                       width: '100%',
                       height: 52,
@@ -846,32 +1530,86 @@ function ParticipantCodingAttemptInner({ user }) {
                 </div>
               )}
 
+              {currentQState.activeTab === 'ai' ? (
+                <div style={{ flex: 1, overflow: 'hidden', background: '#FFFFFF' }}>
+                  <CodingAiAssistant
+                    user={user}
+                    attemptId={attemptId}
+                    problem={currentProblem}
+                    questionState={currentQState}
+                    sessionToken={sessionToken}
+                    onError={showError}
+                  />
+                </div>
+              ) : (
               <div style={s.outputArea}>
-                {judgeStatus && (
+                {currentQState.judgeStatus && (
                   <div style={{ color: '#D97706', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 12.5, marginBottom: 8 }}>
-                    <Loader2 size={14} className="animate-spin text-emerald-600" /> {judgeStatus}
+                    <Loader2 size={14} className="animate-spin text-emerald-600" />
+                    <span>{currentQState.judgeStatus}</span>
+                  </div>
+                )}
+
+                {/* Concept Validation Alert Banner */}
+                {currentQState.conceptValidation && (
+                  <div style={{
+                    marginBottom: 10, padding: '10px 14px', borderRadius: 8,
+                    background: currentQState.conceptValidation.ok ? '#F0FDF4' : '#FEF2F2',
+                    border: currentQState.conceptValidation.ok ? '1px solid #BBF7D0' : '1px solid #FECACA',
+                    display: 'flex', flexDirection: 'column', gap: 6,
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 12.5, color: currentQState.conceptValidation.ok ? '#166534' : '#991B1B' }}>
+                      {currentQState.conceptValidation.ok ? <CheckCircle2 size={15} color="#16A34A" /> : <XCircle size={15} color="#DC2626" />}
+                      <span>{currentQState.conceptValidation.ok ? 'All required concepts satisfied ✓' : 'Code requirement(s) not satisfied'}</span>
+                    </div>
+                    {currentQState.conceptValidation.message && !currentQState.conceptValidation.ok && (
+                      <div style={{ fontSize: 12, color: '#B91C1C' }}>
+                        {currentQState.conceptValidation.message}
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {currentQState.conceptValidation.results?.map((cr, idx) => (
+                        <span
+                          key={idx}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                            background: cr.satisfied ? '#DCFCE7' : '#FEE2E2',
+                            color: cr.satisfied ? '#15803D' : '#DC2626',
+                            border: cr.satisfied ? '1px solid #86EFAC' : '1px solid #FCA5A5',
+                          }}
+                        >
+                          {cr.satisfied ? '✓' : '✗'} {cr.label}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 )}
 
                 {/* Status / Metric Badges */}
-                {(runStatus || submitVerdict || output) && (
+                {(currentQState.runStatus || currentQState.submitVerdict || currentQState.output) && (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      {(runStatus === 'ACCEPTED' || submitVerdict === 'ACCEPTED') ? (
+                      {(currentQState.runStatus === 'ACCEPTED' || currentQState.submitVerdict === 'ACCEPTED') ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#15803D', fontWeight: 700, fontSize: 13 }}>
                           <CheckCircle2 size={15} color="#15803D" />
-                          <span>Success</span>
+                          <span>Success (Accepted)</span>
                         </div>
-                      ) : (runStatus || submitVerdict) ? (
+                      ) : (currentQState.runStatus === 'FAILED_REQUIREMENTS' || currentQState.submitVerdict === 'FAILED_REQUIREMENTS') ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#DC2626', fontWeight: 700, fontSize: 13 }}>
                           <XCircle size={15} color="#DC2626" />
-                          <span>{runStatus || submitVerdict}</span>
+                          <span>FAILED REQUIREMENTS</span>
+                        </div>
+                      ) : (currentQState.runStatus || currentQState.submitVerdict) ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#DC2626', fontWeight: 700, fontSize: 13 }}>
+                          <XCircle size={15} color="#DC2626" />
+                          <span>{currentQState.runStatus || currentQState.submitVerdict}</span>
                         </div>
                       ) : null}
                     </div>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      {runTime != null && (
+                      {currentQState.runTime != null && (
                         <span style={{
                           padding: '3px 10px',
                           borderRadius: 6,
@@ -881,10 +1619,10 @@ function ParticipantCodingAttemptInner({ user }) {
                           fontSize: 11.5,
                           fontWeight: 600,
                         }}>
-                          Time: {runTime.toFixed(2)}s
+                          Time: {Number(currentQState.runTime).toFixed(2)}s
                         </span>
                       )}
-                      {runMemory != null && (
+                      {currentQState.runMemory != null && (
                         <span style={{
                           padding: '3px 10px',
                           borderRadius: 6,
@@ -894,12 +1632,12 @@ function ParticipantCodingAttemptInner({ user }) {
                           fontSize: 11.5,
                           fontWeight: 600,
                         }}>
-                          Memory: {runMemory} MB
+                          Memory: {currentQState.runMemory} MB
                         </span>
                       )}
-                      {submitPassed != null && (
+                      {currentQState.submitPassed != null && (
                         <span style={{ fontSize: 12, color: '#64748B', fontWeight: 600 }}>
-                          {submitPassed}/{submitTotal} test cases passed ({submitScore}%)
+                          {currentQState.submitPassed}/{currentQState.submitTotal} test cases passed ({currentQState.submitScore} pts)
                         </span>
                       )}
                     </div>
@@ -907,7 +1645,7 @@ function ParticipantCodingAttemptInner({ user }) {
                 )}
 
                 {/* Dark Terminal Output Area */}
-                {output ? (
+                {currentQState.output ? (
                   <pre style={{
                     margin: 0,
                     whiteSpace: 'pre-wrap',
@@ -922,55 +1660,72 @@ function ParticipantCodingAttemptInner({ user }) {
                     overflow: 'auto',
                     flex: 1,
                   }}>
-                    {output}
+                    {currentQState.output}
                   </pre>
                 ) : (
-                  !judgeStatus && (
+                  !currentQState.judgeStatus && (
                     <div style={{ color: '#94A3B8', fontSize: 12.5, fontStyle: 'italic', padding: '8px 0' }}>
-                      Run your code or submit to see execution results.
+                      Run your code or click &quot;Submit Code&quot; to see evaluation results for Question {currentProblemIndex + 1}.
                     </div>
                   )
                 )}
 
-                {/* Test Case Results list (when tab is testcases or multiple results) */}
-                {sampleResults.length > 0 && activeTab === 'testcases' && (
+                {/* Test Case Results list */}
+                {currentQState.sampleResults?.length > 0 && currentQState.activeTab === 'testcases' && (
                   <div style={{ marginTop: 10 }}>
-                    <div style={{ fontSize: 11.5, fontWeight: 700, color: '#15803D', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>TEST CASE RESULTS:</div>
-                    {sampleResults.map((tr, idx) => (
+                    <div style={{ fontSize: 11.5, fontWeight: 700, color: '#15803D', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      TEST CASE RESULTS:
+                    </div>
+                    {currentQState.sampleResults.map((tr, idx) => (
                       <div key={idx} style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        padding: '6px 12px',
+                        padding: '8px 12px',
                         borderRadius: 6,
                         background: tr.passed ? '#F0FDF4' : '#FEF2F2',
                         border: `1px solid ${tr.passed ? '#BBF7D0' : '#FECACA'}`,
                         marginBottom: 6,
                         fontSize: 12.5,
                       }}>
-                        {tr.passed ? <CheckCircle2 size={14} color="#15803D" /> : <XCircle size={14} color="#DC2626" />}
-                        <span style={{ fontWeight: 600, color: tr.passed ? '#15803D' : '#DC2626' }}>{`Test Case ${idx + 1}: ${tr.passed ? 'PASSED' : 'FAILED'}`}</span>
-                        <span style={{ marginLeft: 'auto', color: '#64748B', fontSize: 11, fontFamily: 'monospace' }}>{tr.executionTime != null ? `${Number(tr.executionTime).toFixed(3)}s` : ''}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          {tr.passed ? <CheckCircle2 size={14} color="#15803D" /> : <XCircle size={14} color="#DC2626" />}
+                          <span style={{ fontWeight: 600, color: tr.passed ? '#15803D' : '#DC2626' }}>
+                            {`Test Case ${idx + 1}: ${tr.passed ? 'PASSED' : 'FAILED'}`}
+                          </span>
+                          <span style={{ marginLeft: 'auto', color: '#64748B', fontSize: 11, fontFamily: 'monospace' }}>
+                            {tr.executionTime != null ? `${Number(tr.executionTime).toFixed(3)}s` : ''}
+                          </span>
+                        </div>
+                        {(tr.input !== '[Hidden]' || tr.expectedOutput !== '[Hidden]') && (
+                          <div style={{ marginTop: 6, fontSize: 11.5, fontFamily: "'JetBrains Mono', 'Fira Code', monospace", lineHeight: 1.5, color: '#334155', wordBreak: 'break-word' }}>
+                            {tr.input != null && tr.input !== '' && (
+                              <div><span style={{ color: '#64748B' }}>Input:</span> <span style={{ color: '#111827' }}>{tr.input}</span></div>
+                            )}
+                            {tr.expectedOutput != null && tr.expectedOutput !== '' && (
+                              <div><span style={{ color: '#64748B' }}>Expected:</span> <span style={{ color: '#1D4ED8' }}>{tr.expectedOutput}</span></div>
+                            )}
+                            {tr.actualOutput != null && tr.actualOutput !== '' && !tr.passed && (
+                              <div><span style={{ color: '#64748B' }}>Actual:</span> <span style={{ color: '#DC2626' }}>{String(tr.actualOutput).slice(0, 500)}</span></div>
+                            )}
+                            {tr.passed && tr.actualOutput != null && tr.actualOutput !== '' && (
+                              <div><span style={{ color: '#64748B' }}>Actual:</span> <span style={{ color: '#15803D' }}>{String(tr.actualOutput).slice(0, 500)}</span></div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
-                    {submitTotal > sampleResults.filter(r => !r.isHidden).length && (
-                      <div style={{ marginTop: 8, fontSize: 12, color: '#64748B', fontStyle: 'italic' }}>
-                        {submitTotal - sampleResults.filter(r => !r.isHidden).length} hidden test cases were evaluated
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Unified AI Monitoring Engine Widget (Laptop MediaPipe + Mobile YOLO11s) */}
+        {/* Unified AI Monitoring Engine Widget */}
         <UnifiedMonitoringWidget
           contextType="CODING"
           contextId={Number(assessmentId)}
           attemptId={Number(attemptId)}
-          sessionId={resolvedMonitoringSessionId || verifSessionInfo?.sessionId}
+          sessionId={resolvedMonitoringSessionId}
           participantId={user?.id}
           userToken={user?.token}
           mobileEnabled={true}

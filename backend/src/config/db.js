@@ -813,6 +813,50 @@ const connectDB = async () => {
         logger.error('⚠️ Error adding monitoring_session_id to quiz_attempts', { error: qaErr.message });
       }
 
+      // Ensure coding_assessments has ai_help_limit and ai_assistant_enabled
+      try {
+        const dialect = sequelize.getDialect();
+        if (dialect === 'postgres') {
+          await sequelize.query('ALTER TABLE "coding_assessments" ADD COLUMN IF NOT EXISTS "ai_help_limit" INTEGER NOT NULL DEFAULT 1;');
+          await sequelize.query('ALTER TABLE "coding_assessments" ADD COLUMN IF NOT EXISTS "ai_assistant_enabled" BOOLEAN NOT NULL DEFAULT TRUE;');
+          try {
+            await sequelize.query(`
+              DO $$ BEGIN
+                CREATE TYPE "enum_coding_problems_source" AS ENUM('MANUAL', 'AI');
+              EXCEPTION
+                WHEN duplicate_object THEN null;
+              END $$;
+            `);
+          } catch (_) {}
+          try {
+            await sequelize.query(`
+              DO $$ BEGIN
+                CREATE TYPE "enum_coding_problems_ai_validation_status" AS ENUM('AI_GENERATED', 'VALIDATING', 'VALIDATED', 'VALIDATION_FAILED', 'NEEDS_TRAINER_REVIEW', 'PUBLISHED');
+              EXCEPTION
+                WHEN duplicate_object THEN null;
+              END $$;
+            `);
+          } catch (_) {}
+          await sequelize.query('ALTER TABLE "coding_problems" ADD COLUMN IF NOT EXISTS "source" "enum_coding_problems_source" NOT NULL DEFAULT \'MANUAL\';');
+          await sequelize.query('ALTER TABLE "coding_problems" ADD COLUMN IF NOT EXISTS "ai_validation_status" "enum_coding_problems_ai_validation_status" NOT NULL DEFAULT \'PUBLISHED\';');
+          await sequelize.query('ALTER TABLE "coding_problems" ADD COLUMN IF NOT EXISTS "ai_validation_message" TEXT NULL;');
+          await sequelize.query('ALTER TABLE "coding_problems" ADD COLUMN IF NOT EXISTS "required_concepts" JSON NULL;');
+          const CodingProblemLanguage = require('../models/CodingProblemLanguage');
+          await CodingProblemLanguage.sync();
+        } else {
+          try { await sequelize.query('ALTER TABLE `coding_assessments` ADD COLUMN `ai_help_limit` INT NOT NULL DEFAULT 1'); } catch (_) {}
+          try { await sequelize.query('ALTER TABLE `coding_assessments` ADD COLUMN `ai_assistant_enabled` TINYINT(1) NOT NULL DEFAULT 1'); } catch (_) {}
+          try { await sequelize.query("ALTER TABLE `coding_problems` ADD COLUMN `source` ENUM('MANUAL', 'AI') NOT NULL DEFAULT 'MANUAL'"); } catch (_) {}
+          try { await sequelize.query("ALTER TABLE `coding_problems` ADD COLUMN `ai_validation_status` ENUM('AI_GENERATED', 'VALIDATING', 'VALIDATED', 'VALIDATION_FAILED', 'NEEDS_TRAINER_REVIEW', 'PUBLISHED') NOT NULL DEFAULT 'PUBLISHED'"); } catch (_) {}
+          try { await sequelize.query("ALTER TABLE `coding_problems` ADD COLUMN `ai_validation_message` TEXT NULL"); } catch (_) {}
+          try { await sequelize.query("ALTER TABLE `coding_problems` ADD COLUMN `required_concepts` JSON NULL"); } catch (_) {}
+          const CodingProblemLanguage = require('../models/CodingProblemLanguage');
+          await CodingProblemLanguage.sync();
+        }
+      } catch (caErr) {
+        logger.error('⚠️ Error adding coding_assessments and coding_problems columns', { error: caErr.message });
+      }
+
       // Manual creation for proctoring_sessions, proctoring_events, and proctoring_reports
       try {
         await sequelize.query(`
