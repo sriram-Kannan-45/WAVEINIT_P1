@@ -5,47 +5,82 @@ const Notification = sequelize.define('Notification', {
   id: {
     type: DataTypes.BIGINT,
     autoIncrement: true,
-    primaryKey: true
+    primaryKey: true,
   },
   userId: {
     type: DataTypes.BIGINT,
     allowNull: false,
-    field: 'user_id'
+    field: 'user_id',
   },
-  message: {
-    type: DataTypes.STRING,
-    allowNull: false
+  actorUserId: {
+    type: DataTypes.BIGINT,
+    allowNull: true,
+    field: 'actor_user_id',
+  },
+  recipientRole: {
+    type: DataTypes.STRING(20),
+    allowNull: true,
+    field: 'recipient_role',
   },
   type: {
-    type: DataTypes.ENUM('ENROLLMENT', 'NOTE_UPLOAD', 'APPROVAL', 'FEEDBACK_REPLY', 'ASSIGNMENT', 'OTHER'),
-    defaultValue: 'OTHER'
+    type: DataTypes.STRING(60),
+    allowNull: false,
+    defaultValue: 'OTHER',
+  },
+  title: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+  },
+  message: {
+    type: DataTypes.TEXT,
+    allowNull: false,
+  },
+  category: {
+    type: DataTypes.STRING(40),
+    allowNull: false,
+    defaultValue: 'SYSTEM',
+  },
+  relatedEntityType: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    field: 'related_entity_type',
+  },
+  relatedEntityId: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    field: 'related_entity_id',
+  },
+  actionUrl: {
+    type: DataTypes.STRING(500),
+    allowNull: true,
+    field: 'action_url',
   },
   isRead: {
     type: DataTypes.BOOLEAN,
     allowNull: false,
     defaultValue: false,
-    field: 'is_read'
+    field: 'is_read',
   },
-  actionUrl: {
-    type: DataTypes.STRING(255),
+  readAt: {
+    type: DataTypes.DATE,
     allowNull: true,
-    field: 'action_url'
+    field: 'read_at',
   },
-  relatedEntityId: {
-    type: DataTypes.BIGINT,
-    allowNull: true,
-    field: 'related_entity_id'
+  priority: {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    defaultValue: 'NORMAL',
   },
-  relatedEntityType: {
-    type: DataTypes.STRING(50),
+  metadata: {
+    type: DataTypes.JSONB,
     allowNull: true,
-    field: 'related_entity_type'
-  }
+    defaultValue: {},
+  },
 }, {
   tableName: 'notifications',
   timestamps: true,
   createdAt: 'created_at',
-  updatedAt: 'updated_at'
+  updatedAt: 'updated_at',
 });
 
 module.exports = Notification;

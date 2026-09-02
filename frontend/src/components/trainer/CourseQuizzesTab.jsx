@@ -31,9 +31,35 @@ export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
   const { success, error: showError } = useToast()
   const confirm = useConfirm()
   const navigate = useNavigate()
-  const [quizzes, setQuizzes] = useState([])
-  const [lessons, setLessons] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [quizzes, setQuizzes] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(`course_quizzes_${courseId}`)
+      return cached ? JSON.parse(cached) : []
+    } catch {
+      return []
+    }
+  })
+  const [lessons, setLessons] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(`course_lessons_${courseId}`)
+      return cached ? JSON.parse(cached) : []
+    } catch {
+      return []
+    }
+  })
+  const [loading, setLoading] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(`course_quizzes_${courseId}`)
+      return !cached
+    } catch {
+      return true
+    }
+  })
+  const [page, setPage] = useState(1)
+  const [limit] = useState(10)
+  const [total, setTotal] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+  const [selectedQuizzes, setSelectedQuizzes] = useState(new Set())
   const [builderState, setBuilderState] = useState(null)
   const [viewingQuizId, setViewingQuizId] = useState(null)
   const [publishQuiz, setPublishQuiz] = useState(null)
@@ -49,9 +75,9 @@ export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
   const fetchAll = async () => {
     if (!courseId) return
     try {
-      setLoading(true)
+      if (quizzes.length === 0) setLoading(true)
       const [qr, lr] = await Promise.all([
-        fetch(API.TRAINER_COURSES.QUIZZES(courseId), { headers: auth() })
+        fetch(`${API.TRAINER_COURSES.QUIZZES(courseId)}?page=${page}&limit=${limit}`, { headers: auth() })
           .then(async r => {
             if (!r.ok) return { success: false, quizzes: [] }
             const t = await r.text()
@@ -66,15 +92,27 @@ export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
           })
           .catch(() => ({ success: false, lessons: [] })),
       ])
-      if (qr && qr.success) setQuizzes(qr.quizzes || [])
-      if (lr && lr.success) setLessons(lr.lessons || [])
+      if (qr && qr.success) {
+        setQuizzes(qr.quizzes || [])
+        setTotal(qr.total !== undefined ? qr.total : (qr.quizzes ? qr.quizzes.length : 0))
+        setTotalPages(qr.totalPages || Math.ceil((qr.total || (qr.quizzes?.length || 0)) / limit) || 1)
+        try {
+          sessionStorage.setItem(`course_quizzes_${courseId}`, JSON.stringify(qr.quizzes || []))
+        } catch (_) {}
+      }
+      if (lr && lr.success) {
+        setLessons(lr.lessons || [])
+        try {
+          sessionStorage.setItem(`course_lessons_${courseId}`, JSON.stringify(lr.lessons || []))
+        } catch (_) {}
+      }
     } catch {
       // Ignore network errors gracefully
     } finally {
       setLoading(false)
     }
   }
-  useEffect(() => { fetchAll() }, [courseId])
+  useEffect(() => { fetchAll() }, [courseId, page, limit])
 
   const fetchQuizForEdit = async (quizId) => {
     try {
@@ -103,6 +141,57 @@ export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
       try { d = JSON.parse(text) } catch { d = {} }
       if (!r.ok || d.success === false) { showError(d.message || d.error || 'Delete failed'); return }
       success('Quiz deleted')
+      setSelectedQuizzes(prev => {
+        const next = new Set(prev)
+        next.delete(q.id)
+        return next
+      })
+      await fetchAll()
+      onCountChange?.()
+    } catch (e) { showError(e.message) }
+  }
+
+  const handleSelectAll = (e) => {
+    if (e.target.checked) {
+      setSelectedQuizzes(new Set(quizzes.map(q => q.id)))
+    } else {
+      setSelectedQuizzes(new Set())
+    }
+  }
+
+  const handleSelectQuiz = (id) => {
+    setSelectedQuizzes(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const bulkDelete = async () => {
+    if (selectedQuizzes.size === 0) return
+    const ok = await confirm({
+      title: 'Bulk Delete Quizzes',
+      message: `Are you sure you want to delete ${selectedQuizzes.size} selected quiz(zes)? This cannot be undone.`,
+      type: 'danger',
+      confirmText: 'Delete Selected',
+    })
+    if (!ok) return
+    try {
+      const r = await fetch(`${API.TRAINER_COURSES.QUIZZES(courseId)}/bulk-delete`, {
+        method: 'DELETE',
+        headers: { ...auth(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedQuizzes) })
+      })
+      const text = await r.text()
+      let d = {}
+      try { d = JSON.parse(text) } catch { d = {} }
+      if (!r.ok || d.success === false) { showError(d.message || d.error || 'Bulk delete failed'); return }
+      success('Selected quizzes deleted')
+      setSelectedQuizzes(new Set())
       await fetchAll()
       onCountChange?.()
     } catch (e) { showError(e.message) }
@@ -182,9 +271,30 @@ export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
       {/* Header bar */}
       <div className="cqt-header">
         <h3 className="cqt-title">
-          {quizzes.length} Quiz{quizzes.length !== 1 ? 'zes' : ''}
+          {total || quizzes.length} Quiz{(total || quizzes.length) !== 1 ? 'zes' : ''}
         </h3>
         <div className="cqt-actions">
+          {selectedQuizzes.size > 0 && (
+            <button
+              onClick={bulkDelete}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 12px',
+                borderRadius: 8,
+                background: '#EF4444',
+                color: '#FFFFFF',
+                border: 'none',
+                fontWeight: 600,
+                fontSize: 12.5,
+                cursor: 'pointer',
+                marginRight: 8
+              }}
+            >
+              <Trash2 size={13} /> Delete Selected ({selectedQuizzes.size})
+            </button>
+          )}
           <button
             onClick={() => setShowGenerator(true)}
             className="cqt-btn-ai"
@@ -213,6 +323,14 @@ export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
           <table className="cqt-table">
             <thead>
               <tr>
+                <th style={{ width: 40 }}>
+                  <input
+                    type="checkbox"
+                    checked={quizzes.length > 0 && selectedQuizzes.size === quizzes.length}
+                    onChange={handleSelectAll}
+                    style={{ cursor: 'pointer' }}
+                  />
+                </th>
                 <th>TITLE</th>
                 <th>LESSON</th>
                 <th>QUESTIONS</th>
@@ -224,6 +342,14 @@ export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
             <tbody>
               {quizzes.map(q => (
                 <tr key={q.id}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={selectedQuizzes.has(q.id)}
+                      onChange={() => handleSelectQuiz(q.id)}
+                      style={{ cursor: 'pointer' }}
+                    />
+                  </td>
                   <td>
                     <div className="cqt-quiz-title">{q.title}</div>
                     {q.isMandatory && (
@@ -292,6 +418,58 @@ export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
               ))}
             </tbody>
           </table>
+          {totalPages > 1 && (
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '12px 16px', borderTop: '1px solid #F1F5F9', background: '#F8FAFC', borderRadius: '0 0 12px 12px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontSize: 12, color: '#64748B' }}>
+                  Showing <strong style={{ color: '#0F172A' }}>{((page - 1) * limit + 1)}</strong> to <strong style={{ color: '#0F172A' }}>{Math.min(page * limit, total || quizzes.length)}</strong> of <strong style={{ color: '#0F172A' }}>{total || quizzes.length}</strong> quizzes
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                  style={{
+                    padding: '4px 10px', borderRadius: 6, border: '1px solid #CBD5E1',
+                    background: '#FFFFFF', fontSize: 12, cursor: page === 1 ? 'not-allowed' : 'pointer',
+                    color: page === 1 ? '#CBD5E1' : '#475569', display: 'flex', alignItems: 'center', gap: 4
+                  }}
+                >
+                  <ArrowLeft size={12} /> Prev
+                </button>
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+                    <button
+                      key={p}
+                      onClick={() => setPage(p)}
+                      style={{
+                        width: 28, height: 28, borderRadius: 6, border: '1px solid #CBD5E1',
+                        background: p === page ? '#16A34A' : '#FFFFFF',
+                        color: p === page ? '#FFFFFF' : '#475569',
+                        fontSize: 12, fontWeight: p === page ? 600 : 400, cursor: 'pointer'
+                      }}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={page === totalPages}
+                  style={{
+                    padding: '4px 10px', borderRadius: 6, border: '1px solid #CBD5E1',
+                    background: '#FFFFFF', fontSize: 12, cursor: page === totalPages ? 'not-allowed' : 'pointer',
+                    color: page === totalPages ? '#CBD5E1' : '#475569', display: 'flex', alignItems: 'center', gap: 4
+                  }}
+                >
+                  Next <ArrowRight size={12} />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

@@ -16,8 +16,18 @@ router.use(authenticateToken);
 
 // ── TRAINER: CRUD Assessments ──
 router.get('/assessments', roleMiddleware('TRAINER', 'ADMIN'), ctrl.list);
-router.get('/assessments/:id', roleMiddleware('PARTICIPANT', 'TRAINER', 'ADMIN'), ctrl.getOne);
+router.post('/assessments/bulk-delete', roleMiddleware('TRAINER', 'ADMIN'), ctrl.bulkDestroy);
+router.post('/assessments/bulk', roleMiddleware('TRAINER', 'ADMIN'), ctrl.bulkDestroy);
+router.delete('/assessments/bulk-delete', roleMiddleware('TRAINER', 'ADMIN'), ctrl.bulkDestroy);
+router.delete('/assessments/bulk', roleMiddleware('TRAINER', 'ADMIN'), ctrl.bulkDestroy);
+router.post('/bulk-delete', roleMiddleware('TRAINER', 'ADMIN'), ctrl.bulkDestroy);
+router.delete('/bulk', roleMiddleware('TRAINER', 'ADMIN'), ctrl.bulkDestroy);
+router.get('/assessments/:id(\\d+)', roleMiddleware('PARTICIPANT', 'TRAINER', 'ADMIN'), ctrl.getOne);
 router.post('/assessments', roleMiddleware('TRAINER', 'ADMIN'), ctrl.create);
+router.put('/assessments/:id(\\d+)', roleMiddleware('TRAINER', 'ADMIN'), ctrl.update);
+router.delete('/assessments/:id(\\d+)', roleMiddleware('TRAINER', 'ADMIN'), ctrl.destroy);
+// Fallback for non-regex :id parameter routes
+router.get('/assessments/:id', roleMiddleware('PARTICIPANT', 'TRAINER', 'ADMIN'), ctrl.getOne);
 router.put('/assessments/:id', roleMiddleware('TRAINER', 'ADMIN'), ctrl.update);
 router.delete('/assessments/:id', roleMiddleware('TRAINER', 'ADMIN'), ctrl.destroy);
 

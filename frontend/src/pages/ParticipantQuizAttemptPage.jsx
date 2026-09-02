@@ -212,11 +212,13 @@ function ParticipantQuizAttemptPageInner({ user }) {
   }, [sharedCamStream]);
 
   // Called from QuizTaking's "Back to Dashboard" button / auto-submit
-  const handleSubmit = useCallback(async () => {
-    await handleRecordingStop()
-    const targetCourseId = quizData?.courseId || trainingId
-    navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}&subtab=quizzes` : '/participant?tab=myEnrollments')
-  }, [handleRecordingStop, quizData, trainingId, navigate])
+  const handleSubmit = useCallback(() => {
+    try {
+      handleRecordingStop();
+    } catch (_) {}
+    const targetCourseId = quizData?.courseId || trainingId;
+    navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}&subtab=quizzes` : '/participant?tab=myEnrollments', { replace: true });
+  }, [handleRecordingStop, quizData, trainingId, navigate]);
 
   if (loading) {
     return (

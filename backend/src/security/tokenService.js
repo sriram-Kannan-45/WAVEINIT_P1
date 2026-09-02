@@ -37,11 +37,13 @@ if (!ACCESS_TOKEN_SECRET) {
 // database (token_blacklist table). The DB row is what makes revocation global
 // across all App Service instances; the Set is a zero-cost fast path.
 const tokenBlacklist = new Set();
+const validTokensCache = new Map(); // key -> verified timestamp (TTL 60s)
 
-// Periodic cleanup of expired in-memory blacklisted tokens. The DB rows are
-// purged by the leader-guarded cleanup job in app.js.
+// Periodic cleanup of expired in-memory tokens
 setInterval(() => {
   const now = Math.floor(Date.now() / 1000);
+  const nowMs = Date.now();
+
   for (const jti of tokenBlacklist) {
     try {
       const decoded = jwt.decode(jti);
@@ -50,6 +52,12 @@ setInterval(() => {
       }
     } catch {
       // If we can't decode, it's likely our own composite key — clean old ones
+    }
+  }
+
+  for (const [key, ts] of validTokensCache.entries()) {
+    if (nowMs - ts > 60_000) {
+      validTokensCache.delete(key);
     }
   }
 }, 60_000).unref();
@@ -148,14 +156,26 @@ async function isTokenRevoked(decoded) {
   if (!decoded || !decoded.jti) return false;
   const blacklistKey = `${decoded.jti}:${decoded.id}`;
   if (tokenBlacklist.has(blacklistKey)) return true;
+
+  // Fast in-memory check for active valid tokens (avoids 100% of DB roundtrips on valid requests)
+  const cachedValid = validTokensCache.get(blacklistKey);
+  if (cachedValid && (Date.now() - cachedValid < 60_000)) {
+    return false;
+  }
+
   try {
     const { TokenBlacklist } = require('../models');
     const row = await TokenBlacklist.findOne({
       where: { jti: decoded.jti },
       attributes: ['id'],
     });
-    if (row) tokenBlacklist.add(blacklistKey); // warm the fast path next time
-    return !!row;
+    if (row) {
+      tokenBlacklist.add(blacklistKey);
+      validTokensCache.delete(blacklistKey);
+      return true;
+    }
+    validTokensCache.set(blacklistKey, Date.now());
+    return false;
   } catch (_) {
     // DB unavailable — treat as valid (matching the previous in-memory-only
     // behavior) rather than failing the request.
@@ -275,8 +295,9 @@ async function blacklistAccessToken(decoded, { reason = 'logout' } = {}) {
     logger.warn('[SECURITY] Failed to persist token blacklist row', { error: err.message, jti: decoded.jti });
   }
 
-  // Always warm the local fast path.
+  // Always warm the local fast path and evict from valid cache.
   tokenBlacklist.add(blacklistKey);
+  validTokensCache.delete(blacklistKey);
 }
 
 // ── Revoke all refresh tokens for user ─────────────────────────────────────

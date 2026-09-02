@@ -13,6 +13,7 @@ const {
   CourseTrainerAssignment
 } = require('../models');
 const { Op } = require('sequelize');
+const cacheService = require('../services/cacheService');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 
 /**
@@ -96,6 +97,20 @@ const getTrainingLeaderboard = async (req, res) => {
       } else {
         return res.status(403).json({ error: 'Access denied' });
       }
+    }
+
+    const cacheKey = `training_leaderboard:${parsedTrainingId}`;
+    const cachedData = cacheService.get(cacheKey);
+    if (cachedData && req.query.refresh !== 'true') {
+      const { page, limit } = parsePagination(req.query, 10, 100);
+      const paginationMeta = formatPaginationMeta(cachedData.leaderboard.length, page, limit);
+      return res.json({
+        ...cachedData,
+        pagination: paginationMeta,
+        page,
+        limit,
+        totalPages: paginationMeta.totalPages,
+      });
     }
 
     // 4. Fetch all quizzes in this training (both training-scoped and course-scoped)
@@ -428,7 +443,7 @@ const getTrainingLeaderboard = async (req, res) => {
     const { page, limit, offset } = parsePagination(req.query, 10, 100);
     const paginationMeta = formatPaginationMeta(fullLeaderboard.length, page, limit);
 
-    res.json({
+    const resultPayload = {
       success: true,
       training: {
         id: training.id,
@@ -458,7 +473,11 @@ const getTrainingLeaderboard = async (req, res) => {
       page,
       limit,
       totalPages: paginationMeta.totalPages
-    });
+    };
+
+    cacheService.set(cacheKey, resultPayload, 20);
+
+    res.json(resultPayload);
   } catch (error) {
     console.error('Error fetching training leaderboard:', error.message, error.stack);
     res.status(500).json({ error: 'Server error fetching training leaderboard' });

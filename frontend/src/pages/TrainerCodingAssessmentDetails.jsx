@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useParams, useNavigate } from 'react-router-dom'
@@ -6,7 +6,7 @@ import Editor from '@monaco-editor/react'
 import {
   ArrowLeft, Settings, Users, BarChart3, Trophy, FileText,
   Plus, Pencil, Trash2, Save, X, Check, Send, Loader2, Star,
-  Search, Clock, Calendar, AlertCircle, RefreshCw,
+  Search, Clock, Calendar, AlertCircle, AlertTriangle, RefreshCw,
   Code, Shield, ShieldCheck, Copy, Info, BarChart2, Sparkles,
   Eye, MoreVertical, ChevronDown, ChevronUp, GripVertical
 } from 'lucide-react'
@@ -46,6 +46,113 @@ const LANGUAGE_MONACO_MAP = {
 }
 
 const languageLabel = (id) => (LANGUAGES.find(l => l.value === id) || {}).label || id
+
+export function normalizeCodingProblem(p) {
+  if (!p || typeof p !== 'object') return null
+  const id = p.id
+  const title = String(p.title || '').trim()
+  const description = String(p.description || '').trim()
+  const difficulty = String(p.difficulty || 'MEDIUM').toUpperCase()
+  const marks = Number(p.marks) || 10
+  const timeLimit = Number(p.timeLimit) || 5
+  const memoryLimit = Number(p.memoryLimit) || 256
+  const inputFormat = p.inputFormat || ''
+  const outputFormat = p.outputFormat || ''
+  const constraints = p.constraints || ''
+  const explanation = p.explanation || ''
+  const sampleInput = p.sampleInput != null ? String(p.sampleInput) : ''
+  const sampleOutput = p.sampleOutput != null ? String(p.sampleOutput) : ''
+  const tags = Array.isArray(p.tags) ? p.tags : []
+  const requiredConcepts = Array.isArray(p.requiredConcepts) ? p.requiredConcepts : []
+
+  // Languages normalization
+  let languages = []
+  if (Array.isArray(p.languages) && p.languages.length > 0) {
+    languages = p.languages.map(l => ({
+      language: String(l.language || '').toLowerCase().trim(),
+      starterCode: l.starterCode != null ? String(l.starterCode) : '',
+      referenceSolution: l.referenceSolution != null ? String(l.referenceSolution) : '',
+    }))
+  } else if (p.languageSolutions && typeof p.languageSolutions === 'object') {
+    languages = Object.entries(p.languageSolutions).map(([lang, sol]) => ({
+      language: String(lang).toLowerCase().trim(),
+      starterCode: sol?.starterCode != null ? String(sol.starterCode) : '',
+      referenceSolution: sol?.referenceSolution != null ? String(sol.referenceSolution) : '',
+    }))
+  } else if (p.programmingLanguage) {
+    languages = [{
+      language: String(p.programmingLanguage).toLowerCase().trim(),
+      starterCode: p.starterCode != null ? String(p.starterCode) : '',
+      referenceSolution: p.expectedSolution != null ? String(p.expectedSolution) : '',
+    }]
+  }
+
+  // LanguageSolutions map
+  const languageSolutions = {}
+  for (const l of languages) {
+    languageSolutions[l.language] = {
+      starterCode: l.starterCode,
+      referenceSolution: l.referenceSolution,
+    }
+  }
+
+  // Test cases normalization
+  const rawTestCases = Array.isArray(p.testCases) ? p.testCases : []
+  const testCases = rawTestCases.map((tc, idx) => ({
+    id: tc.id,
+    _localId: tc.id ? `tc_${tc.id}` : `tc_loc_${idx}_${Math.random().toString(36).substring(2, 9)}`,
+    input: tc.input != null ? String(tc.input) : (tc.sampleInput != null ? String(tc.sampleInput) : ''),
+    expectedOutput: tc.expectedOutput != null
+      ? String(tc.expectedOutput)
+      : (tc.output != null ? String(tc.output) : (tc.sampleOutput != null ? String(tc.sampleOutput) : '')),
+    isHidden: Boolean(tc.isHidden ?? tc.is_hidden ?? false),
+    description: tc.description || '',
+    order: tc.order != null ? Number(tc.order) : idx,
+  }))
+
+  return {
+    id,
+    title,
+    description,
+    difficulty,
+    marks,
+    timeLimit,
+    memoryLimit,
+    inputFormat,
+    outputFormat,
+    constraints,
+    sampleInput,
+    sampleOutput,
+    explanation,
+    tags,
+    requiredConcepts,
+    languages,
+    languageSolutions,
+    programmingLanguage: languages[0]?.language || 'javascript',
+    starterCode: languages[0]?.starterCode || '',
+    expectedSolution: languages[0]?.referenceSolution || '',
+    testCases,
+    source: p.source || 'AI',
+    aiValidationStatus: p.aiValidationStatus || 'DRAFT',
+    aiValidationMessage: p.aiValidationMessage || null,
+  }
+}
+
+export function normalizeCodingAssessment(a) {
+  if (!a || typeof a !== 'object') return null
+  const rawProblems = Array.isArray(a.problems) ? a.problems : []
+  const problems = rawProblems.map(normalizeCodingProblem).filter(Boolean)
+  const langs = Array.isArray(a.languages) && a.languages.length > 0
+    ? a.languages.map(l => String(l).toLowerCase().trim())
+    : ['javascript']
+
+  return {
+    ...a,
+    languages: langs,
+    problems,
+    numProblems: problems.length,
+  }
+}
 
 function MonoField({ language, value, onChange, readOnly = false, height = 160 }) {
   return (
@@ -128,9 +235,11 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
     }
   }, [])
 
-  const fetchAssessment = useCallback(async () => {
+  const fetchAssessment = useCallback(async (isQuiet = false) => {
     if (!assessmentId) return
-    setLoading(true)
+    if (!isQuiet && !assessment) {
+      setLoading(true)
+    }
     try {
       const r = await fetch(API.CODING.DETAIL(assessmentId), { headers: auth() })
       const d = await r.json()
@@ -142,17 +251,19 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
           timeLimit: d.assessment.timeLimit || 120,
           languages: Array.isArray(d.assessment.languages) ? d.assessment.languages : ['javascript', 'python'],
         })
-      } else {
+      } else if (!isQuiet) {
         toast.error('Assessment not found')
       }
     } catch (e) {
-      toast.error('Failed to load assessment')
+      if (!isQuiet && !assessment) {
+        toast.error('Failed to load assessment')
+      }
     } finally {
       setLoading(false)
     }
-  }, [assessmentId])
+  }, [assessmentId, auth, assessment])
 
-  useEffect(() => { fetchAssessment() }, [fetchAssessment])
+  useEffect(() => { fetchAssessment(false) }, [assessmentId])
 
   const handlePublish = async () => {
     setPublishing(true)
@@ -165,8 +276,9 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
         return
       }
       toast.success('Coding assessment published successfully')
-      fetchAssessment()
-      onRefresh?.()
+      setAssessment(prev => prev ? { ...prev, status: 'PUBLISHED' } : prev)
+      fetchAssessment(true)
+      onRefresh?.(true)
     } catch (e) { toast.error(e.message) }
     finally { setPublishing(false) }
   }
@@ -183,8 +295,9 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
       const r = await fetch(API.CODING.CLOSE(assessmentId), { method: 'POST', headers: auth() })
       if (!r.ok) throw new Error('Close failed')
       toast.success('Coding assessment closed')
-      fetchAssessment()
-      onRefresh?.()
+      setAssessment(prev => prev ? { ...prev, status: 'CLOSED' } : prev)
+      fetchAssessment(true)
+      onRefresh?.(true)
     } catch (e) { toast.error(e.message) }
   }
 
@@ -200,7 +313,7 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
       const r = await fetch(API.CODING.DELETE(assessmentId), { method: 'DELETE', headers: auth() })
       if (!r.ok) throw new Error('Delete failed')
       toast.success('Coding assessment deleted successfully')
-      onRefresh?.()
+      onRefresh?.(true)
       onClose?.()
     } catch (e) { toast.error(e.message) }
   }
@@ -213,9 +326,10 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
       })
       if (!r.ok) throw new Error('Save failed')
       toast.success('Coding assessment updated successfully')
+      setAssessment(prev => prev ? { ...prev, ...editForm } : prev)
       setEditingAssessment(false)
-      fetchAssessment()
-      onRefresh?.()
+      fetchAssessment(true)
+      onRefresh?.(true)
     } catch (e) { toast.error(e.message) }
   }
 
@@ -493,22 +607,28 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
                 )}
 
                 {/* Publish Assessment Button (if draft) */}
-                {assessment.status === 'DRAFT' && (
-                  <button
-                    onClick={handlePublish}
-                    disabled={publishing}
-                    style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 6,
-                      height: 36, padding: '0 16px', background: '#16A34A', border: 'none',
-                      borderRadius: 8, fontSize: 13, fontWeight: 500, color: '#FFFFFF', cursor: 'pointer',
-                      boxShadow: '0 2px 4px rgba(22, 163, 74, 0.2)', transition: 'all 150ms ease', fontFamily: 'inherit',
-                      opacity: publishing ? 0.6 : 1
-                    }}
-                  >
-                    {publishing ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-                    {publishing ? 'Publishing…' : 'Publish Assessment'}
-                  </button>
-                )}
+                {assessment.status === 'DRAFT' && (() => {
+                  const probList = assessment.problems || [];
+                  const allPassed = probList.length > 0 && probList.every(p => p.aiValidationStatus === 'VALIDATED' || p.aiValidationStatus === 'PASSED');
+                  return (
+                    <button
+                      onClick={handlePublish}
+                      disabled={publishing || !allPassed}
+                      title={!allPassed ? 'All problems must pass validation before publishing. Please validate or fix any failing problems.' : 'Publish assessment to participants'}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                        height: 36, padding: '0 16px', background: '#16A34A', border: 'none',
+                        borderRadius: 8, fontSize: 13, fontWeight: 500, color: '#FFFFFF',
+                        cursor: (publishing || !allPassed) ? 'not-allowed' : 'pointer',
+                        boxShadow: '0 2px 4px rgba(22, 163, 74, 0.2)', transition: 'all 150ms ease', fontFamily: 'inherit',
+                        opacity: (publishing || !allPassed) ? 0.5 : 1
+                      }}
+                    >
+                      {publishing ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                      {publishing ? 'Publishing…' : 'Publish Assessment'}
+                    </button>
+                  );
+                })()}
 
                 {/* Delete Assessment Button */}
                 <button
@@ -569,7 +689,7 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
                   />
                 )}
                 {activeTab === 'problems' && (
-                  <ProblemsTab assessment={assessment} onRefresh={fetchAssessment} auth={auth} toast={toast} />
+                  <ProblemsTab assessment={assessment} setAssessment={setAssessment} onRefresh={fetchAssessment} auth={auth} toast={toast} />
                 )}
                 {activeTab === 'participants' && (
                   <ParticipantsTab assessment={assessment} auth={auth} toast={toast} />
@@ -601,94 +721,8 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
    1. GENERAL TAB CONTENT
    ───────────────────────────────────────────────────────────────────────────── */
 function GeneralTabContent({ assessment, trainerDisplayName }) {
-  const statCards = [
-    {
-      icon: FileText,
-      label: 'Problems',
-      value: assessment.problems?.length ?? assessment.numProblems ?? 1,
-      subtitle: 'Total Problems'
-    },
-    {
-      icon: Clock,
-      label: 'Duration',
-      value: `${assessment.timeLimit || 120} minutes`,
-      subtitle: 'Total Time'
-    },
-    {
-      icon: Code,
-      label: 'Languages',
-      value: (assessment.languages && assessment.languages.length > 0 ? assessment.languages.join(', ') : 'javascript, python'),
-      subtitle: 'Allowed Languages'
-    },
-    {
-      icon: RefreshCw,
-      label: 'Attempts Allowed',
-      value: assessment.maxAttempts || 1,
-      subtitle: 'Per Participant'
-    },
-    {
-      icon: Star,
-      label: 'Total Marks',
-      value: assessment.totalMarks ? Number(assessment.totalMarks).toFixed(2) : '10.00',
-      subtitle: 'Maximum Marks'
-    },
-    {
-      icon: Calendar,
-      label: 'Created',
-      value: assessment.createdAt
-        ? new Date(assessment.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-        : '15 Aug 2025, 10:30 AM',
-      subtitle: `By ${trainerDisplayName}`
-    },
-    {
-      icon: BarChart2,
-      label: 'Difficulty',
-      value: assessment.difficulty || 'EASY',
-      subtitle: 'Challenge Level'
-    },
-    {
-      icon: Users,
-      label: 'Participants',
-      value: assessment.participantCount ?? '—',
-      subtitle: 'Enrolled'
-    },
-  ]
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* ── 8 Statistics Cards Grid (4 columns × 2 rows) ── */}
-      <div style={{
-        display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12,
-      }}>
-        {statCards.map((c, i) => {
-          const Icon = c.icon
-          return (
-            <div
-              key={i}
-              style={{
-                background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 14,
-                padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
-                boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
-              }}
-            >
-              <div style={{
-                width: 40, height: 40, borderRadius: 10, background: '#EAF8F0',
-                color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
-              }}>
-                <Icon size={18} strokeWidth={2.2} />
-              </div>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: 11, fontWeight: 500, color: '#64748B', marginBottom: 2 }}>{c.label}</div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {c.value}
-                </div>
-                <div style={{ fontSize: 10.5, fontWeight: 400, color: '#94A3B8', marginTop: 2 }}>{c.subtitle}</div>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-
       {/* ── Description & Instructions 2-Column Card ── */}
       <div style={{
         background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 16,
@@ -698,74 +732,55 @@ function GeneralTabContent({ assessment, trainerDisplayName }) {
         {/* Left Column: Description */}
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-            <FileText size={17} color="#16A34A" />
-            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#0F172A' }}>Description</h3>
+            <FileText size={16} color="#16A34A" />
+            <h4 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#0F172A' }}>Assessment Description</h4>
           </div>
-          <p style={{
-            margin: 0, fontSize: 13, color: '#475569', lineHeight: 1.6,
-            fontWeight: 400
-          }}>
-            {assessment.description || 'Solve the basic output problems and demonstrate your understanding of core programming concepts.'}
+          <p style={{ margin: 0, fontSize: 13, color: '#475569', lineHeight: 1.6 }}>
+            {assessment.description || 'Test foundational coding concepts and problem solving skills.'}
           </p>
         </div>
 
         {/* Right Column: Instructions */}
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-            <Info size={17} color="#16A34A" />
-            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#0F172A' }}>Instructions</h3>
+            <AlertCircle size={16} color="#16A34A" />
+            <h4 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#0F172A' }}>Instructions for Participants</h4>
           </div>
-          <ul style={{
-            margin: 0, paddingLeft: 18, fontSize: 12.5, color: '#475569',
-            lineHeight: 1.7, display: 'flex', flexDirection: 'column', gap: 3
-          }}>
-            <li>Read each problem carefully before writing code.</li>
-            <li>Your code will be tested with multiple test cases.</li>
-            <li>Make sure your output matches the expected format.</li>
-            <li>No external libraries are allowed unless specified.</li>
-          </ul>
+          <p style={{ margin: 0, fontSize: 13, color: '#475569', lineHeight: 1.6 }}>
+            {assessment.instructions || 'Read the problem statement carefully and submit your code within the time limit. All test cases must pass for full score.'}
+          </p>
         </div>
       </div>
 
-      {/* ── Bottom Status Section Bar ── */}
+      {/* ── Additional Rules & Metadata ── */}
       <div style={{
-        background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 14,
-        padding: '14px 22px', boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16
+        background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 16,
+        padding: '18px 22px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        flexWrap: 'wrap', gap: 12
       }}>
-        {/* Published Date */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Calendar size={17} color="#16A34A" />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
           <div>
-            <div style={{ fontSize: 10.5, fontWeight: 500, color: '#94A3B8' }}>Published on</div>
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: '#0F172A' }}>
-              {assessment.publishedAt
-                ? new Date(assessment.publishedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-                : '15 Aug 2025, 11:00 AM'}
-            </div>
+            <span style={{ fontSize: 11, color: '#94A3B8', display: 'block', marginBottom: 2 }}>Passing Criteria</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: '#0F172A' }}>{assessment.passingScore || 60}% Marks</span>
+          </div>
+          <div>
+            <span style={{ fontSize: 11, color: '#94A3B8', display: 'block', marginBottom: 2 }}>Proctoring Enabled</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: assessment.proctoringEnabled ? '#16A34A' : '#64748B' }}>
+              {assessment.proctoringEnabled ? 'Yes' : 'No'}
+            </span>
+          </div>
+          <div>
+            <span style={{ fontSize: 11, color: '#94A3B8', display: 'block', marginBottom: 2 }}>AI Hints Allowed</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: assessment.aiAssistEnabled ? '#16A34A' : '#64748B' }}>
+              {assessment.aiAssistEnabled ? 'Yes (Socratic Tutor)' : 'No'}
+            </span>
           </div>
         </div>
 
-        {/* Last Updated */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <RefreshCw size={17} color="#16A34A" />
-          <div>
-            <div style={{ fontSize: 10.5, fontWeight: 500, color: '#94A3B8' }}>Last updated</div>
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: '#0F172A' }}>
-              {assessment.updatedAt
-                ? new Date(assessment.updatedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-                : '15 Aug 2025, 11:00 AM'}
-            </div>
-          </div>
-        </div>
-
-        {/* Status */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ fontSize: 11, fontWeight: 500, color: '#94A3B8' }}>Status</div>
           <span style={{
-            display: 'inline-flex', alignItems: 'center', gap: 5,
-            padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-            background: '#EAF8F0', color: '#16A34A'
+            display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 8,
+            fontSize: 11.5, fontWeight: 600, background: '#EAF8F0', color: '#16A34A'
           }}>
             <Check size={12} strokeWidth={2.8} /> Active
           </span>
@@ -778,25 +793,29 @@ function GeneralTabContent({ assessment, trainerDisplayName }) {
 /* ─────────────────────────────────────────────────────────────────────────────
    2. PROBLEMS TAB
    ───────────────────────────────────────────────────────────────────────────── */
-function ProblemsTab({ assessment, onRefresh, auth, toast }) {
+function ProblemsTab({ assessment, setAssessment, onRefresh, auth, toast }) {
   const confirm = useConfirm()
   const [modalOpen, setModalOpen] = useState(false)
   const [editingProblem, setEditingProblem] = useState(null)
   const [showAIWizard, setShowAIWizard] = useState(false)
   const [validatingId, setValidatingId] = useState(null)
   const [validatingAll, setValidatingAll] = useState(false)
+  const [deletingProblemId, setDeletingProblemId] = useState(null)
   const problems = assessment.problems || []
 
   const aiStatusStyle = (status) => {
     const map = {
       VALIDATED: { bg: '#EAF8F0', color: '#16A34A', label: 'Validated' },
-      PUBLISHED: { bg: '#EAF8F0', color: '#16A34A', label: 'Published' },
-      AI_GENERATED: { bg: '#EFF6FF', color: '#2563EB', label: 'AI Generated' },
+      PASSED: { bg: '#EAF8F0', color: '#16A34A', label: 'Validated' },
+      PUBLISHED: { bg: '#EAF8F0', color: '#16A34A', label: 'Validated' },
+      AI_GENERATED: { bg: '#EFF6FF', color: '#2563EB', label: 'Pending Validation' },
       VALIDATING: { bg: '#FEF3C7', color: '#D97706', label: 'Validating…' },
       VALIDATION_FAILED: { bg: '#FEF2F2', color: '#DC2626', label: 'Validation Failed' },
+      FAILED: { bg: '#FEF2F2', color: '#DC2626', label: 'Validation Failed' },
       NEEDS_TRAINER_REVIEW: { bg: '#FEF3C7', color: '#B45309', label: 'Needs Review' },
+      PENDING_REVIEW: { bg: '#FEF3C7', color: '#B45309', label: 'Needs Review' },
     }
-    return map[status] || { bg: '#F1F5F9', color: '#64748B', label: status || '—' }
+    return map[status] || { bg: '#F1F5F9', color: '#64748B', label: status || 'Draft' }
   }
 
   const handleValidate = async (probId) => {
@@ -812,7 +831,25 @@ function ProblemsTab({ assessment, onRefresh, auth, toast }) {
       if (!r.ok || data.success === false) throw new Error(data.error || data.message || 'Validation failed')
       toast.success(data.validation?.recommendedStatus === 'VALIDATED' ? 'Problem validated successfully' : `Validation outcome: ${data.validation?.recommendedStatus}`)
       if (data.validation?.issues?.length) toast.error(data.validation.issues.join(' ').slice(0, 300))
-      onRefresh()
+      
+      // Optimistic update of the validated problem
+      if (setAssessment && data.validation) {
+        setAssessment(prev => {
+          if (!prev) return prev
+          const updated = (prev.problems || []).map(p => {
+            if (p.id === probId) {
+              return {
+                ...p,
+                aiValidationStatus: data.validation.recommendedStatus || 'VALIDATED',
+                aiValidationMessage: data.validation.issues?.join(' ') || null,
+              }
+            }
+            return p
+          })
+          return { ...prev, problems: updated }
+        })
+      }
+      onRefresh?.(true)
     } catch (e) { toast.error(e.message) } finally { setValidatingId(null) }
   }
 
@@ -836,7 +873,30 @@ function ProblemsTab({ assessment, onRefresh, auth, toast }) {
       if (!r.ok || data.success === false) throw new Error(data.error || data.message || 'Validation failed')
       const failed = (data.results || []).filter(x => x.recommendedStatus !== 'VALIDATED').length
       toast.success(failed === 0 ? 'All questions validated ✓' : `${data.results?.length} validated, ${failed} need attention`)
-      onRefresh()
+      
+      // Optimistic update of all problems
+      if (setAssessment) {
+        setAssessment(prev => {
+          if (!prev) return prev
+          const resultMap = {}
+          for (const res of (data.results || [])) {
+            if (res.problemId) resultMap[res.problemId] = res
+          }
+          const updated = (prev.problems || []).map(p => {
+            const res = resultMap[p.id]
+            if (res) {
+              return {
+                ...p,
+                aiValidationStatus: res.recommendedStatus || 'VALIDATED',
+                aiValidationMessage: res.issues?.join(' ') || null,
+              }
+            }
+            return { ...p, aiValidationStatus: 'VALIDATED' }
+          })
+          return { ...prev, problems: updated }
+        })
+      }
+      onRefresh?.(true)
     } catch (e) { toast.error(e.message) } finally { setValidatingAll(false) }
   }
 
@@ -852,14 +912,24 @@ function ProblemsTab({ assessment, onRefresh, auth, toast }) {
       confirmText: 'Delete Problem',
     })
     if (!ok) return
+    setDeletingProblemId(probId)
     try {
       const endpoint = API.CODING.DELETE_PROBLEM(probId)
       const r = await fetch(endpoint, { method: 'DELETE', headers: auth() })
       const data = await r.json().catch(() => ({}))
       if (!r.ok || data.success === false) throw new Error(data.error || data.message || 'Delete failed')
       toast.success('Problem deleted')
-      onRefresh()
+      
+      // Optimistically remove problem from state
+      if (setAssessment) {
+        setAssessment(prev => prev ? {
+          ...prev,
+          problems: (prev.problems || []).filter(p => p.id !== probId)
+        } : prev)
+      }
+      onRefresh?.(true)
     } catch (e) { toast.error(e.message) }
+    finally { setDeletingProblemId(null) }
   }
 
   return (
@@ -882,6 +952,42 @@ function ProblemsTab({ assessment, onRefresh, auth, toast }) {
         </div>
       </div>
 
+      {/* ── Summary bar ── */}
+      {problems.length > 0 && (
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          gap: 12, marginBottom: 18, padding: '14px 18px',
+          background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 12,
+        }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Problems</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', marginTop: 2 }}>{problems.length}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Languages</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+              {(assessment.languages || ['javascript']).map(l => (
+                <span key={l} style={{ padding: '2px 7px', background: '#EDE9FE', color: '#6D28D9', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
+                  {languageLabel(l)}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Difficulty</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#0F172A', marginTop: 3 }}>
+              {assessment.difficulty || 'MEDIUM'}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Marks</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', marginTop: 2 }}>
+              {problems.reduce((sum, p) => sum + (p.marks || 10), 0)}
+            </div>
+          </div>
+        </div>
+      )}
+
       {problems.length === 0 ? (
         <div style={{ padding: 40, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}>
           No coding problems yet. Click <strong>Add Problem</strong> or <strong>Generate with AI</strong>.
@@ -896,13 +1002,13 @@ function ProblemsTab({ assessment, onRefresh, auth, toast }) {
                 <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B', width: 110 }}>DIFFICULTY</th>
                 <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B', width: 80, textAlign: 'center' }}>MARKS</th>
                 <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B', width: 90, textAlign: 'center' }}>TEST CASES</th>
-                <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B', width: 130 }}>VALIDATION</th>
+                <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B', width: 140 }}>VALIDATION</th>
                 <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B', width: 120, textAlign: 'center' }}>ACTIONS</th>
               </tr>
             </thead>
             <tbody>
               {problems.map((p, i) => (
-                <tr key={p.id || i} style={{ borderBottom: '1px solid #F8FAFC' }}>
+                <tr key={p.id || `prob_${i}`} style={{ borderBottom: '1px solid #F8FAFC' }}>
                   <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 600, color: '#94A3B8', fontSize: 12.5 }}>{i + 1}</td>
                   <td style={{ padding: '12px 16px' }}>
                     <div style={{ fontWeight: 600, color: '#0F172A', fontSize: 13.5 }}>{p.title}</div>
@@ -927,21 +1033,43 @@ function ProblemsTab({ assessment, onRefresh, auth, toast }) {
                   </td>
                   <td style={{ padding: '12px 16px' }}>
                     {(() => {
-                      const st = aiStatusStyle(p.aiValidationStatus || (p.source === 'AI' ? 'AI_GENERATED' : 'PUBLISHED'))
+                      const st = aiStatusStyle(p.aiValidationStatus || (p.source === 'AI' ? 'AI_GENERATED' : 'DRAFT'))
                       return (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ padding: '3px 8px', borderRadius: 6, fontSize: 10.5, fontWeight: 700, background: st.bg, color: st.color, whiteSpace: 'nowrap' }}>
-                            {st.label}
-                          </span>
-                          {p.source === 'AI' && <Sparkles size={11} color="#16A34A" />}
-                          <button
-                            onClick={() => handleValidate(p.id)}
-                            disabled={validatingId === p.id}
-                            title="Validate with AI (runs reference solution against all test cases)"
-                            style={{ ...iconBtn('#F5F3FF', '#7C3AED'), width: 24, height: 24 }}
-                          >
-                            {validatingId === p.id ? <Loader2 size={11} className="animate-spin" /> : <ShieldCheck size={11} />}
-                          </button>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span
+                              title={p.aiValidationMessage || st.label}
+                              style={{
+                                padding: '3px 8px', borderRadius: 6, fontSize: 10.5, fontWeight: 700,
+                                background: st.bg, color: st.color, whiteSpace: 'nowrap',
+                                display: 'inline-flex', alignItems: 'center', gap: 4
+                              }}
+                            >
+                              {p.aiValidationStatus === 'VALIDATED' || p.aiValidationStatus === 'PASSED' ? (
+                                <ShieldCheck size={11} color="#16A34A" />
+                              ) : p.aiValidationStatus === 'VALIDATION_FAILED' || p.aiValidationStatus === 'FAILED' ? (
+                                <AlertTriangle size={11} color="#DC2626" />
+                              ) : p.aiValidationStatus === 'NEEDS_TRAINER_REVIEW' || p.aiValidationStatus === 'PENDING_REVIEW' ? (
+                                <AlertTriangle size={11} color="#B45309" />
+                              ) : (
+                                <Sparkles size={11} color="#2563EB" />
+                              )}
+                              {st.label}
+                            </span>
+                            <button
+                              onClick={() => handleValidate(p.id)}
+                              disabled={validatingId === p.id}
+                              title="Validate with AI (runs reference solution against all test cases)"
+                              style={{ ...iconBtn('#F5F3FF', '#7C3AED'), width: 24, height: 24 }}
+                            >
+                              {validatingId === p.id ? <Loader2 size={11} className="animate-spin" /> : <ShieldCheck size={11} />}
+                            </button>
+                          </div>
+                          {p.aiValidationMessage && (p.aiValidationStatus === 'VALIDATION_FAILED' || p.aiValidationStatus === 'NEEDS_TRAINER_REVIEW') && (
+                            <div style={{ fontSize: 10.5, color: '#DC2626', maxWidth: 220, lineHeight: 1.2 }} title={p.aiValidationMessage}>
+                              {p.aiValidationMessage.slice(0, 75)}...
+                            </div>
+                          )}
                         </div>
                       )
                     })()}
@@ -951,8 +1079,8 @@ function ProblemsTab({ assessment, onRefresh, auth, toast }) {
                       <button onClick={() => { setEditingProblem(p); setModalOpen(true) }} className="cqt-action-btn cqt-action-btn--edit" title="Edit Problem">
                         <Pencil size={12} />
                       </button>
-                      <button onClick={() => handleDeleteProblem(p.id)} className="cqt-action-btn cqt-action-btn--delete" title="Delete Problem">
-                        <Trash2 size={12} />
+                      <button onClick={() => handleDeleteProblem(p.id)} disabled={deletingProblemId === p.id} className="cqt-action-btn cqt-action-btn--delete" title="Delete Problem">
+                        {deletingProblemId === p.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
                       </button>
                     </div>
                   </td>
@@ -965,10 +1093,26 @@ function ProblemsTab({ assessment, onRefresh, auth, toast }) {
 
       {modalOpen && (
         <ProblemFormModal
+          key={`prob-modal-${editingProblem?.id || 'new'}`}
           assessmentId={assessment.id}
-          existingProblem={editingProblem}
-          onClose={() => setModalOpen(false)}
-          onSaved={() => { setModalOpen(false); onRefresh() }}
+          existingProblem={editingProblem ? normalizeCodingProblem(editingProblem) : null}
+          onClose={() => { setModalOpen(false); setEditingProblem(null) }}
+          onSaved={(savedProb) => {
+            setModalOpen(false)
+            setEditingProblem(null)
+            if (setAssessment && savedProb && savedProb.id) {
+              const normSaved = normalizeCodingProblem(savedProb)
+              setAssessment(prev => {
+                if (!prev) return prev
+                const exists = (prev.problems || []).some(p => p.id === normSaved.id)
+                const updated = exists
+                  ? prev.problems.map(p => p.id === normSaved.id ? { ...p, ...normSaved } : p)
+                  : [...(prev.problems || []), normSaved]
+                return { ...prev, problems: updated, numProblems: updated.length }
+              })
+            }
+            onRefresh?.(true)
+          }}
           auth={auth}
           toast={toast}
         />
@@ -979,7 +1123,14 @@ function ProblemsTab({ assessment, onRefresh, auth, toast }) {
           assessmentId={assessment.id}
           initialLanguages={assessment.languages || ['javascript']}
           onClose={() => setShowAIWizard(false)}
-          onSuccess={() => { setShowAIWizard(false); onRefresh() }}
+          onSuccess={(updatedAssessment) => {
+            setShowAIWizard(false)
+            if (updatedAssessment && setAssessment) {
+              const norm = normalizeCodingAssessment(updatedAssessment)
+              setAssessment(norm)
+            }
+            onRefresh?.(true)
+          }}
           auth={auth}
           toast={toast}
         />
@@ -990,14 +1141,15 @@ function ProblemsTab({ assessment, onRefresh, auth, toast }) {
 
 function AIProblemWizardModal({ assessmentId, initialLanguages = ['javascript'], onClose, onSuccess, auth, toast }) {
   const [topic, setTopic] = useState('')
-  const [difficulty, setDifficulty] = useState('EASY')
   const [problemCount, setProblemCount] = useState(1)
+  const [difficulty, setDifficulty] = useState('EASY')
   const [selectedLangs, setSelectedLangs] = useState(initialLanguages.length > 0 ? initialLanguages : ['python', 'javascript'])
   const [langDropdownOpen, setLangDropdownOpen] = useState(false)
   const [langSearch, setLangSearch] = useState('')
   const [loading, setLoading] = useState(false)
   const [loadingStep, setLoadingStep] = useState('')
   const [error, setError] = useState(null)
+  const reqSeqRef = useRef(0)
 
   const toggleLang = (id) => {
     setSelectedLangs(prev => {
@@ -1020,16 +1172,23 @@ function AIProblemWizardModal({ assessmentId, initialLanguages = ['javascript'],
       return
     }
 
+    const countToSend = Math.max(1, Math.min(parseInt(problemCount, 10) || 1, 10))
+    const currentSeq = ++reqSeqRef.current
+
     setLoading(true)
     setError(null)
-    setLoadingStep(`Generating problem specification for "${topic.trim()}"...`)
+    setLoadingStep(`Generating ${countToSend} problem(s) specification for "${topic.trim()}"...`)
 
     try {
       const stepTimer1 = setTimeout(() => {
-        setLoadingStep(`Generating ${selectedLangs.map(l => languageLabel(l)).join(', ')} starter & reference solutions...`)
+        if (currentSeq === reqSeqRef.current) {
+          setLoadingStep(`Generating ${selectedLangs.map(l => languageLabel(l)).join(', ')} starter & reference solutions...`)
+        }
       }, 1500)
       const stepTimer2 = setTimeout(() => {
-        setLoadingStep('Synthesizing test cases and running validation checks...')
+        if (currentSeq === reqSeqRef.current) {
+          setLoadingStep('Synthesizing test cases and running validation checks...')
+        }
       }, 4500)
 
       const res = await fetch(API.CODING.GENERATE_FOR_ASSESSMENT ? API.CODING.GENERATE_FOR_ASSESSMENT(assessmentId) : `${API.CODING.LIST}/${assessmentId}/generate-problems`, {
@@ -1038,7 +1197,7 @@ function AIProblemWizardModal({ assessmentId, initialLanguages = ['javascript'],
         body: JSON.stringify({
           prompt: topic.trim(),
           difficulty,
-          problemCount,
+          problemCount: countToSend,
           languages: selectedLangs,
         }),
       })
@@ -1046,15 +1205,21 @@ function AIProblemWizardModal({ assessmentId, initialLanguages = ['javascript'],
       clearTimeout(stepTimer1)
       clearTimeout(stepTimer2)
 
+      if (currentSeq !== reqSeqRef.current) return
+
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || data.message || 'AI Problem Generation failed')
 
-      toast.success(`Successfully generated ${problemCount} problem${problemCount > 1 ? 's' : ''} for "${topic.trim()}"`)
-      onSuccess()
+      toast.success(`Successfully generated ${countToSend} problem(s) for "${topic.trim()}"`)
+      onSuccess(data.assessment)
     } catch (err) {
-      setError(err.message || 'AI Generation failed. Please try again.')
+      if (currentSeq === reqSeqRef.current) {
+        setError(err.message || 'AI Generation failed. Please try again.')
+      }
     } finally {
-      setLoading(false)
+      if (currentSeq === reqSeqRef.current) {
+        setLoading(false)
+      }
     }
   }
 
@@ -1097,12 +1262,19 @@ function AIProblemWizardModal({ assessmentId, initialLanguages = ['javascript'],
               style={{ ...inputStyle, fontSize: 13.5, padding: '9px 12px' }}
               required
               disabled={loading}
-              placeholder='e.g. "Print hi", "Fibonacci sequence", "Palindrome check"'
+              placeholder='e.g. "Generate 3 easy problems on array sorting" or "Write a program that prints HI"'
               value={topic}
-              onChange={e => setTopic(e.target.value)}
+              onChange={e => {
+                const val = e.target.value
+                setTopic(val)
+                const m = val.match(/\b([1-9]|10)\s*(?:(?:easy|medium|hard|simple|basic|coding|programming|algorithm)\s+)*(?:problems?|questions?|tasks?|challenges?)\b/i)
+                if (m && m[1]) {
+                  setProblemCount(parseInt(m[1], 10))
+                }
+              }}
             />
-            <span style={{ fontSize: 11.5, color: '#64748B', marginTop: 4, display: 'block' }}>
-              The problem title, description, and test cases will be specifically focused on this topic.
+            <span style={{ fontSize: 11.5, color: '#64748B', marginTop: 4, display: 'block', lineHeight: 1.4 }}>
+              Describe the coding topics or skills you want to assess, including how many problems you'd like (e.g. 'Generate 3 easy problems on array sorting'). If not specified, 1 problem will be generated.
             </span>
           </div>
 
@@ -1117,11 +1289,10 @@ function AIProblemWizardModal({ assessmentId, initialLanguages = ['javascript'],
             </div>
             <div>
               <label style={lblStyle}>Number of Problems</label>
-              <select style={selectStyle} disabled={loading} value={problemCount} onChange={e => setProblemCount(parseInt(e.target.value) || 1)}>
-                <option value={1}>1 Problem</option>
-                <option value={2}>2 Problems</option>
-                <option value={3}>3 Problems</option>
-                <option value={5}>5 Problems</option>
+              <select style={selectStyle} disabled={loading} value={problemCount} onChange={e => setProblemCount(parseInt(e.target.value, 10))}>
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                  <option key={n} value={n}>{n} {n === 1 ? 'Problem' : 'Problems'}</option>
+                ))}
               </select>
             </div>
           </div>
@@ -1133,45 +1304,70 @@ function AIProblemWizardModal({ assessmentId, initialLanguages = ['javascript'],
                 style={{
                   display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center',
                   border: '1px solid #CBD5E1', borderRadius: 10, padding: '8px 10px',
-                  background: '#FFFFFF', minHeight: 42, cursor: loading ? 'not-allowed' : 'pointer',
+                  background: '#FFFFFF', minHeight: 42, cursor: 'pointer',
                 }}
-                onClick={() => !loading && setLangDropdownOpen(o => !o)}
+                onClick={() => setLangDropdownOpen(o => !o)}
               >
-                {selectedLangs.map(id => (
-                  <span key={id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#F5F3FF', color: '#6D28D9', border: '1px solid #DDD6FE', borderRadius: 999, padding: '3px 7px 3px 9px', fontSize: 11.5, fontWeight: 600 }}>
-                    {languageLabel(id)}
-                    {selectedLangs.length > 1 && (
-                      <button type="button" disabled={loading} style={{ background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', padding: 2, color: '#6D28D9' }} onClick={(e) => { e.stopPropagation(); toggleLang(id) }} title="Remove language">
+                {selectedLangs.length === 0 ? (
+                  <span style={{ fontSize: 12.5, color: '#94A3B8' }}>Select one or more languages…</span>
+                ) : (
+                  selectedLangs.map(id => (
+                    <span
+                      key={id}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 5,
+                        background: '#EDE9FE', color: '#6D28D9', border: '1px solid #DDD6FE',
+                        borderRadius: 999, padding: '3px 6px 3px 9px', fontSize: 11.5, fontWeight: 600,
+                      }}
+                    >
+                      {languageLabel(id)}
+                      <button
+                        type="button"
+                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', padding: 2, color: '#6D28D9' }}
+                        onClick={(e) => { e.stopPropagation(); toggleLang(id) }}
+                        title="Remove language"
+                      >
                         <X size={11} />
                       </button>
-                    )}
-                  </span>
-                ))}
-                <span style={{ marginLeft: 'auto', display: 'flex', color: '#64748B' }}><ChevronDown size={14} /></span>
+                    </span>
+                  ))
+                )}
+                <span style={{ marginLeft: 'auto', display: 'flex', color: '#64748B' }}>
+                  <ChevronDown size={14} />
+                </span>
               </div>
 
               {langDropdownOpen && (
-                <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 25, background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 10, boxShadow: '0 12px 30px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
+                <div style={{
+                  position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 20,
+                  background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 10,
+                  boxShadow: '0 12px 30px rgba(0,0,0,0.12)', overflow: 'hidden',
+                }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', borderBottom: '1px solid #F1F5F9', background: '#F8FAFC' }}>
                     <Search size={13} color="#94A3B8" />
                     <input
                       autoFocus
                       value={langSearch}
                       onChange={e => setLangSearch(e.target.value)}
-                      placeholder="Search languages to add…"
+                      placeholder="Search languages…"
                       style={{ border: 'none', outline: 'none', fontSize: 12.5, width: '100%', background: 'transparent' }}
                     />
                   </div>
-                  <div style={{ maxHeight: 180, overflowY: 'auto' }}>
+                  <div style={{ maxHeight: 200, overflow: 'auto' }}>
                     {filteredAvailable.length === 0 ? (
-                      <div style={{ padding: 12, textAlign: 'center', color: '#94A3B8', fontSize: 12 }}>All languages selected or none found.</div>
+                      <div style={{ padding: 12, textAlign: 'center', color: '#94A3B8', fontSize: 12.5 }}>No languages found.</div>
                     ) : (
                       filteredAvailable.map(l => (
                         <button
                           key={l.value}
                           type="button"
                           onClick={() => { toggleLang(l.value); setLangSearch('') }}
-                          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', borderBottom: '1px solid #F8FAFC', background: '#FFFFFF', cursor: 'pointer', fontSize: 12.5, color: '#0F172A' }}
+                          style={{
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            width: '100%', padding: '9px 12px', textAlign: 'left',
+                            border: 'none', borderBottom: '1px solid #F8FAFC', background: '#FFFFFF',
+                            cursor: 'pointer', fontSize: 13, color: '#0F172A',
+                          }}
                         >
                           {l.label}
                           <Plus size={13} color="#94A3B8" />
@@ -1218,6 +1414,11 @@ function AIProblemWizardModal({ assessmentId, initialLanguages = ['javascript'],
 }
 
 function ProblemFormModal({ assessmentId, existingProblem, onClose, onSaved, auth, toast }) {
+  useEffect(() => {
+    console.log('[EDIT_MODAL_DATA] problemId=%s title="%s" languagesCount=%d',
+      existingProblem?.id, existingProblem?.title, (existingProblem?.languages || []).length);
+  }, [existingProblem]);
+
   const [form, setForm] = useState({
     title: existingProblem?.title || '',
     description: existingProblem?.description || '',
@@ -1280,10 +1481,12 @@ function ProblemFormModal({ assessmentId, existingProblem, onClose, onSaved, aut
   const [activeLangTab, setActiveLangTab] = useState(null)
   const [langSearch, setLangSearch] = useState('')
   const [langDropdownOpen, setLangDropdownOpen] = useState(false)
-  const [testCases, setTestCases] = useState(
-    (existingProblem?.testCases || []).map(tc => ({
-      input: tc.input || '',
-      expectedOutput: tc.expectedOutput || '',
+  const [testCases, setTestCases] = useState(() =>
+    (existingProblem?.testCases || []).map((tc, idx) => ({
+      _localId: tc.id ? `tc_${tc.id}` : `tc_loc_${idx}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      id: tc.id,
+      input: tc.input != null ? String(tc.input) : '',
+      expectedOutput: tc.expectedOutput != null ? String(tc.expectedOutput) : (tc.output != null ? String(tc.output) : ''),
       isHidden: Boolean(tc.isHidden),
       description: tc.description || '',
     }))
@@ -1356,7 +1559,16 @@ function ProblemFormModal({ assessmentId, existingProblem, onClose, onSaved, aut
   const updateTc = (i, key, val) => {
     setTestCases(prev => prev.map((tc, idx) => (idx === i ? { ...tc, [key]: val } : tc)))
   }
-  const addTc = () => setTestCases(prev => [...prev, { input: '', expectedOutput: '', isHidden: false, description: '' }])
+  const addTc = () => setTestCases(prev => [
+    ...prev,
+    {
+      _localId: `tc_new_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      input: '',
+      expectedOutput: '',
+      isHidden: false,
+      description: '',
+    }
+  ])
   const removeTc = (i) => setTestCases(prev => prev.filter((_, idx) => idx !== i))
   const moveTc = (i, dir) => {
     setTestCases(prev => {
@@ -1389,6 +1601,14 @@ function ProblemFormModal({ assessmentId, existingProblem, onClose, onSaved, aut
         }
       }
 
+      const cleanTestCases = testCases.map((tc, idx) => ({
+        input: tc.input != null ? String(tc.input) : '',
+        expectedOutput: tc.expectedOutput != null ? String(tc.expectedOutput) : '',
+        isHidden: Boolean(tc.isHidden),
+        description: tc.description || '',
+        order: idx,
+      }))
+
       const payload = {
         ...form,
         requiredConcepts,
@@ -1401,7 +1621,7 @@ function ProblemFormModal({ assessmentId, existingProblem, onClose, onSaved, aut
           generationStatus: 'completed',
         })),
         languageSolutions,
-        testCases,
+        testCases: cleanTestCases,
       }
       if (!existingProblem && !assessmentId) {
         throw new Error('Assessment ID is required')
@@ -1419,7 +1639,7 @@ function ProblemFormModal({ assessmentId, existingProblem, onClose, onSaved, aut
         throw new Error(d.message || d.error || 'Save failed')
       }
       toast.success(existingProblem ? 'Problem updated' : 'Problem created')
-      onSaved()
+      onSaved(d.problem || d.data || { ...payload, id: existingProblem?.id || d.id })
       onClose()
     } catch (err) {
       toast.error(err.message)
@@ -1545,25 +1765,24 @@ function ProblemFormModal({ assessmentId, existingProblem, onClose, onSaved, aut
                     onClick={() => toggleConcept(c.id)}
                     style={{
                       padding: '5px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600,
-                      cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5,
+                      cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
                       background: active ? '#4F46E5' : '#FFFFFF',
                       color: active ? '#FFFFFF' : '#4338CA',
-                      border: active ? '1px solid #4338CA' : '1px solid #C7D2FE',
-                      transition: 'all 0.15s ease',
+                      border: active ? '1px solid #4F46E5' : '1px solid #C7D2FE',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
                     }}
                   >
-                    {active ? <Check size={12} /> : <Plus size={12} />}
-                    Must use {c.label}
+                    {active && <Check size={12} />}
+                    {c.label}
                   </button>
                 )
               })}
             </div>
 
-            {/* Custom concept input */}
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input
-                style={{ ...inputStyle, background: '#FFFFFF', flex: 1, fontSize: 12.5 }}
-                placeholder='Custom code requirement (e.g. "import math", "sort()")'
+                style={{ ...inputStyle, background: '#FFFFFF', flex: 1 }}
+                placeholder="Add custom required concept/pattern (e.g. binary_search, math.sqrt)..."
                 value={customConcept}
                 onChange={e => setCustomConcept(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCustomConcept() } }}
@@ -1571,19 +1790,16 @@ function ProblemFormModal({ assessmentId, existingProblem, onClose, onSaved, aut
               <button
                 type="button"
                 onClick={addCustomConcept}
-                style={{ ...btnOutline, padding: '7px 12px', fontSize: 12, background: '#FFFFFF', color: '#4338CA', borderColor: '#C7D2FE' }}
+                style={{ ...btnOutline, background: '#FFFFFF', color: '#4338CA', borderColor: '#C7D2FE', padding: '8px 14px', fontSize: 12.5 }}
               >
-                <Plus size={12} style={{ marginRight: 4 }} /> Add Requirement
+                <Plus size={13} style={{ marginRight: 4 }} /> Add Custom
               </button>
             </div>
 
-            {/* Active custom concepts */}
-            {requiredConcepts.filter(c => typeof c === 'object' || !['for_loop', 'while_loop', 'if_else', 'function', 'recursion', 'array', 'class'].includes(c)).length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-                {requiredConcepts.map((c, idx) => {
-                  const isBuiltin = typeof c === 'string' && ['for_loop', 'while_loop', 'if_else', 'function', 'recursion', 'array', 'class'].includes(c)
-                  if (isBuiltin) return null
-                  const labelText = typeof c === 'object' ? (c.label || c.query || c.value) : c
+            {requiredConcepts.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                {requiredConcepts.map((concept, idx) => {
+                  const labelText = typeof concept === 'string' ? concept : (concept.label || concept.query || concept.id)
                   return (
                     <span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#FFFFFF', color: '#4338CA', border: '1px solid #C7D2FE', borderRadius: 999, padding: '3px 8px', fontSize: 11.5, fontWeight: 600 }}>
                       Requirement: {labelText}
@@ -1725,7 +1941,7 @@ function ProblemFormModal({ assessmentId, existingProblem, onClose, onSaved, aut
               </div>
             ) : (
               testCases.map((tc, i) => (
-                <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'flex-start' }}>
+                <div key={tc._localId || tc.id || `tc_idx_${i}`} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'flex-start' }}>
                   <div style={{ width: 26, textAlign: 'center', paddingTop: 8, fontWeight: 700, color: '#94A3B8', fontSize: 12 }}>{i + 1}</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <div style={{ display: 'flex', gap: 2 }}>

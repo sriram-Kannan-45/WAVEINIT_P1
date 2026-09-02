@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { Sequelize } = require('sequelize');
 const logger = require('../utils/logger');
+const { bootstrapPerformanceIndexes } = require('./bootstrapPerformanceIndexes');
 
 // ── Aiven MySQL Configuration ──────────────────────────────────────────
 // All credentials MUST come from environment variables.
@@ -185,6 +186,14 @@ const connectDB = async () => {
       await ensureMonitoringSchema();
     } catch (bootstrapErr) {
       logger.error('⚠️ Error bootstrapping async monitoring schema', { error: bootstrapErr.message });
+    }
+
+    // Additive coding assessment & AI assistant columns on pre-existing tables.
+    try {
+      const { ensureCodingSchema } = require('./bootstrapCodingSchema');
+      await ensureCodingSchema();
+    } catch (codingBootstrapErr) {
+      logger.error('⚠️ Error bootstrapping coding schema', { error: codingBootstrapErr.message });
     }
 
     // Ensure lesson status column exists for training progress tracking
@@ -957,6 +966,12 @@ const connectDB = async () => {
       } catch (migError) {
         logger.error('⚠️ Error applying manual schema migrations', { error: migError.message });
       }
+    }
+
+    try {
+      await bootstrapPerformanceIndexes(sequelize);
+    } catch (idxErr) {
+      logger.warn('⚠️ Performance index initialization note:', { error: idxErr.message });
     }
     
   } catch (error) {

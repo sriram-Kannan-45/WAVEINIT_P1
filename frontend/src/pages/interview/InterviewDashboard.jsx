@@ -9,6 +9,7 @@ import {
   Video, Calendar, Clock, User, Plus, Search, Filter,
   Eye, Pencil, CalendarClock, Play, XCircle, Trash2,
   FileText, X, Loader2, ChevronLeft, ChevronRight as ChevronRightIcon,
+  MoreVertical,
 } from 'lucide-react'
 import { useToast } from '../../components/Toast'
 import interviewService from '../../services/interviewService'
@@ -35,6 +36,22 @@ const itemVariants = {
 const labelStyle = { fontSize: 12, fontWeight: 600, color: '#334155', display: 'block', marginBottom: 5 }
 const inputStyle = { width: '100%', padding: '9px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13, fontFamily: 'Inter, system-ui, sans-serif', outline: 'none', boxSizing: 'border-box' }
 const selectStyle = { ...inputStyle, appearance: 'none', background: '#fff url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%2364748b\' stroke-width=\'2\'%3E%3Cpath d=\'m6 9 6 6 6-6\'/%3E%3C/svg%3E") no-repeat right 10px center', paddingRight: 30 }
+
+const ivActionBtn = (bg, border, color) => ({
+  width: 32,
+  height: 32,
+  borderRadius: 8,
+  border: `1px solid ${border}`,
+  background: bg,
+  color: color,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  cursor: 'pointer',
+  padding: 0,
+  transition: 'all 0.15s ease',
+  flexShrink: 0,
+})
 
 const EMPTY_EDIT_FORM = {
   title: '',
@@ -509,59 +526,62 @@ export default function InterviewDashboard({ user }) {
                       {isAdmin ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <button
-                            className="reg-admin-btn reg-admin-btn--secondary"
-                            style={{ padding: '5px 8px', height: 30 }}
+                            style={ivActionBtn('#EFF6FF', '#BFDBFE', '#2563EB')}
                             title="View Details"
                             onClick={() => handleView(iv)}
                           >
-                            <Eye size={14} />
+                            <Eye size={15} color="#2563EB" strokeWidth={2.2} />
                           </button>
-                          <button
-                            className="reg-admin-btn reg-admin-btn--secondary"
-                            style={{ padding: '5px 8px', height: 30 }}
-                            title="Edit Interview"
-                            onClick={() => openEdit(iv)}
-                          >
-                            <Pencil size={14} />
-                          </button>
-                          <button
-                            className="reg-admin-btn reg-admin-btn--secondary"
-                            style={{ padding: '5px 8px', height: 30 }}
-                            title="Change Status"
-                            onClick={() => { setChangeStatusTarget(iv); setNewStatus(''); }}
-                          >
-                            <Filter size={14} />
-                          </button>
-                          {iv.status === 'SCHEDULED' && (
+                          {(iv.status === 'SCHEDULED' || iv.status === 'IN_PROGRESS') && (
                             <button
-                              className="reg-admin-btn reg-admin-btn--secondary"
-                              style={{ padding: '5px 8px', height: 30, color: '#d97706' }}
-                              title="Cancel Interview"
-                              onClick={() => setConfirmTarget({ interview: iv, action: 'cancel' })}
+                              style={ivActionBtn('#F0FDF4', '#BBF7D0', '#16A34A')}
+                              title="Start / Join Interview"
+                              onClick={() => handleStart(iv)}
                             >
-                              <CalendarClock size={14} />
+                              <Play size={15} color="#16A34A" strokeWidth={2.2} />
                             </button>
                           )}
                           <button
-                            className="reg-admin-btn reg-admin-btn--secondary"
-                            style={{ padding: '5px 8px', height: 30, color: '#dc2626', borderColor: '#fca5a5' }}
+                            style={ivActionBtn('#F0FDFA', '#99F6E4', '#0D9488')}
+                            title="Edit Interview"
+                            onClick={() => openEdit(iv)}
+                          >
+                            <Pencil size={15} color="#0D9488" strokeWidth={2.2} />
+                          </button>
+                          <button
+                            style={ivActionBtn('#F5F3FF', '#DDD6FE', '#7C3AED')}
+                            title="Change Status"
+                            onClick={() => { setChangeStatusTarget(iv); setNewStatus(''); }}
+                          >
+                            <Filter size={15} color="#7C3AED" strokeWidth={2.2} />
+                          </button>
+                          {iv.status === 'SCHEDULED' && (
+                            <button
+                              style={ivActionBtn('#FFFBEB', '#FDE68A', '#D97706')}
+                              title="Cancel Interview"
+                              onClick={() => setConfirmTarget({ interview: iv, action: 'cancel' })}
+                            >
+                              <CalendarClock size={15} color="#D97706" strokeWidth={2.2} />
+                            </button>
+                          )}
+                          <button
+                            style={ivActionBtn('#FEF2F2', '#FECACA', '#DC2626')}
                             title="Delete Interview"
                             onClick={() => setConfirmTarget({ interview: iv, action: 'delete' })}
                           >
-                            <Trash2 size={14} />
+                            <Trash2 size={15} color="#DC2626" strokeWidth={2.2} />
                           </button>
                         </div>
                       ) : (
                         <div className="reg-admin-actions">
                           <button
                             className="reg-admin-action"
+                            style={{ background: '#F8FAFC', color: '#334155', border: '1px solid #CBD5E1' }}
                             title="Actions"
                             data-menu-btn={iv.id}
                             onClick={(e) => openMenu(e, iv.id)}
                           >
-                            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                              <circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/>
-                            </svg>
+                            <MoreVertical size={16} color="#334155" strokeWidth={2.2} />
                           </button>
                           <AnimatePresence>
                             {menuOpen === iv.id && (
@@ -579,26 +599,26 @@ export default function InterviewDashboard({ user }) {
                                 transition={{ duration: 0.15 }}
                               >
                                 <button className="reg-admin-action-menu-item" onClick={() => handleView(iv)}>
-                                  <Eye size={14} /> View Details
+                                  <Eye size={14} color="#2563EB" /> View Details
                                 </button>
                                 {manage && (
                                   <button className="reg-admin-action-menu-item" onClick={() => openEdit(iv)}>
-                                    <Pencil size={14} /> Edit Interview
+                                    <Pencil size={14} color="#0D9488" /> Edit Interview
                                   </button>
                                 )}
                                 {manage && (
                                   <button className="reg-admin-action-menu-item" onClick={() => { setChangeStatusTarget(iv); setNewStatus(''); setMenuOpen(null) }}>
-                                    <Filter size={14} /> Change Status
+                                    <Filter size={14} color="#7C3AED" /> Change Status
                                   </button>
                                 )}
                                 {(iv.status === 'SCHEDULED' || iv.status === 'IN_PROGRESS') && (
                                   <button className="reg-admin-action-menu-item" onClick={() => handleStart(iv)}>
-                                    <Play size={14} /> Start Interview
+                                    <Play size={14} color="#16A34A" /> Start Interview
                                   </button>
                                 )}
                                 {iv.status === 'SCHEDULED' && manage && (
                                   <button className="reg-admin-action-menu-item" onClick={() => { setConfirmTarget({ interview: iv, action: 'cancel' }); setMenuOpen(null) }}>
-                                    <CalendarClock size={14} /> Cancel
+                                    <CalendarClock size={14} color="#D97706" /> Cancel Interview
                                   </button>
                                 )}
                               </motion.div>

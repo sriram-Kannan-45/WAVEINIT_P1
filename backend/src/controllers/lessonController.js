@@ -20,8 +20,8 @@ const quizStats = async (lessonQuiz) => {
   const ids = await assignedParticipantIds(lesson.trainingId);
   const completed = ids.length
     ? await QuizProgress.count({
-        where: { lessonQuizId: lessonQuiz.id, participantId: ids, status: 'COMPLETED' }
-      })
+      where: { lessonQuizId: lessonQuiz.id, participantId: ids, status: 'COMPLETED' }
+    })
     : 0;
   return { total: ids.length, completed, pending: ids.length - completed, assignedIds: ids };
 };
@@ -147,7 +147,7 @@ const publishQuizResults = async (req, res) => {
           });
         });
       }
-    } catch (_) {}
+    } catch (_) { }
 
     return res.json({ success: true, message: `Results published for ${ids.length} participants` });
   } catch (error) {

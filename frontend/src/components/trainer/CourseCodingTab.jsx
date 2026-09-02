@@ -14,6 +14,7 @@ import {
   colors, btnPrimary, btnSecondary, iconBtn, STATUS_BADGE, RESULT_BADGE,
   lblStyle, lblTiny, inputStyle, th, td, skeletonStyle, typography, DIFF_BADGE,
 } from '../../theme/tokens'
+import Pagination from '../Pagination'
 import '../../styles/course-tabs.css'
 
 // Stable internal IDs match the judge engine runtimes; labels are friendly names.
@@ -521,13 +522,14 @@ function CodingLeaderboardModal({ assessment, data, onClose }) {
 function AICodingWizard({ user, courseId, onClose, onGenerated }) {
   const { success, error: showError } = useToast()
   const [promptText, setPromptText] = useState('')
-  const [problemCount, setProblemCount] = useState(3)
+  const [problemCount, setProblemCount] = useState(1)
   const [difficulty, setDifficulty] = useState('MEDIUM')
   const [timeLimit, setTimeLimit] = useState(60)
   const [languages, setLanguages] = useState(['javascript', 'python'])
   const [generating, setGenerating] = useState(false)
   const [genStep, setGenStep] = useState(0)
   const [genError, setGenError] = useState('')
+  const reqSeqRef = useRef(0)
 
   const genSteps = useMemo(() => {
     const base = [
@@ -553,6 +555,9 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
     if (languages.length === 0) { showError('Please select at least one language'); return }
     setGenError('')
     setGenerating(true)
+    const countToSend = Math.max(1, Math.min(parseInt(problemCount, 10) || 1, 10))
+    const currentSeq = ++reqSeqRef.current
+
     try {
       const r = await fetch(API.CODING.GENERATE, {
         method: 'POST',
@@ -563,7 +568,7 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
         body: JSON.stringify({
           courseId,
           prompt: promptText.trim(),
-          problemCount: parseInt(problemCount, 10) || 3,
+          problemCount: countToSend,
           difficulty: difficulty.toUpperCase(),
           timeLimit: parseInt(timeLimit, 10) || 60,
           languages,
@@ -571,11 +576,20 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
       })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || 'Generation failed')
+      console.log('[FRONTEND_STATE] Assessment created:', d.assessment)
       success('Coding assessment created successfully')
       onGenerated?.()
       onClose()
-    } catch (err) { setGenError(err.message); showError(err.message) }
-    finally { setGenerating(false) }
+    } catch (err) {
+      if (currentSeq === reqSeqRef.current) {
+        setGenError(err.message)
+        showError(err.message)
+      }
+    } finally {
+      if (currentSeq === reqSeqRef.current) {
+        setGenerating(false)
+      }
+    }
   }
 
   return (
@@ -664,31 +678,25 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
               <label style={{ ...lblStyle, marginTop: 0 }}>Topic or Prompt <span style={{ color: colors.danger[600] }}>*</span></label>
               <textarea
                 value={promptText}
-                onChange={(e) => setPromptText(e.target.value)}
-                placeholder="e.g. JavaScript array methods, Python data structures, etc."
+                onChange={(e) => {
+                  const val = e.target.value
+                  setPromptText(val)
+                  const m = val.match(/\b([1-9]|10)\s*(?:(?:easy|medium|hard|simple|basic|coding|programming|algorithm)\s+)*(?:problems?|questions?|tasks?|challenges?)\b/i)
+                  if (m && m[1]) {
+                    setProblemCount(parseInt(m[1], 10))
+                  }
+                }}
+                placeholder='e.g. "Generate 3 easy problems on array sorting" or "Write a program that prints HI"'
                 rows={4}
                 style={{ ...inputStyle, resize: 'vertical', fontSize: 13 }}
                 required
               />
-              <div style={{ fontSize: 11, color: colors.slate[400], marginTop: 4 }}>
-                Describe the coding topics or skills you want to assess.
+              <div style={{ fontSize: 11, color: colors.slate[500], marginTop: 4, lineHeight: 1.4 }}>
+                Describe the coding topics or skills you want to assess, including how many problems you'd like (e.g. 'Generate 3 easy problems on array sorting'). If not specified, 1 problem will be generated.
               </div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
-              <div>
-                <label style={{ ...lblStyle, marginTop: 0 }}>Problems (1 to N)</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="50"
-                  value={problemCount}
-                  onChange={(e) => setProblemCount(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
-                  placeholder="e.g. 3"
-                  style={inputStyle}
-                  required
-                />
-              </div>
               <div>
                 <label style={{ ...lblStyle, marginTop: 0 }}>Difficulty</label>
                 <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)} style={inputStyle}>
@@ -696,6 +704,14 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
                   <option value="MEDIUM">Medium</option>
                   <option value="HARD">Hard</option>
                   <option value="MIXED">Mixed</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ ...lblStyle, marginTop: 0 }}>Problems</label>
+                <select value={problemCount} onChange={(e) => setProblemCount(parseInt(e.target.value, 10))} style={inputStyle}>
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                    <option key={n} value={n}>{n} {n === 1 ? 'Problem' : 'Problems'}</option>
+                  ))}
                 </select>
               </div>
               <div>
@@ -743,15 +759,40 @@ export default function CourseCodingTab({ user, courseId, onCountChange }) {
   const navigate = useNavigate()
   const { success, error: showError } = useToast()
   const confirm = useConfirm()
-  const [assessments, setAssessments] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [assessments, setAssessments] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(`course_coding_${courseId}`)
+      return cached ? JSON.parse(cached) : []
+    } catch {
+      return []
+    }
+  })
+  const [loading, setLoading] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(`course_coding_${courseId}`)
+      return !cached
+    } catch {
+      return true
+    }
+  })
   const [showWizard, setShowWizard] = useState(false)
+
+  // Filters, Search & Pagination State
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState('ALL')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+
+  // Multi-Selection State
+  const [selectedIds, setSelectedIds] = useState([])
+  const selectAllRef = useRef(null)
 
   const [selectedAssessmentId, setSelectedAssessmentId] = useState(null)
   const [publishAssessment, setPublishAssessment] = useState(null)
   const [leaderboardAssessment, setLeaderboardAssessment] = useState(null)
   const [leaderboardData, setLeaderboardData] = useState([])
   const [sendingAssessmentId, setSendingAssessmentId] = useState(null)
+  const [deletingId, setDeletingId] = useState(null)
 
   const [bankSearch, setBankSearch] = useState('')
   const [bankExpanded, setBankExpanded] = useState(false)
@@ -759,19 +800,77 @@ export default function CourseCodingTab({ user, courseId, onCountChange }) {
 
   const auth = () => ({ Authorization: `Bearer ${user.token}` })
 
-  const fetchAll = async () => {
+  const fetchAll = async (isQuiet = false) => {
     try {
-      setLoading(true)
+      if (!isQuiet && assessments.length === 0) {
+        setLoading(true)
+      }
       const r = await fetch(`${API.CODING.LIST}?courseId=${courseId}`, { headers: auth() })
       const d = await r.json()
-      if (d.success) setAssessments(d.assessments || [])
+      if (d.success) {
+        setAssessments(d.assessments || [])
+        try {
+          sessionStorage.setItem(`course_coding_${courseId}`, JSON.stringify(d.assessments || []))
+        } catch (_) {}
+      }
     } catch (e) {
-      showError(e.message)
+      if (!isQuiet) showError(e.message)
     } finally {
       setLoading(false)
     }
   }
-  useEffect(() => { fetchAll() }, [courseId])
+  useEffect(() => { fetchAll(false) }, [courseId])
+
+  // Filtered & Paginated Assessments
+  const filteredAssessments = useMemo(() => {
+    return assessments.filter(a => {
+      if (statusFilter !== 'ALL' && (a.status || 'DRAFT') !== statusFilter) return false
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase()
+        const matchTitle = (a.title || '').toLowerCase().includes(q)
+        const matchLesson = (a.lessonTitle || '').toLowerCase().includes(q)
+        const matchDiff = (a.difficulty || '').toLowerCase().includes(q)
+        if (!matchTitle && !matchLesson && !matchDiff) return false
+      }
+      return true
+    })
+  }, [assessments, statusFilter, searchQuery])
+
+  // Reset page when search or status filter changes
+  useEffect(() => {
+    setPage(1)
+  }, [searchQuery, statusFilter])
+
+  const totalPages = Math.max(1, Math.ceil(filteredAssessments.length / pageSize))
+  const currentPage = Math.min(page, totalPages)
+  const pagedAssessments = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filteredAssessments.slice(start, start + pageSize)
+  }, [filteredAssessments, currentPage, pageSize])
+
+  // Selection Checkbox Helpers
+  const isAllSelected = pagedAssessments.length > 0 && pagedAssessments.every(a => selectedIds.includes(a.id))
+  const isSomeSelected = pagedAssessments.some(a => selectedIds.includes(a.id)) && !isAllSelected
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = isSomeSelected
+    }
+  }, [isSomeSelected])
+
+  const toggleSelectAll = () => {
+    if (isAllSelected) {
+      const pagedIds = new Set(pagedAssessments.map(a => a.id))
+      setSelectedIds(prev => prev.filter(id => !pagedIds.has(id)))
+    } else {
+      const pagedIds = pagedAssessments.map(a => a.id)
+      setSelectedIds(prev => Array.from(new Set([...prev, ...pagedIds])))
+    }
+  }
+
+  const toggleSelectRow = (id) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }
 
   const handleCreate = async () => {
     try {
@@ -783,7 +882,8 @@ export default function CourseCodingTab({ user, courseId, onCountChange }) {
       const d = await r.json()
       if (!r.ok || d.success === false) { showError(d.error || 'Creation failed'); return }
       success('Assessment created (DRAFT)')
-      onCountChange?.()
+      onCountChange?.(true)
+      fetchAll(true)
       if (d.assessment?.id || d.id) {
         setSelectedAssessmentId(d.assessment?.id || d.id)
       }
@@ -798,19 +898,87 @@ export default function CourseCodingTab({ user, courseId, onCountChange }) {
       confirmText: 'Delete Permanently',
     })
     if (!ok) return
+    setDeletingId(a.id)
     try {
       const r = await fetch(API.CODING.DELETE(a.id), { method: 'DELETE', headers: auth() })
       const d = await r.json()
       if (!r.ok || d.success === false) { showError(d.message || d.error || 'Delete failed'); return }
       success('Assessment deleted')
-      await fetchAll()
-      onCountChange?.()
+      setSelectedIds(prev => prev.filter(id => id !== a.id))
+      const remainingCount = filteredAssessments.length - 1
+      const newTotalPages = Math.max(1, Math.ceil(remainingCount / pageSize))
+      if (currentPage > newTotalPages) {
+        setPage(newTotalPages)
+      }
+      fetchAll(true)
+      onCountChange?.(true)
     } catch (e) { showError(e.message) }
+    finally { setDeletingId(null) }
   }
 
-  const openPreview = async (a) => {
-    const full = await fetchFullAssessment(a.id)
-    if (full) setPreviewAssessment(full)
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) return
+    const ok = await confirm({
+      title: 'Delete Selected Assessments',
+      message: `Are you sure you want to delete ${selectedIds.length} assessment${selectedIds.length === 1 ? '' : 's'}? This will permanently remove all related problems, test cases, and submissions.`,
+      type: 'danger',
+      confirmText: `Delete ${selectedIds.length} Assessment${selectedIds.length === 1 ? '' : 's'}`,
+    })
+    if (!ok) return
+
+    try {
+      let r = await fetch(API.CODING.BULK_DELETE, {
+        method: 'POST',
+        headers: { ...auth(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedIds }),
+      })
+
+      if (r.status === 404) {
+        // Fallback for servers running instances before bulk route was registered
+        let lastError = null
+        const results = await Promise.all(
+          selectedIds.map(async (id) => {
+            try {
+              const res = await fetch(API.CODING.DELETE(id), { method: 'DELETE', headers: auth() })
+              const data = await res.json().catch(() => ({}))
+              if (res.ok && data.success !== false && !data.error) {
+                return true
+              }
+              lastError = data.error || data.message || lastError
+              return false
+            } catch (err) {
+              lastError = err.message || lastError
+              return false
+            }
+          })
+        )
+        const deletedCount = results.filter(Boolean).length
+        if (deletedCount > 0) {
+          success(`${deletedCount} assessment${deletedCount === 1 ? '' : 's'} deleted successfully`)
+        } else {
+          showError(lastError || 'Failed to delete assessments')
+          return
+        }
+      } else {
+        const d = await r.json()
+        if (!r.ok || d.success === false) {
+          showError(d.error || d.message || 'Bulk delete failed')
+          return
+        }
+        success(`${d.count || selectedIds.length} assessment${selectedIds.length === 1 ? '' : 's'} deleted successfully`)
+      }
+
+      const remainingTotal = filteredAssessments.length - selectedIds.length
+      const newTotalPages = Math.max(1, Math.ceil(remainingTotal / pageSize))
+      if (currentPage > newTotalPages) {
+        setPage(newTotalPages)
+      }
+      setSelectedIds([])
+      fetchAll(true)
+      onCountChange?.(true)
+    } catch (e) {
+      showError(e.message || 'Bulk delete failed')
+    }
   }
 
   const publishToParticipants = async (a) => {
@@ -827,7 +995,8 @@ export default function CourseCodingTab({ user, courseId, onCountChange }) {
       const d = await r.json()
       if (!r.ok || d.success === false) { showError(d.error || d.message || 'Publish failed'); return }
       success('Assessment published to participants ✓')
-      await fetchAll()
+      fetchAll(true)
+      onCountChange?.(true)
     } catch (e) { showError(e.message) }
     finally { setSendingAssessmentId(null) }
   }
@@ -897,6 +1066,131 @@ export default function CourseCodingTab({ user, courseId, onCountChange }) {
         </div>
       </div>
 
+      {/* Filter & Search Toolbar */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: 12,
+        background: '#FFFFFF',
+        padding: '10px 16px',
+        borderRadius: 12,
+        border: '1px solid #E2E8F0',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 240, maxWidth: 400 }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            background: '#F8FAFC',
+            border: '1px solid #E2E8F0',
+            borderRadius: 8,
+            padding: '6px 12px',
+            width: '100%',
+          }}>
+            <Search size={14} color="#94A3B8" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search assessments..."
+              style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: 13, width: '100%', color: '#1E293B' }}
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, color: '#94A3B8' }}
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 12, color: '#64748B', fontWeight: 600 }}>Status:</span>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            style={{
+              padding: '6px 12px',
+              borderRadius: 8,
+              border: '1px solid #CBD5E1',
+              background: '#FFFFFF',
+              color: '#334155',
+              fontSize: 12.5,
+              fontWeight: 600,
+              cursor: 'pointer',
+              outline: 'none',
+            }}
+          >
+            <option value="ALL">All Statuses ({assessments.length})</option>
+            <option value="DRAFT">Draft</option>
+            <option value="PUBLISHED">Published</option>
+            <option value="CLOSED">Closed</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Multi-Selection Floating Action Bar */}
+      {selectedIds.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            background: '#FEF2F2',
+            border: '1px solid #FECACA',
+            borderRadius: 10,
+            padding: '8px 16px',
+            color: '#991B1B',
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>{selectedIds.length} assessment{selectedIds.length === 1 ? '' : 's'} selected</span>
+            <button
+              onClick={() => setSelectedIds([])}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                color: '#64748B',
+                fontSize: 12,
+                cursor: 'pointer',
+                textDecoration: 'underline',
+                padding: '0 4px',
+              }}
+            >
+              Clear
+            </button>
+          </div>
+          <button
+            onClick={handleBulkDelete}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              background: '#DC2626',
+              color: '#FFFFFF',
+              border: 'none',
+              borderRadius: 8,
+              padding: '6px 14px',
+              fontSize: 12.5,
+              fontWeight: 600,
+              cursor: 'pointer',
+              boxShadow: '0 1px 3px rgba(220, 38, 38, 0.3)',
+            }}
+          >
+            <Trash2 size={13} />
+            Delete Selected ({selectedIds.length})
+          </button>
+        </motion.div>
+      )}
+
       {loading ? (
         <div style={{ height: 160, background: '#F8FAFC', borderRadius: 12, border: '1px solid #F1F5F9' }} />
       ) : assessments.length === 0 ? (
@@ -907,11 +1201,41 @@ export default function CourseCodingTab({ user, courseId, onCountChange }) {
           <h4>No coding assessments yet</h4>
           <p>Click <strong>Create Assessment</strong> or <strong>Generate with AI</strong> to add the first one.</p>
         </div>
+      ) : filteredAssessments.length === 0 ? (
+        <div className="cct-empty-state" style={{ padding: 32 }}>
+          <h4>No matching assessments found</h4>
+          <p>Try adjusting your search query or status filter.</p>
+          <button
+            onClick={() => { setSearchQuery(''); setStatusFilter('ALL'); }}
+            style={{
+              marginTop: 8,
+              padding: '6px 14px',
+              background: '#F1F5F9',
+              border: '1px solid #CBD5E1',
+              borderRadius: 8,
+              fontSize: 12.5,
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            Clear Filters
+          </button>
+        </div>
       ) : (
         <div className="cct-table-card">
           <table className="cct-table">
             <thead>
               <tr>
+                <th style={{ width: 38, textAlign: 'center', padding: '10px 8px' }}>
+                  <input
+                    type="checkbox"
+                    ref={selectAllRef}
+                    checked={isAllSelected}
+                    onChange={toggleSelectAll}
+                    style={{ cursor: 'pointer', width: 15, height: 15, accentColor: '#16A34A' }}
+                    aria-label="Select all assessments on current page"
+                  />
+                </th>
                 <th>TITLE</th>
                 <th>LESSON</th>
                 <th>PROBLEMS</th>
@@ -921,94 +1245,116 @@ export default function CourseCodingTab({ user, courseId, onCountChange }) {
               </tr>
             </thead>
             <tbody>
-              {assessments.map(a => (
-                <tr key={a.id}>
-                  <td>
-                    <div className="cct-title-cell">{a.title || 'Untitled Assessment'}</div>
-                    {a.isMandatory && (
-                      <span className="cct-badge-mandatory">MANDATORY</span>
-                    )}
-                    {a.difficulty && (
-                      <span className="cct-badge-tag">{a.difficulty}</span>
-                    )}
-                  </td>
-                  <td className="cct-cell-muted">
-                    {a.lessonTitle || (Array.isArray(a.languages) && a.languages.length > 0 ? a.languages.map(wizardLangLabel).join(', ') : '— Course-level —')}
-                  </td>
-                  <td className="cct-cell-num">{a.problemCount ?? a.problems?.length ?? a.numProblems ?? 0}</td>
-                  <td>
-                    <span className={`cct-badge cct-badge--${(a.status || 'DRAFT').toLowerCase()}`}>
-                      {a.status || 'DRAFT'}
-                    </span>
-                  </td>
-                  <td>
-                    <span className={`cct-badge cct-badge--${(a.resultStatus || 'HIDDEN').toLowerCase()}`}>
-                      {a.resultStatus || 'HIDDEN'}
-                    </span>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button
-                        title="View Assessment Details"
-                        onClick={() => setSelectedAssessmentId(a.id)}
-                        className="cct-action-btn"
-                      >
-                        <Eye size={12} />
-                      </button>
-                      <button
-                        title="Edit Assessment"
-                        onClick={() => setSelectedAssessmentId(a.id)}
-                        className="cct-action-btn"
-                      >
-                        <Pencil size={12} />
-                      </button>
-                      {a.status === 'DRAFT' ? (
-                        <button
-                          title="Publish to participants"
-                          onClick={() => publishToParticipants(a)}
-                          disabled={sendingAssessmentId === a.id}
-                          className="cct-action-btn"
-                        >
-                          <Send size={12} />
-                        </button>
-                      ) : (
-                        <button
-                          title={a.resultStatus === 'PUBLISHED' ? 'Already published' : 'Publish results'}
-                          onClick={() => a.resultStatus !== 'PUBLISHED' && setPublishAssessment(a)}
-                          disabled={a.resultStatus === 'PUBLISHED'}
-                          className="cct-action-btn"
-                          style={{ opacity: a.resultStatus === 'PUBLISHED' ? 0.45 : 1 }}
-                        >
-                          <Send size={12} />
-                        </button>
+              {pagedAssessments.map(a => {
+                const isSelected = selectedIds.includes(a.id)
+                return (
+                  <tr key={a.id} style={{ background: isSelected ? '#F0FDF4' : 'transparent' }}>
+                    <td style={{ textAlign: 'center', padding: '10px 8px' }}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleSelectRow(a.id)}
+                        style={{ cursor: 'pointer', width: 15, height: 15, accentColor: '#16A34A' }}
+                        aria-label={`Select assessment ${a.title}`}
+                      />
+                    </td>
+                    <td>
+                      <div className="cct-title-cell">{a.title || 'Untitled Assessment'}</div>
+                      {a.isMandatory && (
+                        <span className="cct-badge-mandatory">MANDATORY</span>
                       )}
-                      <button
-                        title="Manage / Analytics"
-                        onClick={() => setSelectedAssessmentId(a.id)}
-                        className="cct-action-btn"
-                      >
-                        <BarChart3 size={12} />
-                      </button>
-                      <button
-                        title="Leaderboard"
-                        onClick={() => openLeaderboard(a)}
-                        className="cct-action-btn"
-                      >
-                        <Trophy size={12} />
-                      </button>
-                      <button
-                        title="Delete"
-                        onClick={() => handleDelete(a)}
-                        className="cct-action-btn"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                      {a.difficulty && (
+                        <span className="cct-badge-tag">{a.difficulty}</span>
+                      )}
+                    </td>
+                    <td className="cct-cell-muted">
+                      {a.lessonTitle || (Array.isArray(a.languages) && a.languages.length > 0 ? a.languages.map(wizardLangLabel).join(', ') : '— Course-level —')}
+                    </td>
+                    <td className="cct-cell-num">{a.problemCount ?? a.problems?.length ?? a.numProblems ?? 0}</td>
+                    <td>
+                      <span className={`cct-badge cct-badge--${(a.status || 'DRAFT').toLowerCase()}`}>
+                        {a.status || 'DRAFT'}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={`cct-badge cct-badge--${(a.resultStatus || 'HIDDEN').toLowerCase()}`}>
+                        {a.resultStatus || 'HIDDEN'}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button
+                          title="View Assessment Details"
+                          onClick={() => setSelectedAssessmentId(a.id)}
+                          className="cct-action-btn"
+                        >
+                          <Eye size={12} />
+                        </button>
+                        <button
+                          title="Edit Assessment"
+                          onClick={() => setSelectedAssessmentId(a.id)}
+                          className="cct-action-btn"
+                        >
+                          <Pencil size={12} />
+                        </button>
+                        {a.status === 'DRAFT' ? (
+                          <button
+                            title="Publish to participants"
+                            onClick={() => publishToParticipants(a)}
+                            disabled={sendingAssessmentId === a.id}
+                            className="cct-action-btn"
+                          >
+                            <Send size={12} />
+                          </button>
+                        ) : (
+                          <button
+                            title={a.resultStatus === 'PUBLISHED' ? 'Already published' : 'Publish results'}
+                            onClick={() => a.resultStatus !== 'PUBLISHED' && setPublishAssessment(a)}
+                            disabled={a.resultStatus === 'PUBLISHED'}
+                            className="cct-action-btn"
+                            style={{ opacity: a.resultStatus === 'PUBLISHED' ? 0.45 : 1 }}
+                          >
+                            <Send size={12} />
+                          </button>
+                        )}
+                        <button
+                          title="Manage / Analytics"
+                          onClick={() => setSelectedAssessmentId(a.id)}
+                          className="cct-action-btn"
+                        >
+                          <BarChart3 size={12} />
+                        </button>
+                        <button
+                          title="Leaderboard"
+                          onClick={() => openLeaderboard(a)}
+                          className="cct-action-btn"
+                        >
+                          <Trophy size={12} />
+                        </button>
+                        <button
+                          title="Delete"
+                          onClick={() => handleDelete(a)}
+                          className="cct-action-btn"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
+          <Pagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={filteredAssessments.length}
+            pageSize={pageSize}
+            onPageChange={(p) => setPage(p)}
+            onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+            pageSizeOptions={[10, 25, 50, 100]}
+            recordLabel="assessments"
+          />
         </div>
       )}
 
@@ -1070,7 +1416,7 @@ export default function CourseCodingTab({ user, courseId, onCountChange }) {
             user={user}
             courseId={courseId}
             onClose={() => setShowWizard(false)}
-            onGenerated={() => { fetchAll(); onCountChange?.() }}
+            onGenerated={() => { fetchAll(true); onCountChange?.(true) }}
           />
         )}
         {publishAssessment && (
@@ -1078,15 +1424,15 @@ export default function CourseCodingTab({ user, courseId, onCountChange }) {
             user={user}
             assessment={publishAssessment}
             onClose={() => setPublishAssessment(null)}
-            onPublished={fetchAll}
+            onPublished={() => { fetchAll(true); onCountChange?.(true) }}
           />
         )}
         {selectedAssessmentId && (
           <CodingAssessmentDetailModal
             assessmentId={selectedAssessmentId}
             user={user}
-            onClose={() => { setSelectedAssessmentId(null); fetchAll() }}
-            onRefresh={fetchAll}
+            onClose={() => { setSelectedAssessmentId(null); fetchAll(true); onCountChange?.(true) }}
+            onRefresh={() => { fetchAll(true); onCountChange?.(true) }}
           />
         )}
         {leaderboardAssessment && (

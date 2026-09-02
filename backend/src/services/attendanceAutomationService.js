@@ -20,6 +20,7 @@
 const { Op } = require('sequelize');
 const { AttendanceSession, Training, Course, User } = require('../models');
 const logger = require('../utils/logger');
+const cacheService = require('./cacheService');
 
 const TIMEZONE = 'Asia/Kolkata';
 
@@ -211,6 +212,12 @@ function getTrainingDaysList(startDateInput, endDateInput) {
 async function ensureTrainingAttendanceSessions(trainingId) {
   if (!trainingId) return { success: false, count: 0, sessions: [] };
 
+  const cacheKey = `attendance:ensured:${trainingId}`;
+  const isEnsured = cacheService.get(cacheKey);
+  if (isEnsured) {
+    return { success: true, count: 0, sessions: [] };
+  }
+
   try {
     const training = await Training.findByPk(trainingId);
     if (!training) return { success: false, count: 0, sessions: [] };
@@ -286,12 +293,10 @@ async function ensureTrainingAttendanceSessions(trainingId) {
       logger.info(`[AttendanceAutomation] Created ${sessionsToCreate.length} automated attendance sessions for Training #${training.id}`);
     }
 
-    const allSessions = await AttendanceSession.findAll({
-      where: { trainingId: training.id },
-      order: [['sessionDate', 'ASC'], ['sessionType', 'ASC']],
-    });
+    // Cache verification for 5 minutes so subsequent read queries don't hit the DB loop
+    cacheService.set(cacheKey, true, 300);
 
-    return { success: true, count: allSessions.length, sessions: allSessions };
+    return { success: true, count: existingSessions.length + sessionsToCreate.length, sessions: [] };
   } catch (err) {
     logger.error('[AttendanceAutomation] Error ensuring attendance sessions', { trainingId, error: err.message });
     return { success: false, count: 0, error: err.message };

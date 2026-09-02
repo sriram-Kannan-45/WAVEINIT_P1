@@ -52,6 +52,7 @@ const { calculateCourseCompletion, calculateTrainingCompletion } = require('../s
 const { getUploadsRoot, resolveUploadsPath } = require('../config/paths');
 const NotificationService = require('../services/notificationService');
 const aiService = require('../services/aiService');
+const cacheService = require('../services/cacheService');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -354,12 +355,18 @@ async function getCourseDetail(req, res) {
     const course = await loadOwnedCourse(req, res, req.params.courseId);
     if (!course) return;
 
+    const cacheKey = `course:detail:${course.id}`;
+    const cached = cacheService.get(cacheKey);
+    if (cached && req.query.fresh !== 'true') {
+      return res.json({ success: true, course: cached });
+    }
+
     const courseWhere = course.trainingProgramId
       ? { [Op.or]: [{ courseId: course.id }, { trainingId: course.trainingProgramId }] }
       : { courseId: course.id };
 
-    const [program, lessonCount, quizCount, enrolledCount, codingCount, structureProgress] = await Promise.all([
-      Training.findByPk(course.trainingProgramId, { attributes: ['id', 'title'] }),
+    const [program, lessonCount, quizCount, enrolledCount, codingCount, structureProgress, trainingProgress] = await Promise.all([
+      course.trainingProgramId ? Training.findByPk(course.trainingProgramId, { attributes: ['id', 'title'] }) : Promise.resolve(null),
       Lesson.count({ where: courseWhere }),
       AIQuiz.count({ where: courseWhere }),
       Enrollment.count({
@@ -372,33 +379,34 @@ async function getCourseDetail(req, res) {
       }),
       CodingAssessment.count({ where: courseWhere }),
       calculateCourseCompletion(course.id),
+      course.trainingProgramId ? calculateTrainingCompletion(course.trainingProgramId) : Promise.resolve(null),
     ]);
 
-    const trainingProgress = course.trainingProgramId
-      ? await calculateTrainingCompletion(course.trainingProgramId)
-      : null;
+    const courseData = {
+      id: course.id,
+      trainingProgramId: course.trainingProgramId,
+      programTitle: program?.title || null,
+      trainerId: course.trainerId,
+      title: course.title,
+      description: course.description,
+      status: course.status,
+      thumbnailUrl: course.thumbnailUrl,
+      lessonCount: Number(lessonCount || 0),
+      quizCount: Number(quizCount || 0),
+      enrolledCount: Number(enrolledCount || 0),
+      codingCount: Number(codingCount || 0),
+      structureProgress,
+      trainingProgress,
+      completionPercentage: structureProgress?.completionPercentage || 0,
+      createdAt: course.created_at || course.createdAt,
+      updatedAt: course.updated_at || course.updatedAt,
+    };
+
+    cacheService.set(cacheKey, courseData, 20);
 
     res.json({
       success: true,
-      course: {
-        id: course.id,
-        trainingProgramId: course.trainingProgramId,
-        programTitle: program?.title || null,
-        trainerId: course.trainerId,
-        title: course.title,
-        description: course.description,
-        status: course.status,
-        thumbnailUrl: course.thumbnailUrl,
-        lessonCount: Number(lessonCount || 0),
-        quizCount: Number(quizCount || 0),
-        enrolledCount: Number(enrolledCount || 0),
-        codingCount: Number(codingCount || 0),
-        structureProgress,
-        trainingProgress,
-        completionPercentage: structureProgress.completionPercentage,
-        createdAt: course.created_at,
-        updatedAt: course.updated_at,
-      },
+      course: courseData,
     });
   } catch (e) {
     console.error('getCourseDetail:', e.message);
@@ -827,14 +835,26 @@ async function listCourseQuizzes(req, res) {
     const course = await loadOwnedCourse(req, res, req.params.courseId);
     if (!course) return;
 
-    const quizzes = await AIQuiz.findAll({
+    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+    const isPaginated = !!(req.query.page || req.query.limit || req.query.offset !== undefined);
+
+    const total = await AIQuiz.count({ where: { courseId: course.id } });
+
+    let findOptions = {
       where: { courseId: course.id },
       include: [
         { model: Lesson,    as: 'lesson',    attributes: ['id', 'title'], required: false },
         { model: AIQuestion, as: 'questions', attributes: ['id'], required: false },
       ],
       order: [['id', 'DESC']],
-    });
+    };
+
+    if (isPaginated) {
+      findOptions.limit = limit;
+      findOptions.offset = offset;
+    }
+
+    const quizzes = await AIQuiz.findAll(findOptions);
     const out = quizzes.map(q => ({
       id: q.id,
       title: q.title,
@@ -846,7 +866,17 @@ async function listCourseQuizzes(req, res) {
       isMandatory: q.isMandatory,
       createdAt: q.created_at,
     }));
-    res.json({ success: true, quizzes: out });
+    const paginationMeta = formatPaginationMeta(total, page, limit);
+
+    res.json({
+      success: true,
+      quizzes: out,
+      pagination: paginationMeta,
+      total,
+      page,
+      limit,
+      totalPages: paginationMeta.totalPages
+    });
   } catch (e) {
     console.error('listCourseQuizzes:', e.message);
     res.status(500).json({ error: 'Failed to list quizzes' });
@@ -954,9 +984,17 @@ async function updateCourseQuiz(req, res) {
 // DELETE /api/trainer/courses/:courseId/quizzes/:quizId
 async function deleteCourseQuiz(req, res) {
   try {
+    if (req.params.quizId === 'bulk' || req.params.quizId === 'bulk-delete') {
+      return bulkDeleteCourseQuizzes(req, res);
+    }
+    const numericId = Number(req.params.quizId);
+    if (isNaN(numericId)) {
+      return res.status(400).json({ error: 'Invalid quiz ID format' });
+    }
+
     const course = await loadOwnedCourse(req, res, req.params.courseId);
     if (!course) return;
-    const quiz = await AIQuiz.findOne({ where: { id: req.params.quizId, courseId: course.id } });
+    const quiz = await AIQuiz.findOne({ where: { id: numericId, courseId: course.id } });
     if (!quiz) return res.status(404).json({ error: 'Quiz not found' });
 
     const quizId = quiz.id;
@@ -2264,6 +2302,7 @@ async function updateStructureItemStatus(req, res) {
     }
 
     await Lesson.update({ status }, { where: { id: targetIds, courseId: course.id } });
+    cacheService.invalidateCourse(course.id);
 
     const courseProgress = await calculateCourseCompletion(course.id);
     const trainingProgress = course.trainingProgramId ? await calculateTrainingCompletion(course.trainingProgramId) : null;
@@ -2288,13 +2327,21 @@ async function getCourseProgress(req, res) {
     const course = await loadOwnedCourse(req, res, req.params.courseId);
     if (!course) return;
 
+    const cacheKey = `course:${course.id}:progress`;
+    const cachedData = cacheService.get(cacheKey);
+    if (cachedData) {
+      return res.json({ success: true, ...cachedData });
+    }
+
     const courseProgress = await calculateCourseCompletion(course.id);
     const trainingProgress = course.trainingProgramId ? await calculateTrainingCompletion(course.trainingProgramId) : null;
 
+    const result = { courseProgress, trainingProgress };
+    cacheService.set(cacheKey, result, 15);
+
     res.json({
       success: true,
-      courseProgress,
-      trainingProgress,
+      ...result,
     });
   } catch (e) {
     console.error('getCourseProgress error:', e.message);
@@ -2357,6 +2404,78 @@ module.exports = {
   deleteStructureSubModule,
   deleteStructureTopic,
   updateStructureItemStatus,
+  bulkDeleteCourseQuizzes,
+  deleteCourseQuizzesBulk: bulkDeleteCourseQuizzes,
 };
 
 
+
+// DELETE /api/trainer/courses/:courseId/quizzes/bulk-delete
+async function bulkDeleteCourseQuizzes(req, res) {
+  try {
+    const course = await loadOwnedCourse(req, res, req.params.courseId);
+    if (!course) return;
+
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(422).json({ error: 'An array of quiz IDs is required' });
+    }
+
+    await sequelize.transaction(async (t) => {
+      const quizIds = ids.map(Number).filter(n => !isNaN(n));
+
+      const attempts = await QuizAttempt.findAll({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
+      const attemptIds = attempts.map(a => a.id);
+
+      const examSessions = await ExamSession.findAll({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
+      const examSessionIds = examSessions.map(es => es.id);
+
+      const questions = await AIQuestion.findAll({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
+      const questionIds = questions.map(q => q.id);
+
+      const lessonQuizzes = await LessonQuiz.findAll({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
+      const lessonQuizIds = lessonQuizzes.map(lq => lq.id);
+
+      if (examSessionIds.length > 0) {
+        await ProctorActivity.destroy({ where: { sessionId: { [Op.in]: examSessionIds } }, transaction: t });
+        await Violation.destroy({ where: { sessionId: { [Op.in]: examSessionIds } }, transaction: t });
+      }
+
+      await AssessmentSession.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
+      await ExamSession.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
+
+      if (lessonQuizIds.length > 0) {
+        await QuizProgress.destroy({ where: { lessonQuizId: { [Op.in]: lessonQuizIds } }, transaction: t });
+      }
+      await LessonQuiz.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
+
+      if (attemptIds.length > 0) {
+        await QuizAnswer.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t });
+      }
+      await QuizResult.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
+      await QuizAttempt.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
+
+      if (questionIds.length > 0) {
+        await AIQuestionOption.destroy({ where: { questionId: { [Op.in]: questionIds } }, transaction: t });
+      }
+      await AIQuestion.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
+
+      let deletedCount = 0;
+      deletedCount = await AIQuiz.destroy({ where: { id: { [Op.in]: quizIds }, courseId: course.id }, transaction: t });
+      return deletedCount;
+    });
+
+    res.json({
+      success: true,
+      count: ids.length,
+      deletedIds: ids,
+      message: `${ids.length} quizzes deleted successfully`
+    });
+  } catch (e) {
+    console.error('bulkDeleteCourseQuizzes error:', e);
+    res.status(500).json({
+      error: 'Failed to delete selected quizzes',
+      message: e.message || 'Failed to delete selected quizzes'
+    });
+  }
+}

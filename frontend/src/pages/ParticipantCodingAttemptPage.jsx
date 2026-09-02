@@ -107,6 +107,10 @@ function createInitialQuestionState(problem, saved = null, latestSub = null) {
     judgeStatus: null,
     activeTab: saved?.activeTab || 'output',
     customInput: saved?.customInput || '',
+    timeSpentSeconds: saved?.timeSpentSeconds || 0,
+    editCount: saved?.editCount || 0,
+    typedChars: saved?.typedChars || 0,
+    runAttempts: saved?.runAttempts || 0,
   }
 }
 
@@ -115,6 +119,70 @@ function getLangStarter(problem, lang) {
   const found = langConfigs.find(l => l.language === lang)
   return (found && found.starterCode) || problem?.starterCode || ''
 }
+
+const AssessmentTimer = React.memo(function AssessmentTimer({
+  timeLimitMinutes = 60,
+  testStartKey,
+  onExpire,
+  submitted
+}) {
+  const totalSeconds = (timeLimitMinutes || 60) * 60
+  const [timeLeft, setTimeLeft] = useState(() => {
+    try {
+      const stored = sessionStorage.getItem(testStartKey)
+      if (stored) {
+        const elapsed = Math.floor((Date.now() - parseInt(stored, 10)) / 1000)
+        return Math.max(0, totalSeconds - elapsed)
+      }
+    } catch (_) {}
+    return totalSeconds
+  })
+
+  const expiredRef = useRef(false)
+
+  useEffect(() => {
+    if (submitted || timeLeft <= 0) return
+    const interval = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(interval)
+          if (!expiredRef.current) {
+            expiredRef.current = true
+            onExpire?.()
+          }
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [submitted, onExpire])
+
+  const formatTime = (s) => {
+    const m = Math.floor(s / 60)
+    const sec = s % 60
+    return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
+  }
+
+  return (
+    <div style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      background: timeLeft < 300 ? '#FEF2F2' : '#F0FDF4',
+      border: `1px solid ${timeLeft < 300 ? '#FECACA' : '#BBF7D0'}`,
+      color: timeLeft < 300 ? '#DC2626' : '#15803D',
+      padding: '4px 10px',
+      borderRadius: 8,
+      fontSize: 13,
+      fontWeight: 700,
+      fontVariantNumeric: 'tabular-nums'
+    }}>
+      <Clock size={13} color={timeLeft < 300 ? '#DC2626' : '#15803D'} />
+      <span>{formatTime(timeLeft)}</span>
+    </div>
+  )
+})
 
 function ParticipantCodingAttemptInner({ user }) {
   const navigate = useNavigate()
@@ -161,12 +229,13 @@ function ParticipantCodingAttemptInner({ user }) {
   const [submitting, setSubmitting] = useState(false)
   const [submitAllProgress, setSubmitAllProgress] = useState(null)
   const [submitted, setSubmitted] = useState(false)
-  const [timeLeft, setTimeLeft] = useState(null)
   const [saveStatus, setSaveStatus] = useState('')
   const [showCustomInput, setShowCustomInput] = useState(false)
   const [debugMode, setDebugMode] = useState(() => {
     try { return sessionStorage.getItem('coding_debug_mode') === '1' } catch { return false }
   })
+
+  const activeTimeRef = useRef({})
 
   const timerRef = useRef(null)
   const autoSaveRef = useRef(null)
@@ -281,10 +350,17 @@ function ParticipantCodingAttemptInner({ user }) {
     const fetchAssessment = async () => {
       try {
         setLoading(true)
-        debugLog.api('GET /coding/assessments/:id', { assessmentId })
-        const res = await fetch(`${API_BASE}/coding/assessments/${assessmentId}`, {
-          headers: { Authorization: `Bearer ${user.token}` }
+        const qParams = attemptId ? `?attemptId=${attemptId}` : ''
+        debugLog.api('GET /coding/assessments/:id', { assessmentId, attemptId })
+        const token = user?.token || user?.accessToken
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 15000)
+
+        const res = await fetch(`${API_BASE}/coding/assessments/${assessmentId}${qParams}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          signal: controller.signal,
         })
+        clearTimeout(timeoutId)
         const data = await res.json()
         if (aborted) return
         if (!res.ok) {
@@ -314,12 +390,8 @@ function ParticipantCodingAttemptInner({ user }) {
         const now = Date.now()
         if (savedState?.startedAt) {
           startTimeRef.current = savedState.startedAt
-          const elapsed = Math.floor((now - savedState.startedAt) / 1000)
-          const total = (a.timeLimit || 60) * 60
-          setTimeLeft(Math.max(0, total - elapsed))
         } else {
           startTimeRef.current = now
-          setTimeLeft((a.timeLimit || 60) * 60)
         }
 
         // Determine starting problem index: first incomplete problem or saved index
@@ -357,8 +429,15 @@ function ParticipantCodingAttemptInner({ user }) {
   function persistState() {
     if (!attemptId) return
     try {
+      const merged = { ...questionStateRef.current }
+      for (const [pId, q] of Object.entries(merged)) {
+        merged[pId] = {
+          ...q,
+          timeSpentSeconds: activeTimeRef.current[pId] || q.timeSpentSeconds || 0
+        }
+      }
       localStorage.setItem(getStorageKey(attemptId), JSON.stringify({
-        questions: questionStateRef.current,
+        questions: merged,
         currentProblemIndex,
         startedAt: startTimeRef.current || Date.now(),
         updatedAt: Date.now()
@@ -387,7 +466,8 @@ function ParticipantCodingAttemptInner({ user }) {
         saves.push({
           problemId: Number(problemId),
           code: q.code,
-          language: q.language || 'javascript'
+          language: q.language || 'javascript',
+          timeSpentSeconds: activeTimeRef.current[problemId] || q.timeSpentSeconds || 0
         })
       }
     }
@@ -413,34 +493,6 @@ function ParticipantCodingAttemptInner({ user }) {
     serverSaveRef.current = setInterval(saveToServer, SERVER_SAVE_INTERVAL)
     return () => clearInterval(serverSaveRef.current)
   }, [attemptId, submitted, saveToServer])
-
-  // ── Timer & Auto-Submit on Expiry ──
-  useEffect(() => {
-    if (timeLeft == null || submitted) return
-    timerRef.current = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(timerRef.current)
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
-    return () => clearInterval(timerRef.current)
-  }, [timeLeft, submitted])
-
-  useEffect(() => {
-    if (timeLeft === 0 && !submitted && !submittedRef.current) {
-      debugLog.warn('Time limit reached. Auto-submitting assessment...')
-      handleSubmit(true)
-    }
-  }, [timeLeft])
-
-  const formatTime = (s) => {
-    const m = Math.floor(s / 60)
-    const sec = s % 60
-    return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
-  }
 
   const [testStartedAt, setTestStartedAt] = useState(() => {
     try {
@@ -478,6 +530,19 @@ function ParticipantCodingAttemptInner({ user }) {
     }
   }, [consented, submitted])
 
+  // ── Active Time Tracking per Question (High Performance - Ref Based) ──
+  useEffect(() => {
+    if (!consented || submitted || !currentProblem?.id) return
+    const pId = currentProblem.id
+    if (activeTimeRef.current[pId] == null) {
+      activeTimeRef.current[pId] = questionStateRef.current[pId]?.timeSpentSeconds || 0
+    }
+    const interval = setInterval(() => {
+      activeTimeRef.current[pId] = (activeTimeRef.current[pId] || 0) + 1
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [consented, submitted, currentProblem?.id])
+
   const handleCancel = useCallback(() => {
     const targetCourseId = assessment?.courseId || trainingId
     navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}&subtab=coding` : '/participant?tab=myEnrollments')
@@ -490,11 +555,15 @@ function ParticipantCodingAttemptInner({ user }) {
     const existing = questionState[pId] || {}
     const isModified = Boolean(existing.isCompleted && existing.lastSubmittedCode && newCode !== existing.lastSubmittedCode)
     const status = isModified ? 'in_progress' : existing.status
+    const starter = getLangStarter(currentProblem, existing.language || 'javascript')
+    const deltaChars = Math.abs((newCode || '').length - (starter || '').length)
 
     updateQuestion(pId, {
       code: newCode || '',
       isModified,
-      status: status === 'not_started' ? 'in_progress' : status
+      status: status === 'not_started' ? 'in_progress' : status,
+      editCount: (existing.editCount || 0) + 1,
+      typedChars: Math.max(existing.typedChars || 0, deltaChars, (newCode || '').length),
     })
     persistState()
   }
@@ -560,7 +629,8 @@ function ParticipantCodingAttemptInner({ user }) {
       runMemory: null,
       submitVerdict: null,
       judgeStatus: 'Running sample tests...',
-      activeTab: 'output'
+      activeTab: 'output',
+      runAttempts: (q.runAttempts || 0) + 1,
     })
 
     const runStartTime = performance.now()
@@ -960,16 +1030,24 @@ function ParticipantCodingAttemptInner({ user }) {
       }
 
       setSubmitted(true)
-      clearInterval(timerRef.current)
 
-      // Exit fullscreen & cleanup
-      await handleRecordingCleanup()
+      // Fast non-blocking media & proctoring teardown
+      try {
+        if (sharedCamStream) {
+          sharedCamStream.getTracks().forEach(t => t.stop())
+        }
+      } catch (_) {}
+      try { monitoringClient.destroy() } catch (_) {}
+      endVerificationSession()
+      if (fsApi.element()) {
+        try { fsApi.exit() } catch {}
+      }
 
       localStorage.removeItem(getStorageKey(attemptId))
       sessionStorage.removeItem(storageKey)
 
       const targetCourseId = assessment?.courseId || trainingId
-      navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}&subtab=coding` : '/participant?tab=myEnrollments')
+      navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}&subtab=coding` : '/participant?tab=myEnrollments', { replace: true })
     } catch (err) {
       debugLog.error('Submit All error:', err.message)
       showError?.(err.name === 'AbortError' ? 'Submission timed out. Please try again.' : (err.message || 'Submit failed'))
@@ -1057,9 +1135,9 @@ function ParticipantCodingAttemptInner({ user }) {
       gap: 6,
       padding: '6px 14px',
       borderRadius: 8,
-      background: timeLeft < 300 ? '#FEF2F2' : '#FFFFFF',
-      border: timeLeft < 300 ? '1px solid #FECACA' : '1px solid #E2E8F0',
-      color: timeLeft < 300 ? '#DC2626' : '#111827',
+      background: '#F0FDF4',
+      border: '1px solid #BBF7D0',
+      color: '#15803D',
       fontWeight: 700,
       fontSize: 13,
       fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
@@ -1334,12 +1412,12 @@ function ParticipantCodingAttemptInner({ user }) {
           </div>
 
           <div style={s.headerRight}>
-            {timeLeft != null && (
-              <div style={s.timer}>
-                <Clock size={13} color={timeLeft < 300 ? '#DC2626' : '#15803D'} />
-                <span>{formatTime(timeLeft)}</span>
-              </div>
-            )}
+            <AssessmentTimer
+              timeLimitMinutes={assessment?.timeLimit || 60}
+              testStartKey={`coding_${assessmentId}_test_start_${attemptId}`}
+              onExpire={() => handleSubmit(true)}
+              submitted={submitted}
+            />
             <button
               onClick={() => handleSubmit(false)}
               disabled={submitting || submitted}
@@ -1536,7 +1614,10 @@ function ParticipantCodingAttemptInner({ user }) {
                     user={user}
                     attemptId={attemptId}
                     problem={currentProblem}
-                    questionState={currentQState}
+                    questionState={{
+                      ...currentQState,
+                      timeSpentSeconds: activeTimeRef.current[currentProblem?.id] || currentQState.timeSpentSeconds || 0
+                    }}
                     sessionToken={sessionToken}
                     onError={showError}
                   />

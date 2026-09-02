@@ -271,8 +271,20 @@ function App() {
                                responseUrl.includes('/auth/login') || responseUrl.includes('/auth/register');
         const isRefreshEndpoint = rawUrl.includes('/auth/refresh') || responseUrl.includes('/auth/refresh');
         const isVerifEndpoint = rawUrl.includes('/assessment-verification') || responseUrl.includes('/assessment-verification');
+        const isMonitoringEndpoint = rawUrl.includes('/monitoring') || responseUrl.includes('/monitoring');
+        const isAssessmentEndpoint = rawUrl.includes('/coding/participant') ||
+                                     rawUrl.includes('/participant/quizzes') ||
+                                     rawUrl.includes('/ai-quiz/participant');
 
-        if (!isAuthEndpoint && !isRefreshEndpoint && !isVerifEndpoint) {
+        const isAssessmentRoute = typeof window !== 'undefined' && (
+          window.location.pathname.includes('/attempt') ||
+          window.location.pathname.includes('/coding') ||
+          window.location.pathname.includes('/quiz') ||
+          window.location.pathname.includes('/exam') ||
+          window.location.pathname.includes('/verification')
+        );
+
+        if (!isAuthEndpoint && !isRefreshEndpoint && !isVerifEndpoint && !isMonitoringEndpoint) {
           const newToken = await doRefresh()
           if (newToken) {
             const retryOptions = {
@@ -285,8 +297,14 @@ function App() {
             return originalFetch(url, retryOptions)
           }
 
-          localStorage.removeItem('user')
-          setUser(null)
+          // NEVER log the user out during an active assessment or for assessment/monitoring background requests
+          if (!isAssessmentRoute && !isAssessmentEndpoint) {
+            console.warn('[App Auth] Auth token invalid and refresh failed outside assessment. Logging out.');
+            localStorage.removeItem('user')
+            setUser(null)
+          } else {
+            console.warn('[App Auth] Request returned 401 during assessment. Preserving user session & exam state.', { url: rawUrl });
+          }
         }
       }
       return response

@@ -1149,8 +1149,12 @@ router.post('/participant/submit/:attemptId',
           throw err;
         }
 
-        if (attempt.status !== 'IN_PROGRUS') {
-          const err = new Error('Quiz has already been submitted');
+        if (attempt.status === 'SUBMITTED' || attempt.status === 'EVALUATED') {
+          return;
+        }
+
+        if (attempt.status !== 'IN_PROGRESS') {
+          const err = new Error('Quiz attempt cannot be submitted in current status');
           err.status = 409;
           throw err;
         }
@@ -1186,48 +1190,54 @@ router.post('/participant/submit/:attemptId',
 
         let totalScore = 0;
         let maxScore = 0;
-        const questionsMap = {};
-        quiz.questions.forEach(q => { questionsMap[q.id] = q; maxScore += (q.marks || 1); });
-
+        const submittedAnswerMap = new Map();
         for (const ans of answers) {
-          const question = questionsMap[ans.questionId];
-          if (!question) continue;
+          if (ans && ans.questionId != null) {
+            submittedAnswerMap.set(Number(ans.questionId), ans);
+          }
+        }
+
+        for (const question of (quiz.questions || [])) {
+          const qMarks = question.marks || 1;
+          maxScore += qMarks;
+          const ans = submittedAnswerMap.get(Number(question.id));
 
           let score = 0;
-          let feedback = '';
+          let feedback = 'Unanswered';
           let isCorrect = false;
-          const qMarks = question.marks || 1;
 
-          if (['MCQ', 'TRUE_FALSE', 'FILL_BLANK', 'MATCHING'].includes(question.questionType)) {
-            const result = gradeAnswer(question, {
-              selectedOption: ans.selectedOption !== undefined ? ans.selectedOption : null,
-              answer: ans.answerText || ans.answer || '',
-              answerText: ans.answerText || ans.answer || '',
-              matches: ans.matches
-            });
-            isCorrect = result.isCorrect;
-            score = result.score > 0 ? (result.score / 100) * qMarks : 0;
-            if (question.questionType === 'MATCHING') {
-              feedback = `Score: ${result.score}%. Matched ${result.correctCount} of ${result.total} correctly.`;
-            } else {
-              feedback = isCorrect ? 'Correct!' : `Incorrect. Correct answer: ${question.correctAnswer}`;
+          if (ans) {
+            if (['MCQ', 'TRUE_FALSE', 'FILL_BLANK', 'MATCHING'].includes(question.questionType)) {
+              const result = gradeAnswer(question, {
+                selectedOption: ans.selectedOption !== undefined ? ans.selectedOption : null,
+                answer: ans.answerText || ans.answer || '',
+                answerText: ans.answerText || ans.answer || '',
+                matches: ans.matches
+              });
+              isCorrect = result.isCorrect;
+              score = result.score > 0 ? (result.score / 100) * qMarks : 0;
+              if (question.questionType === 'MATCHING') {
+                feedback = `Score: ${result.score}%. Matched ${result.correctCount} of ${result.total} correctly.`;
+              } else {
+                feedback = isCorrect ? 'Correct!' : `Incorrect. Correct answer: ${question.correctAnswer}`;
+              }
+            } else if (ans.answerText && ans.answerText.trim()) {
+              const evaluation = await aiService.evaluateShortAnswer(
+                question.questionText,
+                question.correctAnswer,
+                ans.answerText.trim()
+              );
+              score = evaluation.score || 0;
+              feedback = evaluation.feedback || '';
+              isCorrect = evaluation.isCorrect || false;
             }
-          } else {
-            const evaluation = await aiService.evaluateShortAnswer(
-              question.questionText,
-              question.correctAnswer,
-              ans.answerText || ''
-            );
-            score = evaluation.score || 0;
-            feedback = evaluation.feedback || '';
-            isCorrect = evaluation.isCorrect || false;
           }
 
           await QuizAnswer.create({
             attemptId: attempt.id,
-            questionId: ans.questionId,
-            answerText: ans.answerText || '',
-            selectedOption: ans.selectedOption !== undefined ? ans.selectedOption : null,
+            questionId: question.id,
+            answerText: ans?.answerText || '',
+            selectedOption: ans?.selectedOption !== undefined ? ans.selectedOption : null,
             isCorrect,
             score,
             feedback,

@@ -96,7 +96,7 @@ export default function OverviewSection({
       .then(res => {
         if (active) setUpcomingInterviews(res?.interviews || [])
       })
-      .catch(() => {})
+      .catch(() => { })
     return () => { active = false }
   }, [])
 

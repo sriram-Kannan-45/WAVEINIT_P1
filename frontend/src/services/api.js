@@ -59,7 +59,20 @@ export async function apiClient(endpoint, options = {}) {
     // Handle 401/403
     if (response.status === 401 || response.status === 403) {
       const isAuthEndpoint = endpoint.includes('/auth/login') || endpoint.includes('/auth/register')
-      if (!isAuthEndpoint) {
+      const isMonitoringOrAssessment = endpoint.includes('/monitoring') ||
+                                       endpoint.includes('/coding') ||
+                                       endpoint.includes('/quizzes') ||
+                                       endpoint.includes('/ai-quiz') ||
+                                       endpoint.includes('/assessment-verification')
+      const isAssessmentRoute = typeof window !== 'undefined' && (
+        window.location.pathname.includes('/attempt') ||
+        window.location.pathname.includes('/coding') ||
+        window.location.pathname.includes('/quiz') ||
+        window.location.pathname.includes('/exam') ||
+        window.location.pathname.includes('/verification')
+      )
+
+      if (!isAuthEndpoint && !isMonitoringOrAssessment && !isAssessmentRoute) {
         let shouldLogout = response.status === 401
         if (response.status === 403) {
           try {

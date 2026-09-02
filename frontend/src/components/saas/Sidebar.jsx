@@ -125,7 +125,6 @@ const navGroups = {
     {
       title: 'ASSESSMENTS & RANKING',
       items: [
-        { key: 'ai-quizzes', label: 'Quizzes & Tests', icon: FileText },
         { key: 'leaderboard', label: 'Leaderboard', icon: Trophy },
         { key: 'achievements', label: 'Achievements', icon: Award },
       ],

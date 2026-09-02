@@ -67,7 +67,14 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
   })
   const [feedbacks, setFeedbacks] = useState([])
   const [quizzes, setQuizzes] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(cacheEnrollmentsKey)
+      return !cached
+    } catch {
+      return true
+    }
+  })
   const [takingQuizId, setTakingQuizId] = useState(null)
   const [participantReport, setParticipantReport] = useState(null)
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false)

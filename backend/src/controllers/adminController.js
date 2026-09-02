@@ -93,6 +93,7 @@ const bcrypt = require('bcryptjs');
 const { validateEmail, validatePassword } = require('../utils/validators');
 const { invalidateSummaryCache } = require('./adminSummaryController');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
+const cacheService = require('../services/cacheService');
 
 const updateTraining = async (req, res) => {
   try {
@@ -641,6 +642,12 @@ const deleteTrainer = async (req, res) => {
 
 const getStats = async (req, res) => {
   try {
+    const cacheKey = 'admin:stats';
+    const cached = cacheService.get(cacheKey);
+    if (cached && req.query.fresh !== 'true') {
+      return res.json(cached);
+    }
+
     const now = new Date();
     const { Note } = require('../models');
     const { sequelize } = require('../config/db');
@@ -687,7 +694,7 @@ const getStats = async (req, res) => {
       ? ((totalEnrollments / totalParticipants) * 100).toFixed(1) 
       : 0;
 
-    res.json({ 
+    const result = { 
       success: true,
       // Flat properties for backward compatibility
       totalTrainings,
@@ -723,13 +730,16 @@ const getStats = async (req, res) => {
         ratingDistribution,
         enrollmentRate
       }
-    });
+    };
 
+    cacheService.set(cacheKey, result, 20);
+
+    res.json(result);
   } catch (error) {
     console.error('Get stats error:', error.message);
     res.status(500).json({ 
       success: false,
-    error: 'Server error fetching stats' 
+      error: 'Server error fetching stats' 
     });
   }
 };

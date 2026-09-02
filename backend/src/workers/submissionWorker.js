@@ -109,12 +109,6 @@ async function evaluateSubmission({ submissionId, attemptId, problemId, code, la
       results: outputResults,
       conceptValidation,
     });
-      passedTestCases,
-      score,
-      executionTime: evalResult.maxExecutionTime,
-      memoryUsed: evalResult.maxMemory,
-      results: outputResults,
-    });
 
     if (io) {
       const { CodingAttempt, CodingResult, CodingAssessment } = require('../models');

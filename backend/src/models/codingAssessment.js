@@ -147,6 +147,36 @@ const CodingAssessment = sequelize.define('CodingAssessment', {
     allowNull: false,
     defaultValue: true,
     field: 'ai_assistant_enabled'
+  },
+  aiUnlockThresholds: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    field: 'ai_unlock_thresholds',
+    comment: 'Configurable unlock thresholds for AI assistant levels (minSeconds, minEdits, runAttempts required)'
+  },
+  originalPrompt: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    field: 'original_prompt',
+    comment: 'The exact trainer prompt used to AI-generate this assessment.'
+  },
+  analyzedIntent: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    field: 'analyzed_intent',
+    comment: 'Structured intent analysis captured at generation time (primary task, subtopics, IO, forbidden concepts).'
+  },
+  generationVersion: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    field: 'generation_version',
+    comment: 'Version/name of the generation pipeline (e.g. langgraph-workflow-v1).'
+  },
+  validationResult: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    field: 'validation_result',
+    comment: 'Per-problem AI validation summary at generation time.'
   }
 }, {
   tableName: 'coding_assessments',

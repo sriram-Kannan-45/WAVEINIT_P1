@@ -92,58 +92,53 @@ export function getDefaultStarterCode(lang, problem) {
   }
 }
 
-/**
- * Returns default reference solution for a given language and problem
- */
 export function getDefaultReferenceSolution(lang, problem) {
   const p = problem || {};
   const l = String(lang || 'javascript').toLowerCase();
   const fnCamel = toCamelCase(p.title || 'solution');
   const fnSnake = toSnakeCase(p.title || 'solution');
-  const output = getOutputString(p);
-  const jsonOutput = JSON.stringify(output);
 
   switch (l) {
     case 'python':
-      return `def ${fnSnake}():\n    print(${jsonOutput})\n\nif __name__ == "__main__":\n    ${fnSnake}()\n`;
+      return `def ${fnSnake}():\n    # Write reference solution here\n    raise NotImplementedError("Reference solution not implemented")\n\nif __name__ == "__main__":\n    ${fnSnake}()\n`;
 
     case 'javascript':
-      return `function ${fnCamel}() {\n  console.log(${jsonOutput});\n}\n\n${fnCamel}();\n`;
+      return `function ${fnCamel}() {\n  // Write reference solution here\n  throw new Error("Reference solution not implemented");\n}\n\n${fnCamel}();\n`;
 
     case 'typescript':
-      return `function ${fnCamel}(): void {\n  console.log(${jsonOutput});\n}\n\n${fnCamel}();\n`;
+      return `function ${fnCamel}(): void {\n  // Write reference solution here\n  throw new Error("Reference solution not implemented");\n}\n\n${fnCamel}();\n`;
 
     case 'java':
-      return `public class Main {\n    public static void main(String[] args) {\n        System.out.println(${jsonOutput});\n    }\n}\n`;
+      return `public class Main {\n    public static void main(String[] args) {\n        // Write reference solution here\n        throw new UnsupportedOperationException("Reference solution not implemented");\n    }\n}\n`;
 
     case 'cpp':
-      return `#include <iostream>\nusing namespace std;\n\nint main() {\n    cout << ${jsonOutput} << endl;\n    return 0;\n}\n`;
+      return `#include <iostream>\nusing namespace std;\n\nint main() {\n    // Write reference solution here\n    return 0;\n}\n`;
 
     case 'c':
-      return `#include <stdio.h>\n\nint main() {\n    printf("%s\\n", ${jsonOutput});\n    return 0;\n}\n`;
+      return `#include <stdio.h>\n\nint main() {\n    // Write reference solution here\n    return 0;\n}\n`;
 
     case 'csharp':
-      return `using System;\n\npublic class Solution {\n    public static void Main(string[] args) {\n        Console.WriteLine(${jsonOutput});\n    }\n}\n`;
+      return `using System;\n\npublic class Solution {\n    public static void Main(string[] args) {\n        // Write reference solution here\n        throw new NotImplementedException("Reference solution not implemented");\n    }\n}\n`;
 
     case 'go':
-      return `package main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println(${jsonOutput})\n}\n`;
+      return `package main\n\nimport "fmt"\n\nfunc main() {\n    // Write reference solution here\n    panic("Reference solution not implemented")\n}\n`;
 
     case 'php':
-      return `<?php\nfunction ${fnSnake}() {\n    echo ${jsonOutput} . "\\n";\n}\n\n${fnSnake}();\n`;
+      return `<?php\nfunction ${fnSnake}() {\n    // Write reference solution here\n    throw new Exception("Reference solution not implemented");\n}\n\n${fnSnake}();\n`;
 
     case 'ruby':
-      return `def ${fnSnake}\n  puts ${jsonOutput}\nend\n\n${fnSnake}\n`;
+      return `def ${fnSnake}\n  # Write reference solution here\n  raise "Reference solution not implemented"\nend\n\n${fnSnake}\n`;
 
     case 'kotlin':
-      return `fun main() {\n    println(${jsonOutput})\n}\n`;
+      return `fun main() {\n    // Write reference solution here\n    throw NotImplementedError("Reference solution not implemented")\n}\n`;
 
     case 'rust':
-      return `fn main() {\n    println!("{}", ${jsonOutput});\n}\n`;
+      return `fn main() {\n    // Write reference solution here\n    unimplemented!("Reference solution not implemented");\n}\n`;
 
     case 'swift':
-      return `import Foundation\n\nprint(${jsonOutput})\n`;
+      return `import Foundation\n\n// Write reference solution here\nfatalError("Reference solution not implemented")\n`;
 
     default:
-      return `// Reference solution for ${lang}\n`;
+      return `// Reference solution for ${lang} not implemented\n`;
   }
 }

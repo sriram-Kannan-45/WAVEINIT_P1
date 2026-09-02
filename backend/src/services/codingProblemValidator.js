@@ -39,7 +39,19 @@ function validateStructure(problem, requestedLanguages = ['javascript']) {
     });
   }
 
-  const langSolutions = problem.languageSolutions || {};
+  let langSolutions = problem.languageSolutions ? { ...problem.languageSolutions } : {};
+  if (Array.isArray(problem.languages)) {
+    for (const lc of problem.languages) {
+      const lKey = String(lc.language || '').toLowerCase().trim();
+      if (lKey && !langSolutions[lKey]) {
+        langSolutions[lKey] = {
+          starterCode: lc.starterCode,
+          referenceSolution: lc.referenceSolution,
+        };
+      }
+    }
+  }
+
   for (const lang of requestedLanguages) {
     const sol = langSolutions[lang];
     if (!sol) {
@@ -50,8 +62,19 @@ function validateStructure(problem, requestedLanguages = ['javascript']) {
       }
       if (!sol.referenceSolution || String(sol.referenceSolution).trim() === '') {
         issues.push(`Missing referenceSolution for language "${lang}".`);
+      } else {
+        const ref = String(sol.referenceSolution).trim();
+        if (/console\.log\(["']result["']\)/i.test(ref) || /print\(["']result["']\)/i.test(ref)) {
+          issues.push(`Language "${lang}" contains generic placeholder code stub.`);
+        }
       }
     }
+  }
+
+  const allGenericResult = problem.testCases && problem.testCases.length > 0 &&
+    problem.testCases.every(tc => String(tc.expectedOutput || '').trim().toLowerCase() === 'result');
+  if (allGenericResult && !/result/i.test(problem.title || '')) {
+    issues.push('Test cases contain dummy placeholder expectedOutput "result".');
   }
 
   return {
@@ -67,43 +90,74 @@ function validateSemanticConsistency(problem, intentProfile) {
   const issues = [];
   if (!intentProfile) return { isValid: true, issues: [] };
 
-  const { primaryProgrammingTask, literalValues, forbiddenConcepts } = intentProfile;
-  const combinedText = `${problem.title || ''} ${problem.description || ''} ${(problem.testCases || []).map(tc => `${tc.input} ${tc.expectedOutput}`).join(' ')}`.toLowerCase();
+  const { primaryProgrammingTask, literalValues, forbiddenConcepts, rawPrompt } = intentProfile;
+  const combinedText = `${problem.title || ''} ${problem.description || ''} ${(problem.testCases || []).map(tc => `${tc.input || ''} ${tc.expectedOutput || ''} ${tc.description || ''}`).join(' ')}`.toLowerCase();
 
   // Check 1: Forbidden Concepts
   if (Array.isArray(forbiddenConcepts)) {
     for (const forbidden of forbiddenConcepts) {
       const keyword = forbidden.replace(/_/g, ' ');
-      // If forbidden concept is "sorting" and prompt wasn't sorting
       if (forbidden === 'sorting' && /\b(sort|ascending|descending|quicksort|mergesort|bubblesort)\b/i.test(combinedText)) {
-        issues.push(`Problem introduces forbidden concept "sorting" when user requested "${intentProfile.rawPrompt}".`);
+        issues.push(`Problem introduces forbidden concept "sorting" when user requested "${rawPrompt}".`);
       }
     }
   }
 
   // Check 2: Task Category Alignment
   if (primaryProgrammingTask === CATEGORIES.PRINT_OUTPUT) {
-    // A print output problem must not demand algorithmic transformations of arrays
-    if (/\b(sort the array|bubble sort|binary search tree|graph traversal)\b/i.test(combinedText)) {
-      issues.push(`Generated problem contains complex algorithms when user only requested PRINT_OUTPUT for "${intentProfile.rawPrompt}".`);
+    if (/\b(sort the array|bubble sort|binary search tree|graph traversal|validate json|pagination)\b/i.test(combinedText)) {
+      issues.push(`Generated problem contains complex algorithms when user only requested PRINT_OUTPUT for "${rawPrompt}".`);
     }
 
-    // Check literal values preservation
     if (Array.isArray(literalValues) && literalValues.length > 0) {
       const target = literalValues[0].toLowerCase();
       const hasLiteral = combinedText.includes(target) ||
-        (problem.testCases || []).some(tc => String(tc.expectedOutput).toLowerCase().includes(target));
+        (problem.testCases || []).some(tc => String(tc.expectedOutput || '').toLowerCase().includes(target));
       if (!hasLiteral) {
         issues.push(`Generated problem failed to preserve the explicit literal text "${literalValues[0]}".`);
       }
     }
   } else if (primaryProgrammingTask === CATEGORIES.SORTING) {
-    if (!/\b(sort|ascending|descending|order)\b/i.test(combinedText)) {
-      issues.push(`Problem does not mention sorting for request: "${intentProfile.rawPrompt}".`);
+    if (!/\b(sort|ascending|descending|order|reorder|arrange|sorted)\b/i.test(combinedText)) {
+      issues.push(`Problem does not test sorting for request: "${rawPrompt}".`);
+    }
+    // Reject off-topic topics like key-value validation, pagination, HTTP, etc.
+    if (/\b(key-value|json object|jwt|pagination|chunk partitioning|http|api endpoint)\b/i.test(combinedText) && !/\b(key-value|json|jwt|pagination)\b/i.test(rawPrompt.toLowerCase())) {
+      issues.push(`Problem introduces unrelated domain concepts when user requested sorting.`);
+    }
+  } else if (primaryProgrammingTask === CATEGORIES.SEARCHING) {
+    if (!/\b(search|binary search|find|index of|lookup|search key|element in array)\b/i.test(combinedText)) {
+      issues.push(`Problem does not address searching for request: "${rawPrompt}".`);
     }
   } else if (primaryProgrammingTask === CATEGORIES.STRING_PROCESSING) {
-    if (!/\b(string|character|word|text|reverse|palindrome)\b/i.test(combinedText)) {
-      issues.push(`Problem does not address string processing for request: "${intentProfile.rawPrompt}".`);
+    if (!/\b(string|character|word|text|reverse|palindrome|substring|vowel)\b/i.test(combinedText)) {
+      issues.push(`Problem does not address string processing for request: "${rawPrompt}".`);
+    }
+  } else if (primaryProgrammingTask === CATEGORIES.CONDITIONALS) {
+    if (!/\b(even|odd|positive|negative|zero|leap year|condition|if|else|sign|greater|less)\b/i.test(combinedText)) {
+      issues.push(`Problem does not address conditionals for request: "${rawPrompt}".`);
+    }
+  } else if (primaryProgrammingTask === CATEGORIES.MATH) {
+    if (!/\b(factorial|prime|fibonacci|math|sum|digits|modulo|gcd|lcm|power|divisor)\b/i.test(combinedText)) {
+      issues.push(`Problem does not address math concepts for request: "${rawPrompt}".`);
+    }
+  } else if (primaryProgrammingTask === CATEGORIES.ARRAY_PROCESSING) {
+    if (!/\b(array|list|elements|maximum|minimum|sum|subarray|matrix)\b/i.test(combinedText)) {
+      issues.push(`Problem does not address array processing for request: "${rawPrompt}".`);
+    }
+  } else {
+    // General keyword overlap: Extract key words from user prompt (ignoring common words)
+    const stopWords = new Set(['generate', 'create', 'write', 'give', 'make', 'problem', 'problems', 'easy', 'medium', 'hard', 'a', 'an', 'the', 'of', 'on', 'in', 'for', 'with', 'and', 'or', 'to', 'using', 'that', 'me']);
+    const keywords = rawPrompt
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(w => w.length > 2 && !stopWords.has(w));
+    
+    if (keywords.length > 0) {
+      const matchesKeyword = keywords.some(k => combinedText.includes(k));
+      if (!matchesKeyword) {
+        issues.push(`Problem does not contain any key topic terms (${keywords.join(', ')}) from request "${rawPrompt}".`);
+      }
     }
   }
 
@@ -132,7 +186,25 @@ async function validateReferenceSolutionsExecution(problem, requestedLanguages =
     return { isValid: false, issues: ['No test cases available for execution testing.'], perLanguage };
   }
 
+  // Extract reference solutions from any problem structure (in-memory object, Sequelize instance, or lang array)
   const langSolutions = problem.languageSolutions || {};
+  if (Array.isArray(problem.languages) && problem.languages.length > 0) {
+    for (const l of problem.languages) {
+      const lName = String(l.language || '').toLowerCase().trim();
+      if (lName && !langSolutions[lName]) {
+        langSolutions[lName] = {
+          starterCode: l.starterCode,
+          referenceSolution: l.referenceSolution,
+        };
+      }
+    }
+  }
+  if (problem.programmingLanguage && problem.expectedSolution && !langSolutions[problem.programmingLanguage.toLowerCase()]) {
+    langSolutions[problem.programmingLanguage.toLowerCase()] = {
+      starterCode: problem.starterCode,
+      referenceSolution: problem.expectedSolution,
+    };
+  }
 
   for (const lang of requestedLanguages) {
     const sol = langSolutions[lang];

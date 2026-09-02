@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const compression = require('compression');
 const path = require('path');
 const http = require('http');
 const bcrypt = require('bcryptjs');
@@ -132,6 +133,15 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   exposedHeaders: ['X-Request-Id'],
   maxAge: 86400,
+}));
+
+// Response Compression — Gzip/Deflate compression for payloads > 1KB
+app.use(compression({
+  threshold: 1024,
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) return false;
+    return compression.filter(req, res);
+  },
 }));
 
 // Helmet — sets security HTTP headers (CSP, HSTS, X-Frame-Options, etc.)

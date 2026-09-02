@@ -108,11 +108,31 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
   /* ── Question / answer state ─────────────────────────────────────────── */
   const [currentQ, setCurrentQ] = useState(0)
   const [answers, setAnswers] = useState({})
-  const [timeLeft, setTimeLeft] = useState((quizData?.timeLimit || 30) * 60)
+  const [timeLeft, setTimeLeft] = useState(() => {
+    const totalSec = (quizData?.timeLimit || 30) * 60
+    try {
+      const startKey = `quiz_${quizId}_test_start_${attemptId}`
+      const storedStart = sessionStorage.getItem(startKey)
+      if (storedStart) {
+        const elapsed = Math.floor((Date.now() - parseInt(storedStart, 10)) / 1000)
+        if (elapsed >= 0) {
+          return Math.max(0, totalSec - elapsed)
+        }
+      } else {
+        sessionStorage.setItem(startKey, String(Date.now()))
+      }
+    } catch (_) {}
+    return totalSec
+  })
   const [submitting, setSubmitting] = useState(false)
   const [showConfirmSubmit, setShowConfirmSubmit] = useState(false)
   const [attemptInvalidMsg, setAttemptInvalidMsg] = useState(null)
   const timerRef = useRef(null)
+  const answersRef = useRef(answers)
+
+  useEffect(() => {
+    answersRef.current = answers
+  }, [answers])
 
   /* ── Post-submit result state ────────────────── */
   const [resultData, setResultData] = useState(null)
@@ -166,19 +186,61 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
   const total = questions.length
   const q = questions[currentQ]
 
+  /* ── Monitoring event bridge ───────────────────────────────────────── */
+  const reportMonitoringEvent = useCallback(async (eventType, severity = 'WARNING', metadata = {}) => {
+    if (!attemptId) return
+    try {
+      const endedAt = metadata.violationEndTime || new Date().toISOString()
+      const durationMs = Math.max(0, Number(metadata.durationMs ?? (Number(metadata.duration) || 0) * 1000) || 0)
+      const startedAt = metadata.violationStartTime || new Date(new Date(endedAt).getTime() - durationMs).toISOString()
+      await monitoringClient.reportEvent({
+        source: 'LAPTOP',
+        eventType,
+        severity,
+        durationMs,
+        confidence: metadata.confidence || 0.95,
+        startedAt,
+        endedAt,
+        occurredAt: endedAt,
+        metadata: { ...metadata, violationStartTime: startedAt, violationEndTime: endedAt },
+      })
+    } catch (e) {
+      console.warn('[QuizTaking] Monitoring event dispatch failed:', e)
+    }
+  }, [attemptId])
+
+  const flushOpenProctoringIntervals = useCallback(async () => {
+    try {
+      await monitoringClient._flushOpenIntervals(Date.now())
+    } catch (_) {}
+  }, [])
+
   /* ── handleSubmit (memoised — used by timer, manual click, and 3rd strike) */
   const handleSubmit = useCallback(
-    async ({ silent = false } = {}) => {
+    async ({ silent = false, autoSubmit = false } = {}) => {
       if (submitting || submittedRef.current) return
       submittedRef.current = true
       setSubmitting(true)
       setShowConfirmSubmit(false)
-      const answerArray = Object.entries(answers).map(([questionId, val]) => ({
-        questionId: parseInt(questionId),
-        selectedOption: val.selectedOption !== undefined ? val.selectedOption : null,
-        answerText: val.answerText || null,
-        matches: val.matches || null
-      }))
+      setWarningOpen(false)
+
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
+
+      const currentAnswers = answersRef.current || {}
+      // Build complete answers list including unanswered questions
+      const answerArray = (quizData?.questions || []).map((qItem) => {
+        const val = currentAnswers[qItem.id]
+        return {
+          questionId: qItem.id,
+          selectedOption: val?.selectedOption !== undefined ? val.selectedOption : null,
+          answerText: val?.answerText || null,
+          matches: val?.matches || null
+        }
+      })
+
       try {
         // Pull token from prop first, fall back to sessionStorage so a
         // refresh-mid-exam still posts the correct header.
@@ -210,24 +272,17 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
           body,
         })
         const d = await r.json()
-        if (!r.ok) throw new Error(d.error || 'Submit failed')
+        if (!r.ok && r.status !== 409) throw new Error(d.error || 'Submit failed')
         
-        // The attempt is now persisted, so finalize monitoring with the same
-        // authoritative end time used by the report and Excel export.
+        // Finalize monitoring & video in background without blocking redirect
         try {
-          await monitoringClient.finishSession({ actualTestDurationSeconds: activeDurationSec })
-        } catch (finishErr) {
-          console.warn('[QuizTaking] Monitoring finalization notice:', finishErr.message)
-        }
+          monitoringClient.finishSession({ actualTestDurationSeconds: activeDurationSec }).catch(() => {})
+        } catch (_) {}
 
-        // Stop recording immediately after submit and upload session video
         try {
-          await monitoringClient.stopAndUploadRecording()
-        } catch (uploadErr) {
-          console.warn('[QuizTaking] Video upload notice:', uploadErr.message)
-        }
+          monitoringClient.stopAndUploadRecording().catch(() => {})
+        } catch (_) {}
 
-        // Explicitly destroy monitoring and stop all camera/screen tracks immediately!
         try {
           monitoringClient.destroy()
         } catch (_) {}
@@ -243,13 +298,30 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
           } catch (_) {}
         }
 
-        await onRecordingStop?.()
+        try {
+          onRecordingStop?.()
+        } catch (_) {}
         
-        // Best-effort exit fullscreen so result summary renders normally.
-        if (fsApi.element()) { try { await fsApi.exit() } catch { /* ignore */ } }
-        if (!silent) showSuccess('Quiz submitted successfully!')
-        // Don't pass score data — results are hidden until trainer publishes.
-        setResultData({ status: 'PENDING_RESULT' })
+        try {
+          sessionStorage.removeItem(`quiz_progress_${attemptId}`)
+        } catch (_) {}
+
+        if (fsApi.element()) { try { fsApi.exit().catch(() => {}) } catch (_) {} }
+        
+        if (!silent) {
+          if (autoSubmit) {
+            showSuccess('Time is up! Your quiz has been automatically submitted.')
+          } else {
+            showSuccess('Quiz submitted successfully!')
+          }
+        }
+
+        if (autoSubmit) {
+          setResultData(null)
+          onSubmit?.({ status: 'PENDING_RESULT', autoSubmitted: true })
+        } else {
+          setResultData({ status: 'PENDING_RESULT' })
+        }
       } catch (err) {
         submittedRef.current = false
         setSubmitting(false)
@@ -259,8 +331,7 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
         }
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [answers, attemptId, isStandardQuiz, quizId, onSubmit, submitting, showError, showSuccess, onRecordingStop, webcamStream, screenStream]
+    [attemptId, isStandardQuiz, quizId, quizData?.questions, sessionToken, flushOpenProctoringIntervals, onRecordingStop, webcamStream, screenStream, showSuccess, showError, onSubmit]
   )
 
   /* ── Auto-fullscreen on mount & lock active test start time ───────────── */
@@ -310,35 +381,6 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
       } catch (_) {}
     }
   }, [webcamStream, screenStream])
-
-  /* ── Monitoring event bridge ───────────────────────────────────────── */
-  const reportMonitoringEvent = useCallback(async (eventType, severity = 'WARNING', metadata = {}) => {
-    if (!attemptId) return
-    try {
-      const endedAt = metadata.violationEndTime || new Date().toISOString()
-      const durationMs = Math.max(0, Number(metadata.durationMs ?? (Number(metadata.duration) || 0) * 1000) || 0)
-      const startedAt = metadata.violationStartTime || new Date(new Date(endedAt).getTime() - durationMs).toISOString()
-      await monitoringClient.reportEvent({
-        source: 'LAPTOP',
-        eventType,
-        severity,
-        durationMs,
-        confidence: metadata.confidence || 0.95,
-        startedAt,
-        endedAt,
-        occurredAt: endedAt,
-        metadata: { ...metadata, violationStartTime: startedAt, violationEndTime: endedAt },
-      })
-    } catch (e) {
-      console.warn('[QuizTaking] Monitoring event dispatch failed:', e)
-    }
-  }, [attemptId])
-
-  const flushOpenProctoringIntervals = useCallback(async () => {
-    try {
-      await monitoringClient._flushOpenIntervals(Date.now())
-    } catch (_) {}
-  }, [])
 
   const fsExitTimerRef = useRef(null)
   const fsExitStartTimeRef = useRef(null)
@@ -554,29 +596,39 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
     }
 
     verifyAttemptStatus()
-  }, [currentQ, attemptId, terminated])
+  }, [attemptId, terminated])
 
   /* ── Countdown timer ─────────────────────────────────────────────────── */
   useEffect(() => {
-    if (isCopyDisqualified) return
-    if (isPaused) return
-    if (timeLeft <= 0) {
-      handleSubmit()
-      return
-    }
+    if (isCopyDisqualified || isPaused || submittedRef.current) return
+    if (timeLeft <= 0) return
+
     timerRef.current = setInterval(() => {
       setTimeLeft((prev) => {
         if (prev <= 1) {
           clearInterval(timerRef.current)
-          handleSubmit()
+          timerRef.current = null
           return 0
         }
         return prev - 1
       })
     }, 1000)
-    return () => clearInterval(timerRef.current)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
+    }
   }, [isCopyDisqualified, isPaused])
+
+  /* ── Auto-submit trigger when timer reaches exactly 0 ────────────────── */
+  useEffect(() => {
+    if (timeLeft === 0 && !submittedRef.current && !submitting && !isCopyDisqualified) {
+      console.log('[QuizTaking] Time expired (0s). Automatically submitting quiz attempt...')
+      handleSubmit({ autoSubmit: true, silent: false })
+    }
+  }, [timeLeft, submitting, isCopyDisqualified, handleSubmit])
 
   /* ── Autosave to localStorage ─────────────────────────────────────────── */
   const PROGRESS_KEY = `quiz_progress_${attemptId}`

@@ -3,24 +3,27 @@
  * Handles all notification-related API endpoints
  */
 
-const { Notification } = require('../models');
+const { Notification, User } = require('../models');
 const NotificationService = require('../services/notificationService');
 const logger = require('../utils/logger');
-const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
+const { parsePagination, formatPaginationMeta } = require('../utils/paginationHelper');
 
 /**
- * GET /api/notifications - Get user notifications with pagination
+ * GET /api/notifications - Get user notifications with filtering & pagination
  */
 const getNotifications = async (req, res) => {
   try {
-    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+    const { page, limit, offset } = parsePagination(req.query, 15, 100);
     const userId = req.user.id;
+    const { unreadOnly, category, type } = req.query;
 
-    const result = await NotificationService.getNotifications(
-      userId,
+    const result = await NotificationService.getNotifications(userId, {
       limit,
-      offset
-    );
+      offset,
+      unreadOnly: unreadOnly === 'true' || unreadOnly === true,
+      category,
+      type,
+    });
 
     const total = result.count || 0;
     const paginationMeta = formatPaginationMeta(total, page, limit);
@@ -38,78 +41,60 @@ const getNotifications = async (req, res) => {
       totalPages: paginationMeta.totalPages,
     });
   } catch (error) {
-    logger.error('Error fetching notifications', { error: error.message });
+    logger.error('[notificationController] Error fetching notifications:', { error: error.message });
     res.status(500).json({ success: false, error: 'Failed to fetch notifications' });
   }
 };
 
 /**
- * GET /api/notifications/unread - Get unread notifications count
+ * GET /api/notifications/unread-count or /api/notifications/unread/count
  */
 const getUnreadCount = async (req, res) => {
   try {
     const userId = req.user.id;
-    const unreadCount = await Notification.count({
-      where: { userId, isRead: false },
-    });
-
+    const unreadCount = await NotificationService.getUnreadCount(userId);
     res.json({ success: true, unreadCount });
   } catch (error) {
-    logger.error('Error fetching unread count', { error: error.message });
+    logger.error('[notificationController] Error fetching unread count:', { error: error.message });
     res.status(500).json({ success: false, error: 'Failed to fetch unread count' });
   }
 };
 
 /**
- * PUT /api/notifications/:id/read - Mark notification as read
+ * PUT /api/notifications/:id/read or POST /api/notifications/:id/read
  */
 const markAsRead = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
-    const io = req.app.get('io');
+    const io = req.app?.get('io');
 
-    const notification = await Notification.findByPk(id);
-    if (!notification) {
-      return res.status(404).json({ success: false, error: 'Notification not found' });
-    }
-
-    if (notification.userId !== userId) {
-      return res.status(403).json({ success: false, error: 'Unauthorized' });
-    }
-
-    await NotificationService.markAsRead(id, io);
-
-    res.json({ success: true, message: 'Notification marked as read' });
+    const notification = await NotificationService.markAsRead(id, userId, io);
+    res.json({ success: true, notification, message: 'Notification marked as read' });
   } catch (error) {
-    logger.error('Error marking notification as read', { error: error.message });
-    res.status(500).json({ success: false, error: 'Failed to mark as read' });
+    logger.error('[notificationController] Error marking notification as read:', { error: error.message });
+    const statusCode = error.message.includes('not found') ? 404 : 500;
+    res.status(statusCode).json({ success: false, error: error.message });
   }
 };
 
 /**
- * PUT /api/notifications/read-all - Mark all notifications as read
+ * PUT /api/notifications/read-all or POST /api/notifications/read-all
  */
 const markAllAsRead = async (req, res) => {
   try {
     const userId = req.user.id;
-    const io = req.app.get('io');
+    const io = req.app?.get('io');
 
     const count = await NotificationService.markAllAsRead(userId, io);
-
     res.json({
       success: true,
-      message: `${count} notifications marked as read`,
+      message: `${count} notification(s) marked as read`,
       count,
     });
   } catch (error) {
-    logger.error('Error marking all notifications as read', {
-      error: error.message,
-    });
-    res.status(500).json({
-      success: false,
-      error: 'Failed to mark all as read',
-    });
+    logger.error('[notificationController] Error marking all notifications as read:', { error: error.message });
+    res.status(500).json({ success: false, error: 'Failed to mark all as read' });
   }
 };
 
@@ -121,65 +106,85 @@ const deleteNotification = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
 
-    const notification = await Notification.findByPk(id);
-    if (!notification) {
+    const deleted = await NotificationService.deleteNotification(id, userId);
+    if (!deleted) {
       return res.status(404).json({ success: false, error: 'Notification not found' });
     }
 
-    if (notification.userId !== userId) {
-      return res.status(403).json({ success: false, error: 'Unauthorized' });
-    }
-
-    await NotificationService.deleteNotification(id);
-
     res.json({ success: true, message: 'Notification deleted' });
   } catch (error) {
-    logger.error('Error deleting notification', { error: error.message });
+    logger.error('[notificationController] Error deleting notification:', { error: error.message });
     res.status(500).json({ success: false, error: 'Failed to delete notification' });
   }
 };
 
 /**
- * POST /api/notifications/test - Test notification (development only)
+ * POST /api/notifications/broadcast-announcement (Admin only)
+ * Targeted announcement broadcast
  */
-const testNotification = async (req, res) => {
+const broadcastAnnouncement = async (req, res) => {
   try {
-    const userId = req.user.id;
-    const io = req.app.get('io');
+    if (req.user.role !== 'ADMIN') {
+      return res.status(403).json({ success: false, error: 'Only administrators can broadcast announcements' });
+    }
 
-    const notification = await NotificationService.createNotification(
-      {
-        userId,
-        message: 'This is a test notification',
-        type: 'OTHER',
-      },
-      io
-    );
+    const { title, message, audience = 'ALL', courseId, trainingId, recipientUserId, priority = 'NORMAL', actionUrl } = req.body;
+    if (!title || !message) {
+      return res.status(400).json({ success: false, error: 'Title and message are required' });
+    }
 
-    res.json({ success: true, notification });
-  } catch (error) {
-    logger.error('Error creating test notification', { error: error.message });
-    res.status(500).json({
-      success: false,
-      error: 'Failed to create test notification',
+    const io = req.app?.get('io');
+    const notifBase = {
+      actorUserId: req.user.id,
+      type: NotificationService.TYPES.ANNOUNCEMENT,
+      title: title.trim(),
+      message: message.trim(),
+      category: NotificationService.CATEGORIES.ANNOUNCEMENT,
+      priority: priority.toUpperCase(),
+      actionUrl: actionUrl || null,
+      metadata: { audience, broadcastedBy: req.user.name },
+    };
+
+    let count = 0;
+    if (audience === 'ALL') {
+      const allUsers = await User.findAll({ attributes: ['id', 'role'] });
+      const created = await NotificationService.notifyUsers(allUsers.map((u) => u.id), notifBase, io);
+      count = created.length;
+    } else if (audience === 'TRAINERS') {
+      const created = await NotificationService.notifyRole('TRAINER', notifBase, io);
+      count = created.length;
+    } else if (audience === 'PARTICIPANTS') {
+      const created = await NotificationService.notifyRole('PARTICIPANT', notifBase, io);
+      count = created.length;
+    } else if (audience === 'COURSE' && courseId) {
+      const created = await NotificationService.notifyCourseParticipants(courseId, notifBase, io);
+      count = created.length;
+    } else if (audience === 'TRAINING' && trainingId) {
+      const created = await NotificationService.notifyTrainingParticipants(trainingId, notifBase, io);
+      count = created.length;
+    } else if (audience === 'USER' && recipientUserId) {
+      const created = await NotificationService.createNotification({ ...notifBase, userId: recipientUserId }, io);
+      count = created ? 1 : 0;
+    } else {
+      return res.status(400).json({ success: false, error: 'Invalid audience target or missing courseId/trainingId' });
+    }
+
+    res.json({
+      success: true,
+      message: `Announcement delivered to ${count} recipient(s)`,
+      count,
     });
+  } catch (error) {
+    logger.error('[notificationController] Error broadcasting announcement:', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
 /**
- * GET /api/notifications/my - Get my notifications (legacy endpoint)
+ * GET /api/notifications/my (Legacy compatibility)
  */
 const getMyNotifications = async (req, res) => {
-  try {
-    const notifications = await Notification.findAll({
-      where: { userId: req.user.id },
-      order: [['created_at', 'DESC']]
-    });
-    res.json({ notifications });
-  } catch (error) {
-    console.error('Get notifications error:', error.message);
-    res.status(500).json({ error: 'Server error fetching notifications' });
-  }
+  return getNotifications(req, res);
 };
 
 module.exports = {
@@ -189,5 +194,5 @@ module.exports = {
   markAsRead,
   markAllAsRead,
   deleteNotification,
-  testNotification
+  broadcastAnnouncement,
 };

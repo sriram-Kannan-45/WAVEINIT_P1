@@ -441,7 +441,6 @@ function ParticipantDetailModal({ participant, course, onClose }) {
 export default function CourseParticipantsTab({ courseId, user, course }) {
   const { error: showError, success: showSuccess } = useToast()
   const [participants, setParticipants] = useState([])
-  const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [sortConfig, setSortConfig] = useState({ key: 'joinedAt', direction: 'desc' })
   const [total, setTotal] = useState(0)
@@ -450,10 +449,10 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
   const [detail, setDetail] = useState(null)
   const [showInviteModal, setShowInviteModal] = useState(false)
 
-  const loadParticipants = async (targetPage = page, targetSearch = search) => {
+  const loadParticipants = async (targetPage = page) => {
     setLoading(true)
     try {
-      const r = await fetch(API.TRAINER_COURSES.PARTICIPANTS(courseId, targetPage, PAGE_SIZE, targetSearch), {
+      const r = await fetch(API.TRAINER_COURSES.PARTICIPANTS(courseId), {
         headers: { Authorization: `Bearer ${user.token}` },
       })
       const d = await r.json()
@@ -477,13 +476,6 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
   useEffect(() => {
     loadParticipants()
   }, [courseId, user?.token])
-
-  const handleSearch = (e) => {
-    const v = e.target.value
-    setSearch(v)
-    setPage(1)
-    loadParticipants(1, v)
-  }
 
   const handleSort = (key) => {
     setSortConfig(prev => {
@@ -610,15 +602,6 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
             <p className="cpt-table-subtitle">{totalCount} enrolled participant{totalCount !== 1 ? 's' : ''}</p>
           </div>
           <div className="cpt-table-actions">
-            <div className="cpt-search-box">
-              <Search size={13} color="#94A3B8" />
-              <input
-                className="cpt-search-input"
-                placeholder="Search participants..."
-                value={search}
-                onChange={handleSearch}
-              />
-            </div>
             <button
               className="cpt-btn-primary"
               onClick={() => setShowInviteModal(true)}
@@ -680,7 +663,7 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
                     <div className="cpt-empty-state">
                       <Users size={28} color="#94A3B8" />
                       <h4>No participants found</h4>
-                      <p>{search ? 'Try a different search term.' : 'No participants have enrolled yet.'}</p>
+                      <p>No participants have enrolled yet.</p>
                       <button
                         onClick={() => setShowInviteModal(true)}
                         className="cpt-btn-primary"

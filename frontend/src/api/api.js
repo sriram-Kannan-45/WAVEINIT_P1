@@ -191,6 +191,7 @@ export const API = {
     SEND_QUIZ:     (quizId)            => `${API_BASE}/quizzes/${quizId}/send`,
     PUBLISH_QUIZ:  (courseId, quizId)  => `${API_BASE}/trainer/courses/${courseId}/quizzes/${quizId}/publish`,
     QUIZ_DASHBOARD:(courseId, quizId)  => `${API_BASE}/trainer/courses/${courseId}/quizzes/${quizId}/dashboard`,
+    QUIZ_BULK_DELETE: (courseId)         => `${API_BASE}/trainer/courses/${courseId}/quizzes/bulk-delete`,
     QUIZ_LEADERBOARD:(quizId)          => `${API_BASE}/ai-quiz/leaderboard/${quizId}`,
     QUIZ_RESULTS:    (quizId)          => `${API_BASE}/quizzes/${quizId}/results`,
     PUBLISH_RESULT:  (quizId, pId)     => `${API_BASE}/quizzes/${quizId}/publish-participant/${pId}`,

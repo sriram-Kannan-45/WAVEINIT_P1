@@ -48,7 +48,6 @@ router.delete('/courses/:courseId/structure/submodule/:subModuleId',  trainerOrA
 router.delete('/courses/:courseId/structure/topic/:topicId',           trainerOrAdmin, c.deleteStructureTopic);
 router.post(  '/courses/:courseId/generate-structure',                trainerOrAdmin, uploadAIQuizMaterial.single('file'), c.generateCourseStructure);
 
-
 // ── Lesson Materials (uploads on POST) ─────────────────────────────────────
 router.put(  '/lessons/:lessonId/materials/reorder',         trainerOrAdmin, c.reorderMaterials);
 router.post( '/lessons/:lessonId/materials',                 trainerOrAdmin, uploadAny.single('file'), c.createMaterial);
@@ -57,13 +56,15 @@ router.put(  '/lessons/:lessonId/materials/:id',             trainerOrAdmin, c.u
 router.delete('/lessons/:lessonId/materials/:id',            trainerOrAdmin, c.deleteMaterial);
 
 // ── Quizzes (course-scoped) ────────────────────────────────────────────────
-router.post( '/courses/:courseId/quiz/manual',               trainerOrAdmin, c.createManualQuiz);
-router.get(  '/courses/:courseId/quizzes',                   trainerOrAdmin, c.listCourseQuizzes);
-router.get(  '/courses/:courseId/quizzes/:quizId',           trainerOrAdmin, c.getCourseQuiz);
-router.put(  '/courses/:courseId/quizzes/:quizId',           trainerOrAdmin, c.updateCourseQuiz);
+router.post(  '/courses/:courseId/quiz/manual',               trainerOrAdmin, c.createManualQuiz);
+router.delete('/courses/:courseId/quizzes/bulk-delete',      trainerOrAdmin, c.bulkDeleteCourseQuizzes);
+router.post(  '/courses/:courseId/quizzes/bulk-delete',      trainerOrAdmin, c.bulkDeleteCourseQuizzes);
+router.get(   '/courses/:courseId/quizzes',                   trainerOrAdmin, c.listCourseQuizzes);
+router.get(   '/courses/:courseId/quizzes/:quizId',           trainerOrAdmin, c.getCourseQuiz);
+router.put(   '/courses/:courseId/quizzes/:quizId',           trainerOrAdmin, c.updateCourseQuiz);
 router.delete('/courses/:courseId/quizzes/:quizId',          trainerOrAdmin, c.deleteCourseQuiz);
-router.post( '/courses/:courseId/quizzes/:quizId/publish',   trainerOrAdmin, c.publishQuizResults);
-router.get(  '/courses/:courseId/quizzes/:quizId/dashboard', trainerOrAdmin, c.quizDashboard);
+router.post(  '/courses/:courseId/quizzes/:quizId/publish',   trainerOrAdmin, c.publishQuizResults);
+router.get(   '/courses/:courseId/quizzes/:quizId/dashboard', trainerOrAdmin, c.quizDashboard);
 
 // ── Participants ───────────────────────────────────────────────────────────
 router.get(  '/courses/:courseId/participants',              trainerOrAdmin, c.listParticipants);

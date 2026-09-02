@@ -11,13 +11,11 @@
  */
 
 const { Op } = require('sequelize');
-const { Lesson, Course, Training } = require('../models');
+const { Lesson, Course } = require('../models');
 
 /**
  * Calculates dynamic completion metrics for a Training Program.
- *
- * @param {number|string} trainingId - Training / Program ID
- * @returns {Promise<Object>} Dynamic progress breakdown
+ * Uses batch status projection in 2 minimal queries.
  */
 async function calculateTrainingCompletion(trainingId) {
   const tid = parseInt(trainingId, 10);
@@ -41,28 +39,27 @@ async function calculateTrainingCompletion(trainingId) {
   });
   const courseIds = (courses || []).map((c) => c.id).filter(Boolean);
 
-  // 2. Build condition for all structure items belonging to this training
-  const whereCondition = {
-    [Op.or]: [
-      ...(courseIds.length > 0 ? [{ courseId: { [Op.in]: courseIds } }] : []),
-      { trainingId: tid },
-    ],
-  };
+  // 2. Fetch lesson statuses in a single indexed query
+  const whereCondition = courseIds.length > 0
+    ? { [Op.or]: [{ courseId: { [Op.in]: courseIds } }, { trainingId: tid }] }
+    : { trainingId: tid };
 
-  // 3. Query counts
-  const totalStructureItems = await Lesson.count({ where: whereCondition });
-  const completedStructureItems = await Lesson.count({
-    where: {
-      ...whereCondition,
-      status: 'COMPLETED',
-    },
+  const lessons = await Lesson.findAll({
+    where: whereCondition,
+    attributes: ['status'],
+    raw: true,
   });
-  const inProgressStructureItems = await Lesson.count({
-    where: {
-      ...whereCondition,
-      status: 'IN_PROGRESS',
-    },
-  });
+
+  const totalStructureItems = lessons.length;
+  let completedStructureItems = 0;
+  let inProgressStructureItems = 0;
+
+  for (let i = 0; i < lessons.length; i++) {
+    const s = lessons[i].status;
+    if (s === 'COMPLETED') completedStructureItems++;
+    else if (s === 'IN_PROGRESS') inProgressStructureItems++;
+  }
+
   const pendingStructureItems = Math.max(
     0,
     totalStructureItems - completedStructureItems - inProgressStructureItems
@@ -86,9 +83,7 @@ async function calculateTrainingCompletion(trainingId) {
 
 /**
  * Calculates dynamic completion metrics for a single Course.
- *
- * @param {number|string} courseId - Course ID
- * @returns {Promise<Object>} Dynamic course progress breakdown
+ * Optimized to a single fast indexed query.
  */
 async function calculateCourseCompletion(courseId) {
   const cid = parseInt(courseId, 10);
@@ -104,15 +99,22 @@ async function calculateCourseCompletion(courseId) {
     };
   }
 
-  const whereCondition = { courseId: cid };
+  const lessons = await Lesson.findAll({
+    where: { courseId: cid },
+    attributes: ['status'],
+    raw: true,
+  });
 
-  const totalStructureItems = await Lesson.count({ where: whereCondition });
-  const completedStructureItems = await Lesson.count({
-    where: { ...whereCondition, status: 'COMPLETED' },
-  });
-  const inProgressStructureItems = await Lesson.count({
-    where: { ...whereCondition, status: 'IN_PROGRESS' },
-  });
+  const totalStructureItems = lessons.length;
+  let completedStructureItems = 0;
+  let inProgressStructureItems = 0;
+
+  for (let i = 0; i < lessons.length; i++) {
+    const s = lessons[i].status;
+    if (s === 'COMPLETED') completedStructureItems++;
+    else if (s === 'IN_PROGRESS') inProgressStructureItems++;
+  }
+
   const pendingStructureItems = Math.max(
     0,
     totalStructureItems - completedStructureItems - inProgressStructureItems
@@ -136,9 +138,6 @@ async function calculateCourseCompletion(courseId) {
 
 /**
  * Batch calculate completion metrics for multiple training IDs.
- *
- * @param {Array<number|string>} trainingIds
- * @returns {Promise<Map<number, Object>>}
  */
 async function batchCalculateTrainingsCompletion(trainingIds) {
   const map = new Map();
@@ -148,7 +147,6 @@ async function batchCalculateTrainingsCompletion(trainingIds) {
 
   if (validIds.length === 0) return map;
 
-  // Process in parallel with Promise.all
   await Promise.all(
     validIds.map(async (tid) => {
       try {

@@ -10,7 +10,7 @@ const validateAssessmentSession = async (req, res, next) => {
     const attemptId = req.params.attemptId || req.body?.attemptId || req.query?.attemptId;
 
     if (!sessionToken || !attemptId) {
-      return res.status(401).json({
+      return res.status(403).json({
         error: 'SESSION_INVALID',
         message: 'Assessment session is invalid or expired.',
       });
@@ -29,7 +29,7 @@ const validateAssessmentSession = async (req, res, next) => {
     });
 
     if (!session) {
-      return res.status(401).json({
+      return res.status(403).json({
         error: 'SESSION_INVALID',
         message: 'Assessment session is invalid or expired.',
       });

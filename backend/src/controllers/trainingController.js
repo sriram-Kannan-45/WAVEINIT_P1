@@ -3,6 +3,7 @@ const { Op } = require('sequelize');
 const { ensureTrainingAttendanceSessions } = require('../services/attendanceAutomationService');
 const { calculateTrainingCompletion, batchCalculateTrainingsCompletion } = require('../services/trainingProgressService');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
+const cacheService = require('../services/cacheService');
 
 const createTraining = async (req, res) => {
   try {
@@ -113,9 +114,17 @@ const getAllTrainings = async (req, res) => {
   try {
     const userId = req.user?.id;
     const userRole = req.user?.role;
-    const { search = '', status = '' } = req.query;
+    const search = req.query.search || '';
+    const status = req.query.status || '';
 
-    console.log('📋 getAllTrainings called, user:', userId, 'role:', userRole, 'query:', req.query);
+    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+    const isPaginated = !!(req.query.page || req.query.limit || req.query.offset !== undefined);
+
+    const cacheKey = `trainings:list:${userRole || 'anon'}:${userId || 0}:${search}:${status}:${page}:${limit}:${isPaginated}`;
+    const cached = cacheService.get(cacheKey);
+    if (cached && req.query.fresh !== 'true') {
+      return res.json(cached);
+    }
 
     const where = {};
     if (search && search.trim()) {
@@ -157,9 +166,6 @@ const getAllTrainings = async (req, res) => {
       ],
       order: [['id', 'DESC']]
     };
-
-    const { page, limit, offset } = parsePagination(req.query, 10, 100);
-    const isPaginated = !!(req.query.page || req.query.limit || req.query.offset !== undefined);
 
     if (isPaginated) {
       findOptions.limit = limit;
@@ -249,8 +255,9 @@ const getAllTrainings = async (req, res) => {
 
     const paginationMeta = formatPaginationMeta(total, page, limit);
 
+    let result;
     if (isPaginated) {
-      return res.json({
+      result = {
         success: true,
         trainings: formattedTrainings,
         data: formattedTrainings,
@@ -259,10 +266,13 @@ const getAllTrainings = async (req, res) => {
         page,
         limit,
         totalPages: paginationMeta.totalPages
-      });
+      };
+    } else {
+      result = formattedTrainings;
     }
 
-    return res.json(formattedTrainings);
+    cacheService.set(cacheKey, result, 15);
+    return res.json(result);
   } catch (error) {
     console.error('Get trainings error:', error.message, error.stack);
     res.status(500).json({ error: 'Server error fetching trainings' });

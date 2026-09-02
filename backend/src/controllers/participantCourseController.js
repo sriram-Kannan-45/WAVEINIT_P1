@@ -40,6 +40,7 @@ const {
 
 const { gradeAnswer } = require('../utils/gradeAnswer');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
+const cacheService = require('../services/cacheService');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helpers
@@ -371,6 +372,8 @@ async function enroll(req, res) {
       }, io);
     }
 
+    cacheService.delete(`participant:courses:${req.user.id}`);
+
     res.status(created ? 201 : 200).json({
       success: true,
       message: created ? 'Enrolled successfully' : (enrollment.status === 'ENROLLED' ? 'Already enrolled' : 'Enrolled successfully'),
@@ -392,6 +395,7 @@ async function enroll(req, res) {
 async function unenroll(req, res) {
   try {
     const id = parseInt(req.params.courseId, 10);
+    cacheService.delete(`participant:courses:${req.user.id}`);
     const courseEnrollment = await Enrollment.findOne({
       where: { courseId: id, participantId: req.user.id, status: 'ENROLLED' },
     });
@@ -423,6 +427,12 @@ async function unenroll(req, res) {
 // GET /api/participant/courses  — all courses the participant is currently enrolled in or pending approval
 async function listMyCourses(req, res) {
   try {
+    const cacheKey = `participant:courses:${req.user.id}`;
+    const cached = cacheService.get(cacheKey);
+    if (cached && req.query.fresh !== 'true') {
+      return res.json(cached);
+    }
+
     const enrollments = await Enrollment.findAll({
       where: {
         participantId: req.user.id,
@@ -535,7 +545,7 @@ async function listMyCourses(req, res) {
       enrollmentStatus: enrollment.status,
     }));
 
-    res.json({
+    const result = {
       success: true,
       courses: outCourses,
       data: outCourses,
@@ -544,7 +554,11 @@ async function listMyCourses(req, res) {
       page,
       limit,
       totalPages: paginationMeta.totalPages
-    });
+    };
+
+    cacheService.set(cacheKey, result, 20);
+
+    res.json(result);
   } catch (e) {
     console.error('listMyCourses:', e.message);
     res.status(500).json({ error: 'Failed to list enrolled courses' });
@@ -1271,46 +1285,55 @@ async function submitQuiz(req, res) {
       // Wipe any prior partial answers for this attempt then recreate.
       await QuizAnswer.destroy({ where: { attemptId: attempt.id }, transaction: t });
 
-      const questionsMap = Object.fromEntries(questions.map(q => [String(q.id), q]));
-
+      const submittedMap = new Map();
       for (const a of answerList) {
-        const qid = String(a.questionId);
-        const question = questionsMap[qid];
-        if (!question) continue;
+        if (a && a.questionId != null) {
+          submittedMap.set(String(a.questionId), a);
+        }
+      }
 
-        const submittedText = String(a.answerText ?? a.answer ?? '').trim();
+      const answersToInsert = [];
+      for (const question of questions) {
+        const a = submittedMap.get(String(question.id));
+        const submittedText = a ? String(a.answerText ?? a.answer ?? '').trim() : '';
         const submittedAnswer = {
-          selectedOption: a.selectedOption !== undefined ? a.selectedOption : null,
+          selectedOption: a?.selectedOption !== undefined ? a.selectedOption : null,
           answer: submittedText,
           answerText: submittedText,
-          matches: a.matches
+          matches: a?.matches || null
         };
 
         let isCorrect = false;
         let earnedScore = 0;
-        try {
-          const { isCorrect: gradedCorrect, score: gradeScore } = gradeAnswer(question, submittedAnswer);
-          isCorrect = !!gradedCorrect;
-          earnedScore = (gradeScore || 0) / 100;
-        } catch (_) {
-          isCorrect = false;
-          earnedScore = 0;
+        if (a && (a.selectedOption !== undefined || submittedText || a.matches)) {
+          try {
+            const { isCorrect: gradedCorrect, score: gradeScore } = gradeAnswer(question, submittedAnswer);
+            isCorrect = !!gradedCorrect;
+            earnedScore = (gradeScore || 0) / 100;
+          } catch (_) {
+            isCorrect = false;
+            earnedScore = 0;
+          }
         }
         correct += earnedScore;
 
         let optionIdx = -1;
-        if (Array.isArray(question.options)) {
+        if (Array.isArray(question.options) && submittedText) {
           optionIdx = question.options.findIndex(o => String(o).trim() === submittedText);
         }
 
-        await QuizAnswer.create({
+        answersToInsert.push({
           attemptId:      attempt.id,
-          questionId:     a.questionId,
+          questionId:     question.id,
           answerText:     submittedText,
-          selectedOption: optionIdx >= 0 ? optionIdx : (a.selectedOption !== undefined ? a.selectedOption : null),
+          selectedOption: optionIdx >= 0 ? optionIdx : (a?.selectedOption !== undefined ? a.selectedOption : null),
           isCorrect,
           score:          earnedScore,
-        }, { transaction: t });
+        });
+      }
+
+      if (answersToInsert.length > 0) {
+        await QuizAnswer.bulkCreate(answersToInsert, { transaction: t });
       }
 
       const submittedAt = new Date();
@@ -1338,20 +1361,21 @@ async function submitQuiz(req, res) {
       }, { transaction: t });
     });
 
-    // Recompute course progress safely (only if quiz.courseId exists)
-    if (quiz.courseId) {
-      await recomputeCourseProgress(quiz.courseId, req.user.id).catch(err => {
-        console.warn('recomputeCourseProgress non-fatal warning:', err.message);
-      });
-    }
+    // Recompute course progress & conclude verification asynchronously in background
+    setImmediate(() => {
+      if (quiz.courseId) {
+        recomputeCourseProgress(quiz.courseId, req.user.id).catch(err => {
+          console.warn('recomputeCourseProgress non-fatal warning:', err.message);
+        });
+      }
 
-    // Automatically conclude verification and monitoring session
-    if (attempt?.id) {
-      try {
-        const verificationService = require('../services/assessmentVerificationService');
-        await verificationService.endSession({ attemptId: attempt.id, participantId: req.user.id }).catch(() => {});
-      } catch (_) {}
-    }
+      if (attempt?.id) {
+        try {
+          const verificationService = require('../services/assessmentVerificationService');
+          verificationService.endSession({ attemptId: attempt.id, participantId: req.user.id }).catch(() => {});
+        } catch (_) {}
+      }
+    });
 
     res.json({
       success: true,

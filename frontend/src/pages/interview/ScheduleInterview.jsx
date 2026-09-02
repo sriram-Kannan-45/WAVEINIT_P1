@@ -393,7 +393,7 @@ export default function ScheduleInterview({ user }) {
                 <button
                   type="submit"
                   className="reg-admin-btn reg-admin-btn--primary"
-                  disabled={loading || !form.candidateId || !form.interviewerId || !form.date || !form.time}
+                  disabled={loading}
                 >
                   {loading ? (editingId ? 'Saving...' : 'Scheduling...') : editingId ? 'Save Changes' : 'Schedule Interview'}
                 </button>

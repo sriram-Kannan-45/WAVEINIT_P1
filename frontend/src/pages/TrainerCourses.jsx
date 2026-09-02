@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -88,7 +88,7 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
         setCourses(d.courses)
         try {
           sessionStorage.setItem(`trainer_courses_${user?.id || 'me'}`, JSON.stringify(d.courses))
-        } catch (_) {}
+        } catch (_) { }
       } else {
         throw new Error(d.error || 'Failed to load courses')
       }
@@ -128,7 +128,7 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
       if (search) {
         const q = search.toLowerCase()
         return (c.title || '').toLowerCase().includes(q) ||
-               (c.description || '').toLowerCase().includes(q)
+          (c.description || '').toLowerCase().includes(q)
       }
       return true
     })
@@ -598,7 +598,7 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
                   className="wl-btn-primary"
                   style={{ height: 42 }}
                 >
-                                Import Files
+                  Import Files
                 </button>
               </div>
             </motion.div>
@@ -609,22 +609,43 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
   )
 }
 
-function CourseDetail({ user, courseId, onBack }) {
+function CourseDetail({ user, courseId, initialCourse, onBack }) {
   const { error: showError, success } = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
-  const currentSection = searchParams.get('section') || 'structure'
+
+  const normalizeTrainerTab = (raw) => {
+    const s = String(raw || '').toLowerCase().trim()
+    if (s === 'aiquiz' || s === 'ai-quiz' || s === 'quiz') return 'quizzes'
+    if (s === 'coding-assessment' || s === 'coding_assessment') return 'coding'
+    return s || 'structure'
+  }
+
+  const currentSection = normalizeTrainerTab(searchParams.get('section') || searchParams.get('subtab'))
   const [tab, setTab] = useState(currentSection)
-  const [course, setCourse] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [course, setCourse] = useState(() => {
+    if (initialCourse) return initialCourse
+    try {
+      const cached = sessionStorage.getItem(`course_detail_${courseId}`)
+      if (cached) return JSON.parse(cached)
+      const cachedList = sessionStorage.getItem(`trainer_courses_${user?.id || 'me'}`)
+      if (cachedList) {
+        const list = JSON.parse(cachedList)
+        const found = list.find(c => Number(c.id) === Number(courseId))
+        if (found) return found
+      }
+    } catch (_) {}
+    return null
+  })
+  const [loading, setLoading] = useState(() => !course)
   const [error, setError] = useState(null)
   const auth = () => ({ Authorization: `Bearer ${user?.token || ''}` })
 
   useEffect(() => {
-    const sec = searchParams.get('section')
+    const sec = normalizeTrainerTab(searchParams.get('section') || searchParams.get('subtab'))
     if (sec && sec !== tab) {
       setTab(sec)
     }
-  }, [searchParams.get('section')])
+  }, [searchParams.get('section'), searchParams.get('subtab')])
 
   const handleTabSelect = (tabKey) => {
     setTab(tabKey)
@@ -633,9 +654,11 @@ function CourseDetail({ user, courseId, onBack }) {
     setSearchParams(next, { replace: true })
   }
 
-  const fetchCourse = async (signal) => {
+  const fetchCourse = async (signal, isQuiet = false) => {
     try {
-      setLoading(true)
+      if (!isQuiet && !course) {
+        setLoading(true)
+      }
       setError(null)
       const r = await fetchWithTimeout(API.TRAINER_COURSES.DETAIL(courseId), { headers: auth(), signal }, 12000)
       const d = await r.json().catch(() => ({}))
@@ -643,14 +666,19 @@ function CourseDetail({ user, courseId, onBack }) {
       if (d.success && d.course) {
         setCourse(d.course)
         setError(null)
-      } else {
+        try {
+          sessionStorage.setItem(`course_detail_${courseId}`, JSON.stringify(d.course))
+        } catch (_) {}
+      } else if (!isQuiet && !course) {
         throw new Error(d.error || 'Failed to load course details')
       }
     } catch (e) {
       if (e.name === 'AbortError' || signal?.aborted) return
       console.error('CourseDetail fetch error:', e.message)
-      setError(e.message || 'Failed to load course details')
-      showError(e.message)
+      if (!isQuiet && !course) {
+        setError(e.message || 'Failed to load course details')
+        showError(e.message)
+      }
     } finally {
       if (!signal?.aborted) {
         setLoading(false)
@@ -658,18 +686,21 @@ function CourseDetail({ user, courseId, onBack }) {
     }
   }
 
+  const fetchCourseQuiet = useCallback(() => {
+    fetchCourse(null, true)
+  }, [courseId])
+
   useEffect(() => {
-    setLoading(true)
-    setCourse(null)
+    if (!course) setLoading(true)
     setError(null)
     const controller = new AbortController()
-    fetchCourse(controller.signal)
+    fetchCourse(controller.signal, !!course)
     return () => {
       controller.abort()
     }
   }, [courseId])
 
-  if (loading || (!course && !error)) {
+  if (!course && loading) {
     return (
       <div className="wl-detail-page">
         <div className="wl-detail-loading-row">
@@ -732,13 +763,13 @@ function CourseDetail({ user, courseId, onBack }) {
   }
 
   const TABS = [
-    { key: 'structure',    label: 'Structure',    icon: <Layers size={17} /> },
-    { key: 'lessons',      label: 'Lessons',      icon: <FileText size={17} /> },
-    { key: 'quizzes',      label: 'AI Quiz',      icon: <Sparkles size={17} /> },
-    { key: 'coding',       label: 'Coding',       icon: <Code size={17} /> },
+    { key: 'structure', label: 'Structure', icon: <Layers size={17} /> },
+    { key: 'lessons', label: 'Lessons', icon: <FileText size={17} /> },
+    { key: 'quizzes', label: 'AI Quiz', icon: <Sparkles size={17} /> },
+    { key: 'coding', label: 'Coding', icon: <Code size={17} /> },
     { key: 'participants', label: 'Participants', icon: <Users size={17} /> },
-    { key: 'analytics',    label: 'Analytics',    icon: <BarChart3 size={17} /> },
-    { key: 'discussions',  label: 'Discussions',  icon: <MessageSquare size={17} /> },
+    { key: 'analytics', label: 'Analytics', icon: <BarChart3 size={17} /> },
+    { key: 'discussions', label: 'Discussions', icon: <MessageSquare size={17} /> },
   ]
 
   const statusClass = (course.status || 'PUBLISHED').toLowerCase()
@@ -759,31 +790,34 @@ function CourseDetail({ user, courseId, onBack }) {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25 }}
       >
-        <nav className="wl-detail-breadcrumb">
-          <a href="#" onClick={(e) => { e.preventDefault(); onBack() }}>My Courses</a>
-          <span className="wl-detail-breadcrumb-sep">/</span>
-          <span style={{ color: '#16A34A', fontWeight: 600 }}>{course.title}</span>
-        </nav>
-        <button className="wl-detail-back" onClick={onBack}>
-          <ArrowLeft size={16} /> Back
+        <button
+          className="wl-detail-back-btn"
+          onClick={onBack}
+        >
+          <ArrowLeft size={16} />
+          <span>My Courses</span>
         </button>
+
+        <div className="wl-detail-breadcrumb">
+          <span className="wl-detail-breadcrumb-item">Course</span>
+          <span className="wl-detail-breadcrumb-sep">/</span>
+          <span className="wl-detail-breadcrumb-current">{course.title}</span>
+        </div>
       </motion.div>
 
-      {/* ── Hero Card ── */}
+      {/* ── Hero Banner ── */}
       <motion.div
         className="wl-detail-hero"
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25 }}
+        transition={{ duration: 0.3 }}
       >
-        {/* Left: Thumbnail */}
+        {/* Left: Artwork / Thumbnail */}
         <div className="wl-detail-hero-thumb">
-          <div className="wl-detail-hero-status">
-            <span className={`wl-detail-status-badge wl-detail-status-badge--${statusClass}`}>
-              {course.status || 'PUBLISHED'}
-            </span>
-          </div>
           <CourseArtwork title={course.title} category={course.category} />
+          <span className={`wl-detail-status-badge wl-detail-status-badge--${statusClass}`}>
+            {course.status || 'PUBLISHED'}
+          </span>
         </div>
 
         {/* Right: Info */}
@@ -795,13 +829,10 @@ function CourseDetail({ user, courseId, onBack }) {
                 {course.category || `${course.title} Course`}
               </div>
             </div>
-            <button className="wl-detail-hero-more-btn" aria-label="More options">
-              <MoreVertical size={18} />
-            </button>
           </div>
 
           <p className="wl-detail-hero-desc">
-            {course.description || `Comprehensive course on ${course.title} with structured modules, quizzes, and coding assessments.`}
+            {course.description || `Comprehensive training course for ${course.title}. Manage lessons, materials, and track student progress.`}
           </p>
 
           {/* Stats */}
@@ -818,28 +849,15 @@ function CourseDetail({ user, courseId, onBack }) {
               </div>
             ))}
           </div>
-
-          {/* Training Structure Completion Progress */}
-          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #e2e8f0' }}>
-            <TrainingProgressBar
-              percentage={course.structureProgress?.completionPercentage ?? course.completionPercentage ?? 0}
-              completedItems={course.structureProgress?.completedStructureItems ?? 0}
-              totalItems={course.structureProgress?.totalStructureItems ?? 0}
-              inProgressItems={course.structureProgress?.inProgressStructureItems ?? 0}
-              hasStructure={course.structureProgress?.hasStructure ?? ((course.structureProgress?.totalStructureItems || 0) > 0)}
-              title="Course Structure Completion"
-              size="sm"
-            />
-          </div>
         </div>
       </motion.div>
 
-      {/* ── Tab Navigation Bar ── */}
+      {/* ── Tab Navigation ── */}
       <motion.div
         className="wl-detail-tabs"
-        initial={{ opacity: 0, y: 4 }}
+        initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.2 }}
+        transition={{ duration: 0.25, delay: 0.08 }}
       >
         <div className="wl-detail-tabs-list">
           {TABS.map((t) => (
@@ -872,14 +890,14 @@ function CourseDetail({ user, courseId, onBack }) {
               <AIStructureGenerator
                 user={user}
                 courseId={courseId}
-                onStructureSaved={fetchCourse}
+                onStructureSaved={fetchCourseQuiet}
               />
             </div>
           )}
 
-          {tab === 'lessons' && <LessonsTab user={user} courseId={courseId} onCountChange={fetchCourse} setParentTab={setTab} />}
-          {tab === 'quizzes' && <CourseQuizzesTab user={user} courseId={courseId} onCountChange={fetchCourse} />}
-          {tab === 'coding' && <CourseCodingTab user={user} courseId={courseId} onCountChange={fetchCourse} />}
+          {tab === 'lessons' && <LessonsTab user={user} courseId={courseId} onCountChange={fetchCourseQuiet} setParentTab={setTab} />}
+          {tab === 'quizzes' && <CourseQuizzesTab user={user} courseId={courseId} onCountChange={fetchCourseQuiet} />}
+          {tab === 'coding' && <CourseCodingTab user={user} courseId={courseId} onCountChange={fetchCourseQuiet} />}
           {tab === 'participants' && <CourseParticipantsTab user={user} courseId={courseId} course={course} />}
           {tab === 'analytics' && <CourseAnalyticsTab user={user} courseId={courseId} />}
           {tab === 'discussions' && <DiscussionBoard user={user} trainingId={course.trainingProgramId} />}
@@ -1326,10 +1344,25 @@ export default function TrainerCourses({ user, onLogout, onTabChange, initialCou
   }
 
   if (openCourseId) {
+    let initialCourse = null
+    try {
+      const cached = sessionStorage.getItem(`course_detail_${openCourseId}`)
+      if (cached) {
+        initialCourse = JSON.parse(cached)
+      } else {
+        const cachedList = sessionStorage.getItem(`trainer_courses_${user?.id || 'me'}`)
+        if (cachedList) {
+          const list = JSON.parse(cachedList)
+          initialCourse = list.find(c => Number(c.id) === Number(openCourseId)) || null
+        }
+      }
+    } catch (_) {}
+
     return (
       <CourseDetail
         user={user}
         courseId={openCourseId}
+        initialCourse={initialCourse}
         onBack={handleBack}
       />
     )

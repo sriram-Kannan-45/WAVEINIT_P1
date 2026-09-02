@@ -323,6 +323,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
 
     console.log('[LAPTOP-VERIF] Connecting to Socket.IO for session:', currentSessionId)
     const socket = io(BACKEND_ORIGIN || window.location.origin, {
+      auth: { token: activeToken },
       path: '/socket.io/',
       transports: ['websocket', 'polling'],
       reconnectionAttempts: 20,
@@ -462,7 +463,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
         pcRef.current = null
       }
     }
-  }, [sessionData?.sessionId, getOrCreatePeerConnection])
+  }, [sessionData?.sessionId, getOrCreatePeerConnection, activeToken])
 
   // 5. Polling Fallback
   useEffect(() => {

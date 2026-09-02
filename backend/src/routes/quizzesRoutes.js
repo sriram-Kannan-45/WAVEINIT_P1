@@ -1594,52 +1594,60 @@ router.post('/:quizId/attempts/:attemptId/submit', async (req, res) => {
       // Wipe any prior partial answers for this attempt
       await QuizAnswer.destroy({ where: { attemptId: attempt.id }, transaction: t });
 
+      const submittedAnswerMap = new Map();
       for (const ans of answers) {
-        const question = questionsMap[ans.questionId];
-        if (!question) continue;
+        if (ans && ans.questionId != null) {
+          submittedAnswerMap.set(Number(ans.questionId), ans);
+        }
+      }
+
+      for (const question of questions) {
+        const qMarks = question.marks || 1;
+        const ans = submittedAnswerMap.get(Number(question.id));
 
         let score = 0;
-        let feedback = '';
+        let feedback = 'Unanswered';
         let isCorrect = false;
-        const qMarks = question.marks || 1;
 
-        if (['MCQ', 'TRUE_FALSE', 'FILL_BLANK', 'MATCHING'].includes(question.questionType)) {
-          const { gradeAnswer } = require('../utils/gradeAnswer');
-          const result = gradeAnswer(question, {
-            selectedOption: ans.selectedOption !== undefined ? ans.selectedOption : null,
-            answer: ans.answerText || ans.answer || '',
-            answerText: ans.answerText || ans.answer || '',
-            matches: ans.matches
-          });
-          isCorrect = result.isCorrect;
-          score = result.score > 0 ? (result.score / 100) * qMarks : 0;
-          if (question.questionType === 'MATCHING') {
-            feedback = `Score: ${result.score}%. Matched ${result.correctCount} of ${result.total} correctly.`;
-          } else {
-            feedback = isCorrect ? 'Correct!' : `Incorrect. Correct answer: ${question.correctAnswer}`;
-          }
-        } else {
-          // Fallback to AI evaluation
-          const aiService = require('../services/aiService');
-          try {
-            const evaluation = await aiService.evaluateShortAnswer(
-              question.questionText,
-              question.correctAnswer,
-              ans.answerText || ''
-            );
-            score = evaluation.score || 0;
-            feedback = evaluation.feedback || '';
-            isCorrect = evaluation.isCorrect || false;
-          } catch (aiErr) {
-            console.error('AI evaluation failed, defaulting to 0:', aiErr.message);
+        if (ans) {
+          if (['MCQ', 'TRUE_FALSE', 'FILL_BLANK', 'MATCHING'].includes(question.questionType)) {
+            const { gradeAnswer } = require('../utils/gradeAnswer');
+            const result = gradeAnswer(question, {
+              selectedOption: ans.selectedOption !== undefined ? ans.selectedOption : null,
+              answer: ans.answerText || ans.answer || '',
+              answerText: ans.answerText || ans.answer || '',
+              matches: ans.matches
+            });
+            isCorrect = result.isCorrect;
+            score = result.score > 0 ? (result.score / 100) * qMarks : 0;
+            if (question.questionType === 'MATCHING') {
+              feedback = `Score: ${result.score}%. Matched ${result.correctCount} of ${result.total} correctly.`;
+            } else {
+              feedback = isCorrect ? 'Correct!' : `Incorrect. Correct answer: ${question.correctAnswer}`;
+            }
+          } else if (ans.answerText && ans.answerText.trim()) {
+            // Fallback to AI evaluation
+            const aiService = require('../services/aiService');
+            try {
+              const evaluation = await aiService.evaluateShortAnswer(
+                question.questionText,
+                question.correctAnswer,
+                ans.answerText.trim()
+              );
+              score = evaluation.score || 0;
+              feedback = evaluation.feedback || '';
+              isCorrect = evaluation.isCorrect || false;
+            } catch (aiErr) {
+              console.error('AI evaluation failed, defaulting to 0:', aiErr.message);
+            }
           }
         }
 
         await QuizAnswer.create({
           attemptId: attempt.id,
-          questionId: ans.questionId,
-          answerText: ans.answerText || '',
-          selectedOption: ans.selectedOption !== undefined ? ans.selectedOption : null,
+          questionId: question.id,
+          answerText: ans?.answerText || '',
+          selectedOption: ans?.selectedOption !== undefined ? ans.selectedOption : null,
           isCorrect,
           score,
           feedback,

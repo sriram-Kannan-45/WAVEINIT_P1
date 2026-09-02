@@ -1115,6 +1115,25 @@ class MonitoringEngineClient {
     }
   }
 
+  destroy() {
+    this.stopLaptopMonitoring({ stopTracks: true });
+    if (this.durationSyncTimer) {
+      clearInterval(this.durationSyncTimer);
+      this.durationSyncTimer = null;
+    }
+    if (this.mobileInterval) {
+      clearInterval(this.mobileInterval);
+      this.mobileInterval = null;
+    }
+    if (this.segmentTimer) {
+      clearInterval(this.segmentTimer);
+      this.segmentTimer = null;
+    }
+    this.isMonitoringActive = false;
+    this.isTestActive = false;
+    this.isPaused = false;
+  }
+
   async calibrateGazeBaseline(videoEl) {
     if (!this.sessionId || !videoEl) return false;
     if (this.gazeCalibrationSessionId === this.sessionId) return true;

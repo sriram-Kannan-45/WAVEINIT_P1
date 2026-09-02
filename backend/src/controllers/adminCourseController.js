@@ -24,6 +24,7 @@ const {
   User,
 } = require('../models');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
+const cacheService = require('../services/cacheService');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -135,8 +136,14 @@ async function createProgram(req, res) {
 // GET /api/admin/training-programs
 async function listPrograms(req, res) {
   try {
-    const { search = '' } = req.query;
-    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+    const { search = '', page = '1', limit: qLimit = '10' } = req.query;
+    const cacheKey = `admin:programs:${search}:${page}:${qLimit}`;
+    const cached = cacheService.get(cacheKey);
+    if (cached && req.query.fresh !== 'true') {
+      return res.json(cached);
+    }
+
+    const { limit, offset } = parsePagination(req.query, 10, 100);
 
     const where = {};
     if (search && search.trim()) {
@@ -172,7 +179,7 @@ async function listPrograms(req, res) {
     const formattedPrograms = programs.map(p => programDto(p, { coursesCount: countMap[String(p.id)] || 0 }));
     const paginationMeta = formatPaginationMeta(total, page, limit);
 
-    return res.json({
+    const result = {
       success: true,
       programs: formattedPrograms,
       data: formattedPrograms,
@@ -181,7 +188,10 @@ async function listPrograms(req, res) {
       page,
       limit,
       totalPages: paginationMeta.totalPages
-    });
+    };
+
+    cacheService.set(cacheKey, result, 15);
+    return res.json(result);
   } catch (e) {
     console.error('listPrograms error:', e.message);
     return res.status(500).json({ success: false, error: 'Failed to list training programs' });
@@ -415,8 +425,14 @@ async function createCourse(req, res) {
 // GET /api/admin/courses
 async function listCourses(req, res) {
   try {
-    const { search = '', status = '', programId = '', trainerId = '' } = req.query;
-    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+    const { search = '', status = '', programId = '', trainerId = '', page = '1', limit: qLimit = '10' } = req.query;
+    const cacheKey = `admin:courses:${search}:${status}:${programId}:${trainerId}:${page}:${qLimit}`;
+    const cached = cacheService.get(cacheKey);
+    if (cached && req.query.fresh !== 'true') {
+      return res.json(cached);
+    }
+
+    const { limit, offset } = parsePagination(req.query, 10, 100);
 
     const where = {};
     if (search && search.trim()) {
@@ -446,7 +462,7 @@ async function listCourses(req, res) {
     const dtos = await attachCourseCounts(courses);
     const paginationMeta = formatPaginationMeta(total, page, limit);
 
-    return res.json({
+    const result = {
       success: true,
       courses: dtos,
       data: dtos,
@@ -455,7 +471,10 @@ async function listCourses(req, res) {
       page,
       limit,
       totalPages: paginationMeta.totalPages
-    });
+    };
+
+    cacheService.set(cacheKey, result, 15);
+    return res.json(result);
   } catch (e) {
     console.error('listCourses error:', e.message);
     return res.status(500).json({ success: false, error: 'Failed to list courses' });

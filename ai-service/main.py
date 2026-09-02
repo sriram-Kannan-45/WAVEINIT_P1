@@ -45,7 +45,7 @@ from rag.extraction import UnsupportedSourceError
 from rag.generation import QuizGenerationError
 from rag.orchestrator import RAGQuizGenerator, RAGQuizRequest
 
-# ── Logging Setup ──────────────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Logging Setup Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 class ColoredFormatter(logging.Formatter):
     """Custom logging formatter that adds ANSI colors to logs."""
     GREY = "\x1b[38;20m"
@@ -85,7 +85,7 @@ try:
 except Exception:
     current_port = 8000
 
-# ── Application Setup ──────────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Application Setup Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 app = FastAPI(
     title="LMS AI Quiz Generator",
     version="3.0.0",
@@ -101,7 +101,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Instance identity (for scale-out / readiness signaling) ───────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Instance identity (for scale-out / readiness signaling) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 def get_instance_id() -> str:
     """Stable-ish identifier for this AI-service instance.
 
@@ -122,7 +122,7 @@ def get_instance_id() -> str:
 
 AI_INSTANCE_ID = get_instance_id()
 
-# ── Health & Status Endpoints ─────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Health & Status Endpoints Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 @app.get("/")
 @app.get("/health")
 @app.get("/api/health")
@@ -155,7 +155,7 @@ async def ready_check():
         "yolo_engine": "available" if YOLO_ENGINE_AVAILABLE else "unavailable"
     }
 
-# ── Cache Implementation ───────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Cache Implementation Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 class SimpleCache:
     """In-memory cache with TTL support for quiz generation results."""
     
@@ -187,7 +187,7 @@ class SimpleCache:
 # Initialize cache
 quiz_cache = SimpleCache(default_ttl=7200)  # 2 hour TTL
 
-# ── Configuration ──────────────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Configuration Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 class Config:
     """Centralized configuration for AI service."""
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
@@ -201,7 +201,7 @@ class Config:
     RETRY_DELAY = 2  # seconds
     SIMILARITY_THRESHOLD = 0.7  # For duplicate detection
 
-# ── Enhanced Prompt Templates ─────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Enhanced Prompt Templates Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 DIFFICULTY_CONFIGS = {
     "EASY": {
         "description": "Basic recall and comprehension questions",
@@ -231,7 +231,7 @@ DIFFICULTY_CONFIGS = {
 
 TOPIC_EXTRACTION_PROMPT = """You are a senior curriculum designer and subject-matter analyst.
 
-You will be given a piece of source text. This text may be informal — a personal learning journal, notes, or a diary-style entry — describing a person's day-to-day learning activity rather than presenting clean facts.
+You will be given a piece of source text. This text may be informal Ã¢â‚¬â€ a personal learning journal, notes, or a diary-style entry Ã¢â‚¬â€ describing a person's day-to-day learning activity rather than presenting clean facts.
 
 Your job is NOT to summarize what the person did. Your job is to identify the underlying technical subjects, tools, libraries, frameworks, design patterns, and concepts that are MENTIONED in the text, so they can be used as a syllabus/scope for an independent quiz that will be written separately, by someone who will never see this text.
 
@@ -239,9 +239,9 @@ Your job is NOT to summarize what the person did. Your job is to identify the un
 {text}
 
 ## INSTRUCTIONS:
-1. Ignore narrative framing entirely. Phrases like "Yesterday I started", "Today I plan to", "I also learned", "After that I learned" describe the person's timeline, not testable facts — discard them completely.
+1. Ignore narrative framing entirely. Phrases like "Yesterday I started", "Today I plan to", "I also learned", "After that I learned" describe the person's timeline, not testable facts Ã¢â‚¬â€ discard them completely.
 2. List every distinct technical subject, tool, library, framework, design pattern, or concept that is named or clearly implied in the text.
-3. For each one, write a one-line description of what it actually IS in the real world, using your own general knowledge of the subject — not a paraphrase of how the text mentioned it.
+3. For each one, write a one-line description of what it actually IS in the real world, using your own general knowledge of the subject Ã¢â‚¬â€ not a paraphrase of how the text mentioned it.
 4. Rate each topic's depth as BASIC (terminology-level), INTERMEDIATE (usage-level), or ADVANCED (architecture/design-level), based on how thoroughly it's discussed.
 5. Do not invent topics that are not named or clearly implied in the text.
 
@@ -260,9 +260,9 @@ Your job is NOT to summarize what the person did. Your job is to identify the un
 
 QUESTION_GENERATION_PROMPT = """You are an expert certification exam item-writer, in the style of Oracle Java certification, API-testing certifications, or professional courses on Udemy/Coursera.
 
-You are NOT summarizing a document. You are writing an ORIGINAL quiz that tests real-world knowledge of the subjects listed below. Treat the topic list as a syllabus only. Do not reference, quote, or rephrase any specific source text — there is no document in this conversation, only a syllabus. Write every question, option, and explanation from your own expert knowledge of these subjects.
+You are NOT summarizing a document. You are writing an ORIGINAL quiz that tests real-world knowledge of the subjects listed below. Treat the topic list as a syllabus only. Do not reference, quote, or rephrase any specific source text Ã¢â‚¬â€ there is no document in this conversation, only a syllabus. Write every question, option, and explanation from your own expert knowledge of these subjects.
 
-## SYLLABUS (topics to test — use your own domain knowledge of each):
+## SYLLABUS (topics to test Ã¢â‚¬â€ use your own domain knowledge of each):
 {topics_json}
 
 ## DIFFICULTY LEVEL: {difficulty}
@@ -270,19 +270,19 @@ You are NOT summarizing a document. You are writing an ORIGINAL quiz that tests 
 - MEDIUM: usage, behavior, comparisons between related concepts.
 - HARD: edge cases, design trade-offs, scenario-based reasoning.
 
-## QUESTION TYPE DISTRIBUTION — MANDATORY EXACT COUNTS, NOT APPROXIMATE
+## QUESTION TYPE DISTRIBUTION Ã¢â‚¬â€ MANDATORY EXACT COUNTS, NOT APPROXIMATE
 Generate EXACTLY {num_questions} questions in total, with this EXACT breakdown:
 - Exactly {mcq_count} questions with "questionType": "MCQ"
 - Exactly {true_false_count} questions with "questionType": "TRUE_FALSE"
 - Exactly {fill_blank_count} questions with "questionType": "FILL_BLANK"
 - Exactly {matching_count} questions with "questionType": "MATCHING"
-These counts are non-negotiable. Do not skip a type, substitute one type for another, or default to whichever type feels easiest to write, even if a topic feels better suited to a different format. Spread questions across the different syllabus topics — do not cluster every question on a single topic.
+These counts are non-negotiable. Do not skip a type, substitute one type for another, or default to whichever type feels easiest to write, even if a topic feels better suited to a different format. Spread questions across the different syllabus topics Ã¢â‚¬â€ do not cluster every question on a single topic.
 
 ## SELF-CHECK BEFORE YOU RESPOND
 Count how many questions you have written for each questionType. If any count does not exactly match the breakdown above, add, remove, or convert questions until every count matches exactly. Only output the JSON once this is true.
 
 ## ABSOLUTE RULES
-1. NEVER use or imply the words "document", "text", "passage", or "author" — there is no source document in this task, only a syllabus.
+1. NEVER use or imply the words "document", "text", "passage", or "author" Ã¢â‚¬â€ there is no source document in this task, only a syllabus.
 2. NEVER ask about what someone "learned", "did", "plans to do", or any diary/narrative content. Every question must be a standalone, real-world knowledge question about the subject itself, exactly like a textbook or certification exam question.
 3. For FILL_BLANK: compose a brand-new sentence, in your own words, that explains a fact about the concept, then blank exactly ONE key technical term in that new sentence. Never construct a blank from anything resembling a diary sentence.
 4. Write in the neutral voice of an exam writer. Never first person, never past tense narrative.
@@ -294,11 +294,11 @@ Count how many questions you have written for each questionType. If any count do
 ### MCQ
 - Max 20 words for the question, exactly one idea.
 - Exactly 4 options, each max 8 words, only one correct.
-- Distractors must be real, plausible wrong answers a learner might actually pick — not random unrelated text.
+- Distractors must be real, plausible wrong answers a learner might actually pick Ã¢â‚¬â€ not random unrelated text.
 
 ### TRUE_FALSE
 - One declarative factual statement, max 20 words.
-- Mix true and false statements roughly evenly across the quiz — do not make every statement true.
+- Mix true and false statements roughly evenly across the quiz Ã¢â‚¬â€ do not make every statement true.
 
 ### FILL_BLANK
 - One new, original sentence, max 20 words, with exactly one key technical term replaced by "____".
@@ -307,9 +307,9 @@ Count how many questions you have written for each questionType. If any count do
 
 ### MATCHING
 - 3 to 5 pairs of {{left: short term, right: short definition/effect}} from the SAME topic.
-- Each "right" value max 10 words and unique — not guessable by length or grammar alone.
+- Each "right" value max 10 words and unique Ã¢â‚¬â€ not guessable by length or grammar alone.
 
-## STYLE CALIBRATION EXAMPLE (match this tone and rigor — write about the actual syllabus topics, not this example):
+## STYLE CALIBRATION EXAMPLE (match this tone and rigor Ã¢â‚¬â€ write about the actual syllabus topics, not this example):
   Question: Which method in REST Assured sends the configured HTTP request?
   Options: A. given()  B. when()  C. then()  D. validate()
   Correct: B
@@ -357,7 +357,7 @@ Return ONLY raw JSON, no markdown fences, nothing before or after it:
 """
 
 
-# ── Similarity Detection ───────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Similarity Detection Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 def simple_text_similarity(text1: str, text2: str) -> float:
     """
     Simple Jaccard similarity for detecting duplicate questions.
@@ -406,7 +406,7 @@ def filter_duplicate_questions(questions: List[Dict], threshold: float = 0.7) ->
     
     return filtered
 
-# ── JSON Validation & Repair ───────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ JSON Validation & Repair Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 def validate_question_structure(question: Dict) -> bool:
     """Validate that a question has all required fields with correct types."""
     required_fields = {
@@ -591,7 +591,7 @@ def validate_and_filter_prompt_questions(raw_questions: List[Dict], requested_co
         # Clean markdown formatting (bold, headers, bullets, backticks)
         def clean_md(t: str) -> str:
             t = re.sub(r"\*\*|##|`", "", t)
-            t = re.sub(r"^[•\-\*\+]\s*", "", t)
+            t = re.sub(r"^[Ã¢â‚¬Â¢\-\*\+]\s*", "", t)
             return t.strip()
 
         q_clean = clean_md(q_text)
@@ -747,7 +747,7 @@ def safe_json_parse(text: str) -> Tuple[List[Dict], List[str]]:
         warnings.append("No JSON object or array found in response")
         return [], warnings
 
-    # Light, *safe* fixups (do NOT touch quotes — that breaks apostrophes).
+    # Light, *safe* fixups (do NOT touch quotes Ã¢â‚¬â€ that breaks apostrophes).
     payload = re.sub(r',\s*([}\]])', r'\1', payload)   # trailing commas
     payload = re.sub(r'}\s*{', '},{', payload)         # missing commas between objects
 
@@ -805,7 +805,7 @@ def safe_json_parse(text: str) -> Tuple[List[Dict], List[str]]:
 
     return valid_questions, warnings
 
-# ── LLM Setup (Gemini only — Groq removed) ────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ LLM Setup (Gemini only Ã¢â‚¬â€ Groq removed) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 raw_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 if raw_model not in ("gemini-2.5-flash", "gemini-2.5-pro"):
@@ -823,7 +823,7 @@ if GEMINI_API_KEY and GEMINI_API_KEY not in ("", "your-gemini-api-key-here"):
         from langchain_text_splitters import RecursiveCharacterTextSplitter
 
         # Gemini's native JSON mode (response_mime_type) guarantees valid JSON
-        # output — no more "Expecting ',' delimiter" parse failures.
+        # output Ã¢â‚¬â€ no more "Expecting ',' delimiter" parse failures.
         llm = ChatGoogleGenerativeAI(
             google_api_key=GEMINI_API_KEY,
             model=GEMINI_MODEL,
@@ -834,16 +834,16 @@ if GEMINI_API_KEY and GEMINI_API_KEY not in ("", "your-gemini-api-key-here"):
             response_mime_type="application/json",
         )
         llm_type = f"Gemini ({GEMINI_MODEL})"
-        log.info("✅ LLM initialized with %s (JSON mode enabled)", llm_type)
+        log.info("Ã¢Å“â€¦ LLM initialized with %s (JSON mode enabled)", llm_type)
     except ImportError as e:
-        log.error("❌ Missing dependency: %s — run: pip install langchain-google-genai", e)
+        log.error("Ã¢ÂÅ’ Missing dependency: %s Ã¢â‚¬â€ run: pip install langchain-google-genai", e)
     except Exception as e:
-        log.error("❌ Gemini initialization failed: %s", e)
+        log.error("Ã¢ÂÅ’ Gemini initialization failed: %s", e)
 
 if llm is None:
-    log.warning("⚠️ No Gemini LLM available (GEMINI_API_KEY not set) — using text-based fallback")
+    log.warning("Ã¢Å¡Â Ã¯Â¸Â No Gemini LLM available (GEMINI_API_KEY not set) Ã¢â‚¬â€ using text-based fallback")
 
-# ── Service Instantiations ─────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Service Instantiations Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 gemini_client = GeminiClient()
 prompt_builder = PromptBuilder()
 json_validator = JSONValidator()
@@ -852,7 +852,7 @@ option_randomizer = OptionRandomizer()
 explanation_generator = ExplanationGenerator()
 rag_quiz_generator = RAGQuizGenerator()
 
-# ── Request / Response Models ─────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Request / Response Models Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 class QuizRequest(BaseModel):
     text: str
     num_questions: int = 10
@@ -917,7 +917,7 @@ class EvaluateResponse(BaseModel):
     feedback: str
     isCorrect: bool
 
-# ── Text Extraction ─────────────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Text Extraction Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 def extract_text_from_pdf(file_path: str) -> str:
     """Extract text from PDF file."""
     try:
@@ -946,19 +946,19 @@ def extract_text_from_txt(file_path: str) -> str:
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"TXT extraction failed: {str(e)}")
 
-# ── Text Cleaning ─────────────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Text Cleaning Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 def clean_text_for_quiz(text: str) -> str:
     """Clean extracted text for better quiz generation."""
     import re
     text = re.sub(r'[\w.-]+?@\w+\.\w{2,}', '[EMAIL]', text)
     text = re.sub(r'https?://\S+', '[URL]', text)
-    text = re.sub(r'[|•■◆▪–—]+', ' ', text)
+    text = re.sub(r'[|Ã¢â‚¬Â¢Ã¢â€“Â Ã¢â€”â€ Ã¢â€“ÂªÃ¢â‚¬â€œÃ¢â‚¬â€]+', ' ', text)
     text = re.sub(r'([a-z])\n([A-Z])', r'\1. \2', text)
     text = re.sub(r'\n{2,}', '. ', text)
     text = re.sub(r'  +', ' ', text)
     return text.strip()
 
-# ── Quiz Generation ─────────────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Quiz Generation Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 QUIZ_PROMPT_TEMPLATE = """
 You are an expert educational quiz generator. Based ONLY on the provided document content, generate {num_questions} multiple-choice quiz questions.
 
@@ -1047,7 +1047,7 @@ def filter_grounded_questions(questions: List[Dict], doc_text: str) -> List[Dict
         else:
             dropped += 1
     if dropped:
-        log.warning("Dropped %d ungrounded LLM question(s) — no document overlap", dropped)
+        log.warning("Dropped %d ungrounded LLM question(s) Ã¢â‚¬â€ no document overlap", dropped)
     return grounded
 
 def generate_cache_key(text: str, num_questions: int, difficulty: str) -> str:
@@ -1075,7 +1075,7 @@ def generate_quiz_with_langchain(text: str, num_questions: int = 10, difficulty:
     cache_key = generate_cache_key(cleaned_text, num_questions, difficulty)
     cached_result = quiz_cache.get(cache_key)
     if cached_result:
-        log.info("✅ Cache hit! Returning cached quiz questions and title")
+        log.info("Ã¢Å“â€¦ Cache hit! Returning cached quiz questions and title")
         return cached_result
 
     try:
@@ -1259,7 +1259,7 @@ def generate_quiz_with_langchain(text: str, num_questions: int = 10, difficulty:
         cache_val = (formatted_questions, quiz_title)
         quiz_cache.set(cache_key, cache_val)
         
-        log.info(f"✅ Generated {len(formatted_questions)} questions successfully via direct REST pipeline")
+        log.info(f"Ã¢Å“â€¦ Generated {len(formatted_questions)} questions successfully via direct REST pipeline")
         return formatted_questions, quiz_title
 
     except Exception as e:
@@ -1517,7 +1517,7 @@ def generate_text_based_questions(text: str, num_questions: int, difficulty: str
             detail="Could not generate any fallback questions from the document content."
         )
 
-    log.info("✅ Generated %d fallback questions (MCQ & FILL_BLANK mix)", len(questions))
+    log.info("Ã¢Å“â€¦ Generated %d fallback questions (MCQ & FILL_BLANK mix)", len(questions))
     return questions
 
 
@@ -1527,7 +1527,7 @@ def generate_sample_questions(num_questions: int, difficulty: str) -> List[Dict]
 
     Previously this returned questions like "Sample MCQ 1: What is the main
     concept discussed?" with options ["Option A", "Option B", ...]. Those are
-    NOT knowledge-based — they were saved to the DB and shown to participants,
+    NOT knowledge-based Ã¢â‚¬â€ they were saved to the DB and shown to participants,
     making the quiz feature look broken.
 
     We now always raise so the API surface returns a clear error rather than
@@ -1610,7 +1610,7 @@ Return ONLY the JSON:
         "isCorrect": score >= 60
     }
 
-# ── API Endpoints ─────────────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ API Endpoints Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 @app.get("/")
 def root():
     """Root endpoint returning basic service info."""
@@ -1771,7 +1771,7 @@ async def generate_quiz_legacy(request: QuizRequest):
 
 def generate_mock_prompt_quiz(prompt: str, count: int, difficulty: str) -> List[Dict[str, str]]:
     """Generate mock/fallback MCQ questions when the LLM is unavailable or fails."""
-    log.warning("⚠️ Using mock prompt-to-quiz generator fallback for: '%s'", prompt)
+    log.warning("Ã¢Å¡Â Ã¯Â¸Â Using mock prompt-to-quiz generator fallback for: '%s'", prompt)
     mock_questions = []
     templates = [
         {
@@ -1950,12 +1950,12 @@ Response Format:
             except Exception as e:
                 last_error = e
                 error_str = str(e).lower()
-                # Gemini rate limit (429 RESOURCE_EXHAUSTED) — sleep long enough
+                # Gemini rate limit (429 RESOURCE_EXHAUSTED) Ã¢â‚¬â€ sleep long enough
                 if "429" in error_str or "resource_exhausted" in error_str or "quota" in error_str or "rate" in error_str:
                     retry_delay = _parse_retry_delay(str(e))
                     delay = max(30 * attempt, (retry_delay or 0) + 5)
                     delay = min(delay, 180)
-                    log.warning("Gemini rate limit hit on attempt %d — backing off %ds", attempt, delay)
+                    log.warning("Gemini rate limit hit on attempt %d Ã¢â‚¬â€ backing off %ds", attempt, delay)
                     await asyncio.sleep(delay)
                     continue
                 log.warning("Attempt %d failed: %s", attempt, e)
@@ -2246,7 +2246,7 @@ async def generate_course_structure(request: dict):
                 extracted_text = extractor.extract_from_file(file_path, mime_type)
                 log.info("Extracted %d chars from file: %s", len(extracted_text), file_path)
             except Exception as e:
-                log.warning("Document extraction failed: %s — continuing with prompt only", e)
+                log.warning("Document extraction failed: %s Ã¢â‚¬â€ continuing with prompt only", e)
                 extracted_text = ""
 
         system_prompt = (
@@ -2600,7 +2600,7 @@ async def clear_cache():
     return {"message": "Cache cleared successfully", "status": "ok"}
 
 
-# ── Coding Assessment AI endpoints (Modules A & B) ─────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Coding Assessment AI endpoints (Modules A & B) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 class CodingQuestionRequest(BaseModel):
     topic: str
     difficulty: str = "medium"
@@ -2679,16 +2679,39 @@ def _invoke_json(prompt: str):
     return None
 
 
+def extract_problem_count_py(prompt: str, explicit: Optional[int] = None) -> int:
+    if explicit is not None and explicit > 0:
+        return min(max(1, explicit), 10)
+    p = (prompt or "").lower().strip()
+    match = re.search(r'\b(\d+)\s*(?:problems?|questions?|tasks?|challenges?|exercises?|programs?)\b', p)
+    if match:
+        try:
+            return min(max(1, int(match.group(1))), 10)
+        except Exception:
+            pass
+    gen_match = re.search(r'\b(?:generate|create|write|make|give\s+me)\s+(\d+)\b', p)
+    if gen_match:
+        try:
+            return min(max(1, int(gen_match.group(1))), 10)
+        except Exception:
+            pass
+    word_map = {'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10}
+    word_match = re.search(r'\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:(?:easy|medium|hard|simple|basic)\s+)?(?:problems?|questions?|tasks?|challenges?|exercises?|programs?)\b', p)
+    if word_match and word_match.group(1) in word_map:
+        return word_map[word_match.group(1)]
+    return 1
+
+
 class CodingProblemsRequest(BaseModel):
     prompt: str
-    numProblems: int = 5
+    numProblems: Optional[int] = None
     difficulty: str = "MEDIUM"
     languages: str = "javascript,python"
 
     @field_validator('numProblems')
     @classmethod
     def validate_count(cls, v):
-        if v < 1 or v > 20:
+        if v is not None and (v < 1 or v > 20):
             raise ValueError('Number of problems must be between 1 and 20.')
         return v
 
@@ -2701,184 +2724,6 @@ class CodingProblemsRequest(BaseModel):
         return v
 
 
-CODING_PROBLEMS_SYSTEM = (
-    "You are an expert competitive programming question author and compiler specialist. "
-    "MANDATORY RULE: You must generate problems STRICTLY and SPECIFICALLY based on the user's exact topic/prompt. "
-    "DO NOT generate unrelated algorithms or array transformations unless explicitly requested.\n"
-    "Generate a set of coding problems in strict JSON. Return ONLY valid JSON, no markdown.\n"
-    "Schema:\n"
-    "{\n"
-    '  "title": string (overall assessment title),\n'
-    '  "problems": [\n'
-    "    {\n"
-    '      "title": string,\n'
-    '      "description": string (detailed problem statement),\n'
-    '      "constraints": string,\n'
-    '      "inputFormat": string,\n'
-    '      "outputFormat": string,\n'
-    '      "sampleInput": string,\n'
-    '      "sampleOutput": string,\n'
-    '      "explanation": string,\n'
-    '      "difficulty": "EASY"|"MEDIUM"|"HARD",\n'
-    '      "programmingLanguage": string,\n'
-    '      "starterCode": string (boilerplate code template),\n'
-    '      "expectedSolution": string (complete runnable reference solution),\n'
-    '      "timeLimit": number (seconds, default 5),\n'
-    '      "memoryLimit": number (MB, default 256),\n'
-    '      "marks": number,\n'
-    '      "tags": string[],\n'
-    '      "testCases": [\n'
-    "        {\n"
-    '          "input": string,\n'
-    '          "expectedOutput": string,\n'
-    '          "isHidden": boolean,\n'
-    '          "description": string|null\n'
-    "        }\n"
-    "      ]\n"
-    "    }\n"
-    "  ]\n"
-    "}\n"
-    "Ensure every reference solution passes all generated test cases. "
-    "Suggest marks by difficulty: EASY=10, MEDIUM=20, HARD=30."
-)
-
-
-def generate_fallback_coding_problems(topic: str, count: int = 1, difficulty: str = "EASY") -> Dict[str, Any]:
-    norm = topic.strip().lower()
-    is_print = bool(re.search(r'\b(print|echo|output|display|show|hello)\b', norm))
-    
-    target_text = "hi"
-    match = re.search(r'(?:print|echo|output|display|show)\s+["\']?([^"\']+)["\']?', norm)
-    if match and match.group(1):
-        target_text = match.group(1).strip()
-    elif "hello world" in norm:
-        target_text = "Hello, World!"
-    elif not is_print:
-        target_text = topic.strip()
-
-    problems = []
-    for i in range(count):
-        p_title = topic if count == 1 else f"{topic} (Part {i + 1})"
-        
-        if is_print:
-            desc = f"Write a program that prints the exact text \"{target_text}\"."
-            inp_fmt = "No input."
-            out_fmt = f"Print the exact text: {target_text}"
-            s_inp = ""
-            s_out = target_text
-            starter = f"# Print {target_text}\n"
-            expected = f'print("{target_text}")\n'
-            test_cases = [
-                {"input": "", "expectedOutput": target_text, "isHidden": False, "description": f"Print {target_text}"},
-                {"input": "\n", "expectedOutput": target_text, "isHidden": True, "description": "Trailing check"}
-            ]
-        elif "sort" in norm:
-            is_desc = "descending" in norm
-            desc = f"Write a program that takes space-separated numbers and prints them sorted in {'descending' if is_desc else 'ascending'} order."
-            inp_fmt = "Space-separated numbers."
-            out_fmt = "Sorted numbers separated by spaces."
-            s_inp = "4 2 8 1 5"
-            s_out = "8 5 4 2 1" if is_desc else "1 2 4 5 8"
-            starter = "def sort_numbers():\n    pass\n\nif __name__ == '__main__':\n    sort_numbers()\n"
-            expected = f"import sys\n\ndef sort_numbers():\n    nums = [int(x) for x in sys.stdin.read().split()]\n    nums.sort(reverse={'True' if is_desc else 'False'})\n    print(' '.join(str(x) for x in nums))\n\nif __name__ == '__main__':\n    sort_numbers()\n"
-            test_cases = [
-                {"input": "4 2 8 1 5", "expectedOutput": s_out, "isHidden": False, "description": "Basic case"},
-                {"input": "1", "expectedOutput": "1", "isHidden": True, "description": "Single element"}
-            ]
-        elif "reverse" in norm and "string" in norm:
-            desc = "Write a program that takes a string input and prints the reversed string."
-            inp_fmt = "A single string."
-            out_fmt = "The reversed string."
-            s_inp = "hello"
-            s_out = "olleh"
-            starter = "def reverse_string():\n    pass\n\nif __name__ == '__main__':\n    reverse_string()\n"
-            expected = "import sys\n\ndef reverse_string():\n    print(sys.stdin.read().strip()[::-1])\n\nif __name__ == '__main__':\n    reverse_string()\n"
-            test_cases = [
-                {"input": "hello", "expectedOutput": "olleh", "isHidden": False, "description": "Simple string"},
-                {"input": "racecar", "expectedOutput": "racecar", "isHidden": True, "description": "Palindrome"}
-            ]
-        elif "even" in norm or "odd" in norm:
-            desc = "Write a program that reads an integer and prints 'Even' if the number is even, and 'Odd' if odd."
-            inp_fmt = "A single integer."
-            out_fmt = "'Even' or 'Odd'."
-            s_inp = "4"
-            s_out = "Even"
-            starter = "def check_even_odd():\n    pass\n\nif __name__ == '__main__':\n    check_even_odd()\n"
-            expected = "import sys\n\ndef check_even_odd():\n    n = int(sys.stdin.read().strip())\n    print('Even' if n % 2 == 0 else 'Odd')\n\nif __name__ == '__main__':\n    check_even_odd()\n"
-            test_cases = [
-                {"input": "4", "expectedOutput": "Even", "isHidden": False, "description": "Even number"},
-                {"input": "7", "expectedOutput": "Odd", "isHidden": False, "description": "Odd number"},
-                {"input": "0", "expectedOutput": "Even", "isHidden": True, "description": "Zero check"}
-            ]
-        else:
-            desc = f"Write a program to solve: {topic}."
-            inp_fmt = "Standard input."
-            out_fmt = "Expected result."
-            s_inp = "1"
-            s_out = target_text
-            starter = f"# Solution for {topic}\n"
-            expected = f'print("{target_text}")\n'
-            test_cases = [
-                {"input": "1", "expectedOutput": target_text, "isHidden": False, "description": "Sample test case"}
-            ]
-
-        problems.append({
-            "title": p_title,
-            "description": desc,
-            "constraints": "Time Limit: 5.0s, Memory Limit: 256MB",
-            "inputFormat": inp_fmt,
-            "outputFormat": out_fmt,
-            "sampleInput": s_inp,
-            "sampleOutput": s_out,
-            "explanation": f"Produces the output for {topic}.",
-            "difficulty": difficulty.upper(),
-            "programmingLanguage": "python",
-            "starterCode": starter,
-            "expectedSolution": expected,
-            "timeLimit": 5,
-            "memoryLimit": 256,
-            "marks": 10 if difficulty.upper() == 'EASY' else 20,
-            "tags": [topic.lower()[:20]],
-            "testCases": test_cases
-        })
-
-    return {
-        "title": f"Coding: {topic[:60]}",
-        "problems": problems
-    }
-
-
-@app.post("/generate-coding-problems")
-async def generate_coding_problems(req: CodingProblemsRequest):
-    prompt = (
-        CODING_PROBLEMS_SYSTEM
-        + f"\n\nTopic: {req.prompt}. Number of problems: {req.numProblems}. "
-        + f"Difficulty: {req.difficulty}. Languages: {req.languages}."
-    )
-    for attempt in range(1, Config.MAX_RETRIES + 1):
-        try:
-            log.info("Generating %d coding problems (attempt %d/%d)...", req.numProblems, attempt, Config.MAX_RETRIES)
-            parsed = _invoke_json(prompt)
-            if parsed and isinstance(parsed, dict) and "problems" in parsed and isinstance(parsed["problems"], list) and len(parsed["problems"]) > 0:
-                title = parsed.get("title") or f"Coding Assessment: {req.prompt[:60]}"
-                return {
-                    "title": title,
-                    "problems": parsed["problems"],
-                    "languages": req.languages.split(","),
-                }
-        except Exception as e:
-            log.warning("Coding problems generation attempt %d failed: %s", attempt, e)
-            await asyncio.sleep(Config.RETRY_DELAY * attempt)
-
-    log.warning("Coding problems LLM generation failed. Returning resilient intent-faithful synthesis.")
-    fallback = generate_fallback_coding_problems(req.prompt, req.numProblems, req.difficulty)
-    return {
-        "title": fallback["title"],
-        "problems": fallback["problems"],
-        "languages": req.languages.split(","),
-    }
-
-
 @app.post("/generate-coding-question")
 async def generate_coding_question(req: CodingQuestionRequest):
     prompt = (
@@ -2887,28 +2732,18 @@ async def generate_coding_question(req: CodingQuestionRequest):
     )
     try:
         parsed = _invoke_json(prompt)
-        if parsed and isinstance(parsed, dict) and "title" in parsed:
-            parsed.setdefault("test_cases", [])
-            return {"question": parsed}
     except Exception as e:
         log.warning("Coding question generation failed: %s", e)
+        parsed = None
 
-    # Resilient fallback question
-    fallback_q = {
-        "title": f"Solve problem on {req.topic}",
-        "problem_description": f"Write an algorithm to process data structures for {req.topic}.",
-        "input_format": "Standard input parameters",
-        "output_format": "Processed result",
-        "constraints": "O(N) time complexity",
-        "sample_input": "sample_data",
-        "sample_output": "sample_result",
-        "explanation": "Valid algorithmic approach.",
-        "test_cases": [{"input": "test1", "expected_output": "out1", "is_hidden": False}],
-        "difficulty": req.difficulty,
-        "marks": 20,
-        "tags": [req.topic.lower()]
-    }
-    return {"question": fallback_q}
+    if not (parsed and isinstance(parsed, dict) and "title" in parsed):
+        raise HTTPException(
+            status_code=502,
+            detail="Coding question generation failed. The model did not return a valid question and no static fallback is used.",
+        )
+
+    parsed.setdefault("test_cases", [])
+    return {"question": parsed}
 
 
 @app.post("/review-code")
@@ -2948,17 +2783,30 @@ class CodingAssistRequest(BaseModel):
 
 
 CODING_ASSIST_SYSTEM = (
-    "You are a Socratic coding tutor embedded inside a proctored coding assessment. "
-    "Your ONLY job is to help the student reason toward a solution using questions, "
-    "hints, and conceptual guidance. STRICT RULES:\n"
-    "1. NEVER provide a full, copy-paste ready solution, code block, or the reference/expected solution.\n"
-    "2. Never reveal hidden test cases, the expected output of hidden cases, or the official answer.\n"
-    "3. Ask guiding questions, point out which concept to apply, suggest what to check first, "
-    "   and help the student debug their own logic one step at a time.\n"
-    "4. Reference the student's own code only to ask targeted questions about it.\n"
-    "5. Keep responses concise (2-5 sentences) and supportive.\n"
-    "6. Do not be helpful beyond coaching: no full algorithms written out verbatim without reasoning steps.\n"
-    "Return ONLY the coaching text, no markdown code fences, no JSON."
+    "You are a beginner-friendly coding mentor during a live assessment.\n"
+    "Your job is to help the participant understand the problem and think independently.\n"
+    "Use extremely simple English.\n"
+    "Explain concepts step by step.\n"
+    "Give ideas and directions, not solutions.\n"
+    "Never write code.\n"
+    "Never provide programming syntax.\n"
+    "Never provide pseudocode.\n"
+    "Never provide copy-paste instructions.\n"
+    "Never provide the final algorithm in exact implementation form.\n"
+    "Never reveal hidden test cases.\n"
+    "Never reveal the reference solution.\n\n"
+    "If asked for code, politely refuse and explain the idea instead:\n"
+    "\"I cannot write the code for you during this assessment, but I can help you understand the idea.\"\n\n"
+    "OUTPUT STRUCTURE:\n"
+    "WHAT THE QUESTION WANTS:\n"
+    "(Short, simple explanation)\n\n"
+    "WHAT YOU NEED TO THINK ABOUT:\n"
+    "(Simple points to check)\n\n"
+    "IDEA TO TRY:\n"
+    "(Conceptual direction in plain words)\n\n"
+    "NEXT STEP:\n"
+    "(One simple thing the student can try)\n"
+    "Return ONLY beginner-friendly coaching text, with no code fences, no syntax snippets, no JSON."
 )
 
 
@@ -2975,7 +2823,7 @@ async def coding_assist(req: CodingAssistRequest):
     )
     try:
         if gemini_client and gemini_client.api_key:
-            raw = gemini_client.generate_content(prompt, temperature=0.3, response_json=False)
+            raw = gemini_client.generate_content(prompt, temperature=0.2, response_json=False)
             if raw and raw.strip():
                 return {"assist": raw.strip()}
     except Exception as e:
@@ -2991,13 +2839,16 @@ async def coding_assist(req: CodingAssistRequest):
             log.warning("Coding assist LangChain invoke failed: %s", e)
 
     fallback = (
-        "Let's break this down together. First, what inputs can the function receive, "
-        "and what is the expected output for the simplest possible input? "
-        "Think about which data structure or pattern from this topic's constraints fits here — "
-        "then try describing, in words only, the steps you would take before writing code."
+        "WHAT THE QUESTION WANTS:\n"
+        "Let us understand the problem step by step.\n\n"
+        "WHAT YOU NEED TO THINK ABOUT:\n"
+        "Think about what inputs are provided and what result needs to be produced.\n\n"
+        "IDEA TO TRY:\n"
+        "Can you break this into two simple parts: first receiving the data, then checking the condition?\n\n"
+        "NEXT STEP:\n"
+        "Try writing the input handling part first and test it in the editor."
     )
     return {"assist": fallback}
-
 
 def check_and_resolve_port(port: int) -> int:
     """Check if the port is in use; try to terminate any previous instance, else fallback to next available ports."""
@@ -3049,25 +2900,25 @@ def check_and_resolve_port(port: int) -> int:
 
 def validate_startup_config():
     """Validates configuration parameters and environment variables on startup."""
-    log.info("🔍 Validating environment and configuration...")
+    log.info("Ã°Å¸â€Â Validating environment and configuration...")
     
     if Config.DEFAULT_CHUNK_SIZE <= 0:
-        log.critical("❌ Invalid configuration: DEFAULT_CHUNK_SIZE must be positive.")
+        log.critical("Ã¢ÂÅ’ Invalid configuration: DEFAULT_CHUNK_SIZE must be positive.")
         sys.exit(1)
     if Config.DEFAULT_CHUNK_OVERLAP < 0 or Config.DEFAULT_CHUNK_OVERLAP >= Config.DEFAULT_CHUNK_SIZE:
-        log.critical("❌ Invalid configuration: DEFAULT_CHUNK_OVERLAP must be non-negative and less than DEFAULT_CHUNK_SIZE.")
+        log.critical("Ã¢ÂÅ’ Invalid configuration: DEFAULT_CHUNK_OVERLAP must be non-negative and less than DEFAULT_CHUNK_SIZE.")
         sys.exit(1)
     if Config.MAX_RETRIES < 1:
-        log.critical("❌ Invalid configuration: MAX_RETRIES must be at least 1.")
+        log.critical("Ã¢ÂÅ’ Invalid configuration: MAX_RETRIES must be at least 1.")
         sys.exit(1)
     if Config.RETRY_DELAY < 0:
-        log.critical("❌ Invalid configuration: RETRY_DELAY must be non-negative.")
+        log.critical("Ã¢ÂÅ’ Invalid configuration: RETRY_DELAY must be non-negative.")
         sys.exit(1)
 
     gemini_key = os.getenv("GEMINI_API_KEY", "")
     
     if gemini_key == "your-gemini-api-key-here":
-        log.critical("❌ Invalid environment: GEMINI_API_KEY is configured with a placeholder value.")
+        log.critical("Ã¢ÂÅ’ Invalid environment: GEMINI_API_KEY is configured with a placeholder value.")
         sys.exit(1)
 
     port_str = os.getenv("AI_SERVICE_PORT", "8000")
@@ -3076,12 +2927,12 @@ def validate_startup_config():
         if port < 1 or port > 65535:
             raise ValueError()
     except ValueError:
-        log.critical(f"❌ Invalid environment: AI_SERVICE_PORT '{port_str}' is not a valid port number.")
+        log.critical(f"Ã¢ÂÅ’ Invalid environment: AI_SERVICE_PORT '{port_str}' is not a valid port number.")
         sys.exit(1)
         
-    log.info("✅ Configuration and environment are valid.")
+    log.info("Ã¢Å“â€¦ Configuration and environment are valid.")
 
-# ── YOLOv8 Proctoring Engine & MediaPipe Endpoints ────
+# Ã¢â€â‚¬Ã¢â€â‚¬ YOLOv8 Proctoring Engine & MediaPipe Endpoints Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 try:
     from inference.yolo_detector import yolo_engine
     YOLO_ENGINE_AVAILABLE = True
@@ -3097,7 +2948,7 @@ except Exception as e:
     PROCTORING_ENGINE_AVAILABLE = False
 
 
-# ── Person-presence fallback for the MediaPipe laptop pipeline ──────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Person-presence fallback for the MediaPipe laptop pipeline Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 # Face landmarks are the primary "occupant present" signal. When the face is
 # not resolvable (full body visible but small/turned/blurred face), the YOLO
 # person class proves the occupant is nevertheless present so the session is

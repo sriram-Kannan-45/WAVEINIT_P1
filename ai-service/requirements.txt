@@ -39,4 +39,5 @@ langchain-core>=0.1.0
 langchain-community>=0.0.1
 langchain-google-genai>=1.0.0
 langchain-openai>=0.1.0
+langgraph>=0.2.0
 huggingface-hub>=0.23.4

@@ -117,6 +117,12 @@ const CodingProblem = sequelize.define('CodingProblem', {
     allowNull: true,
     field: 'required_concepts',
     comment: 'Structured list of required coding concepts a participant MUST use (e.g. ["for_loop", "function"]). Stored separately from problem constraints.'
+  },
+  validationResult: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    field: 'validation_result',
+    comment: 'AI validation report for this problem at generation time.'
   }
 }, {
   tableName: 'coding_problems',

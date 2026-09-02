@@ -7,6 +7,7 @@ const roleMiddleware = require('../middleware/roles');
 const upload = require('../middleware/upload');
 const { uploadAIQuizMaterial } = require('../middleware/uploadAIQuizMaterial');
 const { generateAIQuiz } = require('../controllers/aiQuizGenerationController');
+const cacheService = require('../services/cacheService');
 
 const router = express.Router();
 
@@ -18,6 +19,12 @@ router.get(
   async (req, res) => {
     try {
       const trainerId = req.user.id;
+      const cacheKey = `trainer:trainings:${trainerId}`;
+      const cached = cacheService.get(cacheKey);
+      if (cached && req.query.fresh !== 'true') {
+        return res.json(cached);
+      }
+
       const { TrainingTrainerAssignment, Course, CourseTrainerAssignment } = require('../models');
       const { Op } = require('sequelize');
 
@@ -63,8 +70,17 @@ router.get(
         order: [['startDate', 'ASC']]
       });
 
-      const formattedTrainings = await Promise.all(trainings.map(async t => {
-        const enrolledCount = await Enrollment.count({ where: { trainingId: t.id, status: 'ENROLLED' } });
+      const trainingIds = trainings.map(t => t.id);
+      const counts = trainingIds.length > 0 ? await Enrollment.findAll({
+        where: { trainingId: { [Op.in]: trainingIds }, status: 'ENROLLED' },
+        attributes: ['trainingId', [Enrollment.sequelize.fn('COUNT', '*'), 'cnt']],
+        group: ['trainingId'],
+        raw: true,
+      }).catch(() => []) : [];
+      const countMap = Object.fromEntries(counts.map(c => [String(c.trainingId), Number(c.cnt)]));
+
+      const formattedTrainings = trainings.map(t => {
+        const enrolledCount = countMap[String(t.id)] || 0;
         return {
           id: t.id,
           title: t.title,
@@ -76,9 +92,12 @@ router.get(
           availableSeats: t.capacity ? (t.capacity - enrolledCount) : null,
           sequentialLearning: t.sequentialLearning || false
         };
-      }));
+      });
 
-      res.json({ trainings: formattedTrainings });
+      const result = { trainings: formattedTrainings };
+      cacheService.set(cacheKey, result, 20);
+
+      res.json(result);
     } catch (error) {
       console.error('Trainer get trainings error:', error.message);
       res.status(500).json({ error: 'Server error fetching trainings' });
@@ -262,6 +281,12 @@ router.get(
   async (req, res) => {
     try {
       const trainerId = req.user.id;
+      const cacheKey = `trainer:feedbacks:${trainerId}`;
+      const cached = cacheService.get(cacheKey);
+      if (cached && req.query.fresh !== 'true') {
+        return res.json(cached);
+      }
+
       const { TrainingTrainerAssignment, Course, CourseTrainerAssignment } = require('../models');
       const { Op } = require('sequelize');
 
@@ -335,12 +360,16 @@ router.get(
         ? (feedbacks.reduce((s, f) => s + f.subjectRating, 0) / feedbacks.length).toFixed(1)
         : 0;
 
-      res.json({
+      const result = {
         feedbacks: formattedFeedbacks,
         averageTrainerRating: avgTrainerRating,
         averageSubjectRating: avgSubjectRating,
         averageRating: avgTrainerRating
-      });
+      };
+
+      cacheService.set(cacheKey, result, 20);
+
+      res.json(result);
     } catch (error) {
       console.error('Trainer get feedbacks error:', error.message);
       res.status(500).json({ error: 'Server error fetching feedbacks' });
