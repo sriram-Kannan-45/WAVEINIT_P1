@@ -11,6 +11,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const { Op } = require('sequelize');
 const {
+  sequelize,
   MonitoringSession,
   MonitoringEvent,
   MonitoringConfig,
@@ -20,6 +21,10 @@ const {
   Interview,
 } = require('../models');
 const logger = require('../utils/logger');
+
+const BROWSER_EVENT_TYPES = new Set(['TAB_SWITCH', 'FULLSCREEN_EXIT', 'WINDOW_BLUR', 'PAGE_VISIBILITY_HIDDEN']);
+const BROWSER_SWITCH_LIMIT = 3;
+const BROWSER_SWITCH_PENALTY = 10;
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
 
@@ -109,7 +114,10 @@ function aggregateMonitoringEvents(events, maxGapMs = 750) {
   const grouped = new Map();
   for (const event of events || []) {
     const direction = String(event.metadata?.direction || event.direction || '').toUpperCase();
-    const key = `${event.source || 'LAPTOP'}|${event.eventType}|${direction}`;
+    const browser = BROWSER_EVENT_TYPES.has(event.eventType);
+    const key = browser
+      ? `BROWSER|${event.metadata?.browserIncidentId || 'legacy'}`
+      : `${event.source || 'LAPTOP'}|${event.eventType}|${direction}`;
     const item = { ...event, ...eventIntervalBounds(event) };
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(item);
@@ -120,12 +128,16 @@ function aggregateMonitoringEvents(events, maxGapMs = 750) {
     items.sort((a, b) => a.start - b.start || a.end - b.end);
     let current = null;
     for (const item of items) {
-      if (!current || item.start > current.end + maxGapMs) {
+      if (!current || (item.metadata?.browserIncidentId ? item.metadata.browserIncidentId !== current.metadata?.browserIncidentId : item.start > current.end + (BROWSER_EVENT_TYPES.has(item.eventType) ? 0 : maxGapMs))) {
         if (current) incidents.push(current);
         current = { ...item, rawEventIds: [item.id] };
         continue;
       }
       current.end = Math.max(current.end, item.end);
+      if (BROWSER_EVENT_TYPES.has(item.eventType)) {
+        const rank = { TAB_SWITCH: 3, PAGE_VISIBILITY_HIDDEN: 3, WINDOW_BLUR: 2, FULLSCREEN_EXIT: 1 };
+        if (rank[item.eventType] > rank[current.eventType]) current.eventType = item.eventType;
+      }
       current.confidence = Math.max(Number(current.confidence) || 0, Number(item.confidence) || 0);
       if ((SEVERITY_RANK[item.severity] || 0) > (SEVERITY_RANK[current.severity] || 0)) current.severity = item.severity;
       current.rawEventIds.push(item.id);
@@ -222,6 +234,7 @@ const DEFAULT_CONFIGS = {
 
 class MonitoringEngineService {
   constructor() {
+    this.pendingEventWrites = new Map();
     this.inMemoryCooldowns = new Map(); // key -> lastTimestamp
     this.activeMobileViolations = new Map(); // sessionId -> current remote-camera interval
     this.pendingSessionStarts = new Map(); // attempt key -> in-flight session creation
@@ -397,9 +410,10 @@ class MonitoringEngineService {
     }
   }
 
-  async getSession(sessionId) {
+  async getSession(sessionId, options = {}) {
     if (!sessionId) return null;
     return MonitoringSession.findOne({
+      ...options,
       where: { sessionId: String(sessionId) },
       include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email'] }],
     });
@@ -479,11 +493,13 @@ class MonitoringEngineService {
     return session;
   }
 
-  async startTestSession({ sessionId, attemptId = null, testStartedAt = null, configuredDurationSeconds = null }) {
+  async startTestSession({ sessionId, attemptId = null, testStartedAt = null, configuredDurationSeconds = null, transaction = null }) {
+    if (!transaction) return sequelize.transaction(transaction => this.startTestSession({ sessionId, attemptId, testStartedAt, configuredDurationSeconds, transaction }));
     const session = await MonitoringSession.findOne({
-      where: { sessionId: String(sessionId) }
+      where: { sessionId: String(sessionId) }, transaction, lock: transaction.LOCK.UPDATE,
     });
     if (!session) throw new Error('Monitoring session not found');
+    if (['COMPLETED', 'ABORTED'].includes(session.status)) return session;
 
     const startTime = testStartedAt ? new Date(testStartedAt) : new Date();
     const validStartedAt = Number.isNaN(startTime.getTime()) ? new Date() : startTime;
@@ -506,24 +522,26 @@ class MonitoringEngineService {
       ...(configuredDurationSeconds ? { configuredDurationSeconds: Number(configuredDurationSeconds) } : {})
     };
 
-    session.status = 'ACTIVE';
-    session.laptopStatus = 'ACTIVE';
     if (!session.startedAt || ['CALIBRATING', 'READY'].includes(session.status)) {
       session.startedAt = validStartedAt;
     }
+    session.status = 'ACTIVE';
+    session.laptopStatus = 'ACTIVE';
     if (attemptId && !session.attemptId) {
       session.attemptId = Number(attemptId);
     }
     session.metadata = updatedMetadata;
-    await session.save();
+    await session.save({ transaction });
 
     logger.info(`[MonitoringEngine] Test officially started for session ${sessionId} at ${validStartedAt.toISOString()}`);
     return session;
   }
 
-  async pauseTestSession({ sessionId, pausedAt = null, reason = 'PAUSED', activeDurationSeconds = null }) {
-    const session = await this.getSession(sessionId);
+  async pauseTestSession({ sessionId, pausedAt = null, reason = 'PAUSED', activeDurationSeconds = null, transaction = null }) {
+    if (!transaction) return sequelize.transaction(transaction => this.pauseTestSession({ sessionId, pausedAt, reason, activeDurationSeconds, transaction }));
+    const session = await this.getSession(sessionId, { transaction, lock: { level: transaction.LOCK.UPDATE, of: MonitoringSession } });
     if (!session) throw new Error('Monitoring session not found');
+    if (['COMPLETED', 'ABORTED'].includes(session.status)) return session;
 
     const pauseTime = pausedAt ? new Date(pausedAt) : new Date();
     const validPausedAt = Number.isNaN(pauseTime.getTime()) ? new Date() : pauseTime;
@@ -561,15 +579,17 @@ class MonitoringEngineService {
       activeSegments,
       pauseEvents,
     };
-    await session.save();
+    await session.save({ transaction });
 
     logger.info(`[MonitoringEngine] Test paused for session ${sessionId} at ${validPausedAt.toISOString()} (accumulated active: ${activeDuration}s)`);
     return session;
   }
 
-  async resumeTestSession({ sessionId, resumedAt = null, reason = 'RESUMED' }) {
-    const session = await this.getSession(sessionId);
+  async resumeTestSession({ sessionId, resumedAt = null, reason = 'RESUMED', transaction = null }) {
+    if (!transaction) return sequelize.transaction(transaction => this.resumeTestSession({ sessionId, resumedAt, reason, transaction }));
+    const session = await this.getSession(sessionId, { transaction, lock: { level: transaction.LOCK.UPDATE, of: MonitoringSession } });
     if (!session) throw new Error('Monitoring session not found');
+    if (['COMPLETED', 'ABORTED'].includes(session.status)) return session;
 
     const resumeTime = resumedAt ? new Date(resumedAt) : new Date();
     const validResumedAt = Number.isNaN(resumeTime.getTime()) ? new Date() : resumeTime;
@@ -610,15 +630,17 @@ class MonitoringEngineService {
       activeSegments,
       pauseEvents,
     };
-    await session.save();
+    await session.save({ transaction });
 
     logger.info(`[MonitoringEngine] Test resumed for session ${sessionId} at ${validResumedAt.toISOString()}`);
     return session;
   }
 
-  async syncTestDuration({ sessionId, activeDurationSeconds = 0, activeSegments = null }) {
-    const session = await this.getSession(sessionId);
+  async syncTestDuration({ sessionId, activeDurationSeconds = 0, activeSegments = null, transaction = null }) {
+    if (!transaction) return sequelize.transaction(transaction => this.syncTestDuration({ sessionId, activeDurationSeconds, activeSegments, transaction }));
+    const session = await this.getSession(sessionId, { transaction, lock: { level: transaction.LOCK.UPDATE, of: MonitoringSession } });
     if (!session) throw new Error('Monitoring session not found');
+    if (['COMPLETED', 'ABORTED'].includes(session.status)) return { success: true, activeDurationSeconds: session.metadata?.activeDurationSeconds || 0 };
 
     const existingMeta = session.metadata || {};
     const updatedSec = Math.max(Number(existingMeta.activeDurationSeconds || 0), Number(activeDurationSeconds || 0));
@@ -629,7 +651,7 @@ class MonitoringEngineService {
       ...(activeSegments ? { activeSegments } : {}),
       lastDurationSyncAt: new Date().toISOString(),
     };
-    await session.save();
+    await session.save({ transaction });
     return { success: true, activeDurationSeconds: updatedSec };
   }
 
@@ -1038,8 +1060,18 @@ class MonitoringEngineService {
 
   // ── Authoritative Server-Side Scoring & Event Ingestion ──────────────────
 
-  async reportEvent({
+  async reportEvent(args) {
+    // Serialize counts and counter updates for events in the same session.
+    const previous = this.pendingEventWrites.get(args.sessionId) || Promise.resolve();
+    const operation = previous.catch(() => {}).then(() => sequelize.transaction(transaction => this._reportEvent({ ...args, transaction })));
+    this.pendingEventWrites.set(args.sessionId, operation);
+    try { return await operation; }
+    finally { if (this.pendingEventWrites.get(args.sessionId) === operation) this.pendingEventWrites.delete(args.sessionId); }
+  }
+
+  async _reportEvent({
     sessionId,
+    transaction,
     attemptId = null,
     participantId,
     source = 'LAPTOP',
@@ -1056,7 +1088,7 @@ class MonitoringEngineService {
       throw new Error('sessionId and eventType are required');
     }
 
-    const session = await this.getSession(sessionId);
+    const session = await this.getSession(sessionId, { transaction, lock: { level: transaction.LOCK.UPDATE, of: MonitoringSession } });
     if (!session) throw new Error('Monitoring session not found');
 
     // Ensure session.attemptId is resolved if not present
@@ -1068,19 +1100,19 @@ class MonitoringEngineService {
         if (verif?.attemptId) {
           resolvedAttemptId = verif.attemptId;
           session.attemptId = resolvedAttemptId;
-          await session.save();
+          await session.save({ transaction });
         } else {
           const qa = await QuizAttempt.findOne({ where: { monitoringSessionId: session.sessionId } });
           if (qa) {
             resolvedAttemptId = qa.id;
             session.attemptId = resolvedAttemptId;
-            await session.save();
+            await session.save({ transaction });
           } else {
             const ca = await CodingAttempt.findOne({ where: { monitoringSessionId: session.sessionId } });
             if (ca) {
               resolvedAttemptId = ca.id;
               session.attemptId = resolvedAttemptId;
-              await session.save();
+              await session.save({ transaction });
             }
           }
         }
@@ -1094,7 +1126,7 @@ class MonitoringEngineService {
               [session.contextType === 'CODING' ? 'assessmentId' : 'quizId']: session.contextId },
             order: [['id', 'DESC']],
           });
-          if (att) { resolvedAttemptId = att.id; session.attemptId = att.id; await session.save(); }
+          if (att) { resolvedAttemptId = att.id; session.attemptId = att.id; await session.save({ transaction }); }
         }
       }
     }
@@ -1107,8 +1139,11 @@ class MonitoringEngineService {
     const reportedAt = occurredAt ? new Date(occurredAt) : new Date(now);
     const validReportedAt = Number.isNaN(reportedAt.getTime()) ? new Date(now) : reportedAt;
 
+    const browserEvent = BROWSER_EVENT_TYPES.has(eventType);
+    const discreteBrowserIncident = browserEvent && typeof metadata.browserIncidentId === 'string' && metadata.browserIncidentId.length <= 128 && Number(durationMs) >= 2000;
+
     // Ensure test is active and event is not from pre-test calibration
-    if (session.status !== 'ACTIVE' && session.status !== 'PAUSED') {
+    if (session.status !== 'ACTIVE' && session.status !== 'PAUSED' && !(discreteBrowserIncident && session.status === 'COMPLETED' && session.endedAt && validReportedAt <= new Date(session.endedAt))) {
       logger.info(`[MonitoringEngine] Dropping pre-test event ${eventType} for session ${sessionId} (status=${session.status})`);
       return { skipped: true, reason: 'TEST_NOT_ACTIVE', session };
     }
@@ -1130,12 +1165,12 @@ class MonitoringEngineService {
     const cooldownKey = `${sessionId}_${normalizedSource}_${eventType}`;
     const lastTriggered = this.inMemoryCooldowns.get(cooldownKey) || 0;
 
-    if (now - lastTriggered < cooldownMs && normalizedSeverity !== 'CRITICAL') {
+    if (!discreteBrowserIncident && now - lastTriggered < cooldownMs && normalizedSeverity !== 'CRITICAL') {
       return { skipped: true, reason: 'DEBOUNCED', session };
     }
 
     // 2. Idempotency Key Generation / Verification
-    const finalIdempotencyKey = idempotencyKey || `${sessionId}_${normalizedSource}_${eventType}_${validReportedAt.getTime()}_${Number(durationMs) || 0}`;
+    const finalIdempotencyKey = discreteBrowserIncident ? ('browser_' + crypto.createHash('sha256').update(sessionId + ':' + metadata.browserIncidentId).digest('hex')) : idempotencyKey || `${sessionId}_${normalizedSource}_${eventType}_${validReportedAt.getTime()}_${Number(durationMs) || 0}`;
     // 3. Authoritative Score Delta Computation
     const weights = config.score_weights || {};
     let baseWeight = weights[eventType];
@@ -1152,12 +1187,20 @@ class MonitoringEngineService {
 
     // 4. Grace Warnings Check (First 3 Alerts are Live Warnings Only & Unscored)
     const existingEventsCount = await MonitoringEvent.count({
+      transaction,
       where: { monitoringSessionId: session.sessionId },
     });
 
-    const isGraceWarning = existingEventsCount < 3;
-    const warningNumber = existingEventsCount + 1;
-    const effectiveScoreDelta = isGraceWarning ? 0.0 : scoreDelta;
+    const priorBrowserEvents = browserEvent ? await MonitoringEvent.findAll({
+      transaction,
+      where: { monitoringSessionId: session.sessionId, eventType: { [Op.in]: [...BROWSER_EVENT_TYPES] } },
+    }) : [];
+    const browserSwitchCount = aggregateMonitoringEvents(priorBrowserEvents.map(row => row.toJSON ? row.toJSON() : row)).length + 1;
+    const isGraceWarning = browserEvent ? browserSwitchCount <= BROWSER_SWITCH_LIMIT : existingEventsCount < 3;
+    const warningNumber = browserEvent ? browserSwitchCount : existingEventsCount + 1;
+    const effectiveScoreDelta = browserEvent
+      ? (browserSwitchCount === BROWSER_SWITCH_LIMIT + 1 ? BROWSER_SWITCH_PENALTY : 0)
+      : (isGraceWarning ? 0 : scoreDelta);
 
     const warningMessages = {
       FACE_ABSENT: 'Participant face absent — please look directly at your screen',
@@ -1184,6 +1227,7 @@ class MonitoringEngineService {
 
     try {
       const [ev, wasCreated] = await MonitoringEvent.findOrCreate({
+        transaction,
         where: { idempotencyKey: finalIdempotencyKey },
         defaults: {
           monitoringSessionId: session.sessionId,
@@ -1211,12 +1255,15 @@ class MonitoringEngineService {
       event = ev;
       created = wasCreated;
     } catch (concurrencyErr) {
-      event = await MonitoringEvent.findOne({ where: { idempotencyKey: finalIdempotencyKey } });
+      event = await MonitoringEvent.findOne({ transaction, where: { idempotencyKey: finalIdempotencyKey } });
       created = false;
     }
 
     if (!created && event) {
-      return { skipped: true, reason: 'IDEMPOTENT_DUPLICATE', event, session };
+      return { skipped: true, reason: 'IDEMPOTENT_DUPLICATE', event, session, browserSwitchCount: session.metadata?.browserSwitchCount };
+    }
+    if (!event) {
+      throw new Error('Monitoring event persistence failed');
     }
 
     try {
@@ -1235,6 +1282,8 @@ class MonitoringEngineService {
         score: newScore,
         riskLevel: newRiskLevel,
         totalEvents: session.totalEvents + 1,
+        ...(browserEvent ? { metadata: { ...session.metadata, browserSwitchCount,
+          tabSwitchScore: browserSwitchCount > BROWSER_SWITCH_LIMIT ? BROWSER_SWITCH_PENALTY : 0 } } : {}),
       };
 
       if (!isGraceWarning) {
@@ -1247,13 +1296,14 @@ class MonitoringEngineService {
         }
       }
 
-      await session.update(updateData);
+      await session.update(updateData, { transaction });
 
       // Cross-persist to ProctoringEvent for complete report compatibility
       try {
         const { ProctoringEvent } = require('../models');
         if (ProctoringEvent && (resolvedAttemptId || session.attemptId || session.sessionId)) {
           await ProctoringEvent.findOrCreate({
+            transaction,
             where: { idempotencyKey: finalIdempotencyKey },
             defaults: {
               monitoringSessionId: session.sessionId,
@@ -1282,6 +1332,7 @@ class MonitoringEngineService {
       logger.info(
         `[MonitoringEngine] Recorded event: ${eventType} [${normalizedSeverity}] (grace: ${isGraceWarning}, scoreDelta: +${effectiveScoreDelta}) for session: ${session.sessionId}, attemptId: ${resolvedAttemptId || session.attemptId}`
       );
+      if (session.status === 'COMPLETED') await this.persistFinalAudit(session.sessionId, transaction);
 
       return {
         success: true,
@@ -1292,6 +1343,7 @@ class MonitoringEngineService {
         warningMessage,
         scoreDelta: effectiveScoreDelta,
         currentScore: newScore,
+        ...(browserEvent ? { browserSwitchCount, tabSwitchScore: browserSwitchCount > BROWSER_SWITCH_LIMIT ? BROWSER_SWITCH_PENALTY : 0 } : {}),
         riskLevel: newRiskLevel,
         session,
       };
@@ -1449,15 +1501,25 @@ class MonitoringEngineService {
       logger.warn(`[MonitoringEngine] aggregateSession after endSession failed: ${err.message}`);
     }
 
-    return this.getReport({ sessionId: session.sessionId });
+    return this.persistFinalAudit(session.sessionId);
   }
 
-  async getReport({ sessionId, attemptId = null, contextType = 'QUIZ', contextId = null }) {
+  async persistFinalAudit(sessionId, transaction = null) {
+    if (!transaction) return sequelize.transaction(transaction => this.persistFinalAudit(sessionId, transaction));
+    const session = await this.getSession(sessionId, { transaction, lock: { level: transaction.LOCK.UPDATE, of: MonitoringSession } });
+    const report = await this.getReport({ sessionId, transaction });
+    await session.update({ score: report.finalScore, riskLevel: report.riskLevel,
+      metadata: { ...session.metadata, browserSwitchCount: report.tabSwitchCount, tabSwitchScore: report.tabSwitchScore,
+        finalAudit: { score: report.finalScore, scoringBreakdown: report.scoringBreakdown, totalEvents: report.totalEvents } } }, { transaction });
+    return report;
+  }
+
+  async getReport({ sessionId, attemptId = null, contextType = 'QUIZ', contextId = null, transaction = null }) {
     contextType = String(contextType).toUpperCase();
     if (!['QUIZ', 'CODING', 'INTERVIEW'].includes(contextType)) throw new Error('Invalid monitoring context type');
     let session = null;
     if (sessionId) {
-      session = await this.getSession(sessionId);
+      session = await this.getSession(sessionId, transaction ? { transaction } : {});
     }
     if (!session && attemptId) {
       session = await MonitoringSession.findOne({
@@ -1522,6 +1584,7 @@ class MonitoringEngineService {
     // Query from both MonitoringEvent and ProctoringEvent to guarantee 0 missing events
     const { ProctoringEvent } = require('../models');
     const monitoringEvents = await MonitoringEvent.findAll({
+      ...(transaction ? { transaction } : {}),
       where: { monitoringSessionId: session.sessionId },
       order: [['occurredAt', 'ASC']],
     });
@@ -1530,6 +1593,7 @@ class MonitoringEngineService {
     if (ProctoringEvent && session.attemptId) {
       try {
         proctoringEvents = await ProctoringEvent.findAll({
+          ...(transaction ? { transaction } : {}),
           where: { monitoringSessionId: session.sessionId },
           order: [['timestamp', 'ASC']],
         });
@@ -1828,11 +1892,9 @@ class MonitoringEngineService {
     const noPersonScore = faceAbsentSec > 0 ? 10.0 : 0.0;
 
     // 5. Tab Switch / Fullscreen Exit (> 3 attempts): Max 10 Marks
-    const tabSwitchEvents = scoredEvents.filter((e) =>
-      ['TAB_SWITCH', 'FULLSCREEN_EXIT', 'WINDOW_BLUR', 'PAGE_VISIBILITY_HIDDEN'].includes(e.eventType)
-    );
+    const tabSwitchEvents = mergedEvents.filter(e => BROWSER_EVENT_TYPES.has(e.eventType));
     const tabSwitchCount = tabSwitchEvents.length;
-    const tabSwitchScore = tabSwitchCount > 3 ? 10.0 : 0.0;
+    const tabSwitchScore = tabSwitchCount > BROWSER_SWITCH_LIMIT ? BROWSER_SWITCH_PENALTY : 0;
 
     // Total Malpractice Audit Score out of 100 Marks
     const finalScore = Math.min(100.0, Math.max(0.0, eyeHeadScore + mobileScore + multiFaceScore + noPersonScore + tabSwitchScore));
@@ -2020,7 +2082,7 @@ class MonitoringEngineService {
         eyeHead: { score: eyeHeadScore, max: 60, violationSeconds: uniqueEyeHeadSec },
         noPerson: { score: noPersonScore, max: 10, faceAbsentSeconds: faceAbsentSec },
         multiPerson: { score: multiFaceScore, max: 10, detected: multiFaceScore > 0 },
-        tabSwitch: { score: tabSwitchScore, max: 10, count: tabSwitchCount, exceeded: tabSwitchCount > 3 },
+        tabSwitch: { score: tabSwitchScore, max: 10, count: tabSwitchCount, limit: BROWSER_SWITCH_LIMIT, exceeded: tabSwitchCount > BROWSER_SWITCH_LIMIT },
         mobile: { score: mobileScore, max: 10, count: phoneViolations.length },
         total: finalScore,
       },
@@ -2114,4 +2176,3 @@ serviceInstance.calculateUniqueViolationSeconds = calculateUniqueViolationSecond
 serviceInstance.aggregateMonitoringEvents = aggregateMonitoringEvents;
 
 module.exports = serviceInstance;
-

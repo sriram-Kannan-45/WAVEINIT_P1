@@ -1,16 +1,12 @@
 const express = require('express');
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/db');
-const multer = require('multer');
-const path = require('path');
-const { getUploadsPath, resolveUploadsPath } = require('../config/paths');
 const { AIDocument, AIQuiz, AIQuestion, AIQuestionOption, QuizAttempt, QuizAnswer, QuizResult, Training, User, Course, CourseTrainerAssignment, TrainingTrainerAssignment, QuizAssignment } = require('../models');
 const authenticateToken = require('../middleware/auth');
 const roleMiddleware = require('../middleware/roles');
 const aiService = require('../services/aiService');
-const pdf = require('pdf-parse');
-const mammoth = require('mammoth');
-const fs = require('fs');
+const aiQuizService = require('../services/aiQuizService');
+const { normalizeQuizDifficulty } = require('../utils/quizDifficulty');
 const { generateAIQuiz } = require('../controllers/aiQuizGenerationController');
 const { uploadAIQuizMaterial } = require('../middleware/uploadAIQuizMaterial');
 
@@ -20,97 +16,7 @@ const { grantQuizAssist, getQuizStatus } = require('../services/quizAiAssistantS
  
 const router = express.Router();
 
-  // Absolute path for uploads directory (shared storage root — config/paths.js)
-  const uploadsDir = getUploadsPath('ai-docs');
-  
-  // Ensure uploads directory exists
-  if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-    console.log('Created uploads directory:', uploadsDir);
-  }
-
-  const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-      cb(null, uploadsDir);
-    },
-    filename: (req, file, cb) => {
-      const unique = Date.now() + '-' + file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, '');
-      cb(null, unique);
-    }
-  });
-
-  // STRICT image detection - check magic bytes
-  const isImageFile = (buffer) => {
-    if (!buffer || buffer.length < 4) return false;
-    // PNG: 89 50 4E 47
-    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return true;
-    // JPEG: FF D8 FF
-    if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return true;
-    // GIF: 47 49 46 38
-    if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) return true;
-    // BMP: 42 4D
-    if (buffer[0] === 0x42 && buffer[1] === 0x4D) return true;
-    // WebP: 52 49 46 46 (RIFF) ... 57 45 42 50 (WEBP)
-    if (buffer.length >= 12 && buffer.slice(0,4).toString() === 'RIFF' && buffer.slice(8,12).toString() === 'WEBP') return true;
-    return false;
-  };
-
-  const upload = multer({
-    storage,
-    fileFilter: (req, file, cb) => {
-      // Check MIME type first
-      const allowedMimes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain'];
-      const isImageMime = file.mimetype?.startsWith('image/');
-      
-      if (isImageMime) {
-        return cb(new Error('Images are not supported. Please upload PDF, DOCX, or TXT files only.'));
-      }
-      
-      if (allowedMimes.includes(file.mimetype) || file.originalname.match(/\.(pdf|docx|txt)$/i)) {
-        cb(null, true);
-      } else {
-        cb(new Error('Only PDF, DOCX, and TXT files are allowed'));
-      }
-    },
-    limits: { fileSize: 10 * 1024 * 1024 }
-  });
-
-  const extractText = async (filePath, mimeType) => {
-    // Ensure the file path is absolute
-    const absPath = path.isAbsolute(filePath) ? filePath : resolveUploadsPath(filePath);
-    
-    if (!fs.existsSync(absPath)) {
-      throw new Error(`File not found: ${absPath}`);
-    }
-
-    if (mimeType === 'text/plain' || absPath.endsWith('.txt')) {
-      return fs.readFileSync(absPath, 'utf8');
-    }
-    if (mimeType === 'application/pdf' || absPath.endsWith('.pdf')) {
-      const dataBuffer = fs.readFileSync(absPath);
-      try {
-        const data = await pdf(dataBuffer);
-        return data.text || '';
-      } catch (pdfErr) {
-        console.error('PDF parse error:', pdfErr.message);
-        throw new Error('Failed to parse PDF: ' + pdfErr.message);
-      }
-    }
-    if (mimeType.includes('wordprocessingml') || absPath.endsWith('.docx')) {
-      try {
-        const result = await mammoth.extractRawText({ path: absPath });
-        return result.value || '';
-      } catch (docxErr) {
-        console.error('DOCX parse error:', docxErr.message);
-        throw new Error('Failed to parse DOCX: ' + docxErr.message);
-      }
-    }
-    throw new Error('Unsupported file type: ' + mimeType);
-  };
-
-  // RAG replacement for the document quiz generator. This route is registered
-  // before the legacy inline handler below, so existing clients keep using the
-  // same URL while the implementation moves to retrieval-first generation.
+  // Both document URLs use the same generation and persistence handler.
   router.post('/trainer/upload-document',
     authenticateToken,
     roleMiddleware('TRAINER'),
@@ -134,13 +40,14 @@ const router = express.Router();
       try {
         const { prompt, questionCount = 10, difficulty = 'MIXED', courseId, trainingId } = req.body;
         const trainerId = req.user.id;
+        const diffUpper = normalizeQuizDifficulty(difficulty);
 
         if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
           return res.status(422).json({ error: 'Prompt/Topic cannot be empty.' });
         }
 
-        const count = parseInt(questionCount, 10);
-        if (isNaN(count) || count < 1 || count > 100) {
+        const count = Number(questionCount);
+        if (!Number.isInteger(count) || count < 1 || count > 100) {
           return res.status(422).json({ error: 'Number of questions must be between 1 and 100.' });
         }
 
@@ -189,7 +96,7 @@ const router = express.Router();
           const courseAssigned = await CourseTrainerAssignment.findOne({
             where: { courseId: resolvedCourseId, trainerId }
           });
-          const hasCourseAccess = course.trainerId === trainerId || courseAssigned !== null || req.user.role === 'ADMIN';
+          const hasCourseAccess = String(course.trainerId) === String(trainerId) || courseAssigned !== null || req.user.role === 'ADMIN';
           if (!hasCourseAccess) {
             return res.status(403).json({
               success: false,
@@ -213,7 +120,7 @@ const router = express.Router();
           const trainingAssigned = await TrainingTrainerAssignment.findOne({
             where: { trainingId: resolvedTrainingId, trainerId }
           });
-          const hasTrainingAccess = training.trainerId === trainerId || training.createdBy === trainerId || trainingAssigned !== null || req.user.role === 'ADMIN';
+          const hasTrainingAccess = String(training.trainerId) === String(trainerId) || String(training.createdBy) === String(trainerId) || trainingAssigned !== null || req.user.role === 'ADMIN';
           if (!hasTrainingAccess) {
             return res.status(403).json({
               success: false,
@@ -223,12 +130,9 @@ const router = express.Router();
           }
         }
 
-        // Coerce difficulty for prompt generation
-        const diffCoerced = difficulty.charAt(0).toUpperCase() + difficulty.slice(1).toLowerCase();
-        const diffUpper = difficulty.toUpperCase();
-
         console.log(`[aiQuizRoutes] Requesting prompt-quiz generation from AI for: "${prompt}"`);
-        const questions = await aiService.generateQuizFromPrompt(prompt.trim(), count, ['Easy', 'Medium', 'Hard'].includes(diffCoerced) ? diffCoerced : 'Medium');
+        const sourceText = await require('../services/quizLearningSources').loadLearningSources({courseId: resolvedCourseId, materials: req.body.materials, lessonIds: req.body.lessonIds, instructions: prompt});
+        const questions = await aiService.generateQuizFromPrompt(prompt.trim(), count, diffUpper, {sourceText, sourceRequired: Boolean(req.body.materials || req.body.lessonIds?.length), marksPerQuestion: req.body.marksPerQuestion});
 
         if (!questions || questions.length === 0) {
           return res.status(502).json({
@@ -255,353 +159,46 @@ const router = express.Router();
 
         // Save Quiz to database
         const timeLimit = parseInt(req.body.timeLimit || req.body.time_limit, 10) || 30;
-        const quiz = await AIQuiz.create({
-          trainerId,
-          trainingId: resolvedTrainingId,
-          courseId: resolvedCourseId,
-          title: `Quiz: ${prompt.trim()}`,
-          numQuestions: questions.length,
-          timeLimit,
-          difficulty: ['EASY', 'MEDIUM', 'HARD', 'MIXED'].includes(diffUpper) ? diffUpper : 'MIXED',
-          status: 'DRAFT',
-          isPublished: false,
-          isActive: true,
-          published: false,
-          createdBy: trainerId
+        const quiz = await sequelize.transaction(async transaction => {
+          const savedQuiz = await AIQuiz.create({
+            trainerId,
+            trainingId: resolvedTrainingId,
+            courseId: resolvedCourseId,
+            title: `Quiz: ${questions.topic || prompt.trim()}`,
+            numQuestions: questions.length,
+            totalMarks: questions.totalMarks,
+            timeLimit,
+            difficulty: diffUpper,
+            status: 'DRAFT',
+            isPublished: false,
+            isActive: true,
+            published: false,
+            createdBy: trainerId
+          }, { transaction });
+
+          await aiQuizService.saveQuestions(savedQuiz.id, questions, { transaction, difficulty: diffUpper });
+          return savedQuiz;
         });
-
-        console.log(`[aiQuizRoutes] ✅ Quiz #${quiz.id} created as DRAFT — trainingId=${quiz.trainingId}, courseId=${quiz.courseId}, createdBy=${trainerId}`);
-        // NOTE: quiz_assignments are created per-participant when trainer clicks "Send Quiz"
-
-        console.log(`[aiQuizRoutes] Saving ${questions.length} prompt-generated questions for quiz #${quiz.id}...`);
-        for (let i = 0; i < questions.length; i++) {
-          const q = questions[i];
-          
-          // Extract options and correct answer
-          const optionA = q.optionA || q.option_a || '';
-          const optionB = q.optionB || q.option_b || '';
-          const optionC = q.optionC || q.option_c || '';
-          const optionD = q.optionD || q.option_d || '';
-          const optionsList = [optionA, optionB, optionC, optionD].filter(Boolean);
-
-          const rawCorrect = q.correctAnswer || q.correct_answer || '';
-          
-          // Map correct answer text to options index (0-3)
-          let correctIdx = 0;
-          const idx = optionsList.findIndex(opt => String(opt).trim().toLowerCase() === String(rawCorrect).trim().toLowerCase());
-          if (idx >= 0) {
-            correctIdx = idx;
-          } else if (['0', '1', '2', '3'].includes(String(rawCorrect))) {
-            correctIdx = parseInt(rawCorrect, 10);
-          } else if (['A', 'B', 'C', 'D'].includes(String(rawCorrect).toUpperCase())) {
-            correctIdx = String(rawCorrect).toUpperCase().charCodeAt(0) - 65;
-          }
-
-          const savedQuestion = await AIQuestion.create({
-            quizId: quiz.id,
-            questionText: q.question || q.questionText || `Question ${i + 1}`,
-            questionType: 'MCQ',
-            options: optionsList,
-            correctAnswer: String(correctIdx),
-            explanation: q.explanation || '',
-            difficulty: q.difficulty || diffUpper || 'MEDIUM',
-            order: i
-          });
-
-          // Also save to AIQuestionOption table if options exist
-          for (let optionIndex = 0; optionIndex < optionsList.length; optionIndex++) {
-            await AIQuestionOption.create({
-              questionId: savedQuestion.id,
-              optionText: String(optionsList[optionIndex]),
-              isCorrect: optionIndex === correctIdx,
-              order: optionIndex
-            });
-          }
-        }
 
         await quiz.reload({ include: [{ model: AIQuestion, as: 'questions' }] });
 
         return res.status(201).json({
           success: true,
           message: `Quiz "${quiz.title}" generated successfully from prompt with ${questions.length} questions`,
+          generationSource: questions.generationSource,
+          topic: questions.topic,
+          sourceKind: questions.sourceKind,
+          sources: questions.sources,
           quiz
         });
 
     } catch (error) {
       console.error('Prompt generation endpoint error:', error.message);
       const statusCode = error.status || 500;
-      res.status(statusCode).json({ error: error.message });
+      res.status(statusCode).json({ error: error.message, code: error.code });
     }
     }
   );
-
-  // POST /api/ai-quiz/trainer/upload-document
-  router.post('/trainer/upload-document',
-    authenticateToken,
-    roleMiddleware('TRAINER'),
-    upload.single('file'),
-    async (req, res) => {
-      try {
-        const { trainingId, courseId, numQuestions = 10, difficulty = 'MIXED' } = req.body;
-        const trainerId = req.user.id;
-
-        // Print received params for debugging as requested
-        console.log(`[aiQuizRoutes] Request received: trainingId="${trainingId}" (type: ${typeof trainingId}), courseId="${courseId}" (type: ${typeof courseId}), trainerId="${trainerId}"`);
-
-        if (!req.file) {
-          return res.status(400).json({ error: 'No file uploaded' });
-        }
-
-        const filePath = path.resolve(req.file.path);  // Get absolute path
-        const fileType = req.file.mimetype;
-        const originalName = req.file.originalname;
-
-        // STRICT validation: Read first bytes to detect image signatures
-        try {
-          const fileBuffer = fs.readFileSync(filePath);
-          
-          // Check for image file signatures (magic bytes)
-          if (isImageFile(fileBuffer)) {
-            // Clean up the uploaded file
-            try { fs.unlinkSync(filePath); } catch(e) {}
-            return res.status(415).json({ 
-              error: 'Images are not supported. Please upload PDF, DOCX, or TXT files only.',
-              details: 'The AI model (google/flan-t5-base) does not support image input.'
-            });
-          }
-        } catch (readErr) {
-          console.warn('Could not read file for image detection:', readErr.message);
-        }
-
-      let content = '';
-      try {
-        // Ensure we pass absolute path to extractText
-        const absPath = path.isAbsolute(filePath) ? filePath : resolveUploadsPath(filePath);
-        content = await extractText(absPath, fileType);
-      } catch (err) {
-        // Clean up file on error
-        try { fs.unlinkSync(filePath); } catch(e) {}
-        return res.status(400).json({ error: 'Failed to extract text from file: ' + err.message });
-      }
-
-      if (!content || content.trim().length < 50) {
-        return res.status(400).json({ error: 'Document content too short or empty' });
-      }
-
-      // ── Resolve courseId and trainingId ──
-      let resolvedCourseId = courseId || null;
-      let resolvedTrainingId = trainingId || null;
-
-      // Clean up stringified values
-      if (resolvedCourseId === 'undefined' || resolvedCourseId === 'null' || resolvedCourseId === 'NaN' || resolvedCourseId === '') {
-        resolvedCourseId = null;
-      }
-      if (resolvedTrainingId === 'undefined' || resolvedTrainingId === 'null' || resolvedTrainingId === 'NaN' || resolvedTrainingId === '') {
-        resolvedTrainingId = null;
-      }
-
-      if (resolvedCourseId && resolvedTrainingId && String(resolvedCourseId) === String(resolvedTrainingId)) {
-        resolvedCourseId = null;
-      }
-
-      // Fallback: If trainingId was passed but no courseId was provided, check if it's actually a courseId or a trainingId.
-      if (resolvedTrainingId && !resolvedCourseId) {
-        const courseCheck = await Course.findByPk(resolvedTrainingId);
-        if (courseCheck) {
-          resolvedCourseId = resolvedTrainingId;
-          resolvedTrainingId = courseCheck.trainingProgramId;
-          console.log(`[aiQuizRoutes] Detected courseId "${resolvedCourseId}" passed in trainingId parameter. Resolved trainingProgramId: "${resolvedTrainingId}"`);
-        } else {
-          // If it is indeed a trainingId, resolve its associated Course under the new architecture
-          const course = await Course.findOne({ where: { trainingProgramId: resolvedTrainingId } });
-          if (course) {
-            resolvedCourseId = course.id;
-            console.log(`[aiQuizRoutes] Resolved courseId "${resolvedCourseId}" from trainingId "${resolvedTrainingId}"`);
-          }
-        }
-      }
-
-      // Perform validation and authorization
-      if (resolvedCourseId) {
-        const course = await Course.findByPk(resolvedCourseId);
-        if (!course) {
-          try { fs.unlinkSync(filePath); } catch (e) {}
-          return res.status(400).json({
-            success: false,
-            error: 'Course not found',
-            details: `The selected course (ID: ${resolvedCourseId}) does not exist.`
-          });
-        }
-
-        // Verify trainer assignment
-        const courseAssigned = await CourseTrainerAssignment.findOne({
-          where: { courseId: resolvedCourseId, trainerId }
-        });
-        const hasCourseAccess = course.trainerId === trainerId || courseAssigned !== null;
-        if (!hasCourseAccess) {
-          try { fs.unlinkSync(filePath); } catch (e) {}
-          return res.status(403).json({
-            success: false,
-            error: 'Access denied',
-            details: `You are not authorized to generate quizzes for course (ID: ${resolvedCourseId}).`
-          });
-        }
-
-        resolvedTrainingId = course.trainingProgramId;
-      } else if (resolvedTrainingId) {
-        const training = await Training.findByPk(resolvedTrainingId);
-        if (!training) {
-          try { fs.unlinkSync(filePath); } catch (e) {}
-          return res.status(400).json({
-            success: false,
-            error: 'Training not found',
-            details: `The selected training program (ID: ${resolvedTrainingId}) does not exist.`
-          });
-        }
-
-        // Verify trainer assignment
-        const trainingAssigned = await TrainingTrainerAssignment.findOne({
-          where: { trainingId: resolvedTrainingId, trainerId }
-        });
-        const hasTrainingAccess = training.trainerId === trainerId || training.createdBy === trainerId || trainingAssigned !== null;
-        if (!hasTrainingAccess) {
-          try { fs.unlinkSync(filePath); } catch (e) {}
-          return res.status(403).json({
-            success: false,
-            error: 'Access denied',
-            details: `You are not authorized to generate quizzes for training program (ID: ${resolvedTrainingId}).`
-          });
-        }
-      }
-
-      // Auto-assign training if still missing
-      if (!resolvedTrainingId) {
-        console.log(`[aiQuizRoutes/upload] No trainingId provided — attempting auto-assignment for trainer #${trainerId}`);
-        resolvedTrainingId = await resolveTrainingId(trainerId, resolvedTrainingId);
-      }
-
-      // Always resolve corresponding courseId if trainingId is present but courseId is not
-      if (resolvedTrainingId && !resolvedCourseId) {
-        const course = await Course.findOne({ where: { trainingProgramId: resolvedTrainingId } });
-        if (course) {
-          resolvedCourseId = course.id;
-        }
-      }
-
-      console.log(`[aiQuizRoutes/upload] Resolved trainingId=${resolvedTrainingId}, courseId=${resolvedCourseId}`);
-
-      const document = await AIDocument.create({
-        trainerId,
-        trainingId: resolvedTrainingId,
-        title: req.file.originalname,
-        content: content.substring(0, 50000),
-        fileUrl: `/uploads/ai-docs/${req.file.filename}`,
-        fileType: fileType,
-        status: 'PROCESSING'
-      });
-
-      const quiz = await AIQuiz.create({
-        documentId: document.id,
-        trainerId,
-        trainingId: resolvedTrainingId,
-        courseId: resolvedCourseId,
-        title: `Quiz: ${req.file.originalname}`,
-        numQuestions: parseInt(numQuestions),
-        difficulty,
-        status: 'PUBLISHED',
-        isPublished: true,
-        isActive: true,
-        published: true, // legacy compatibility
-        publishedAt: new Date(),
-        createdBy: trainerId
-      });
-
-      console.log(`[aiQuizRoutes/upload] ✅ Quiz #${quiz.id} created — trainingId=${quiz.trainingId}, courseId=${quiz.courseId}, isPublished=${quiz.isPublished}, isActive=${quiz.isActive}, createdBy=${trainerId}`);
-
-      // Create quiz_assignment record
-      if (resolvedTrainingId) {
-        await ensureQuizAssignment(quiz.id, resolvedTrainingId);
-      }
-
-      try {
-        // Strip image references that might confuse the AI. Keep newlines and
-        // sentence punctuation intact — the Python service does the heavier
-        // text normalization, and over-cleaning here was destroying context.
-        let cleanContent = content;
-        // Remove image filename patterns (image.png, fig1.jpg, etc.)
-        cleanContent = cleanContent.replace(/\b(image|img|fig|figure)\d*\.(png|jpg|jpeg|gif|bmp|webp|svg)\b/gi, ' ');
-        cleanContent = cleanContent.replace(/\b(image|img|fig|figure)\s*\d+\.(png|jpg|jpeg|gif|bmp|webp|svg)\b/gi, ' ');
-        // Remove markdown image tags
-        cleanContent = cleanContent.replace(/!\[.*?\]\(.*?\)/g, ' ');
-        cleanContent = cleanContent.replace(/\[image:?\s*[^\]]*\]/gi, ' ');
-        // Remove "Figure X:" or "Fig. X:" labels
-        cleanContent = cleanContent.replace(/\b(figure|fig)\.?\s*\d+[:\-–—]\s*/gi, ' ');
-        // Remove file path references to images
-        cleanContent = cleanContent.replace(/[C-Z]:\\[^\s]*\.(png|jpg|jpeg|gif|bmp|webp|svg)/gi, ' ');
-        cleanContent = cleanContent.replace(/(\/|\\)[^\s]+\.(png|jpg|jpeg|gif|bmp|webp|svg)/gi, ' ');
-
-        console.log('[aiQuizRoutes] Sending', cleanContent.length, 'chars to AI service');
-        const result = await aiService.generateQuizFromText(cleanContent, parseInt(numQuestions), difficulty);
-
-        const questions = result.questions || [];
-        const quizTitle = result.title || `Quiz: ${req.file.originalname}`;
-
-        // CRITICAL: refuse to save a quiz with zero questions. Previously we
-        // happily saved an empty AIQuiz record, leaving the trainer with a
-        // useless DRAFT and the participant with "no questions yet" errors.
-        if (questions.length === 0) {
-          await document.update({ status: 'ERROR' });
-          await quiz.destroy();
-          return res.status(502).json({
-            error: 'AI service returned no questions',
-            details: 'The document was processed but the LLM did not produce any usable questions. Please verify the document has enough structured content and that the AI service is reachable.'
-          });
-        }
-
-        // Update quiz title to whatever the LLM chose
-        await quiz.update({ title: quizTitle });
-
-        console.log(`[aiQuizRoutes] Saving ${questions.length} questions for quiz #${quiz.id}...`);
-        for (let i = 0; i < questions.length; i++) {
-          const q = questions[i];
-          const saved = await AIQuestion.create({
-            quizId: quiz.id,
-            questionText: q.questionText,
-            questionType: q.questionType || 'MCQ',
-            options: q.options || null,
-            correctAnswer: String(q.correctAnswer),
-            explanation: q.explanation || '',
-            difficulty: q.difficulty || difficulty || 'MEDIUM',
-            order: i
-          });
-          console.log(`  ✅ Saved Q${i + 1} (id=${saved.id}) quiz_id=${saved.quizId}: "${q.questionText?.substring(0, 60)}..."`);
-        }
-        console.log(`[aiQuizRoutes] ✅ All ${questions.length} questions saved for quiz #${quiz.id}`);
-        await document.update({ status: 'READY' });
-        await quiz.reload({ include: [{ model: AIQuestion, as: 'questions' }] });
-        console.log(`[aiQuizRoutes] Quiz reloaded — questions count: ${quiz.questions?.length ?? 0}`);
-
-        res.status(201).json({
-          message: `Quiz "${quizTitle}" generated successfully with ${questions.length} questions`,
-          quiz
-        });
-      } catch (err) {
-        // Roll the failed quiz back so we don't leak empty DRAFT rows.
-        try {
-          await document.update({ status: 'ERROR' });
-          await quiz.destroy();
-          console.warn(`[aiQuizRoutes] Rolled back quiz #${quiz.id} after failure: ${err.message}`);
-        } catch (rollbackErr) {
-          console.error('[aiQuizRoutes] Rollback failed:', rollbackErr.message);
-        }
-        return res.status(500).json({ error: 'AI generation failed: ' + err.message });
-      }
-    } catch (error) {
-      console.error('Upload document error:', error);
-      res.status(500).json({ error: error.message });
-    }
-  }
-);
 
 // GET /api/ai-quiz/trainer/quizzes
 router.get('/trainer/quizzes',
@@ -653,7 +250,7 @@ router.put('/trainer/quiz/:id',
       if (shuffleQuestions !== undefined) update.shuffleQuestions = shuffleQuestions;
       if (allowMultipleAttempts !== undefined) update.allowMultipleAttempts = allowMultipleAttempts;
       if (maxAttempts !== undefined) update.maxAttempts = parseInt(maxAttempts);
-      if (difficulty !== undefined) update.difficulty = difficulty;
+      if (difficulty !== undefined) update.difficulty = normalizeQuizDifficulty(difficulty);
       if (isMandatory !== undefined) update.isMandatory = isMandatory;
       if (copyProtectionEnabled !== undefined) update.copyProtectionEnabled = copyProtectionEnabled;
       if (maxCopyWarnings !== undefined) update.maxCopyWarnings = parseInt(maxCopyWarnings);
@@ -667,7 +264,7 @@ router.put('/trainer/quiz/:id',
       await quiz.update(update);
       res.json({ message: 'Quiz updated', quiz });
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      res.status(error.status || 500).json({ error: error.message });
     }
   }
 );
@@ -1332,7 +929,8 @@ router.post('/participant/submit/:attemptId',
       res.json({
         success: true,
         message: 'Quiz submitted successfully. Please wait for trainer to publish results.',
-        status: 'PENDING_RESULT'
+        status: 'PENDING_RESULT',
+        attemptId: Number(req.params.attemptId)
       });
     } catch (error) {
       console.error('Submit error:', error);
@@ -1871,7 +1469,7 @@ router.post('/participant/:attemptId/quiz-ai-assist',
       if (!questionId) {
         return res.status(422).json({ error: 'questionId is required' });
       }
-      if (!question.trim()) {
+      if (typeof question !== 'string' || !question.trim() || question.length > 4000) {
         return res.status(422).json({ error: 'question (student prompt) is required' });
       }
       const result = await grantQuizAssist({
@@ -1882,9 +1480,9 @@ router.post('/participant/:attemptId/quiz-ai-assist',
       });
       return res.json(result);
     } catch (err) {
-      if (err.status) return res.status(err.status).json({ error: err.message, code: err.code, remaining: err.remaining });
       console.error('[quiz-ai-assist]', err);
-      return res.status(500).json({ error: 'Failed to get AI assistance' });
+      if (err.status) return res.status(err.status).json({ error: err.message, code: err.code, remaining: err.remaining });
+      return res.status(500).json({ error: err.message || 'Failed to get AI assistance' });
     }
   }
 );

@@ -9,15 +9,7 @@ import {
 } from 'lucide-react'
 import { API_BASE } from '../api/api'
 import AiMentorPanel from './ai-mentor/AiMentorPanel'
-
-const authHeaders = (token) => ({
-  'Content-Type': 'application/json',
-  Authorization: `Bearer ${token}`
-})
-
-// A stuck upstream model call must never leave the participant's chat stuck in
-// the loading state, so each mentor request is bounded and aborted on timeout.
-const MENTOR_TIMEOUT_MS = 20000
+import { authHeaders, MENTOR_TIMEOUT_MS, readMentorResponse } from './ai-mentor/mentorRequest'
 
 const ASSISTANCE_LEVELS = [
   { level: 1, label: 'Level 1: Hint', icon: Lightbulb, color: '#0D9488', bg: '#F0FDFA', border: '#99F6E4', desc: 'Short, gentle clue to get you thinking' },
@@ -176,16 +168,13 @@ const CodingAiAssistant = React.memo(function CodingAiAssistant({
           errorContext: questionState?.output || '',
         }),
       })
-      const data = await res.json()
+      const data = await readMentorResponse(res)
       if (requests.current.get(pId) !== controller) return
-      if (!res.ok) {
-        throw new Error(data.error || data.response || 'AI assistant unavailable')
-      }
 
       setStatusByProblem(prev => ({ ...prev, [pId]: {
         ...prev[pId], used: Math.max(prev[pId]?.used || 0, Number(data.usageUsed) || used + 1),
       } }))
-      setMessages(prev => [...prev, { role: 'assistant', text: data.response || '(no response)', level: lvl, at: Date.now() }])
+      setMessages(prev => [...prev, { role: 'assistant', text: data.response, level: lvl, at: Date.now() }])
     } catch (err) {
       if (requests.current.get(pId) !== controller) return
       if (err && err.name === 'AbortError') {

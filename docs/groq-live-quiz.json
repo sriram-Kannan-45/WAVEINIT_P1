@@ -1,0 +1,50 @@
+{
+  "checkedAt": "2026-09-04T12:59:50.478Z",
+  "configuration": {
+    "geminiConfigured": true,
+    "groqConfigured": true
+  },
+  "checks": {
+    "quizGeneration": {
+      "success": true,
+      "topic": "Speed, Distance, and Time",
+      "count": 3,
+      "generationSource": "ai-verified",
+      "questions": [
+        {
+          "question": "A cyclist travels at a constant speed of 18 km/h. How long will it take to cover a distance of 45 km?",
+          "options": [
+            "2 hours",
+            "2.5 hours",
+            "3 hours",
+            "3.5 hours"
+          ],
+          "correctAnswer": "1",
+          "explanation": "Time = distance ÷ speed = 45 km ÷ 18 km/h = 2.5 h. The cyclist needs two and a half hours to travel 45 km."
+        },
+        {
+          "question": "A train travels 150 miles in 3 hours. If it continues at the same speed, how far will it travel in 5.5 hours?",
+          "options": [
+            "250 miles",
+            "275 miles",
+            "300 miles",
+            "325 miles"
+          ],
+          "correctAnswer": "1",
+          "explanation": "First find speed: 150 mi ÷ 3 h = 50 mi/h. Then distance for 5.5 h = 50 mi/h × 5.5 h = 275 miles."
+        },
+        {
+          "question": "A runner completes a 10 km race in 42 minutes. What is the runner's average speed in meters per second (m/s)?",
+          "options": [
+            "3.97 m/s",
+            "4.00 m/s",
+            "4.23 m/s",
+            "4.76 m/s"
+          ],
+          "correctAnswer": "0",
+          "explanation": "Convert distance to meters: 10 km = 10,000 m. Convert time to seconds: 42 min = 42 × 60 = 2520 s. Speed = 10,000 m ÷ 2520 s ≈ 3.97 m/s."
+        }
+      ]
+    }
+  }
+}

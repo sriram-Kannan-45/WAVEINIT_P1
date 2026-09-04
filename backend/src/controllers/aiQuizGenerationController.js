@@ -1,17 +1,16 @@
 const fs = require('fs');
 const path = require('path');
 const {
+  sequelize,
   AIDocument,
   AIQuiz,
   AIQuestion,
-  AIQuestionOption,
   Training,
   Course,
-  CourseTrainerAssignment,
-  TrainingTrainerAssignment,
-  QuizAssignment,
 } = require('../models');
 const aiService = require('../services/aiService');
+const aiQuizService = require('../services/aiQuizService');
+const { normalizeQuizDifficulty } = require('../utils/quizDifficulty');
 const { isImageFile } = require('../middleware/uploadAIQuizMaterial');
 
 function cleanNullable(value) {
@@ -119,7 +118,7 @@ async function resolveScope({ trainingId, courseId, trainerId }) {
 }
 
 function validateQuestionCount(value) {
-  const count = parseInt(value, 10);
+  const count = Number(value);
   if (!Number.isInteger(count) || count < 1 || count > 100) {
     const error = new Error('numberOfQuestions must be between 1 and 100.');
     error.status = 422;
@@ -137,41 +136,6 @@ function validateUploadedFile(filePath) {
   }
 }
 
-async function saveQuestions(quizId, questions) {
-  for (let i = 0; i < questions.length; i++) {
-    const q = questions[i];
-    const savedQuestion = await AIQuestion.create({
-      quizId,
-      questionText: q.questionText,
-      questionType: q.questionType || 'MCQ',
-      options: q.options || null,
-      correctAnswer: String(q.correctAnswer ?? ''),
-      acceptableAnswers: q.acceptableAnswers || null,
-      pairs: q.pairs || null,
-      explanation: q.explanation || '',
-      topic: q.topic || null,
-      bloomsLevel: q.bloomsLevel || null,
-      difficulty: q.difficulty || 'MEDIUM',
-      order: i,
-    });
-
-    if (Array.isArray(q.options) && q.options.length > 0) {
-      const correctIndex = ['0', '1', '2', '3'].includes(String(q.correctAnswer))
-        ? parseInt(q.correctAnswer, 10)
-        : q.options.findIndex(option => String(option).trim().toLowerCase() === String(q.correctAnswer).trim().toLowerCase());
-
-      for (let optionIndex = 0; optionIndex < q.options.length; optionIndex++) {
-        await AIQuestionOption.create({
-          questionId: savedQuestion.id,
-          optionText: String(q.options[optionIndex]),
-          isCorrect: optionIndex === correctIndex,
-          order: optionIndex,
-        });
-      }
-    }
-  }
-}
-
 async function generateAIQuiz(req, res) {
   let document = null;
   let quiz = null;
@@ -181,9 +145,11 @@ async function generateAIQuiz(req, res) {
     const trainerId = req.user.id;
     const trainingId = req.body.training_id ?? req.body.trainingId;
     const courseId = req.body.course_id ?? req.body.courseId;
-    const difficulty = String(req.body.difficulty || 'MIXED').toUpperCase();
+    const difficulty = normalizeQuizDifficulty(req.body.difficulty);
     const numQuestions = validateQuestionCount(req.body.numberOfQuestions ?? req.body.numQuestions ?? req.body.questionCount ?? 10);
-    const questionType = req.body.questionType || req.body.question_type || 'MIXED';
+    const questionType = req.body.questionType || req.body.question_type || 'MCQ';
+    const instructions = cleanNullable(req.body.prompt ?? req.body.instructions);
+    const marksPerQuestion = req.body.marksPerQuestion;
     const timeLimit = parseInt(req.body.timeLimit || req.body.time_limit, 10) || 30;
     const url = cleanNullable(req.body.url ?? req.body.source_url);
 
@@ -215,7 +181,7 @@ async function generateAIQuiz(req, res) {
       status: 'PROCESSING',
     });
 
-    quiz = await AIQuiz.create({
+    const quizValues = {
       documentId: document.id,
       trainerId,
       trainingId: resolvedTrainingId,
@@ -223,13 +189,13 @@ async function generateAIQuiz(req, res) {
       title: `Quiz: ${sourceTitle}`,
       numQuestions,
       timeLimit,
-      difficulty: ['EASY', 'MEDIUM', 'HARD', 'MIXED'].includes(difficulty) ? difficulty : 'MIXED',
+      difficulty,
       status: 'DRAFT',
       isPublished: false,
       isActive: true,
       published: false,
       createdBy: trainerId,
-    });
+    };
 
     const result = req.file
       ? await aiService.generateQuizFromFile({
@@ -241,6 +207,8 @@ async function generateAIQuiz(req, res) {
         numQuestions,
         difficulty,
         questionType,
+        instructions,
+        marksPerQuestion,
       })
       : await aiService.generateQuizFromUrl({
         url,
@@ -249,23 +217,25 @@ async function generateAIQuiz(req, res) {
         numQuestions,
         difficulty,
         questionType,
+        instructions,
+        marksPerQuestion,
       });
 
     const questions = result.questions || [];
     if (questions.length === 0) {
       await document.update({ status: 'ERROR' });
-      await quiz.destroy();
+      if (quiz) await quiz.destroy();
       return res.status(502).json({
         error: 'AI service returned no questions',
         details: 'The RAG pipeline processed the material but produced no usable questions.',
       });
     }
 
-    await quiz.update({ title: result.title || `Quiz: ${sourceTitle}`, numQuestions: questions.length });
-    await saveQuestions(quiz.id, questions);
-    await document.update({
-      status: 'READY',
-      content: result.metadata?.cleanTextPreview || null,
+    quiz = await sequelize.transaction(async transaction => {
+      const savedQuiz = await AIQuiz.create({ ...quizValues, title: result.title || quizValues.title, numQuestions: questions.length, totalMarks: questions.totalMarks }, { transaction });
+      await aiQuizService.saveQuestions(savedQuiz.id, questions, { transaction, difficulty });
+      await document.update({ status: 'READY', content: result.metadata?.cleanTextPreview || null }, { transaction });
+      return savedQuiz;
     });
 
     // NOTE: quiz_assignments are created per-participant when trainer clicks "Send Quiz"
@@ -276,6 +246,7 @@ async function generateAIQuiz(req, res) {
 
     return res.status(201).json({
       success: true,
+      generationSource: result.generationSource,
       message: `Quiz "${quiz.title}" generated successfully with ${questions.length} questions`,
       quiz,
       generatedQuiz: result.quizOutput || {
@@ -302,7 +273,7 @@ async function generateAIQuiz(req, res) {
       try { fs.unlinkSync(filePath); } catch (_) {}
     }
     console.error('[generateAIQuiz] Error:', error.message);
-    return res.status(error.status || 500).json({ error: error.message });
+    return res.status(error.status || 500).json({ error: error.message, code: error.code });
   }
 }
 

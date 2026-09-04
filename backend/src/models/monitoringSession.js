@@ -93,6 +93,12 @@ const MonitoringSession = sequelize.define('MonitoringSession', {
     field: 'score',
     comment: 'Server-side authoritative cumulative malpractice score',
   },
+  metadata: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    field: 'metadata',
+    comment: 'Persisted active timing segments, browser counters and final audit summary',
+  },
   riskLevel: {
     type: DataTypes.ENUM('LOW', 'MEDIUM', 'HIGH', 'CRITICAL'),
     allowNull: false,

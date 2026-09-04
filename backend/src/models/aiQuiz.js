@@ -1,5 +1,6 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/db');
+const { QUIZ_DIFFICULTIES, normalizeQuizDifficulty } = require('../utils/quizDifficulty');
 
 const AIQuiz = sequelize.define('AIQuiz', {
   id: {
@@ -64,9 +65,10 @@ const AIQuiz = sequelize.define('AIQuiz', {
     field: 'num_questions'
   },
   difficulty: {
-    type: DataTypes.ENUM('EASY', 'MEDIUM', 'HARD', 'MIXED'),
+    type: DataTypes.ENUM(...QUIZ_DIFFICULTIES),
     allowNull: false,
-    defaultValue: 'MIXED'
+    defaultValue: 'MIXED',
+    set(value) { this.setDataValue('difficulty', normalizeQuizDifficulty(value)); }
   },
   // ── Lifecycle status ──
   status: {

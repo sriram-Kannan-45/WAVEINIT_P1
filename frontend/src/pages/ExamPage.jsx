@@ -29,6 +29,7 @@ export default function ExamPage() {
   return (
     <ProctorProvider>
       <ExamShell
+        user={user}
         sessionId={Number(sessionId)}
         onSubmitted={() => navigate(`/exam/${sessionId}/result`, { replace: true })}
       />

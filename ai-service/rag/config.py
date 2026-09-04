@@ -19,8 +19,8 @@ class RAGConfig:
     embedding_fallback_model = os.getenv("EMBEDDING_FALLBACK_MODEL", "intfloat/e5-large-v2")
     max_generation_retries = int(os.getenv("AI_JSON_RETRY_COUNT", "3"))
     faiss_index_dir = Path(os.getenv("FAISS_INDEX_DIR", "vector_store")).resolve()
-    raw_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    gemini_model = "gemini-2.5-pro" if "pro" in raw_model.lower() else "gemini-2.5-flash"
+    # Preserve configured model IDs; Flash Lite must not be coerced to Flash.
+    gemini_model = os.getenv("QUIZ_GENERATION_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")).strip()
     gemini_context_limit_chars = int(os.getenv("GEMINI_CONTEXT_LIMIT_CHARS", "150000"))
     gemini_api_key = os.getenv("GEMINI_API_KEY", "")
     env_file = ENV_FILE
@@ -37,8 +37,7 @@ class RAGConfig:
         return bool(self.gemini_api_key and self.gemini_api_key != "your-gemini-api-key-here")
 
     def require_gemini_key(self) -> None:
-        if not self.has_gemini_key():
-            raise RuntimeError(
-                f"GEMINI_API_KEY is required for RAG quiz generation. "
-                f"Set it in {self.env_file} and restart the AI service."
-            )
+        # Compatibility name: either configured live provider can serve RAG.
+        from services.ai_provider import has_key
+        if not has_key(self.gemini_api_key) and not has_key(os.getenv('GROQ_API_KEY')):
+            raise RuntimeError('A Gemini or Groq API key is required for quiz generation.')

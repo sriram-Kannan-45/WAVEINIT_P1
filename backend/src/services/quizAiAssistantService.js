@@ -1,11 +1,9 @@
 'use strict';
 
-const axios = require('axios');
+const { requestMentorText, reviewMentorText } = require('./mentorProvider');
 const logger = require('../utils/logger');
 const answerGuard = require('./aiAnswerGuard');
 
-const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
-const HTTP_TIMEOUT = process.env.AI_HTTP_TIMEOUT ? Number(process.env.AI_HTTP_TIMEOUT) : 4000;
 
 /**
  * Default AI mentor limit when the quiz has not configured one (ai_help_limit = 0).
@@ -32,7 +30,7 @@ function sanitiseQuizAiResponse(rawText) {
   // Hard rule: never allow a verbatim single-letter/option-style answer to stand alone.
   // Patterns: "the answer is B", "Answer: C", "correct option is A", "option 2", etc.
   const revealPatterns = [
-    /\bthe\s+(correct\s+)?answer\s+(is|should\s+be)\s*[:=\-]?\s*\(?\s*[A-Ca-c1-4]\)?/g,
+    /\bthe\s+(correct\s+)?answer\s+(is|should\s+be)\s*[:=\-]?\s*\(?\s*[A-Da-d1-4]\)?/g,
     /\banswer\s*[:=\-]\s*\(?\s*[A-Ca-c1-4]\)?/g,
     /\boption\s+[A-Ca-c1-4]\s+is\s+(the\s+)?(correct|right|answer)/g,
     /\bchoose\s+[A-Ca-c1-4]\b/g,
@@ -136,12 +134,11 @@ Reply now, as their mentor, within the limits above.`;
 }
 
 /**
- * Multi-tier AI mentor call (Gemini Direct -> Python microservice -> Local fallback).
+ * Multi-tier AI mentor call (shared Gemini/Groq provider with bounded live regeneration).
  *
- * Every tier's output passes through sanitiseQuizAiResponse and then
- * answerGuard.checkQuizResponse. A blocked reply falls through to the next tier
- * (regeneration); the local generator is safe by construction, so a leak can
- * never be the value returned to the participant.
+ * Every tier's output passes through the answer guard and independent live
+ * coaching review. A blocked reply falls through to the next tier
+ * (regeneration); exhausted attempts return an error instead of local text.
  *
  * @returns {Promise<{text: string, possibleLeak: boolean, reasons: string[], tier: string}>}
  */
@@ -155,7 +152,6 @@ async function callQuizAssist({
   // passed to buildQuizSystemPrompt, so they never enter model context.
   answerStrings = [],
 }) {
-  const apiKey = process.env.GEMINI_API_KEY;
   const prompt = buildQuizSystemPrompt({
     questionText,
     questionType,
@@ -172,7 +168,7 @@ async function callQuizAssist({
    * should be tried instead.
    */
   const guard = (text, tier) => {
-    const firstPass = sanitiseQuizAiResponse(text);
+    const firstPass = text;
     const verdict = answerGuard.checkQuizResponse({
       text: firstPass,
       options: Array.isArray(options) ? options : [],
@@ -190,127 +186,28 @@ async function callQuizAssist({
     return verdict.text ? verdict.text : null;
   };
 
-  // Tier 1: Direct Gemini API
-  if (apiKey) {
-    try {
-      const geminiRes = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-        {
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.2,
-            maxOutputTokens: 600,
-          },
-        },
-        { timeout: HTTP_TIMEOUT, headers: { 'Content-Type': 'application/json' } }
-      );
-
-      const text = geminiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (text && typeof text === 'string' && text.trim()) {
-        const safe = guard(text.trim(), 'gemini');
-        if (safe) return { text: safe, possibleLeak, reasons: leakReasons, tier: 'gemini' };
-      }
-    } catch (err) {
-      logger.warn('[QuizAiAssistant] Gemini direct call failed, falling back', { error: err.message });
-    }
+  const deadline = Date.now() + 18000;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (deadline - Date.now() < 1000) throw Object.assign(new Error('AI guidance timed out. Please retry.'), {status:503,code:'AI_GUIDANCE_TIMEOUT'});
+    const remote = await requestMentorText(prompt + (attempt ? '\nYour previous response was rejected. Give a fresh conceptual hint without identifying any answer, final result, or complete solution. Do not require waiting or prior attempts.' : ''), {timeout: deadline - Date.now()});
+    if (!remote?.text || !remote.provider) throw Object.assign(new Error('The AI provider returned no usable guidance. Please retry.'), {status: 503, code: 'AI_INVALID_RESPONSE'});
+    const safe = guard(remote.text, remote.provider);
+    if (safe && deadline - Date.now() >= 1000 && await reviewMentorText(prompt, safe, {timeout:deadline - Date.now()})) return {text: safe, possibleLeak, reasons: leakReasons, tier: remote.provider};
+    possibleLeak = true;
+    leakReasons.push('guidance_rejected');
   }
-
-  // Tier 2: Python microservice fallback
-  try {
-    const response = await axios.post(
-      `${AI_SERVICE_URL}/quiz/assist`,
-      {
-        question_text: questionText,
-        question_type: questionType,
-        options: Array.isArray(options) ? options : [],
-        question: question || 'Can you help me think through this question?',
-        history: history || '',
-      },
-      { timeout: HTTP_TIMEOUT, headers: { 'Content-Type': 'application/json' } }
-    );
-    const text = response.data?.assist;
-    if (text && typeof text === 'string' && text.trim()) {
-      const safe = guard(text.trim(), 'ai-service');
-      if (safe) return { text: safe, possibleLeak, reasons: leakReasons, tier: 'ai-service' };
-    }
-  } catch (err) {
-    logger.warn('[QuizAiAssistant] Python AI service call failed', { error: err.message });
-  }
-
-  // Tier 3: Local rule-based Socratic fallback (offline safety net)
-  const localOutput = generateLocalQuizGuidance({ questionText, questionType, question });
-  const safeLocal = guard(localOutput, 'local');
-  return {
-    text: safeLocal || 'Let us take a step back. Read the question once more and tell me, in your own words, what it is asking. I will guide you from there.',
-    possibleLeak,
-    reasons: leakReasons,
-    tier: 'local',
-  };
+  throw Object.assign(new Error('The AI could not provide guidance without revealing the assessment answer. Please rephrase your question.'), {status: 502, code: 'AI_GUIDANCE_REJECTED'});
 }
 
-/**
- * Local offline rule-based quiz guidance (no-answer, concept + next-step).
- */
-function generateLocalQuizGuidance({ questionText, questionType, question }) {
-  const qLower = (question || '').toLowerCase().trim();
-
-  if (
-    qLower.includes('purila') ||
-    qLower.includes('puriyala') ||
-    qLower.includes('therila') ||
-    qLower.includes('tamil') ||
-    qLower.includes('solli thanga')
-  ) {
-    return `Parava illa, simple ah yosinga.
-
-Question la first line ah thirumba padinga, adhu enna kekurathu nu ungal soththa vaarthai la sollunga.
-
-Apram choices la enna difference irukku nu paarunga. Rendu choices similar ah irundha, edhu vera category la varudhu nu yosinga.
-
-Question ah ungal soththa vaarthai la rewrite panni enkitta sollunga, naan adutha step ku vazhi kaatturen.`;
-  }
-
-  if (
-    qLower.includes('answer') ||
-    qLower.includes('tell me the answer') ||
-    qLower.includes('which option') ||
-    qLower.includes('give me the answer') ||
-    qLower.includes('sollunga') ||
-    qLower.includes('solution')
-  ) {
-    return `I can't tell you which one it is during the assessment — but let's get you there.
-
-Read the question again and name the concept it is testing. One sentence is enough.
-
-Now think about what that concept says must be true. That is the test you apply to each choice yourself.
-
-Tell me how you understand the question in your own words, and I will guide you from there.`;
-  }
-
-  return `Let's break this down so you can find it yourself.
-
-Put the question in your own words first, and be clear about what outcome it is asking you to identify.
-
-Next, name the rule or definition behind it. Most quiz questions turn on one.
-
-Then work out what that rule requires, and hold each choice up against it in turn.
-
-Share your understanding of the question with me and I will help you sharpen the reasoning.`;
-}
-
-/**
- * Builds the participant's prior exchanges with the mentor for this question,
- * truncated to keep the prompt bounded.
- */
 async function loadQuizHistory({ attemptId, questionId, participantId, noAnswerFilter }) {
   const { QuizAiHelp } = require('../models');
   const helps = await QuizAiHelp.findAll({
     where: { attemptId, questionId, participantId },
-    order: [['createdAt', 'ASC']],
+    order: [['id', 'DESC']],
     attributes: ['prompt', 'response'],
     limit: 8,
   });
-  return helps
+  return helps.reverse()
     .map((h) => `Student: ${h.prompt}\nMentor: ${h.response}`)
     .join('\n\n')
     .slice(0, 4000);
@@ -355,11 +252,16 @@ async function grantQuizAssist({ attemptId, questionId, participantId, question 
       const s = String(v).trim();
       if (s) answerStrings.push(s);
     };
-    collect(keyRow?.correctAnswer);
+    // MCQ keys are stored as zero-based indices. Resolve them to the actual
+    // answer text for the guard; an index such as "1" cannot catch "50 km/h".
+    const options = Array.isArray(questionRow.options) ? questionRow.options : [];
+    const key = String(keyRow?.correctAnswer ?? '').trim();
+    if (['MCQ', 'TRUE_FALSE'].includes(questionRow.questionType) && /^[0-3]$/.test(key) && options[Number(key)] != null) collect(options[Number(key)]);
+    else collect(keyRow?.correctAnswer);
     collect(keyRow?.acceptableAnswers);
     collect(keyRow?.pairs);
   } catch (err) {
-    logger.warn('[QuizAiAssistant] Could not load answer key for leak check', { error: err.message });
+    throw Object.assign(new Error('The mentor could not load this question safely. Please retry.'), {status: 503, cause: err});
   }
 
   const quiz = await AIQuiz.findByPk(attempt.quizId, {
@@ -383,6 +285,15 @@ async function grantQuizAssist({ attemptId, questionId, participantId, question 
 
   const history = await loadQuizHistory({ attemptId, questionId, participantId });
 
+  // Do not hold an attempt row lock while waiting on an external AI provider.
+  // Submission and another tab must remain responsive; recheck below on save.
+  const assist = await callQuizAssist({
+    questionText: questionRow?.questionText || '',
+    questionType: questionRow?.questionType || 'MCQ',
+    options: Array.isArray(questionRow?.options) ? questionRow.options : [],
+    question: String(question || '').slice(0, 4000), history, answerStrings,
+  });
+
   const result = await sequelize.transaction(async (t) => {
     const lockedAttempt = await QuizAttempt.findOne({
       where: { id: attemptId, participantId, status: 'IN_PROGRESS' },
@@ -399,19 +310,10 @@ async function grantQuizAssist({ attemptId, questionId, participantId, question 
       throw err;
     }
 
-    const assist = await callQuizAssist({
-      questionText: questionRow?.questionText || '',
-      questionType: questionRow?.questionType || 'MCQ',
-      options: Array.isArray(questionRow?.options) ? questionRow.options : [],
-      question: String(question || '').slice(0, 4000),
-      history,
-      answerStrings,
-    });
-
     const safeCoachingText = assist.text;
     const possibleLeak = Boolean(assist.possibleLeak);
 
-    const nextUsage = lockedAttempt.aiHelpUsage + 1;
+    const nextUsage = (Number(lockedAttempt.aiHelpUsage) || 0) + 1;
     await lockedAttempt.update({ aiHelpUsage: nextUsage }, { transaction: t });
 
     if (safeCoachingText) {
@@ -438,12 +340,13 @@ async function grantQuizAssist({ attemptId, questionId, participantId, question 
       });
     }
 
-    return { text: safeCoachingText, used: nextUsage, possibleLeak };
+    return { text: safeCoachingText, used: nextUsage, possibleLeak, provider: assist.tier };
   });
 
   const remaining = unlimited ? -1 : Math.max(0, limit - result.used);
   return {
     response: result.text,
+    provider: result.provider,
     used: result.used,
     limit,
     unlimited,
@@ -486,6 +389,5 @@ module.exports = {
   sanitiseQuizAiResponse,
   buildQuizSystemPrompt,
   callQuizAssist,
-  generateLocalQuizGuidance,
   DEFAULT_AI_MENTOR_LIMIT,
 };

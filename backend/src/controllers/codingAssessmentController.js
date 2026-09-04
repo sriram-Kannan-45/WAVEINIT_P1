@@ -2094,6 +2094,9 @@ exports.aiAssist = async (req, res) => {
   try {
     const { attemptId, problemId, code, language, question, level, action, errorContext } = req.body;
     if (!attemptId || !problemId) return fail(res, 400, 'attemptId and problemId are required');
+    for (const [name, value, max] of [['question', question, 4000], ['code', code, 32000], ['errorContext', errorContext, 8000], ['language', language, 50], ['action', action, 80]]) {
+      if (value != null && (typeof value !== 'string' || value.length > max)) return fail(res, 422, `${name} must be text up to ${max} characters`);
+    }
 
     const service = require('../services/codingAiAssistantService');
     const result = await service.grantAssist({
@@ -2109,7 +2112,7 @@ exports.aiAssist = async (req, res) => {
     });
     ok(res, result);
   } catch (err) {
-    if (err.status) return fail(res, err.status, err.message);
+    if (err.status) return res.status(err.status).json({error:err.message,code:err.code});
     logger.error('AI assist error', { error: err.message });
     fail(res, 500, err.message);
   }

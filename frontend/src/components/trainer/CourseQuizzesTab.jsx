@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { SingleAttemptProctoringModal } from '../../proctoring/components/TrainerMonitoringReport'
 import { API, API_BASE } from '../../api/api'
+import { QUIZ_DIFFICULTY_OPTIONS } from '../../constants/quizDifficulty'
 import { useToast } from '../Toast'
 import { useConfirm } from '../ui/AlertModal'
 import {
@@ -1894,7 +1895,7 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
   // Prompt Fields
   const [promptText, setPromptText] = useState('')
   const [questionCount, setQuestionCount] = useState(10)
-  const [difficulty, setDifficulty] = useState('Medium')
+  const [difficulty, setDifficulty] = useState('MEDIUM')
   const [timeLimit, setTimeLimit] = useState(30)
   const [generating, setGenerating] = useState(false)
 
@@ -1933,7 +1934,7 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
         throw new Error(data.error || data.details || data.message || 'Failed to generate quiz')
       }
 
-      success('AI Quiz Generated Successfully!')
+      success('AI quiz generated and verified successfully!')
       onGenerated?.()
       onClose()
     } catch (err) {
@@ -1958,6 +1959,8 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
     formData.append('questionCount', questionCount)
     formData.append('difficulty', difficulty)
     formData.append('timeLimit', timeLimit)
+    formData.append('questionType', 'MCQ')
+    if (promptText.trim()) formData.append('prompt', promptText.trim())
 
     try {
       const response = await fetch(API.AI_QUIZ.GENERATE_FROM_DOCUMENT, {
@@ -2106,7 +2109,7 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
                 AI is generating your quiz questions...
               </div>
               <div style={{ fontSize: 13, color: '#64748B', marginTop: 4, maxWidth: 380, lineHeight: 1.5 }}>
-                Creating question stems, distractors, correct answers, and explanations. This usually takes 10–25 seconds.
+                Generating and checking each question. If the AI needs a short pause, we’ll wait and continue automatically. Please keep this window open.
               </div>
             </div>
           </div>
@@ -2159,10 +2162,7 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
                   onChange={(e) => setDifficulty(e.target.value)}
                   style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5 }}
                 >
-                  <option value="Easy">Easy</option>
-                  <option value="Medium">Medium</option>
-                  <option value="Hard">Hard</option>
-                  <option value="Mixed">Mixed</option>
+                  {QUIZ_DIFFICULTY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
               </div>
 
@@ -2218,7 +2218,7 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
                 type="file"
                 ref={fileInputRef}
                 onChange={(e) => setFile(e.target.files[0] || null)}
-                accept=".pdf,.docx,.txt,.md"
+                accept=".pdf,.docx,.pptx,.txt"
                 style={{ display: 'none' }}
               />
 
@@ -2240,7 +2240,7 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
                 ) : (
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>
-                      Click to upload document (PDF, Word, Text)
+                      Click to upload document (PDF, Word, PowerPoint, Text)
                     </div>
                     <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 2 }}>
                       AI will analyze the file and generate matching questions
@@ -2249,6 +2249,13 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
                 )}
               </div>
             </div>
+
+            <label style={{ display: 'block', marginBottom: 16, fontSize: 13 }}>
+              Topic and requirements (optional)
+              <textarea value={promptText} onChange={e => setPromptText(e.target.value)}
+                placeholder="Choose what to cover from this material, or leave blank to cover its key concepts."
+                rows={3} style={{ width: '100%', marginTop: 6, padding: 10, border: '1px solid #CBD5E1', borderRadius: 8, boxSizing: 'border-box' }} />
+            </label>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
               <div>
@@ -2276,10 +2283,7 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
                   onChange={(e) => setDifficulty(e.target.value)}
                   style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5 }}
                 >
-                  <option value="Easy">Easy</option>
-                  <option value="Medium">Medium</option>
-                  <option value="Hard">Hard</option>
-                  <option value="Mixed">Mixed</option>
+                  {QUIZ_DIFFICULTY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
               </div>
 

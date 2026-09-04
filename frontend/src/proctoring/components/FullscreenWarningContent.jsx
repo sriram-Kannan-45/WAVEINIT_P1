@@ -3,7 +3,7 @@ export function FullscreenWarningTitle({ warnings }) {
 }
 
 export function FullscreenWarningDescription() {
-  return <>You exited fullscreen mode. Please return to fullscreen to continue your assessment.
+  return <>You left the assessment tab, window, or fullscreen mode. Please return to fullscreen to continue your assessment.
     This incident is recorded in your proctoring audit. The monitoring service applies the
     shared warning allowance and scoring rules when calculating your report.</>
 }

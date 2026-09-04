@@ -39,7 +39,7 @@ export const participantChatbotService = {
           headers,
           body: JSON.stringify(payload),
         },
-        15000
+        25000
       );
 
       if (!response.ok) {
@@ -50,16 +50,7 @@ export const participantChatbotService = {
       return await response.json();
     } catch (err) {
       console.warn('Chatbot assistant request error:', err.message);
-      // Return safe fallback guidance
-      return {
-        success: false,
-        reply: "I'm having trouble connecting right now, but you can use the quick actions below:",
-        actionButtons: [
-          { label: 'Open My Courses', action: 'navigate', route: '/participant', tab: 'myCourses' },
-          { label: 'Open My Profile', action: 'navigate', route: '/my-profile' },
-        ],
-        suggestions: ['What should I do next?', 'How do I scan the QR code?'],
-      };
+      throw err;
     }
   },
 };

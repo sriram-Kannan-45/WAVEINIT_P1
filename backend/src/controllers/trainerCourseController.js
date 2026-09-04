@@ -1446,133 +1446,10 @@ async function rejectParticipant(req, res) {
 }
 
 // GET /api/trainer/courses/:courseId/available-participants
-async function getAvailableParticipants(req, res) {
-  try {
-    const course = await loadOwnedCourse(req, res, req.params.courseId);
-    if (!course) return;
 
-    // Find all already enrolled/pending participant IDs for this course / training
-    const existingEnrollments = await Enrollment.findAll({
-      where: {
-        [Op.or]: [
-          { courseId: course.id },
-          ...(course.trainingProgramId ? [{ trainingId: course.trainingProgramId }] : [])
-        ],
-        status: { [Op.in]: ['ENROLLED', 'PENDING'] }
-      },
-      attributes: ['participantId']
-    });
-    const enrolledParticipantIds = existingEnrollments.map(e => e.participantId);
-
-    // Fetch approved participants who are NOT already enrolled in this course
-    const approvedParticipants = await User.findAll({
-      where: {
-        role: 'PARTICIPANT',
-        status: 'APPROVED',
-        isDeleted: false,
-        id: { [Op.notIn]: enrolledParticipantIds.length > 0 ? enrolledParticipantIds : [0] }
-      },
-      attributes: ['id', 'name', 'email', 'phone', 'created_at'],
-      order: [['name', 'ASC']]
-    });
-
-    const out = approvedParticipants.map(p => ({
-      id: p.id,
-      participantId: p.id,
-      userId: p.id,
-      name: p.name || 'Unnamed Participant',
-      email: p.email || '',
-      phone: p.phone || '',
-      status: 'APPROVED',
-      created_at: p.createdAt || p.dataValues?.created_at
-    }));
-
-    res.json({ success: true, participants: out, total: out.length });
-  } catch (e) {
-    console.error('getAvailableParticipants error:', e.message);
-    res.status(500).json({ error: 'Failed to fetch available participants' });
-  }
-}
 
 // POST /api/trainer/courses/:courseId/participants
-async function addParticipant(req, res) {
-  try {
-    const course = await loadOwnedCourse(req, res, req.params.courseId);
-    if (!course) return;
 
-    const { participantIds, participantId, participant_id, userId, userIds } = req.body || {};
-    let rawIds = [];
-    if (Array.isArray(participantIds)) rawIds.push(...participantIds);
-    if (Array.isArray(userIds)) rawIds.push(...userIds);
-    if (participantId) rawIds.push(participantId);
-    if (participant_id) rawIds.push(participant_id);
-    if (userId) rawIds.push(userId);
-
-    const targetIds = Array.from(new Set(rawIds.map(id => parseInt(id, 10)).filter(Boolean)));
-
-    if (targetIds.length === 0) {
-      return res.status(400).json({ error: 'participantId is required' });
-    }
-
-    // Verify all selected users are approved participants
-    const approvedUsers = await User.findAll({
-      where: {
-        id: targetIds,
-        role: 'PARTICIPANT',
-        status: 'APPROVED',
-        isDeleted: false
-      }
-    });
-
-    if (approvedUsers.length === 0) {
-      return res.status(400).json({ error: 'No valid approved participants found to invite.' });
-    }
-
-    const trainingId = course.trainingProgramId || null;
-    let enrolledCount = 0;
-
-    for (const user of approvedUsers) {
-      const [enrollment, created] = await Enrollment.findOrCreate({
-        where: {
-          participantId: user.id,
-          courseId: course.id
-        },
-        defaults: {
-          participantId: user.id,
-          courseId: course.id,
-          trainingId: trainingId,
-          status: 'ENROLLED',
-          progressPercent: 0
-        }
-      });
-
-      if (!created && enrollment.status !== 'ENROLLED') {
-        await enrollment.update({ status: 'ENROLLED', trainingId: trainingId || enrollment.trainingId });
-      }
-
-      enrolledCount++;
-
-      // Send notification
-      NotificationService.createNotification({
-        userId: user.id,
-        message: `You have been invited and enrolled in course "${course.title}".`,
-        type: 'ENROLLMENT',
-        actionUrl: `/participant`,
-        relatedEntityId: course.id,
-        relatedEntityType: 'Course'
-      }, req.app.get('io')).catch(() => {});
-    }
-
-    res.json({
-      success: true,
-      message: `Successfully invited ${enrolledCount} participant(s) to "${course.title}".`,
-      enrolledCount
-    });
-  } catch (e) {
-    console.error('addParticipant error:', e.message);
-    res.status(500).json({ error: 'Failed to invite participants' });
-  }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ANALYTICS
@@ -1924,14 +1801,17 @@ function parseLessonsToStructure(courseTitle, lessons) {
     const itemStatus = l.status || 'PENDING';
 
     if (/^module(\s+\d+)?:\s*/i.test(rawTitle)) {
-      const cleanTitle = rawTitle.replace(/^module(\s+\d+)?:\s*/i, '').trim();
+      const match = rawTitle.match(/^module\s*(\d+)?[:.-]?\s*(.*)$/i);
+      const modNum = match && match[1] ? match[1] : (modules.length + 1);
+      const coreTitle = match && match[2] ? match[2].trim() : rawTitle.replace(/^module(\s+\d+)?:\s*/i, '').trim();
+      const displayTitle = `Module ${modNum}: ${coreTitle}`;
       currentModule = {
         id: l.id,
-        title: cleanTitle || rawTitle,
+        title: displayTitle,
         description: desc,
         duration: duration,
         status: itemStatus,
-        expanded: true,
+        expanded: modules.length === 0,
         subModules: [],
       };
       modules.push(currentModule);
@@ -1947,7 +1827,7 @@ function parseLessonsToStructure(courseTitle, lessons) {
         topics: [],
       };
       if (!currentModule) {
-        currentModule = { id: l.id, title: 'Main Module', description: '', duration: '', status: itemStatus, expanded: true, subModules: [] };
+        currentModule = { id: l.id, title: 'Module 1: Main Module', description: '', duration: '', status: itemStatus, expanded: true, subModules: [] };
         modules.push(currentModule);
       }
       currentModule.subModules.push(currentSubModule);
@@ -1961,7 +1841,7 @@ function parseLessonsToStructure(courseTitle, lessons) {
         status: itemStatus,
       };
       if (!currentModule) {
-        currentModule = { id: l.id, title: 'Main Module', description: '', duration: '', status: itemStatus, expanded: true, subModules: [] };
+        currentModule = { id: l.id, title: 'Module 1: Main Module', description: '', duration: '', status: itemStatus, expanded: true, subModules: [] };
         modules.push(currentModule);
       }
       if (!currentSubModule) {
@@ -1983,7 +1863,14 @@ function parseLessonsToStructure(courseTitle, lessons) {
     }
   }
 
-  return { courseTitle, modules };
+  let totalHoursSum = 0;
+  for (const m of modules) {
+    const match = (m.duration || '').match(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)/i);
+    if (match) totalHoursSum += parseFloat(match[1]);
+  }
+  const estimatedDuration = totalHoursSum > 0 ? `${totalHoursSum} Hours` : '';
+
+  return { courseTitle, estimatedDuration, modules };
 }
 
 // Helper: save structured JSON to database as Lessons
@@ -1992,15 +1879,20 @@ async function saveStructureToDatabase(courseId, trainerId, structure, replaceEx
     throw new Error('Invalid structure format: modules must be an array');
   }
 
+  return sequelize.transaction(async transaction => {
   if (replaceExisting) {
-    await Lesson.destroy({ where: { courseId } });
+    await Lesson.destroy({ where: { courseId }, transaction });
   }
 
   let orderIndex = 0;
   const createdLessons = [];
 
-  for (const m of structure.modules) {
-    const modTitle = `Module: ${m.title || 'Untitled Module'}`;
+  for (let mIdx = 0; mIdx < structure.modules.length; mIdx++) {
+    const m = structure.modules[mIdx];
+    const cleanModName = (m.title || 'Untitled Module')
+      .replace(/^(?:module\s*\d*[:.-]?\s*)+/i, '')
+      .trim();
+    const modTitle = `Module ${mIdx + 1}: ${cleanModName}`;
     const modDesc = m.description || '';
     const modContent = m.duration ? `Estimated Duration: ${m.duration}` : '';
     
@@ -2011,11 +1903,14 @@ async function saveStructureToDatabase(courseId, trainerId, structure, replaceEx
       description: modDesc || null,
       content: modContent || null,
       orderIndex: orderIndex++,
-    });
+    }, {transaction});
     createdLessons.push(modLesson);
 
     for (const sm of (m.subModules || [])) {
-      const smTitle = `Sub Module: ${sm.title || 'Untitled Sub Module'}`;
+      const cleanSmName = (sm.title || 'Untitled Sub Module')
+        .replace(/^(?:sub\s*module\s*\d*[:.-]?\s*)+/i, '')
+        .trim();
+      const smTitle = `Sub Module: ${cleanSmName}`;
       const smContent = sm.duration ? `Estimated Duration: ${sm.duration}` : '';
       
       const smLesson = await Lesson.create({
@@ -2025,11 +1920,14 @@ async function saveStructureToDatabase(courseId, trainerId, structure, replaceEx
         description: null,
         content: smContent || null,
         orderIndex: orderIndex++,
-      });
+      }, {transaction});
       createdLessons.push(smLesson);
 
       for (const t of (sm.topics || [])) {
-        const tTitle = `Topic: ${t.title || 'Untitled Topic'}`;
+        const cleanTName = (t.title || 'Untitled Topic')
+          .replace(/^(?:topic\s*\d*[:.-]?\s*)+/i, '')
+          .trim();
+        const tTitle = `Topic: ${cleanTName}`;
         const tDesc = t.description || '';
         const tContent = t.duration ? `Estimated Duration: ${t.duration}` : '';
 
@@ -2040,13 +1938,14 @@ async function saveStructureToDatabase(courseId, trainerId, structure, replaceEx
           description: tDesc || null,
           content: tContent || null,
           orderIndex: orderIndex++,
-        });
+        }, {transaction});
         createdLessons.push(tLesson);
       }
     }
   }
 
   return createdLessons;
+  });
 }
 
 // POST /api/trainer/courses/:courseId/generate-structure
@@ -2071,7 +1970,7 @@ async function generateCourseStructure(req, res) {
     }
 
     console.log(`[STRUCTURE] 1. Trainer Prompt received for Course #${course.id} ("${course.title}"): "${payload.prompt}"`);
-    console.log('[STRUCTURE] 2. Calling Gemini AI model via aiService...');
+    console.log('[STRUCTURE] 2. Generating course structure via aiService...');
 
     const result = await aiService.generateCourseStructure(payload);
     
@@ -2081,10 +1980,10 @@ async function generateCourseStructure(req, res) {
     }
 
     if (!result || !result.structure || !Array.isArray(result.structure.modules) || result.structure.modules.length === 0) {
-      throw new Error('Gemini AI returned an empty or invalid course structure.');
+      throw new Error('AI service returned an empty or invalid course structure.');
     }
 
-    console.log(`[STRUCTURE] 3. Gemini response received. Parsed ${result.structure.modules.length} modules, estimated duration: "${result.structure.estimatedDuration || 'N/A'}"`);
+    console.log(`[STRUCTURE] 3. Structure generated successfully. Parsed ${result.structure.modules.length} modules, estimated duration: "${result.structure.estimatedDuration || 'N/A'}"`);
     console.log('[STRUCTURE] 4. Saving generated structure to MySQL database...');
 
     const savedLessons = await saveStructureToDatabase(
@@ -2094,6 +1993,12 @@ async function generateCourseStructure(req, res) {
       replaceExisting !== false
     );
     console.log(`[STRUCTURE] 5. Database save result: ${savedLessons.length} lessons persisted successfully in MySQL.`);
+
+    // If course title was generic, update it to the specific courseTitle generated by AI
+    if (result.structure?.courseTitle && (course.title === 'Untitled Course' || course.title === 'New Course' || !course.title.trim())) {
+      course.title = result.structure.courseTitle;
+      await course.save();
+    }
 
     res.json({
       success: true,
@@ -2106,7 +2011,7 @@ async function generateCourseStructure(req, res) {
       try { fs.unlinkSync(req.file.path); } catch (_) {}
     }
     console.error('[STRUCTURE] ❌ generateCourseStructure failed:', e.message);
-    res.status(500).json({ error: `AI generation failed: ${e.message}` });
+    res.status(e.status || 500).json({ error: `AI generation failed: ${e.message}`, code:e.code });
   }
 }
 

@@ -1,0 +1,19 @@
+{
+  "checkedAt": "2026-09-04T13:03:28.843Z",
+  "configuration": {
+    "geminiConfigured": true,
+    "groqConfigured": true
+  },
+  "checks": {
+    "gemini": {
+      "success": false,
+      "status": 429,
+      "reason": "Live provider rejected the request"
+    },
+    "forcedGeminiQuota": {
+      "success": true,
+      "provider": "groq",
+      "responseId": "chatcmpl-48ae693c-ae9d-4efe-aa77-3eda6a293b5c"
+    }
+  }
+}

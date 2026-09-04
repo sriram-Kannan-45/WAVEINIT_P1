@@ -1,0 +1,116 @@
+{
+  "source": "verified-math",
+  "topic": "Speed, Distance, and Time",
+  "questions": [
+    {
+      "question": "Which relationship gives average speed from total distance and total travel time?",
+      "options": [
+        "Distance / Time",
+        "Distance × Time",
+        "Time / Distance",
+        "Distance + Time"
+      ],
+      "correctAnswer": "Distance / Time",
+      "explanation": "Average speed is total distance divided by total travel time."
+    },
+    {
+      "question": "At constant speed, how can the distance travelled during a known time be calculated?",
+      "options": [
+        "Speed / Time",
+        "Speed × Time",
+        "Time / Speed",
+        "Speed + Time"
+      ],
+      "correctAnswer": "Speed × Time",
+      "explanation": "Distance equals constant speed multiplied by elapsed time."
+    },
+    {
+      "question": "Which expression gives the travel time when distance and constant speed are known?",
+      "options": [
+        "Distance × Speed",
+        "Speed / Distance",
+        "Distance / Speed",
+        "Distance + Speed"
+      ],
+      "correctAnswer": "Distance / Speed",
+      "explanation": "Travel time is the distance divided by the constant speed."
+    },
+    {
+      "question": "A bus travels 150 km in 3 hours. What is its average speed?",
+      "options": [
+        "30 km/h",
+        "45 km/h",
+        "50 km/h",
+        "60 km/h"
+      ],
+      "correctAnswer": "50 km/h",
+      "explanation": "Average speed = 150 ÷ 3 = 50 km/h."
+    },
+    {
+      "question": "A cyclist rides at 12 km/h for 2.5 hours. How far does the cyclist travel?",
+      "options": [
+        "30 km",
+        "24 km",
+        "4.8 km",
+        "36 km"
+      ],
+      "correctAnswer": "30 km",
+      "explanation": "Distance = 12 × 2.5 = 30 km."
+    },
+    {
+      "question": "A car travels 210 km at a constant 70 km/h. How long does the journey take?",
+      "options": [
+        "2 hours",
+        "3 hours",
+        "4 hours",
+        "5 hours"
+      ],
+      "correctAnswer": "3 hours",
+      "explanation": "Time = 210 ÷ 70 = 3 hours."
+    },
+    {
+      "question": "Convert a speed of 72 km/h into metres per second.",
+      "options": [
+        "10 m/s",
+        "15 m/s",
+        "25 m/s",
+        "20 m/s"
+      ],
+      "correctAnswer": "20 m/s",
+      "explanation": "One kilometre is 1000 metres and one hour is 3600 seconds, so 72 × 1000 ÷ 3600 = 20 m/s."
+    },
+    {
+      "question": "A runner moves at 5 m/s. What is the equivalent speed in km/h?",
+      "options": [
+        "12 km/h",
+        "18 km/h",
+        "20 km/h",
+        "25 km/h"
+      ],
+      "correctAnswer": "18 km/h",
+      "explanation": "Multiply metres per second by 3600 ÷ 1000: 5 × 3.6 = 18 km/h."
+    },
+    {
+      "question": "A train moves at 90 km/h for 20 minutes. What distance does it cover?",
+      "options": [
+        "15 km",
+        "20 km",
+        "30 km",
+        "45 km"
+      ],
+      "correctAnswer": "30 km",
+      "explanation": "Convert minutes to hours: 20 ÷ 60 = one third of an hour. Distance = 90 × one third = 30 km."
+    },
+    {
+      "question": "A taxi travels 60 km in one hour, stops for one hour, then travels 40 km in one hour. What is its average speed for the whole trip, including the stop, rounded to two decimals?",
+      "options": [
+        "50 km/h",
+        "30 km/h",
+        "40 km/h",
+        "33.33 km/h"
+      ],
+      "correctAnswer": "33.33 km/h",
+      "explanation": "Use total distance and the entire elapsed time, including the stop: (60 + 40) ÷ 3 = 33.33 km/h rounded to two decimals."
+    }
+  ]
+}

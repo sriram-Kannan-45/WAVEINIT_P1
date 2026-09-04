@@ -1,0 +1,99 @@
+{
+  "checkedAt": "2026-09-04T15:53:42.670Z",
+  "section": "document",
+  "result": {
+    "questions": [
+      {
+        "question": "Which pigment is responsible for absorbing light energy during photosynthesis?",
+        "questionText": "Which pigment is responsible for absorbing light energy during photosynthesis?",
+        "questionType": "MCQ",
+        "options": [
+          "Chlorophyll",
+          "Carotene",
+          "Xanthophyll",
+          "Anthocyanin"
+        ],
+        "correctAnswer": "0",
+        "correctOption": 0,
+        "explanation": "Chlorophyll is the primary pigment that captures light energy in the thylakoid membranes, initiating the light‑dependent reactions of photosynthesis.",
+        "difficulty": "EASY",
+        "marks": 1,
+        "topic": "Photosynthesis",
+        "bloomsLevel": null,
+        "order": 0
+      },
+      {
+        "question": "In which part of the chloroplast do the light‑dependent reactions that produce ATP and NADPH occur?",
+        "questionText": "In which part of the chloroplast do the light‑dependent reactions that produce ATP and NADPH occur?",
+        "questionType": "MCQ",
+        "options": [
+          "Thylakoid membranes",
+          "Stroma",
+          "Outer membrane",
+          "Inner membrane"
+        ],
+        "correctAnswer": "0",
+        "correctOption": 0,
+        "explanation": "The light‑dependent reactions take place in the thylakoid membranes, where chlorophyll absorbs light and the energy is used to generate ATP and NADPH.",
+        "difficulty": "EASY",
+        "marks": 1,
+        "topic": "Photosynthesis",
+        "bloomsLevel": null,
+        "order": 0
+      }
+    ],
+    "title": "Quiz: Photosynthesis",
+    "difficulty": "EASY",
+    "generationSource": "ai-verified",
+    "quizOutput": {
+      "title": "Quiz: Photosynthesis",
+      "difficulty": "EASY",
+      "totalQuestions": 2,
+      "questions": [
+        {
+          "question": "Which pigment is responsible for absorbing light energy during photosynthesis?",
+          "questionText": "Which pigment is responsible for absorbing light energy during photosynthesis?",
+          "questionType": "MCQ",
+          "options": [
+            "Chlorophyll",
+            "Carotene",
+            "Xanthophyll",
+            "Anthocyanin"
+          ],
+          "correctAnswer": "0",
+          "correctOption": 0,
+          "explanation": "Chlorophyll is the primary pigment that captures light energy in the thylakoid membranes, initiating the light‑dependent reactions of photosynthesis.",
+          "difficulty": "EASY",
+          "marks": 1,
+          "topic": "Photosynthesis",
+          "bloomsLevel": null,
+          "order": 0
+        },
+        {
+          "question": "In which part of the chloroplast do the light‑dependent reactions that produce ATP and NADPH occur?",
+          "questionText": "In which part of the chloroplast do the light‑dependent reactions that produce ATP and NADPH occur?",
+          "questionType": "MCQ",
+          "options": [
+            "Thylakoid membranes",
+            "Stroma",
+            "Outer membrane",
+            "Inner membrane"
+          ],
+          "correctAnswer": "0",
+          "correctOption": 0,
+          "explanation": "The light‑dependent reactions take place in the thylakoid membranes, where chlorophyll absorbs light and the energy is used to generate ATP and NADPH.",
+          "difficulty": "EASY",
+          "marks": 1,
+          "topic": "Photosynthesis",
+          "bloomsLevel": null,
+          "order": 0
+        }
+      ]
+    },
+    "metadata": {
+      "cleanTextPreview": "Today we studied photosynthesis in plants. Chlorophyll absorbs light energy. Plants use carbon dioxide and water to produce glucose and release oxygen. Light-dependent reactions occur in thylakoid membranes and produce ATP and NADPH. The Calvin cycle occurs in the stroma and uses ATP and NADPH to fix carbon dioxide into sugars. Light intensity, carbon dioxide concentration and temperature can limit the rate of photosynthesis.",
+      "topic": "Photosynthesis",
+      "generationSource": "ai-verified"
+    }
+  }
+}

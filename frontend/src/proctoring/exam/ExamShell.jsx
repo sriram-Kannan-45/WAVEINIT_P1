@@ -29,11 +29,11 @@ import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ui/AlertModal';
 import useExamTimer from '../hooks/useExamTimer';
 import useAntiCheat from '../hooks/useAntiCheat';
-import useTabVisibility from '../hooks/useTabVisibility';
-import useFullscreen from '../hooks/useFullscreen';
 import useNetworkStatus from '../hooks/useNetworkStatus';
-import useProctoringMedia from '../hooks/useProctoringMedia';
 import useDeviceFingerprint from '../hooks/useDeviceFingerprint';
+import ExamProctorShell from '../components/ExamProctorShell';
+import UnifiedMonitoringWidget from '../../components/monitoring/UnifiedMonitoringWidget';
+import monitoringClient from '../engine/MonitoringEngineClient';
 
 import TopBar from './TopBar';
 import QuestionNavigator from './QuestionNavigator';
@@ -46,7 +46,7 @@ import { WifiOff, Lock } from 'lucide-react';
 
 const AUTOSAVE_MS = 8_000;
 
-export default function ExamShell({ sessionId, onSubmitted }) {
+export default function ExamShell({ sessionId, onSubmitted, user }) {
   const navigate = useNavigate();
   const proctor = useProctor();
   const fp = useDeviceFingerprint();
@@ -189,7 +189,6 @@ export default function ExamShell({ sessionId, onSubmitted }) {
 
   // ── 2. Server-driven countdown ────────────────────────────────────────
   const isOnline = useNetworkStatus();
-  const proctorMedia = useProctoringMedia({ enabled: proctor.isActive });
   const [offlineOffset, setOfflineOffset] = useState(0);
   const [offlineSeconds, setOfflineSeconds] = useState(0);
 
@@ -258,73 +257,18 @@ export default function ExamShell({ sessionId, onSubmitted }) {
     onViolation: (type, meta) => proctor.report(type, undefined, meta),
   });
 
-  const isBlurredRef = useRef(false);
-
-  useTabVisibility({
-    enabled: isActive && !submitting,
-    onHidden: () => {
-      if (isBlurredRef.current) {
-        proctor.report('BROWSER_MINIMIZE', 'Browser was minimized or window lost focus.');
-      } else {
-        proctor.report('TAB_SWITCH', 'Participant switched tabs.');
-      }
-    },
-    onBlur: () => {
-      isBlurredRef.current = true;
-      proctor.report('WINDOW_BLUR', 'Exam window lost focus.');
-    },
-    onFocus: () => {
-      isBlurredRef.current = false;
-    },
-    onShown: () => {
-      isBlurredRef.current = false;
-    }
-  });
-
-  useFullscreen({
-    enabled: isActive && !submitting,
-    onExit: async () => {
-      proctor.report('FULLSCREEN_EXIT');
-      // Best-effort: re-enter fullscreen automatically (browser permitting)
-      try { await document.documentElement.requestFullscreen?.(); } catch { /* user has to re-enter manually */ }
-    },
-  });
-
-  // MOUSE_LEAVE violation detection: mouse leaves viewport for > 1 second, rate-limited to 5s
+  // Browser detection belongs to the shared engine. The legacy session still
+  // handles answers/authentication; it must not count browser DOM events again.
+  const [browserWarnings, setBrowserWarnings] = useState(0);
   useEffect(() => {
-    if (!isActive || submitting) return;
-
-    let leaveTimeout = null;
-    let lastReportTime = 0;
-
-    const handleMouseLeave = () => {
-      if (leaveTimeout) clearTimeout(leaveTimeout);
-
-      leaveTimeout = setTimeout(() => {
-        const now = Date.now();
-        if (now - lastReportTime >= 5000) {
-          proctor.report('MOUSE_LEAVE', 'Cursor left the exam environment.');
-          lastReportTime = now;
-        }
-      }, 1000);
-    };
-
-    const handleMouseEnter = () => {
-      if (leaveTimeout) {
-        clearTimeout(leaveTimeout);
-        leaveTimeout = null;
-      }
-    };
-
-    document.addEventListener('mouseleave', handleMouseLeave);
-    document.addEventListener('mouseenter', handleMouseEnter);
-
+    const update = event => setBrowserWarnings(event.detail.count);
+    window.addEventListener('assessment:browser-incident', update);
+    window.addEventListener('assessment:browser-count', update);
     return () => {
-      document.removeEventListener('mouseleave', handleMouseLeave);
-      document.removeEventListener('mouseenter', handleMouseEnter);
-      if (leaveTimeout) clearTimeout(leaveTimeout);
+      window.removeEventListener('assessment:browser-incident', update);
+      window.removeEventListener('assessment:browser-count', update);
     };
-  }, [isActive, submitting, proctor]);
+  }, []);
 
   // ── 4. beforeunload guard (prevent accidental refresh losing answers) ─
   useEffect(() => {
@@ -413,7 +357,12 @@ export default function ExamShell({ sessionId, onSubmitted }) {
         answerText: a.answerText ?? '',
       }));
 
+      await monitoringClient._flushOpenIntervals(Date.now());
+      await monitoringClient.flushBrowserEvents();
       const result = await proctorApi.finalize(sId, sToken, finalAnswers);
+      await monitoringClient.finishSession();
+      monitoringClient.stopAndUploadRecording().catch(() => {});
+      monitoringClient.destroy();
 
       if (!silent) {
         toastSuccess('Exam submitted successfully');
@@ -464,6 +413,7 @@ export default function ExamShell({ sessionId, onSubmitted }) {
   };
 
   return (
+    <ExamProctorShell inactive={!isActive || submitting}>
     <div className="eq-shell" style={proctor.isActive ? { paddingTop: '36px' } : {}}>
       <SecurityBanner />
       <TopBar
@@ -479,8 +429,7 @@ export default function ExamShell({ sessionId, onSubmitted }) {
           void submitExam();
         }}
         submitting={submitting}
-        warningsCount={proctor.warningsCount}
-        fullscreenExits={proctor.fullscreenExits}
+        warningsCount={browserWarnings}
         onFullscreen={handleFullscreen}
       />
 
@@ -506,6 +455,12 @@ export default function ExamShell({ sessionId, onSubmitted }) {
 
         {/* Right — sidebar with timer + navigator + live progress + perf chart */}
         <aside className="flex min-h-0 flex-col">
+          <UnifiedMonitoringWidget placement="inline" contextType="QUIZ"
+            contextId={data.quiz?.id || session.quizId} attemptId={session.attemptId}
+            participantId={user?.id} userToken={user?.token}
+            isTestActive={isActive && !submitting} testStartedAt={session.startedAt}
+            configuredDurationSeconds={totalSeconds || 0}
+          />
           <QuestionNavigator
             questions={questions}
             answers={answers}
@@ -528,28 +483,6 @@ export default function ExamShell({ sessionId, onSubmitted }) {
         autoSubmit={typeof timeLeft === 'number' ? 'On' : 'Off'}
         examMode={proctor.isActive ? 'Secure' : 'Standard'}
       />
-
-      {/* Floating picture-in-picture webcam self-view */}
-      {proctor.isActive && proctorMedia.stream && (
-        <div className="fixed bottom-16 right-4 z-50 overflow-hidden h-28 w-28 rounded-2xl border-2 border-white bg-black shadow-2xl ring-1 ring-slate-200/50 sm:bottom-20 sm:right-6 transition-all hover:scale-105">
-          <video
-            ref={(el) => {
-              if (el && proctorMedia.stream) {
-                el.srcObject = proctorMedia.stream;
-                el.play().catch(() => {});
-              }
-            }}
-            muted
-            playsInline
-            className="h-full w-full object-cover scale-x-[-1]"
-          />
-          {/* Subtle live indicator */}
-          <div className="absolute top-1.5 left-1.5 flex items-center gap-1 rounded-full bg-black/40 px-1.5 py-0.5 backdrop-blur-sm">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-[8px] font-bold text-white uppercase tracking-wider">Live</span>
-          </div>
-        </div>
-      )}
 
       {/* Offline reconnecting overlay */}
       {!isOnline && proctor.isActive && (
@@ -590,6 +523,7 @@ export default function ExamShell({ sessionId, onSubmitted }) {
         </div>
       )}
     </div>
+    </ExamProctorShell>
   );
 }
 

@@ -1,0 +1,19 @@
+{
+  "settings_version": "0.0.8",
+  "datasets_dir": "D:\\feedWeb (2)\\datasets",
+  "weights_dir": "D:\\feedWeb (2)\\feedWeb\\weights",
+  "runs_dir": "D:\\feedWeb (2)\\feedWeb\\runs",
+  "uuid": "6428e903d79e75f0854f398e842d4d982753cf2c3d4a6f127b7f654004a249b8",
+  "sync": true,
+  "api_key": "",
+  "openai_api_key": "",
+  "clearml": true,
+  "comet": true,
+  "dvc": true,
+  "mlflow": true,
+  "raytune": true,
+  "tensorboard": false,
+  "wandb": false,
+  "vscode_msg": true,
+  "openvino_msg": true
+}

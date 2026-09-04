@@ -1,0 +1,120 @@
+{
+  "checkedAt": "2026-09-04T16:18:13.713Z",
+  "status": 201,
+  "count": 10,
+  "elapsedMs": 162220,
+  "topic": "Speed, Distance, and Time",
+  "generationSource": "ai-verified",
+  "questions": [
+    {
+      "question": "A car travels 240 km at 60 km/h and then the same distance at 40 km/h. What is its average speed for the whole journey?",
+      "options": [
+        "48 km/h",
+        "50 km/h",
+        "52 km/h",
+        "55 km/h"
+      ],
+      "correctAnswer": "0",
+      "explanation": "Total distance = 240 + 240 = 480 km. Total time = 240/60 + 240/40 = 4 h + 6 h = 10 h. Average speed = total distance / total time = 480 km ÷ 10 h = 48 km/h."
+    },
+    {
+      "question": "A train covers 180 km in 3 hours. If its speed is increased by 20 km/h, how many minutes will it save on the journey?",
+      "options": [
+        "30 minutes",
+        "45 minutes",
+        "60 minutes",
+        "75 minutes"
+      ],
+      "correctAnswer": "1",
+      "explanation": "Original speed = 180 km ÷ 3 h = 60 km/h. New speed = 60 + 20 = 80 km/h. New time = 180 km ÷ 80 km/h = 2.25 h = 2 h 15 min. Time saved = 3 h – 2.25 h = 0.75 h = 45 minutes."
+    },
+    {
+      "question": "A cyclist rides 30 km to a town at 15 km/h and returns the same distance at 20 km/h. What is the total travel time?",
+      "options": [
+        "3 hours",
+        "3.5 hours",
+        "4 hours",
+        "4.5 hours"
+      ],
+      "correctAnswer": "1",
+      "explanation": "Time outbound = 30 km ÷ 15 km/h = 2 h. Time return = 30 km ÷ 20 km/h = 1.5 h. Total time = 2 h + 1.5 h = 3.5 h."
+    },
+    {
+      "question": "A runner completes a 10 km race in 50 minutes. If she wants to finish a 15 km race in the same average speed, how many minutes will it take?",
+      "options": [
+        "75 minutes",
+        "80 minutes",
+        "85 minutes",
+        "90 minutes"
+      ],
+      "correctAnswer": "0",
+      "explanation": "Average speed = 10 km ÷ (50/60) h = 12 km/h. Time for 15 km = 15 ÷ 12 h = 1.25 h = 75 minutes. The option \"75 minutes\" matches exactly."
+    },
+    {
+      "question": "A boat travels upstream 40 km in 5 hours and downstream the same distance in 2 hours. What is the speed of the current?",
+      "options": [
+        "4 km/h",
+        "5 km/h",
+        "6 km/h",
+        "7 km/h"
+      ],
+      "correctAnswer": "2",
+      "explanation": "Let still‑water speed be v and current speed be c. Upstream speed: v – c = 40 km ÷ 5 h = 8 km/h. Downstream speed: v + c = 40 km ÷ 2 h = 20 km/h. Adding equations: 2v = 28 ⇒ v = 14 km/h. Substituting: 14 – c = 8 ⇒ c = 6 km/h."
+    },
+    {
+      "question": "A delivery driver covers a distance of 150 km at a constant speed. If he had driven 10 km/h faster, he would have arrived 30 minutes earlier. What was his original speed?",
+      "options": [
+        "40 km/h",
+        "45 km/h",
+        "50 km/h",
+        "55 km/h"
+      ],
+      "correctAnswer": "2",
+      "explanation": "Let original speed be v km/h. Time taken = 150/v. At speed v+10, time = 150/(v+10). Difference = 30 minutes = 0.5 h.\nEquation: 150/v – 150/(v+10) = 0.5. Multiply by v(v+10): 150(v+10) – 150v = 0.5 v(v+10).\nSimplify left: 150v + 1500 – 150v = 1500.\nSo 1500 = 0.5 v(v+10) → v(v+10) = 3000 → v^2 + 10v – 3000 = 0.\nSolve quadratic: v = [-10 ± √(100 + 12000)]/2 = [-10 ± √12100]/2 = [-10 ± 110]/2.\nPositive root: (100)/2 = 50 km/h. Hence original speed is 50 km/h."
+    },
+    {
+      "question": "Two cars start from towns 300 km apart and drive toward each other. Car A travels at 70 km/h and Car B at 50 km/h. After how many minutes will they meet?",
+      "options": [
+        "120 minutes",
+        "130 minutes",
+        "150 minutes",
+        "180 minutes"
+      ],
+      "correctAnswer": "2",
+      "explanation": "Relative speed = 70 km/h + 50 km/h = 120 km/h. Time to meet = distance ÷ relative speed = 300 km ÷ 120 km/h = 2.5 h = 150 minutes."
+    },
+    {
+      "question": "A runner covers the first 5 km at 10 km/h and the next 5 km at 5 km/h. What is his average speed for the entire 10 km run?",
+      "options": [
+        "6.0 km/h",
+        "6.5 km/h",
+        "6.67 km/h",
+        "7.0 km/h"
+      ],
+      "correctAnswer": "2",
+      "explanation": "Time for first 5 km = 5 km ÷ 10 km/h = 0.5 h. Time for second 5 km = 5 km ÷ 5 km/h = 1 h. Total time = 1.5 h. Average speed = total distance ÷ total time = 10 km ÷ 1.5 h = 6.666… km/h, rounded to 6.67 km/h."
+    },
+    {
+      "question": "A car travels 120 km at a constant speed. If it had traveled 10 km/h faster, the journey would have taken 1 hour less. What was the original speed?",
+      "options": [
+        "20 km/h",
+        "25 km/h",
+        "30 km/h",
+        "35 km/h"
+      ],
+      "correctAnswer": "2",
+      "explanation": "Let original speed be v km/h. Time at original speed = 120/v. Time at increased speed = 120/(v+10). Given: 120/v – 120/(v+10) = 1. Multiply by v(v+10): 120(v+10) – 120v = v(v+10). Simplifies to 1200 = v² + 10v. Rearranged: v² + 10v – 1200 = 0. Solving, discriminant = 10² + 4·1200 = 4900, √ = 70. v = (‑10 + 70)/2 = 30 km/h."
+    },
+    {
+      "question": "A train travels 200 km at a uniform speed. For the next 100 km it increases its speed by 25% and arrives 30 minutes earlier than if it had continued at the original speed. What was the original speed?",
+      "options": [
+        "35 km/h",
+        "40 km/h",
+        "45 km/h",
+        "50 km/h"
+      ],
+      "correctAnswer": "1",
+      "explanation": "Let original speed be v km/h. Original total time = 200/v + 100/v = 300/v hours. New total time = 200/v + 100/(1.25v) = 200/v + 80/v = 280/v hours. Difference = 300/v – 280/v = 20/v hours, which equals 0.5 h (30 minutes). Thus 20/v = 0.5 ⇒ v = 40 km/h."
+    }
+  ]
+}

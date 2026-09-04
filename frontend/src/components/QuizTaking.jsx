@@ -29,6 +29,9 @@ import {
   ShieldCheck,
   XCircle,
   MonitorPlay,
+  FileText,
+  Files,
+  Sparkles,
 } from 'lucide-react'
 import { useToast } from './Toast'
 import { API_BASE } from '../api/api'
@@ -37,6 +40,7 @@ import { useQuizProtection } from '../hooks/useQuizProtection.jsx'
 import QuizWatermark from './ai-quizzes/QuizWatermark'
 import AssessmentAIMentor from './ai-mentor/AssessmentAIMentor'
 import monitoringClient from '../proctoring/engine/MonitoringEngineClient'
+import UnifiedMonitoringWidget from './monitoring/UnifiedMonitoringWidget'
 import {
   buildAttemptScope,
   readAttemptDraft,
@@ -98,7 +102,7 @@ function ProgressRing({ percent, size = 132 }) {
 /* ──────────────────────────────────────────────────────────────────────────
    MAIN COMPONENT
    ────────────────────────────────────────────────────────────────────────── */
-function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isStandardQuiz = false, screenStream, examSession, onScreenShareResumed, onRecordingStop, webcamStream }) {
+function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isStandardQuiz = false, screenStream, examSession, onScreenShareResumed, onRecordingStop, monitoringSessionId = null, monitoringParticipant = null, testStartedAt = null }) {
   const { error: showError, success: showSuccess } = useToast()
 
   /* ── Question / answer state ─────────────────────────────────────────── */
@@ -133,7 +137,21 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
     answersRef.current = answers
   }, [answers])
 
-  /* ── Post-submit result state ────────────────── */
+  const [visitedQuestions, setVisitedQuestions] = useState(() => new Set([0]))
+  useEffect(() => {
+    setVisitedQuestions(prev => {
+      if (prev.has(currentQ)) return prev
+      const next = new Set(prev)
+      next.add(currentQ)
+      return next
+    })
+  }, [currentQ])
+
+  /* ── Submission Lifecycle State ──────────────── */
+  const [submissionState, setSubmissionState] = useState('IDLE') // 'IDLE' | 'PROCESSING' | 'COMPLETED' | 'ERROR'
+  const [processingStage, setProcessingStage] = useState('')
+  const [submissionError, setSubmissionError] = useState(null)
+  const [autoSubmittedNotice, setAutoSubmittedNotice] = useState(false)
   const [resultData, setResultData] = useState(null)
 
   /* ── Fullscreen + warning state ──────────────────────────────────────── */
@@ -205,9 +223,8 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
   )
 
   const flushOpenProctoringIntervals = useCallback(async () => {
-    try {
-      await monitoringClient._flushOpenIntervals(Date.now())
-    } catch (_) {}
+    await monitoringClient._flushOpenIntervals(Date.now())
+    await monitoringClient.flushBrowserEvents()
   }, [])
 
   /* ── handleSubmit (memoised — used by timer and manual submission) */
@@ -216,8 +233,12 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
       if (submitting || submittedRef.current) return
       submittedRef.current = true
       setSubmitting(true)
+      setAutoSubmittedNotice(autoSubmit)
+      setSubmissionError(null)
       setShowConfirmSubmit(false)
       setWarningOpen(false)
+      setSubmissionState('PROCESSING')
+      setProcessingStage('Saving answers and completing proctoring session...')
 
       if (timerRef.current) {
         clearInterval(timerRef.current)
@@ -247,9 +268,7 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
         if (token) headers['X-Assessment-Session'] = token
 
         // Flush all open gaze, head, and absence intervals before final submission
-        try {
-          await flushOpenProctoringIntervals();
-        } catch (_) {}
+        await flushOpenProctoringIntervals();
 
         const activeDurationSec = monitoringClient.getActiveDurationSeconds();
 
@@ -261,6 +280,7 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
           ? JSON.stringify({ attemptId, answers: answerArray, timeTaken: activeDurationSec, actualTestDurationSeconds: activeDurationSec })
           : JSON.stringify({ answers: answerArray, timeTaken: activeDurationSec, actualTestDurationSeconds: activeDurationSec })
 
+        setProcessingStage('Submitting answers to server...')
         const r = await fetch(submitUrl, {
           method: 'POST',
           headers,
@@ -269,9 +289,9 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
         const d = await r.json()
         if (!r.ok && r.status !== 409) throw new Error(d.error || 'Submit failed')
         
-        // Finalize monitoring & video in background without blocking redirect
+        // Save the final audit before leaving; video uploads run separately.
         try {
-          monitoringClient.finishSession({ actualTestDurationSeconds: activeDurationSec }).catch(() => {})
+          await monitoringClient.finishSession({ actualTestDurationSeconds: activeDurationSec })
         } catch (_) {}
 
         try {
@@ -282,11 +302,6 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
           monitoringClient.destroy()
         } catch (_) {}
 
-        if (webcamStream) {
-          try {
-            webcamStream.getTracks().forEach(t => t.stop())
-          } catch (_) {}
-        }
         if (screenStream) {
           try {
             screenStream.getTracks().forEach(t => t.stop())
@@ -303,6 +318,25 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
 
         if (fsApi.element()) { try { fsApi.exit().catch(() => {}) } catch (_) {} }
         
+        const effectiveAttemptId = d.attemptId || attemptId;
+
+        // Fetch verified result from the database
+        setProcessingStage('Processing assessment results...')
+        let verifiedResult = null;
+        try {
+          const resultRes = await fetch(`${API_BASE}/participant/quizzes/${quizId}/result?attemptId=${effectiveAttemptId}`, {
+            headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' }
+          });
+          if (resultRes.ok) {
+            verifiedResult = await resultRes.json();
+          }
+        } catch (fetchErr) {
+          console.warn('[QuizTaking] Could not pre-fetch result:', fetchErr);
+        }
+
+        setSubmissionState('COMPLETED');
+        setProcessingStage('Result ready! Redirecting...');
+
         if (!silent) {
           if (autoSubmit) {
             showSuccess('Time is up! Your quiz has been automatically submitted.')
@@ -311,20 +345,26 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
           }
         }
 
-        // Navigate immediately after successful submission for BOTH
-        // manual and auto-submit so the participant is not stuck.
-        setResultData(null)
-        onSubmit?.({ status: 'PENDING_RESULT', autoSubmitted: autoSubmit })
+        // Pass full result context to parent to trigger redirect
+        onSubmit?.({
+          status: 'COMPLETED',
+          autoSubmitted: autoSubmit,
+          attemptId: effectiveAttemptId,
+          quizId,
+          result: verifiedResult
+        });
       } catch (err) {
         submittedRef.current = false
         setSubmitting(false)
+        setSubmissionState('ERROR')
+        setSubmissionError(err.message || 'Submission failed. Please try again.')
         console.error('[QuizTaking] Submit failed:', err)
         if (!silent) {
           showError(err.message || 'Submission failed. Please try again.')
         }
       }
     },
-    [attemptId, isStandardQuiz, quizId, quizData?.questions, sessionToken, flushOpenProctoringIntervals, onRecordingStop, webcamStream, screenStream, showSuccess, showError, onSubmit, draftScope, draftStore]
+    [attemptId, isStandardQuiz, quizId, quizData?.questions, sessionToken, flushOpenProctoringIntervals, onRecordingStop, screenStream, showSuccess, showError, onSubmit, draftScope, draftStore]
   )
 
   /* ── Auto-fullscreen on mount & lock active test start time ───────────── */
@@ -355,25 +395,6 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
       document.body.classList.remove('qt-fullscreen-active')
     }
   }, [])
-
-  /* ── Clean up media streams and monitoring client on unmount ────────── */
-  useEffect(() => {
-    return () => {
-      if (webcamStream) {
-        try {
-          webcamStream.getTracks().forEach((t) => t.stop())
-        } catch (_) {}
-      }
-      if (screenStream) {
-        try {
-          screenStream.getTracks().forEach((t) => t.stop())
-        } catch (_) {}
-      }
-      try {
-        monitoringClient.destroy()
-      } catch (_) {}
-    }
-  }, [webcamStream, screenStream])
 
   /* ── Screen share violation reporting ──────────────────────────────── */
   const reportViolation = useCallback(async (type, message) => {
@@ -627,8 +648,10 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
   }, [draftScope, draftStore])
 
   /* ── Helpers / derived state ─────────────────────────────────────────── */
+  const isInteractionLocked = submitting || submittedRef.current || isCopyDisqualified || submissionState !== 'IDLE'
+
   const handleAnswer = (questionId, value) => {
-    if (submitting || isCopyDisqualified) return
+    if (isInteractionLocked) return
     setAnswers((prev) => ({ ...prev, [questionId]: value }))
   }
 
@@ -640,8 +663,14 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
   const timerUrgent = timeLeft < 300
   const timerWarning = timeLeft < 600 && !timerUrgent
 
-  const goNext = () => setCurrentQ((p) => Math.min(total - 1, p + 1))
-  const goPrev = () => setCurrentQ((p) => Math.max(0, p - 1))
+  const goNext = () => {
+    if (isInteractionLocked) return
+    setCurrentQ((p) => Math.min(total - 1, p + 1))
+  }
+  const goPrev = () => {
+    if (isInteractionLocked) return
+    setCurrentQ((p) => Math.max(0, p - 1))
+  }
 
   const optionLetters = useMemo(() => ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'], [])
 
@@ -698,7 +727,7 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
           <div className="qt-header__brand-block">
             <span className="qt-brand-pill">WAVE INIT LMS</span>
             <h1 className="qt-header__title" title={quizData.title}>
-              {quizData.title || 'Assessment'}
+              {quizData.title ? (quizData.title.toLowerCase().startsWith('quiz:') ? quizData.title : `Quiz: ${quizData.title}`) : 'Quiz: speed time distance'}
             </h1>
           </div>
 
@@ -719,19 +748,16 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
             )}
             <span
               className={[
-                'qt-timer',
-                timerUrgent ? 'qt-timer--urgent' : timerWarning ? 'qt-timer--warning' : '',
+                'qt-timer-pill',
+                timerUrgent ? 'qt-timer-pill--urgent' : timerWarning ? 'qt-timer-pill--warning' : '',
               ].join(' ')}
               aria-label={`Time remaining ${formatTime(timeLeft)}`}
             >
-              <Clock size={14} aria-hidden />
-              <span className="qt-timer__value">{formatTime(timeLeft)}</span>
+              <Clock size={15} aria-hidden />
+              <span className="qt-timer-pill__value">{formatTime(timeLeft)}</span>
             </span>
-            <span className="qt-q-counter">
-              <span className="qt-q-counter__label">Q</span>
-              <span className="qt-q-counter__num">{currentQ + 1}</span>
-              <span className="qt-q-counter__sep"> of </span>
-              <span className="qt-q-counter__total">{total}</span>
+            <span className="qt-counter-pill">
+              <span className="qt-counter-pill__text">Q {currentQ + 1} of {total}</span>
             </span>
           </div>
         </div>
@@ -749,7 +775,7 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
 
       {/* ─── BODY: question pane + sidebar ──────────────────────────── */}
       <div className="qt-body">
-        {/* MAIN — question card + footer nav */}
+        {/* MAIN — question card + 4-metric stats + question navigator */}
         <main className="qt-main">
           <AnimatePresence mode="wait">
             <motion.article
@@ -762,7 +788,7 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
               className="qt-qcard"
             >
               <div className="qt-qcard__label">
-                QUESTION {currentQ + 1} <span aria-hidden> · </span>
+                QUESTION {currentQ + 1} –{' '}
                 {q.questionType === 'MCQ' && 'MULTIPLE CHOICE'}
                 {q.questionType === 'TRUE_FALSE' && 'TRUE / FALSE'}
                 {q.questionType === 'FILL_BLANK' && 'FILL IN THE BLANK'}
@@ -872,76 +898,198 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
             </motion.article>
           </AnimatePresence>
 
-          {/* Footer nav: prev / dots / next */}
-          <nav className="qt-foot" aria-label="Question navigation">
-            <button
-              type="button"
-              className="qt-foot__btn qt-foot__btn--ghost"
-              onClick={goPrev}
-              disabled={currentQ === 0 || submitting || isCopyDisqualified}
-            >
-              <ChevronLeft size={16} /> Previous
-            </button>
-
-            <div className="qt-dots" aria-hidden>
-              {questions.slice(0, Math.min(total, 12)).map((_, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  disabled={submitting || isCopyDisqualified}
-                  onClick={() => setCurrentQ(idx)}
-                  aria-label={`Go to question ${idx + 1}`}
-                  className={[
-                    'qt-dot',
-                    idx === currentQ
-                      ? 'qt-dot--current'
-                      : answers[questions[idx].id]
-                        ? 'qt-dot--done'
-                        : 'qt-dot--todo',
-                  ].join(' ')}
-                />
-              ))}
+          {/* ─── 4-METRIC STATISTICS ROW ──────────────────────────────── */}
+          <div className="qt-stats-grid">
+            {/* Card 1: Progress Radial Ring */}
+            <div className="qt-stat-card qt-stat-card--ring">
+              <div className="qt-ring-box">
+                <svg width={56} height={56} className="qt-ring-box__svg">
+                  <circle cx={28} cy={28} r={23} fill="none" stroke="#e2e8f0" strokeWidth={5} />
+                  <motion.circle
+                    cx={28} cy={28} r={23} fill="none" stroke="#0284c7" strokeWidth={5}
+                    strokeLinecap="round" strokeDasharray={2 * Math.PI * 23}
+                    initial={{ strokeDashoffset: 2 * Math.PI * 23 }}
+                    animate={{ strokeDashoffset: 2 * Math.PI * 23 * (1 - answeredPercent / 100) }}
+                    transition={{ duration: 0.5, ease: 'easeOut' }}
+                  />
+                </svg>
+                <div className="qt-ring-box__center">
+                  <span className="qt-ring-box__val">{answeredPercent}%</span>
+                  <span className="qt-ring-box__lbl">PROGRESS</span>
+                </div>
+              </div>
             </div>
 
-            {!isLastQuestion ? (
+            {/* Card 2: Answered Count */}
+            <div className="qt-stat-card">
+              <div className="qt-stat-card__icon qt-stat-card__icon--green">
+                <CheckCircle2 size={24} />
+              </div>
+              <div className="qt-stat-card__body">
+                <span className="qt-stat-card__val qt-stat-card__val--green">{answeredCount}</span>
+                <span className="qt-stat-card__lbl">ANSWERED</span>
+              </div>
+            </div>
+
+            {/* Card 3: Remaining Count */}
+            <div className="qt-stat-card">
+              <div className="qt-stat-card__icon qt-stat-card__icon--red">
+                <FileText size={22} />
+              </div>
+              <div className="qt-stat-card__body">
+                <span className="qt-stat-card__val qt-stat-card__val--red">{unansweredCount}</span>
+                <span className="qt-stat-card__lbl">REMAINING</span>
+              </div>
+            </div>
+
+            {/* Card 4: Total Questions */}
+            <div className="qt-stat-card">
+              <div className="qt-stat-card__icon qt-stat-card__icon--blue">
+                <Files size={22} />
+              </div>
+              <div className="qt-stat-card__body">
+                <span className="qt-stat-card__val qt-stat-card__val--blue">{total}</span>
+                <span className="qt-stat-card__lbl">TOTAL QUESTIONS</span>
+              </div>
+            </div>
+          </div>
+
+          {/* ─── QUESTION NAVIGATOR CARD ──────────────────────────────── */}
+          <div className="qt-navigator-card">
+            <div className="qt-navigator-header">
+              <h3 className="qt-navigator-title">Question navigator</h3>
+              <div className="qt-navigator-legend">
+                <span className="qt-legend-item">
+                  <span className="qt-legend-dot qt-legend-dot--current" /> Current
+                </span>
+                <span className="qt-legend-item">
+                  <span className="qt-legend-dot qt-legend-dot--unanswered" /> Not answered
+                </span>
+                <span className="qt-legend-item">
+                  <span className="qt-legend-dot qt-legend-dot--answered" /> Answered
+                </span>
+                <span className="qt-legend-item">
+                  <span className="qt-legend-dot qt-legend-dot--notvisited" /> Not visited
+                </span>
+              </div>
+            </div>
+
+            <div className="qt-navigator-grid">
+              {questions.map((question, idx) => {
+                const isCurrent = idx === currentQ
+                const isAnswered = Boolean(answers[question.id])
+                const isVisited = visitedQuestions.has(idx)
+
+                let btnClass = 'qt-nav-num-btn'
+                if (isCurrent) btnClass += ' qt-nav-num-btn--current'
+                else if (isAnswered) btnClass += ' qt-nav-num-btn--answered'
+                else if (isVisited) btnClass += ' qt-nav-num-btn--unanswered'
+                else btnClass += ' qt-nav-num-btn--notvisited'
+
+                return (
+                  <button
+                    key={question.id}
+                    type="button"
+                    disabled={submitting || isCopyDisqualified}
+                    onClick={() => setCurrentQ(idx)}
+                    aria-label={`Question ${idx + 1}${isAnswered ? ' answered' : ''}${isCurrent ? ' current' : ''}`}
+                    aria-current={isCurrent ? 'true' : undefined}
+                    className={btnClass}
+                  >
+                    {idx + 1}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Navigation bottom controls */}
+            <div className="qt-navigator-footer">
               <button
                 type="button"
-                className="qt-foot__btn qt-foot__btn--primary"
-                onClick={goNext}
-                disabled={submitting || isCopyDisqualified}
+                className="qt-foot__btn qt-foot__btn--ghost"
+                onClick={goPrev}
+                disabled={currentQ === 0 || submitting || isCopyDisqualified}
               >
-                Next <ChevronRight size={16} />
+                <ChevronLeft size={16} /> Previous
               </button>
-            ) : (
-              <button
-                type="button"
-                className="qt-foot__btn qt-foot__btn--primary"
-                onClick={() => setShowConfirmSubmit(true)}
-                disabled={submitting || isCopyDisqualified}
-              >
-                <Send size={15} /> Submit
-              </button>
-            )}
-          </nav>
+
+              <div className="qt-dots" aria-hidden>
+                {questions.slice(0, Math.min(total, 12)).map((_, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    disabled={submitting || isCopyDisqualified}
+                    onClick={() => setCurrentQ(idx)}
+                    aria-label={`Go to question ${idx + 1}`}
+                    className={[
+                      'qt-dot',
+                      idx === currentQ
+                        ? 'qt-dot--current'
+                        : answers[questions[idx].id]
+                          ? 'qt-dot--done'
+                          : 'qt-dot--todo',
+                    ].join(' ')}
+                  />
+                ))}
+              </div>
+
+              {!isLastQuestion ? (
+                <button
+                  type="button"
+                  className="qt-foot__btn qt-foot__btn--primary"
+                  onClick={goNext}
+                  disabled={submitting || isCopyDisqualified}
+                >
+                  Next <ChevronRight size={16} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="qt-foot__btn qt-foot__btn--primary"
+                  onClick={() => setShowConfirmSubmit(true)}
+                  disabled={submitting || isCopyDisqualified}
+                >
+                  <Send size={15} /> Submit
+                </button>
+              )}
+            </div>
+          </div>
         </main>
 
-        {/* SIDEBAR */}
-        <aside className="qt-side" aria-label="Quiz progress and navigator">
-          {/* The assessment exposes one mentor surface, fixed at the top of the rail. */}
+        {/* SIDEBAR — MONITORING & AI MENTOR */}
+        <aside className="qt-side" aria-label="Monitoring and AI Mentor">
+          {!resultData && (
+            <div className="qt-side-card">
+              <UnifiedMonitoringWidget
+                key={attemptId}
+                placement="inline"
+                contextType="QUIZ"
+                contextId={quizId}
+                attemptId={attemptId}
+                sessionId={monitoringSessionId}
+                participantId={monitoringParticipant?.id || userData?.id}
+                userToken={monitoringParticipant?.token || userData?.token}
+                isTestActive={!terminated && !isCopyDisqualified && !resultData}
+                isPaused={isPaused}
+                testStartedAt={testStartedAt}
+                configuredDurationSeconds={(quizData?.timeLimit || 30) * 60}
+              />
+            </div>
+          )}
+
+          {/* AI Mentor widget */}
           {!submitting && !submittedRef.current && !isCopyDisqualified && q && (
             mentorOpen ? (
-              <div className="qt-side__panel qt-side__panel--mentor">
-                <div className="qt-mentor-box">
-                  <AssessmentAIMentor
-                    assessmentType="QUIZ"
-                    user={userData}
-                    attemptId={attemptId}
-                    question={q}
-                    sessionToken={sessionToken}
-                    onError={(msg) => showError(msg)}
-                    onClose={() => setMentorOpen(false)}
-                  />
-                </div>
+              <div className="qt-side-card qt-side-card--mentor">
+                <AssessmentAIMentor
+                  assessmentType="QUIZ"
+                  user={userData}
+                  attemptId={attemptId}
+                  question={q}
+                  sessionToken={sessionToken}
+                  onError={(msg) => showError(msg)}
+                  onClose={() => setMentorOpen(false)}
+                />
               </div>
             ) : (
               <button
@@ -949,75 +1097,10 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
                 className="qt-mentor-reopen"
                 onClick={() => setMentorOpen(true)}
               >
-                Open AI Mentor
+                <Sparkles size={14} color="#7C3AED" /> Open AI Mentor
               </button>
             )
           )}
-
-          <div className="qt-side__panel qt-side__panel--ring">
-            <ProgressRing percent={answeredPercent} />
-          </div>
-
-          <div className="qt-side__stats">
-            <div className="qt-stat qt-stat--ok">
-              <span className="qt-stat__value">{answeredCount}</span>
-              <span className="qt-stat__label">Answered</span>
-            </div>
-            <div className="qt-stat qt-stat--bad">
-              <span className="qt-stat__value">{unansweredCount}</span>
-              <span className="qt-stat__label">Remaining</span>
-            </div>
-          </div>
-
-          <div className="qt-side__panel">
-            <h3 className="qt-side__heading">Question navigator</h3>
-            <div className="qt-nav-grid">
-              {questions.map((question, idx) => {
-                const answered = !!answers[question.id]
-                const current = idx === currentQ
-                return (
-                  <button
-                    key={question.id}
-                    type="button"
-                    disabled={submitting || isCopyDisqualified}
-                    onClick={() => setCurrentQ(idx)}
-                    aria-label={`Question ${idx + 1}${answered ? ' answered' : ''}${current ? ' current' : ''}`}
-                    aria-current={current ? 'true' : undefined}
-                    className={[
-                      'qt-nav-cell',
-                      current ? 'qt-nav-cell--current' : '',
-                      answered && !current ? 'qt-nav-cell--done' : '',
-                    ].join(' ')}
-                  >
-                    {idx + 1}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          <button
-            type="button"
-            className="qt-submit-btn"
-            onClick={() => setShowConfirmSubmit(true)}
-            disabled={submitting || submittedRef.current || isCopyDisqualified}
-          >
-            <CheckCircle2 size={15} /> Submit quiz
-          </button>
-
-          <div className={`qt-fs-status ${isFullscreen ? 'qt-fs-status--ok' : 'qt-fs-status--warn'}`}>
-            {isFullscreen ? (
-              <>
-                <ShieldCheck size={13} aria-hidden />
-                Fullscreen mode active
-              </>
-            ) : (
-              <>
-                <ShieldAlert size={13} aria-hidden />
-                Fullscreen required
-              </>
-            )}
-          </div>
         </aside>
       </div>
 
@@ -1222,69 +1305,180 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
         )}
       </AnimatePresence>
 
-      {/* ─── Post-submit success page ──────────────────────────────────── */}
+      {/* ─── Test Completed / Result Processing Modal ────────────────────── */}
       <AnimatePresence>
-        {resultData && (
+        {submissionState !== 'IDLE' && (
           <motion.div
-            key="result-bg"
+            key="submission-proc-bg"
             className="qt-modal-bg"
+            style={{ backdropFilter: 'blur(10px)', background: 'rgba(15, 23, 42, 0.72)', zIndex: 12000 }}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
             <motion.div
-              role="dialog"
-              aria-labelledby="qt-result-title"
-              initial={{ scale: 0.95, opacity: 0, y: 16 }}
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="qt-proc-title"
+              initial={{ scale: 0.92, opacity: 0, y: 16 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 16 }}
-              className="qt-modal qt-modal--result"
+              exit={{ scale: 0.92, opacity: 0, y: 16 }}
+              className="qt-modal qt-modal--processing"
+              style={{
+                maxWidth: 480,
+                textAlign: 'center',
+                padding: '36px 32px',
+                borderRadius: '20px',
+                boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.35)',
+                background: '#ffffff',
+                border: '1px solid #e2e8f0'
+              }}
               onClick={(e) => e.stopPropagation()}
-              style={{ maxWidth: 440, textAlign: 'center' }}
             >
-              <div
-                className="qt-modal__icon-wrap"
-                style={{
-                  width: 64, height: 64, borderRadius: '50%',
-                  background: '#ecfdf5',
-                  color: '#16a34a',
-                  margin: '0 auto 16px', display: 'flex',
-                  alignItems: 'center', justifyContent: 'center',
-                }}
-              >
-                <CheckCircle2 size={32} />
-              </div>
-              <h2 id="qt-result-title" className="qt-modal__title" style={{ fontSize: 20 }}>
-                Quiz Submitted Successfully
-              </h2>
-              <p style={{ color: '#475569', fontSize: 14, lineHeight: 1.6, marginTop: 12, marginBottom: 4 }}>
-                Your answers have been saved successfully.
-              </p>
-              <p style={{ color: '#475569', fontSize: 14, lineHeight: 1.6, marginBottom: 16 }}>
-                Please wait until your trainer publishes the results.
-              </p>
-              <div style={{
-                background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10,
-                padding: '12px 16px', marginBottom: 16, display: 'inline-flex',
-                alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: '#92400e'
-              }}>
-                <span style={{ fontSize: 16 }}>🟡</span>
-                Waiting for Result Publication
-              </div>
-              <div style={{ fontSize: 12, color: '#94a3b8', lineHeight: 1.7, marginBottom: 20 }}>
-                Once the results are published, you will be able to view:<br />
-                • Your Score &amp; Percentage<br />
-                • Rank &amp; Leaderboard<br />
-                • Correct Answers (if enabled)
-              </div>
-              <button
-                type="button"
-                className="qt-foot__btn qt-foot__btn--primary"
-                onClick={() => { setResultData(null); onSubmit?.(resultData) }}
-                style={{ marginTop: 4, width: '100%', justifyContent: 'center' }}
-              >
-                Back to Dashboard
-              </button>
+              {submissionState === 'ERROR' ? (
+                <>
+                  <div
+                    style={{
+                      width: 68,
+                      height: 68,
+                      borderRadius: '50%',
+                      background: '#fef2f2',
+                      color: '#dc2626',
+                      border: '1px solid #fecaca',
+                      margin: '0 auto 20px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <AlertTriangle size={36} />
+                  </div>
+                  <h2 id="qt-proc-title" style={{ fontSize: 22, fontWeight: 800, color: '#0f172a', margin: '0 0 8px' }}>
+                    Submission Issue
+                  </h2>
+                  <p style={{ color: '#64748b', fontSize: 14, lineHeight: 1.6, margin: '0 0 24px' }}>
+                    {submissionError || 'There was a problem submitting your answers. Your progress is preserved.'}
+                  </p>
+                  <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+                    <button
+                      type="button"
+                      className="qt-foot__btn qt-foot__btn--ghost"
+                      onClick={() => setSubmissionState('IDLE')}
+                      style={{ padding: '10px 20px', borderRadius: 10, fontSize: 14, fontWeight: 600 }}
+                    >
+                      Back to Quiz
+                    </button>
+                    <button
+                      type="button"
+                      className="qt-foot__btn qt-foot__btn--primary"
+                      onClick={() => handleSubmit({ autoSubmit: autoSubmittedNotice })}
+                      style={{ padding: '10px 24px', borderRadius: 10, fontSize: 14, fontWeight: 600 }}
+                    >
+                      Retry Submission
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div
+                    style={{
+                      width: 72,
+                      height: 72,
+                      borderRadius: '50%',
+                      background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)',
+                      color: '#059669',
+                      border: '2px solid #a7f3d0',
+                      margin: '0 auto 20px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      boxShadow: '0 10px 25px -5px rgba(16, 185, 129, 0.25)',
+                    }}
+                  >
+                    <CheckCircle2 size={40} className="animate-pulse" />
+                  </div>
+
+                  <h2
+                    id="qt-proc-title"
+                    style={{
+                      fontSize: 22,
+                      fontWeight: 800,
+                      color: '#0f172a',
+                      margin: '0 0 10px',
+                      fontFamily: "'Poppins', sans-serif"
+                    }}
+                  >
+                    {autoSubmittedNotice ? 'Time Expired – Test Submitted' : 'Test Completed Successfully'}
+                  </h2>
+
+                  <p
+                    style={{
+                      color: '#475569',
+                      fontSize: 14.5,
+                      lineHeight: 1.6,
+                      margin: '0 0 24px',
+                      maxWidth: 400,
+                      marginLeft: 'auto',
+                      marginRight: 'auto'
+                    }}
+                  >
+                    Your answers have been submitted successfully. Please wait while your result is being processed.
+                  </p>
+
+                  {/* Progress Indicator Container */}
+                  <div
+                    style={{
+                      background: '#f8fafc',
+                      borderRadius: 14,
+                      padding: '16px 20px',
+                      border: '1px solid #e2e8f0',
+                      marginBottom: 20
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 12 }}>
+                      <Loader size={18} className="qt-spin" style={{ color: '#2563eb' }} />
+                      <span style={{ fontSize: 13.5, fontWeight: 600, color: '#1e293b' }}>
+                        {processingStage || 'Processing assessment results...'}
+                      </span>
+                    </div>
+
+                    <div
+                      style={{
+                        height: 6,
+                        width: '100%',
+                        background: '#e2e8f0',
+                        borderRadius: 999,
+                        overflow: 'hidden',
+                        position: 'relative'
+                      }}
+                    >
+                      <motion.div
+                        style={{
+                          height: '100%',
+                          background: 'linear-gradient(90deg, #2563eb, #0d9488, #10b981)',
+                          borderRadius: 999,
+                        }}
+                        initial={{ width: '15%' }}
+                        animate={{ width: submissionState === 'COMPLETED' ? '100%' : '85%' }}
+                        transition={{ duration: 1.8, ease: 'easeInOut' }}
+                      />
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      fontSize: 12.5,
+                      color: '#64748b',
+                      fontWeight: 500
+                    }}
+                  >
+                    <span style={{ color: '#10b981', fontWeight: 700 }}>✓</span> Answers Locked • Database Sync in Progress
+                  </div>
+                </>
+              )}
             </motion.div>
           </motion.div>
         )}

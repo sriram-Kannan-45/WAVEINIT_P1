@@ -518,7 +518,7 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
         {
           id: `ai-err-${Date.now()}`,
           role: 'assistant',
-          content: 'I had trouble reaching the server. You can use the quick actions below:',
+          content: err.message || 'I had trouble reaching the server. You can use the quick actions below:',
           actionButtons: [
             { label: 'Open My Courses', action: 'navigate', type: 'OPEN_COURSES', route: '/participant', tab: 'myEnrollments' },
             { label: 'Open My Profile', action: 'navigate', type: 'OPEN_PROFILE', route: '/my-profile' },

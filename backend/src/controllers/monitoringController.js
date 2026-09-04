@@ -528,7 +528,7 @@ class MonitoringController {
 
   /**
    * GET /api/monitoring/sessions/:id/excel
-   * Download the official 2-sheet Excel report (Monitoring Report + Summary).
+   * Download the monitoring report, summary and unscored warning history.
    */
   async downloadExcelReport(req, res) {
     try {
@@ -556,6 +556,9 @@ class MonitoringController {
         mobileScore: report.mobileScore ?? report.scoringBreakdown?.mobile?.score ?? 0.0,
         tabSwitchCount: report.tabSwitchCount || 0,
         tabSwitchScore: report.tabSwitchScore ?? report.scoringBreakdown?.tabSwitch?.score ?? 0.0,
+        totalEvents: report.totalEvents,
+        graceWarningsCount: report.graceWarningsCount,
+        graceWarnings: report.graceWarnings || [],
         finalScore: report.finalScore ?? report.score ?? 0,
         videoUrl: report.videoUrl ? (report.videoUrl.startsWith('http') ? report.videoUrl : `${req.protocol}://${req.get('host')}${report.videoUrl}`) : null,
       };

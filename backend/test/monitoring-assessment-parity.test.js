@@ -9,6 +9,7 @@ jest.mock('../src/services/aiQuizService', () => ({}));
 
 const { Op } = require('sequelize');
 const models = require('../src/models');
+models.sequelize = { transaction: jest.fn(callback => callback({ LOCK: { UPDATE: 'UPDATE' } })) };
 const service = require('../src/services/monitoringService');
 const legacy = require('../src/services/proctoringService');
 const ExcelJS = require('exceljs');
@@ -40,7 +41,7 @@ beforeEach(() => {
     events.push(event);
     return [event, true];
   });
-  models.MonitoringEvent.findAll.mockImplementation(async ({ where }) => events.filter(e => e.monitoringSessionId === where.monitoringSessionId));
+  models.MonitoringEvent.findAll.mockImplementation(async ({ where }) => events.filter(e => e.monitoringSessionId === where.monitoringSessionId && (!where.eventType || where.eventType[Op.in].includes(e.eventType))));
   models.ProctoringEvent.findAll.mockResolvedValue([]);
   models.ProctoringEvent.findOrCreate.mockResolvedValue([{}, true]);
   models.QuizAttempt.findByPk.mockResolvedValue(null);
@@ -74,20 +75,52 @@ test('same events retain Quiz grace allowance, browser threshold, final score an
     const reports = await Promise.all(sessions.map(s => service.getReport({ attemptId: 17, contextType: s.contextType })));
     expect(reports[1].contextType).toBe('CODING');
     expect(reports[1].scoringBreakdown).toEqual(reports[0].scoringBreakdown);
-    expect(reports[1].tabSwitchCount).toBe(Math.max(0, i + 1 - 3));
-    // These are the existing Quiz boundaries: first 3 events are grace;
-    // more than 3 scored browser incidents incur the 10-point audit penalty.
-    expect(reports[1].tabSwitchScore).toBe(i === 6 ? 10 : 0);
-    expect(reports[1].finalScore).toBe(i === 6 ? 10 : 0);
+    expect(reports[1].tabSwitchCount).toBe(i + 1);
+    // The first three browser switches are warnings; the fourth adds the existing 10-point penalty.
+    expect(reports[1].tabSwitchScore).toBe(i >= 3 ? 10 : 0);
+    expect(reports[1].finalScore).toBe(i >= 3 ? 10 : 0);
     const book = new ExcelJS.Workbook();
     await book.xlsx.load(await excel.generateReportBuffer(reports[1].events, reports[1]));
     const values = new Map();
     book.getWorksheet('Summary').eachRow(row => values.set(row.getCell(1).value, row.getCell(2).value));
     expect(values.get('  Tab Switch Score')).toBe(`${reports[1].tabSwitchScore.toFixed(2)} / 10`);
     expect(values.get('  Total Proctoring Mark')).toBe(`${reports[1].finalScore.toFixed(2)} / 100`);
+    expect(values.get('  Grace Warnings')).toBe(reports[1].graceWarningsCount);
+    expect(book.getWorksheet('Warnings').rowCount - 1).toBe(reports[1].graceWarningsCount);
   }
   for (const call of models.MonitoringEvent.count.mock.calls) expect(Object.keys(call[0].where)).toEqual(['monitoringSessionId']);
   for (const call of models.ProctoringEvent.findAll.mock.calls) expect(Object.keys(call[0].where)).toEqual(['monitoringSessionId']);
+});
+
+test.each(['QUIZ', 'CODING'])('%s counts rapid distinct browser incidents once despite concurrent retries and unrelated AI warnings', async contextType => {
+  const session = sessions.find(s => s.contextType === contextType);
+  const now = new Date('2026-09-04T10:01:00Z').getTime();
+  jest.spyOn(Date, 'now').mockReturnValue(now);
+  await service.reportEvent({sessionId:session.sessionId,eventType:'FACE_ABSENT',severity:'WARNING',durationMs:2000});
+  const incident = index => ({sessionId:session.sessionId,eventType:'TAB_SWITCH',severity:'WARNING',durationMs:2000,
+    occurredAt:new Date(now+index*2100).toISOString(),metadata:{browserIncidentId:`switch-${index}`}});
+  const results = await Promise.all([1,2,3,4].map(i=>service.reportEvent(incident(i))));
+  expect(results.map(r=>r.browserSwitchCount)).toEqual([1,2,3,4]);
+  expect(results.map(r=>r.scoreDelta)).toEqual([0,0,0,10]);
+  expect((await service.reportEvent({...incident(4),eventType:'FULLSCREEN_EXIT'})).reason).toBe('IDEMPOTENT_DUPLICATE');
+  const report=await service.getReport({sessionId:session.sessionId});
+  expect(report.tabSwitchCount).toBe(4);
+  expect(report.tabSwitchScore).toBe(10);
+  expect(session.totalEvents).toBe(5);
+  expect(session.metadata.browserSwitchCount).toBe(4);
+  expect(session.status).toBe('ACTIVE');
+});
+
+test('late lifecycle requests cannot reopen a completed assessment or overwrite its final timing', async () => {
+  const session=sessions[0];
+  session.status='COMPLETED';
+  await service.startTestSession({sessionId:session.sessionId});
+  await service.resumeTestSession({sessionId:session.sessionId});
+  await service.pauseTestSession({sessionId:session.sessionId});
+  await service.syncTestDuration({sessionId:session.sessionId,activeDurationSeconds:9999});
+  expect(session.status).toBe('COMPLETED');
+  expect(session.metadata.actualTestDurationSeconds).toBe(600);
+  expect(session.save).not.toHaveBeenCalled();
 });
 
 test('Coding duration and session start never resolve through an overlapping Quiz attempt ID', async () => {
@@ -98,7 +131,7 @@ test('Coding duration and session start never resolve through an overlapping Qui
   expect(report.actualTestDurationSeconds).toBe(300);
   expect(models.QuizAttempt.findByPk).not.toHaveBeenCalled();
   await service.startTestSession({ sessionId: 'session-CODING', attemptId: 17 });
-  expect(models.MonitoringSession.findOne).toHaveBeenLastCalledWith({ where: { sessionId: 'session-CODING' } });
+  expect(models.MonitoringSession.findOne).toHaveBeenLastCalledWith(expect.objectContaining({ where: { sessionId: 'session-CODING' }, lock: 'UPDATE' }));
 });
 
 test('report lists display and filter the same audit score as individual and Excel reports', async () => {

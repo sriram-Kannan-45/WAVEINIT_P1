@@ -184,6 +184,7 @@ router.post('/chatbot/ask', participant, async (req, res) => {
 
     return res.json({ success: true, ...result });
   } catch (error) {
+    if (error.code === 'AI_PROVIDERS_UNAVAILABLE') return res.status(503).json({success:false,error:error.message,code:error.code});
     console.error('Error handling participant chatbot request:', error);
     return res.status(500).json({
       success: false,

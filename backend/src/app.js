@@ -465,6 +465,7 @@ const startServer = async () => {
 
     // 5. Connect to database
     await connectDB();
+    await require('../database/migrations/20260904b-monitoring-session-metadata').up(sequelize.getQueryInterface());
 
     // Required by mentor INSERTs and reporting SELECTs. Run independently of
     // the late alter-sync group, where an unrelated table error can skip it.

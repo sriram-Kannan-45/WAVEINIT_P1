@@ -356,12 +356,13 @@ function checkQuizResponse({ text, options = [], answerStrings = [] } = {}) {
   let out = typeof text === 'string' ? text : '';
   const reasons = [];
   const flatNorm = normaliseAnswer(out);
+  if (/^(?:option\s*)?[a-d1-4][.)]?$/i.test(out.trim())) reasons.push('bare_option_answer');
 
   // 1. The correct answer itself, in any casing/punctuation, is always a leak.
   for (const ans of answerStrings) {
     const norm = normaliseAnswer(ans);
-    if (norm.length < 2) continue;
-    if (flatNorm.includes(norm)) {
+    if (!norm) continue;
+    if (new RegExp(`(?:^|\\s)${escapeRe(norm)}(?:$|\\s)`).test(flatNorm)) {
       reasons.push('correct_answer_verbatim');
       break;
     }

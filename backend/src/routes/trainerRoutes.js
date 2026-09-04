@@ -853,15 +853,12 @@ router.post(
         return res.status(422).json({ error: 'Difficulty is required.' });
       }
 
-      // Convert difficulty to Title Case (Easy, Medium, Hard)
-      const diffCoerced = difficulty.charAt(0).toUpperCase() + difficulty.slice(1).toLowerCase();
-      if (!['Easy', 'Medium', 'Hard'].includes(diffCoerced)) {
-        return res.status(422).json({ error: 'Difficulty must be Easy, Medium, or Hard.' });
-      }
+      const { normalizeQuestionDifficulty } = require('../utils/quizDifficulty');
+      const canonicalDifficulty = normalizeQuestionDifficulty(difficulty);
 
       const aiService = require('../services/aiService');
       console.log(`[trainerRoutes] Requesting prompt-quiz generation from AI for: "${prompt}"`);
-      const questions = await aiService.generateQuizFromPrompt(prompt.trim(), count, diffCoerced);
+      const questions = await aiService.generateQuizFromPrompt(prompt.trim(), count, canonicalDifficulty);
 
       return res.json({
         success: true,
@@ -870,7 +867,7 @@ router.post(
 
     } catch (error) {
       console.error('❌ [POST /trainer/quiz/generate-from-prompt] ERROR:', error.message);
-      return res.status(500).json({
+      return res.status(error.status || 500).json({
         error: error.message || 'Failed to generate quiz from prompt'
       });
     }

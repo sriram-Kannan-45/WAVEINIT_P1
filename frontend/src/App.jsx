@@ -701,6 +701,24 @@ function AppRoutes({ user, onLogin, onLogout }) {
       />
 
       <Route
+        path="/quizzes/:quizId/result"
+        element={
+          user?.role === 'PARTICIPANT' ? (
+            <Layout
+              user={user}
+              onLogout={onLogout}
+              activeTab="myEnrollments"
+              onTabChange={() => window.location.href = '/participant'}
+            >
+              <ParticipantQuizResultPage user={user} />
+            </Layout>
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+
+      <Route
         path="/participant/exam/:quizId"
         element={
           user?.role === 'PARTICIPANT'

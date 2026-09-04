@@ -8,14 +8,9 @@ class ExplanationGenerator:
         pass
 
     def ensure_explanations(self, questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Verify that every question has a non-empty explanation field.
-        Appends a reasonable default fallback if missing.
-        """
-        for i, q in enumerate(questions):
-            explanation = q.get("explanation", "").strip()
-            if not explanation:
-                correct = q.get("correctAnswer", "")
-                q["explanation"] = f"This is the correct answer based on technical validation of the concept '{correct}'."
-                log.info(f"Added default explanation for question {i + 1}")
+        """Reject missing explanations; never fabricate an explanation or answer."""
+        for index, question in enumerate(questions):
+            explanation = question.get("explanation")
+            if not isinstance(explanation, str) or len(explanation.strip()) < 10:
+                raise ValueError(f"Question {index + 1} needs a generated and verified explanation.")
         return questions

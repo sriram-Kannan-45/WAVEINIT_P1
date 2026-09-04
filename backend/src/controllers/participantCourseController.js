@@ -1398,14 +1398,27 @@ async function getQuizResult(req, res) {
     if (!ctx) return;
     const { quiz } = ctx;
 
-    const attempt = await QuizAttempt.findOne({
-      where: {
-        quizId: quiz.id,
-        participantId: req.user.id,
-        status: { [Op.in]: ['SUBMITTED', 'EVALUATED', 'AUTO_SUBMITTED', 'disqualified_copy_violation', 'disqualified_policy_violation'] }
-      },
+    const targetAttemptId = req.query.attemptId ? parseInt(req.query.attemptId, 10) : null;
+    const attemptWhere = {
+      quizId: quiz.id,
+      participantId: req.user.id,
+      status: { [Op.in]: ['SUBMITTED', 'EVALUATED', 'AUTO_SUBMITTED', 'disqualified_copy_violation', 'disqualified_policy_violation'] }
+    };
+    if (targetAttemptId) {
+      attemptWhere.id = targetAttemptId;
+    }
+
+    let attempt = await QuizAttempt.findOne({
+      where: attemptWhere,
       order: [['id', 'DESC']],
     });
+
+    if (!attempt && targetAttemptId) {
+      attempt = await QuizAttempt.findOne({
+        where: { id: targetAttemptId, participantId: req.user.id, quizId: quiz.id }
+      });
+    }
+
     if (!attempt) {
       // Check if an in-progress attempt exists
       const anyAttempt = await QuizAttempt.findOne({
@@ -1417,12 +1430,15 @@ async function getQuizResult(req, res) {
           success: true,
           status: 'SUBMITTED_HIDDEN',
           resultStatus: quiz.resultStatus || 'HIDDEN',
+          quizTitle: quiz.title,
           message: 'Your quiz has been submitted. Results are pending trainer review.',
           submittedAt: anyAttempt.submittedAt || anyAttempt.updatedAt,
           attemptStatus: anyAttempt.status,
+          attemptId: anyAttempt.id,
+          timeTaken: anyAttempt.timeTaken || 0,
         });
       }
-      return res.json({ success: true, status: 'NOT_SUBMITTED', resultStatus: quiz.resultStatus });
+      return res.json({ success: true, status: 'NOT_SUBMITTED', resultStatus: quiz.resultStatus, quizTitle: quiz.title });
     }
 
     const isResultPublished =
@@ -1431,13 +1447,20 @@ async function getQuizResult(req, res) {
       !!quiz.isResultPublished;
 
     if (!isResultPublished) {
+      const totalQuestionsCount = await AIQuestion.count({ where: { quizId: quiz.id } });
+      const answeredCount = await QuizAnswer.count({ where: { attemptId: attempt.id } });
       return res.json({
         success: true,
         status: 'SUBMITTED_HIDDEN',
         resultStatus: 'HIDDEN',
+        quizTitle: quiz.title,
         message: 'Your quiz has been submitted successfully. Results will be published by the trainer.',
-        submittedAt: attempt.submittedAt,
+        submittedAt: attempt.submittedAt || attempt.updatedAt,
         attemptStatus: attempt.status,
+        attemptId: attempt.id,
+        timeTaken: attempt.timeTaken || 0,
+        totalQuestions: totalQuestionsCount,
+        answeredCount,
       });
     }
 
@@ -1475,11 +1498,16 @@ async function getQuizResult(req, res) {
       success: true,
       status: 'PUBLISHED',
       resultStatus: 'PUBLISHED',
+      quizTitle: quiz.title,
+      attemptId: attempt.id,
       score: computedPercentage,
       totalScore: computedTotalScore,
       maxScore: computedMaxScore,
       submittedAt: attempt.submittedAt,
       attemptStatus: attempt.status,
+      timeTaken: attempt.timeTaken || 0,
+      totalQuestions: totalCount,
+      answeredCount: myAnswers.length,
       correctCount,
       wrongCount: Math.max(0, totalCount - correctCount),
       passStatus: computedPercentage >= 50 ? 'Pass' : 'Fail',

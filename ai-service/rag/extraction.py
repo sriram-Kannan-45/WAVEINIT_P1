@@ -1,3 +1,5 @@
+import tempfile
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Optional
 
@@ -45,16 +47,25 @@ class TextExtractor:
     def extract_from_url(self, url: str) -> str:
         if not url or not url.lower().startswith(("http://", "https://")):
             raise UnsupportedSourceError("URL must start with http:// or https://")
-        response = requests.get(
-            url,
-            timeout=20,
-            headers={"User-Agent": "LMS-AI-Quiz-RAG/1.0"},
-        )
-        response.raise_for_status()
-        content_type = response.headers.get("content-type", "")
-        if "text/html" not in content_type and "application/xhtml" not in content_type:
-            raise UnsupportedSourceError(f"URL did not return HTML content: {content_type}")
-        soup = BeautifulSoup(response.text, "html.parser")
+        with requests.get(url, timeout=20, stream=True, headers={"User-Agent": "LMS-AI-Quiz-RAG/1.0"}) as response:
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+            data = bytearray()
+            for chunk in response.iter_content(chunk_size=65536):
+                data.extend(chunk)
+                if len(data) > self.config.max_file_size_bytes:
+                    raise UnsupportedSourceError("Source URL exceeds the maximum file size.")
+            mime_extensions = {"application/pdf": ".pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx", "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx", "text/plain": ".txt"}
+            suffix = mime_extensions.get(content_type) or Path(urlparse(response.url).path).suffix.lower()
+            if suffix in self.config.allowed_extensions and content_type not in {"text/html", "application/xhtml+xml"}:
+                with tempfile.TemporaryDirectory(prefix="quiz-source-") as temp_dir:
+                    source = Path(temp_dir) / ("source" + suffix)
+                    source.write_bytes(data)
+                    return self.extract_from_file(str(source))
+            if content_type not in {"text/html", "application/xhtml+xml"}:
+                raise UnsupportedSourceError(f"Unsupported URL content type: {content_type}")
+            html = bytes(data).decode(response.encoding or "utf-8", errors="replace")
+        soup = BeautifulSoup(html, "html.parser")
         for tag in soup(["script", "style", "noscript", "svg", "header", "footer", "nav", "aside"]):
             tag.decompose()
         main = soup.find("main") or soup.find("article") or soup.body or soup

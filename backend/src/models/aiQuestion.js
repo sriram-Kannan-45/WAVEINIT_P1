@@ -1,5 +1,6 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/db');
+const { QUESTION_DIFFICULTIES, normalizeQuestionDifficulty } = require('../utils/quizDifficulty');
 
 const AIQuestion = sequelize.define('AIQuestion', {
   id: {
@@ -57,9 +58,10 @@ const AIQuestion = sequelize.define('AIQuestion', {
     field: 'blooms_level'
   },
   difficulty: {
-    type: DataTypes.ENUM('EASY', 'MEDIUM', 'HARD'),
+    type: DataTypes.ENUM(...QUESTION_DIFFICULTIES),
     allowNull: false,
-    defaultValue: 'MEDIUM'
+    defaultValue: 'MEDIUM',
+    set(value) { this.setDataValue('difficulty', normalizeQuestionDifficulty(value)); }
   },
   order: {
     type: DataTypes.INTEGER,

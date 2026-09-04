@@ -1,0 +1,113 @@
+{
+  "checkedAt": "2026-09-04T15:53:02.218Z",
+  "section": "course",
+  "result": {
+    "success": true,
+    "structure": {
+      "courseTitle": "Introductory Biology: Photosynthesis Fundamentals",
+      "estimatedDuration": "2 Hours",
+      "modules": [
+        {
+          "title": "Module 1 – Light‑Dependent Reactions",
+          "duration": "1 Hours",
+          "description": "Explore how plants capture light energy and convert it into chemical energy (ATP and NADPH).",
+          "subModules": [
+            {
+              "title": "Submodule 1.1 – Chlorophyll and Light Absorption",
+              "duration": "0.5 Hours",
+              "topics": [
+                {
+                  "title": "Structure and function of chlorophyll",
+                  "duration": "0.166667 Hours",
+                  "description": "Identify chlorophyll molecules and explain how they absorb specific wavelengths of light."
+                },
+                {
+                  "title": "Photon capture in thylakoid membranes",
+                  "duration": "0.166667 Hours",
+                  "description": "Describe the arrangement of photosystems I and II within the thylakoid membrane."
+                },
+                {
+                  "title": "Factors affecting light absorption",
+                  "duration": "0.166667 Hours",
+                  "description": "Discuss how light intensity, wavelength, and pigment concentration influence energy capture."
+                }
+              ]
+            },
+            {
+              "title": "Submodule 1.2 – Energy Conversion to ATP and NADPH",
+              "duration": "0.5 Hours",
+              "topics": [
+                {
+                  "title": "Electron transport chain and proton gradient",
+                  "duration": "0.2 Hours",
+                  "description": "Explain how electrons move through the chain and generate a proton motive force."
+                },
+                {
+                  "title": "Photophosphorylation: ATP synthesis",
+                  "duration": "0.15 Hours",
+                  "description": "Detail the role of ATP synthase in converting the proton gradient into ATP."
+                },
+                {
+                  "title": "Formation of NADPH",
+                  "duration": "0.15 Hours",
+                  "description": "Outline the reduction of NADP+ to NADPH at photosystem I."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Module 2 – Calvin Cycle and Photosynthetic Regulation",
+          "duration": "1 Hours",
+          "description": "Examine the carbon‑fixing reactions in the stroma and how environmental factors control photosynthesis rate.",
+          "subModules": [
+            {
+              "title": "Submodule 2.1 – Calvin Cycle Mechanics",
+              "duration": "0.583333 Hours",
+              "topics": [
+                {
+                  "title": "Carbon fixation and the role of Rubisco",
+                  "duration": "0.2 Hours",
+                  "description": "Describe how CO₂ is incorporated into ribulose‑1,5‑bisphosphate."
+                },
+                {
+                  "title": "Reduction phase: converting 3‑PGA to G3P",
+                  "duration": "0.183333 Hours",
+                  "description": "Show how ATP and NADPH from the light reactions drive reduction."
+                },
+                {
+                  "title": "Regeneration of RuBP",
+                  "duration": "0.2 Hours",
+                  "description": "Explain the series of reactions that restore the CO₂ acceptor molecule."
+                }
+              ]
+            },
+            {
+              "title": "Submodule 2.2 – Environmental Limits on Photosynthesis",
+              "duration": "0.416667 Hours",
+              "topics": [
+                {
+                  "title": "Impact of light intensity",
+                  "duration": "0.133333 Hours",
+                  "description": "Discuss the light‑saturation point and photoinhibition."
+                },
+                {
+                  "title": "Effect of CO₂ concentration",
+                  "duration": "0.133333 Hours",
+                  "description": "Explain how CO₂ availability influences the Calvin cycle rate."
+                },
+                {
+                  "title": "Temperature dependence",
+                  "duration": "0.15 Hours",
+                  "description": "Relate enzyme activity and membrane fluidity to temperature effects."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "generationSource": "ai-verified",
+    "provider": "groq"
+  }
+}

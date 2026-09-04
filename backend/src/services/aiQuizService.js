@@ -1,4 +1,5 @@
 const {
+  sequelize,
   AIQuiz,
   AIQuestion,
   AIQuestionOption,
@@ -13,6 +14,7 @@ const {
 const aiService = require('./aiService');
 const { gradeAnswer } = require('../utils/gradeAnswer');
 const { Op } = require('sequelize');
+const { normalizeQuizDifficulty, normalizeGeneratedQuestionDifficulty } = require('../utils/quizDifficulty');
 
 class AIQuizService {
   /**
@@ -20,11 +22,10 @@ class AIQuizService {
    * @param {string} type - 'prompt' or 'document'
    * @param {string} input - Prompt topic or extracted document text
    * @param {number} questionCount - Number of questions to generate
-   * @param {string} difficulty - 'Easy', 'Medium', or 'Hard'
+   * @param {string} difficulty - EASY, MEDIUM, HARD, or MIXED (case-insensitive input)
    */
-  async generateQuiz(type, input, questionCount = 10, difficulty = 'Medium') {
-    const coercedDiff = difficulty.charAt(0).toUpperCase() + difficulty.slice(1).toLowerCase(); // Easy, Medium, Hard
-    const diffUpper = difficulty.toUpperCase(); // EASY, MEDIUM, HARD, MIXED
+  async generateQuiz(type, input, questionCount = 10, difficulty = 'MEDIUM') {
+    const diffUpper = normalizeQuizDifficulty(difficulty);
 
     if (type === 'document') {
       console.log(`[AIQuizService] Generating quiz from document text (${input.length} chars)`);
@@ -32,10 +33,10 @@ class AIQuizService {
       return result.questions || [];
     } else if (type === 'prompt') {
       console.log(`[AIQuizService] Generating quiz from prompt topic "${input}"`);
-      const questions = await aiService.generateQuizFromPrompt(input, questionCount, coercedDiff);
+      const questions = await aiService.generateQuizFromPrompt(input, questionCount, diffUpper);
       // generateQuizFromPrompt returns questions already, but let's normalize them just in case
       // Since it's from prompt, we use normalized parser to map properties cleanly.
-      return this.parseResponse(questions, coercedDiff);
+      return questions;
     } else {
       throw new Error(`Unsupported generation type: ${type}`);
     }
@@ -45,54 +46,7 @@ class AIQuizService {
    * Normalizes the questions format.
    */
   parseResponse(questions = [], fallbackDifficulty = 'MEDIUM') {
-    // We can reuse the normalization logic from aiService.js or define a custom clean parser.
-    return questions.map((q, i) => {
-      const questionText = q.question || q.questionText || `Question ${i + 1}`;
-      const explanation = q.explanation || '';
-      const difficulty = (q.difficulty || fallbackDifficulty).toUpperCase();
-      const questionType = String(q.questionType || q.question_type || 'MCQ').toUpperCase();
-
-      let options = [];
-      let correctAnswer = '';
-
-      if (questionType === 'TRUE_FALSE') {
-        options = ['True', 'False'];
-        const correctRaw = String(q.correctAnswer || q.correct_answer || '').trim().toLowerCase();
-        correctAnswer = correctRaw === 'false' || correctRaw === '1' ? '1' : '0';
-      } else {
-        // Handle MCQ
-        options = Array.isArray(q.options) && q.options.length === 4
-          ? q.options.map(opt => String(opt))
-          : [q.optionA, q.optionB, q.optionC, q.optionD].filter(Boolean);
-
-        if (options.length !== 4) {
-          options = ['Option A', 'Option B', 'Option C', 'Option D'];
-        }
-
-        const rawCorrect = q.correctAnswer || q.correct_answer || '';
-        // Find option index
-        const idx = options.findIndex(opt => String(opt).trim().toLowerCase() === String(rawCorrect).trim().toLowerCase());
-        if (idx >= 0) {
-          correctAnswer = String(idx);
-        } else if (['0', '1', '2', '3'].includes(String(rawCorrect))) {
-          correctAnswer = String(rawCorrect);
-        } else if (['A', 'B', 'C', 'D'].includes(String(rawCorrect).toUpperCase())) {
-          correctAnswer = String(String(rawCorrect).toUpperCase().charCodeAt(0) - 65);
-        } else {
-          correctAnswer = '0';
-        }
-      }
-
-      return {
-        questionText,
-        questionType: 'MCQ', // For now ensure MCQ compatibility
-        options,
-        correctAnswer,
-        explanation,
-        difficulty: ['EASY', 'MEDIUM', 'HARD'].includes(difficulty) ? difficulty : 'MEDIUM',
-        order: i
-      };
-    });
+    return require('./quizGenerationContract').validateMcqs(questions, {difficulty: fallbackDifficulty});
   }
 
   /**
@@ -110,9 +64,7 @@ class AIQuizService {
     published = true,
     documentId = null
   }) {
-    const diffUpper = ['EASY', 'MEDIUM', 'HARD', 'MIXED'].includes(String(difficulty).toUpperCase())
-      ? String(difficulty).toUpperCase()
-      : 'MIXED';
+    const diffUpper = normalizeQuizDifficulty(difficulty);
 
     const quiz = await AIQuiz.create({
       courseId: courseId || null,
@@ -141,7 +93,10 @@ class AIQuizService {
   /**
    * Saves the questions and their choices.
    */
-  async saveQuestions(quizId, questions = []) {
+  async saveQuestions(quizId, questions = [], { transaction = null, difficulty = 'MIXED' } = {}) {
+    if (!transaction) return sequelize.transaction(transaction => this.saveQuestions(quizId, questions, { transaction, difficulty }));
+    require('./promptQuizGenerator').assertVerifiedQuestions(questions);
+    questions = require('./quizGenerationContract').validateQuestions(questions, {difficulty});
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i];
       const savedQuestion = await AIQuestion.create({
@@ -151,9 +106,14 @@ class AIQuizService {
         options: q.options || null,
         correctAnswer: String(q.correctAnswer ?? ''),
         explanation: q.explanation || '',
-        difficulty: q.difficulty || 'MEDIUM',
+        acceptableAnswers: q.acceptableAnswers || null,
+        pairs: q.pairs || null,
+        topic: q.topic || null,
+        bloomsLevel: q.bloomsLevel || null,
+        difficulty: q.difficulty,
+        marks: q.marks,
         order: i,
-      });
+      }, { transaction });
 
       if (Array.isArray(q.options) && q.options.length > 0) {
         const correctIndex = ['0', '1', '2', '3'].includes(String(q.correctAnswer))
@@ -166,7 +126,7 @@ class AIQuizService {
             optionText: String(q.options[optionIndex]),
             isCorrect: optionIndex === correctIndex,
             order: optionIndex,
-          });
+          }, { transaction });
         }
       }
     }

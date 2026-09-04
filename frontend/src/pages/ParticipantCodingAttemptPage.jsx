@@ -5,8 +5,6 @@ import UnifiedMonitoringWidget from '../components/monitoring/UnifiedMonitoringW
 import { API_BASE, BACKEND_ORIGIN } from '../api/api'
 import { useToast } from '../components/Toast'
 import { useConfirm } from '../components/ui/AlertModal'
-import { ProctorProvider, useProctor } from '../proctoring/ProctorContext'
-import useDeviceFingerprint from '../proctoring/hooks/useDeviceFingerprint'
 import { useQuizProtection } from '../hooks/useQuizProtection.jsx'
 import { Loader2, AlertCircle, Play, Check, Clock, Send, Save, Terminal, Bug, Trash2, CheckCircle2, XCircle, ChevronRight, Award, Sparkles } from 'lucide-react'
 import CodeEditor from '../components/CodeEditor'
@@ -266,8 +264,6 @@ function ParticipantCodingAttemptInner({ user }) {
   const { trainingId, assessmentId } = useParams()
   const [searchParams] = useSearchParams()
   const { error: showError, success: showSuccess } = useToast()
-  const proctor = useProctor()
-  const fp = useDeviceFingerprint()
 
   // Problem-set identity, part of the draft scope. Held in a ref (the scope is
   // read inside callbacks) with a version counter so the memo below recomputes
@@ -1145,6 +1141,7 @@ function ParticipantCodingAttemptInner({ user }) {
 
     try {
       await monitoringClient._flushOpenIntervals(Date.now())
+      await monitoringClient.flushBrowserEvents()
       const activeDurationSec = monitoringClient.getActiveDurationSeconds()
       const submissions = problems.map(p => ({
         problemId: p.id,
@@ -1194,7 +1191,9 @@ function ParticipantCodingAttemptInner({ user }) {
       if (autoSaveRef.current) { clearInterval(autoSaveRef.current); autoSaveRef.current = null; }
       if (serverSaveRef.current) { clearInterval(serverSaveRef.current); serverSaveRef.current = null; }
 
-      // Fast non-blocking media & proctoring teardown
+      await monitoringClient.finishSession({ actualTestDurationSeconds: activeDurationSec })
+
+      // Media & proctoring teardown after the final audit is acknowledged
       try { monitoringClient.destroy() } catch (_) {}
       endVerificationSession()
       if (fsApi.element()) {
@@ -1971,8 +1970,9 @@ function ParticipantCodingAttemptInner({ user }) {
                 mobileEnabled={true}
                 preCalibrated={true}
                 prePaired={true}
-                isTestActive={consented}
+                isTestActive={consented && !submitted}
                 testStartedAt={testStartedAt}
+                configuredDurationSeconds={(assessment?.timeLimit || 60) * 60}
               />
             </div>
           </aside>
@@ -2122,9 +2122,5 @@ function ParticipantCodingAttemptInner({ user }) {
 }
 
 export default function ParticipantCodingAttemptPage({ user }) {
-  return (
-    <ProctorProvider>
-      <ParticipantCodingAttemptInner user={user} />
-    </ProctorProvider>
-  )
+  return <ParticipantCodingAttemptInner user={user} />
 }

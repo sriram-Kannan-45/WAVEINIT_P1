@@ -15,7 +15,7 @@ const AssessmentAIMentor = React.memo(function AssessmentAIMentor({ assessmentTy
     return <CodingAiAssistant key={`${props.user?.id}:${props.attemptId}`} {...props} />
   }
 
-  return <QuizAiAssistant {...props} />
+  return <QuizAiAssistant key={`${props.user?.id}:${props.attemptId}`} {...props} />
 })
 
 AssessmentAIMentor.propTypes = {

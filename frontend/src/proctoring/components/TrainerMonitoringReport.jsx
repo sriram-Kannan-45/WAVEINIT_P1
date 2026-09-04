@@ -490,7 +490,7 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose, context
                     </span>
                   </div>
                   <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
-                    {`${data?.tabSwitchCount ?? data?.scoringBreakdown?.tabSwitch?.count ?? 0} scored browser incident(s) ${tabSwitchScore > 0 ? '(Audit penalty applied)' : '(No audit penalty)'}`}
+                    {`${data?.tabSwitchCount ?? data?.scoringBreakdown?.tabSwitch?.count ?? 0} confirmed browser switch(es) ${tabSwitchScore > 0 ? '(Audit penalty applied)' : '(No audit penalty)'}`}
                   </div>
                 </div>
 
@@ -761,7 +761,7 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose, context
                   </span>
                 </div>
                 <div style={{ fontSize: 11.5, color: '#64748b', marginBottom: 10, lineHeight: 1.4 }}>
-                  The first 3 alerts of any monitoring session are surfaced as live on-screen corrective guidance without penalty scoring. Scored report violations begin strictly from strike 4 onward.
+                  The first three confirmed browser switches are warnings. More than three switches apply the browser audit penalty. Other monitoring categories retain their own grace allowance.
                 </div>
                 {graceWarnings.length > 0 ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

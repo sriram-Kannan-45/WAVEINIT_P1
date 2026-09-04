@@ -1,0 +1,71 @@
+{
+  "checkedAt": "2026-09-04T15:54:01.885Z",
+  "section": "coding",
+  "result": {
+    "title": "Coding Assessment: Compute Square of a Single Integer",
+    "languages": [
+      "python"
+    ],
+    "problems": [
+      {
+        "title": "Compute Square of a Single Integer",
+        "description": "Write a program that reads a single integer from standard input and prints its square. The input will contain exactly one integer N. Output the value N*N on a single line.",
+        "constraints": "Time Limit: 1.0s, Memory Limit: 64MB, -10^9 <= N <= 10^9",
+        "inputFormat": "A single line containing an integer N.",
+        "outputFormat": "A single line containing the square of N.",
+        "sampleInput": "5",
+        "sampleOutput": "25",
+        "explanation": "5 squared is 25, so the program outputs 25.",
+        "difficulty": "EASY",
+        "marks": 10,
+        "tags": [
+          "coding"
+        ],
+        "testCases": [
+          {
+            "input": "3",
+            "expectedOutput": "9",
+            "isHidden": false,
+            "description": "Positive small integer"
+          },
+          {
+            "input": "-4",
+            "expectedOutput": "16",
+            "isHidden": false,
+            "description": "Negative integer"
+          },
+          {
+            "input": "0",
+            "expectedOutput": "0",
+            "isHidden": true,
+            "description": "Edge case zero"
+          }
+        ],
+        "languageSolutions": {
+          "python": {
+            "starterCode": "import sys\n\ndef solve():\n    data = sys.stdin.read().strip()\n    if not data:\n        return\n    # TODO: parse input and compute square\n    pass\n\nif __name__ == \"__main__\":\n    solve()\n",
+            "referenceSolution": "import sys\n\ndef solve():\n    n = int(sys.stdin.readline().strip())\n    print(n * n)\n\nif __name__ == \"__main__\":\n    solve()\n"
+          }
+        },
+        "timeLimit": 5,
+        "memoryLimit": 256,
+        "languages": [
+          {
+            "starterCode": "import sys\n\ndef solve():\n    data = sys.stdin.read().strip()\n    if not data:\n        return\n    # TODO: parse input and compute square\n    pass\n\nif __name__ == \"__main__\":\n    solve()\n",
+            "referenceSolution": "import sys\n\ndef solve():\n    n = int(sys.stdin.readline().strip())\n    print(n * n)\n\nif __name__ == \"__main__\":\n    solve()\n",
+            "language": "python",
+            "starterCodeSource": "generated",
+            "referenceSolutionSource": "generated",
+            "generationStatus": "completed"
+          }
+        ],
+        "programmingLanguage": "python",
+        "starterCode": "import sys\n\ndef solve():\n    data = sys.stdin.read().strip()\n    if not data:\n        return\n    # TODO: parse input and compute square\n    pass\n\nif __name__ == \"__main__\":\n    solve()\n",
+        "expectedSolution": "import sys\n\ndef solve():\n    n = int(sys.stdin.readline().strip())\n    print(n * n)\n\nif __name__ == \"__main__\":\n    solve()\n",
+        "validationStatus": "VALIDATED",
+        "validationDetail": null
+      }
+    ],
+    "allPassed": true
+  }
+}

@@ -1,17 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import PropTypes from 'prop-types'
 import { Loader2, ShieldCheck, Lock } from 'lucide-react'
 import { API_BASE } from '../api/api'
 import AiMentorPanel from './ai-mentor/AiMentorPanel'
-
-const authHeaders = (token) => ({
-  'Content-Type': 'application/json',
-  Authorization: `Bearer ${token}`
-})
-
-// A stuck upstream model call must never leave the participant's chat stuck in
-// the loading state, so each mentor request is bounded and aborted on timeout.
-const MENTOR_TIMEOUT_MS = 20000
+import { authHeaders, MENTOR_TIMEOUT_MS, readMentorResponse } from './ai-mentor/mentorRequest'
 
 /**
  * The approved quiz quick-action set, in the approved order.
@@ -51,28 +43,43 @@ const QuizAiAssistant = React.memo(function QuizAiAssistant({
   const [limit, setLimit] = useState(3)
   const [used, setUsed] = useState(0)
   const [unlimited, setUnlimited] = useState(false)
-  const [messages, setMessages] = useState([])
-  const [input, setInput] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [messagesByQuestion, setMessagesByQuestion] = useState({})
+  const [inputByQuestion, setInputByQuestion] = useState({})
+  const [sendingByQuestion, setSendingByQuestion] = useState({})
+  const requests = useRef(new Map())
   const [statusLoading, setStatusLoading] = useState(false)
 
   const qId = question?.id
+  const messages = messagesByQuestion[qId] || []
+  const input = inputByQuestion[qId] || ''
+  const loading = Boolean(sendingByQuestion[qId])
+  const setMessages = updater => setMessagesByQuestion(prev => ({...prev, [qId]: typeof updater === 'function' ? updater(prev[qId] || []) : updater}))
+  const setInput = value => setInputByQuestion(prev => ({...prev, [qId]: value}))
+  const setLoading = value => setSendingByQuestion(prev => ({...prev, [qId]: value}))
+  useEffect(() => () => {
+    for (const controller of requests.current.values()) { clearTimeout(controller.mentorTimeout); controller.abort() }
+    requests.current.clear()
+  }, [])
 
   const loadStatus = useCallback(async (isInitial = false) => {
     if (!user?.token || !attemptId) return
     if (isInitial) setStatusLoading(true)
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), MENTOR_TIMEOUT_MS)
     try {
       const res = await fetch(`${API_BASE}/ai-quiz/participant/${attemptId}/quiz-ai-status`, {
         headers: authHeaders(user.token),
+        signal: controller.signal,
       })
       const data = await res.json()
       if (res.ok && data) {
         setEnabled(data.enabled !== false)
         setLimit(Number(data.limit) || 3)
-        setUsed(Number(data.used) || 0)
+        setUsed(previous => Math.max(previous, Number(data.used) || 0))
         setUnlimited(data.unlimited === true)
       }
     } catch (_) {} finally {
+      clearTimeout(timeout)
       if (isInitial) setStatusLoading(false)
     }
   }, [user?.token, attemptId])
@@ -97,7 +104,7 @@ const QuizAiAssistant = React.memo(function QuizAiAssistant({
 
   const ask = async (customPrompt) => {
     const prompt = (customPrompt || input || '').trim()
-    if (!prompt || loading || (remaining !== -1 && remaining <= 0)) {
+    if (!prompt || !qId || !user?.token || requests.current.has(qId) || (remaining !== -1 && remaining <= 0)) {
       if (remaining !== -1 && remaining <= 0) {
         onError?.('You have used all your AI mentor help for this quiz.')
       }
@@ -110,6 +117,8 @@ const QuizAiAssistant = React.memo(function QuizAiAssistant({
 
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), MENTOR_TIMEOUT_MS)
+    controller.mentorTimeout = timeoutId
+    requests.current.set(qId, controller)
 
     const headers = { ...authHeaders(user.token), 'Content-Type': 'application/json' }
     if (sessionToken) headers['X-Assessment-Session'] = sessionToken
@@ -124,18 +133,15 @@ const QuizAiAssistant = React.memo(function QuizAiAssistant({
           question: prompt,
         }),
       })
-      const data = await res.json()
-      if (!res.ok) {
-        if (res.status === 429) {
-          setUsed(data.remaining === 0 ? limit : used)
-        }
-        throw new Error(data.error || data.response || 'AI mentor unavailable')
-      }
-      setUsed(Number(data.used) || used + 1)
+      const data = await readMentorResponse(res)
+      if (requests.current.get(qId) !== controller) return
+      setUsed(previous => Math.max(previous, Number(data.used) || previous + 1))
       if (data.unlimited != null) setUnlimited(data.unlimited === true)
       if (data.limit != null) setLimit(Number(data.limit))
-      setMessages(prev => [...prev, { role: 'assistant', text: data.response || '(no response)', at: Date.now() }])
+      setMessages(prev => [...prev, { role: 'assistant', text: data.response, at: Date.now() }])
     } catch (err) {
+      if (requests.current.get(qId) !== controller) return
+      if (err.code === 'AI_HELP_LIMIT_REACHED' && err.remaining === 0) setUsed(limit)
       if (err && err.name === 'AbortError') {
         setMessages(prev => [...prev, { role: 'assistant', text: '', error: 'The mentor took too long to respond. Please try your question again.', at: Date.now() }])
       } else {
@@ -143,7 +149,7 @@ const QuizAiAssistant = React.memo(function QuizAiAssistant({
       }
     } finally {
       clearTimeout(timeoutId)
-      setLoading(false)
+      if (requests.current.get(qId) === controller) { requests.current.delete(qId); setLoading(false) }
     }
   }
 

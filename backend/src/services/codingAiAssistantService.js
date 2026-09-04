@@ -1,11 +1,9 @@
 'use strict';
 
-const axios = require('axios');
+const { requestMentorText, reviewMentorText } = require('./mentorProvider');
 const logger = require('../utils/logger');
 const answerGuard = require('./aiAnswerGuard');
 
-const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
-const HTTP_TIMEOUT = process.env.AI_HTTP_TIMEOUT ? Number(process.env.AI_HTTP_TIMEOUT) : 4000;
 
 // Reject obsolete provider responses too, including from an older AI service.
 const OBSOLETE_RESTRICTION = /(?:help options|hint|level).{0,80}(?:unlock|locked)|try the problem for a little longer|make an attempt first|(?:write|run)(?: your| some)? code first(?:[.!]|.{0,60}(?:before|hint|help))|(?:wait|time remaining).{0,60}(?:hint|help|unlock)/i;
@@ -66,7 +64,7 @@ function buildSystemPrompt({
   conversation = [],
 }) {
   const levelDirections = {
-    1: 'LEVEL 1 — HINT: one or two short conceptual clues that get them started. Do not walk through the whole method.',
+    1: 'LEVEL 1 — HINT: one brief conceptual clue and one guiding question. No code expressions or specific implementation syntax at this level. Do not walk through the method.',
     2: 'LEVEL 2 — APPROACH: describe the order of reasoning — what to work out first, which property or rule matters, what shape the result takes.',
     3: 'LEVEL 3 — GUIDED SYNTAX: you may now name the specific operator, built-in function or API that applies, show it as an isolated expression, and say what each of its possible results means. You must still stop before assembling it into the statement that solves the problem.',
   };
@@ -96,19 +94,14 @@ YOU MAY DO THESE:
 - Say what each possible result of that expression means.
 - Explain what an error message means and where to look, without correcting the line.
 
-THE DEPTH CEILING — this is exactly how far you may go:
-  "You can use the modulo operator (%) in JavaScript."
-  "Example: n % 2"
-  "If the result is 0 -> Even"
-  "If the result is 1 -> Odd"
-  "Try using that in your code!"
-That is allowed. Writing "if (n % 2 === 0) return 'Even'" is not — you stopped one step too far. Give them the piece, never the assembly.
+THE DEPTH CEILING:
+Explain one relevant concept or diagnostic step for this specific problem. Do not give a complete algorithm, map conditions to final output values, or assemble a solution in prose or code. Avoid examples from unrelated problems.
 
 If they ask outright for the answer or the code, decline warmly and redirect:
 "I can't write that part for you during the assessment — but let's get you to it. <guiding question>"
 
 HOW TO WRITE THE REPLY:
-- Write 3 to 5 very short paragraphs, one idea each, separated by a blank line. Never one dense block.
+- Write at most two short paragraphs, under 90 words, covering one concept only. Never one dense block.
 - Plain sentences. No markdown headings, no bullet characters, no code fences.
 - Simple, warm, encouraging English. Short words, short sentences.
 - If a technical term is unavoidable, say what it means in the same breath.
@@ -142,11 +135,11 @@ Reply now, as their mentor, within the limits above.`;
 }
 
 /**
- * Multi-Tier Socratic AI Assistant call (Gemini Direct -> Python Microservice -> Local Offline Fallback).
+ * Multi-Tier Socratic AI Assistant call (shared Gemini/Groq provider with bounded live regeneration).
  *
  * Every tier's output passes through answerGuard.checkCodingResponse before it
  * is returned. A rejected reply falls through to the next tier (regeneration),
- * and the local generator is safe by construction, so a leak can never be the
+ * and exhausted attempts return an error; unsafe text cannot be the
  * value returned to the participant.
  *
  * @returns {Promise<{text: string, possibleLeak: boolean, reasons: string[], tier: string}>}
@@ -171,7 +164,6 @@ async function callAssist({
   // context on any tier.
   referenceSolutions = [],
 }) {
-  const apiKey = process.env.GEMINI_API_KEY;
   const prompt = buildSystemPrompt({
     title,
     problemStatement,
@@ -208,193 +200,23 @@ async function callAssist({
         blocked: verdict.blocked,
       });
     }
-    if (verdict.blocked) return null;
+    if (verdict.blocked || verdict.possibleLeak) return null;
     return verdict.text ? verdict.text : null;
   };
 
-  // Tier 1: Direct Gemini API
-  if (apiKey) {
-    try {
-      const geminiRes = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-        {
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.2,
-            maxOutputTokens: 600,
-          },
-        },
-        { timeout: HTTP_TIMEOUT, headers: { 'Content-Type': 'application/json' } }
-      );
-
-      const text = geminiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (text && typeof text === 'string' && text.trim()) {
-        const safe = guard(text.trim(), 'gemini');
-        if (safe) return { text: safe, possibleLeak, reasons: leakReasons, tier: 'gemini' };
-      }
-    } catch (err) {
-      logger.warn('[CodingAiAssistant] Gemini direct call failed, falling back', { error: err.message });
-    }
+  const deadline = Date.now() + 18000;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (deadline - Date.now() < 1000) throw Object.assign(new Error('AI guidance timed out. Please retry.'), {status:503,code:'AI_GUIDANCE_TIMEOUT'});
+    const remote = await requestMentorText(prompt + (attempt ? '\nYour previous response was rejected. Give a fresh conceptual hint without identifying any answer, final result, or complete solution. Do not require waiting or prior attempts.' : ''), {timeout: deadline - Date.now()});
+    if (!remote?.text || !remote.provider) throw Object.assign(new Error('The AI provider returned no usable guidance. Please retry.'), {status: 503, code: 'AI_INVALID_RESPONSE'});
+    const safe = guard(remote.text, remote.provider);
+    if (safe && deadline - Date.now() >= 1000 && await reviewMentorText(prompt, safe, {timeout:deadline - Date.now()})) return {text: safe, possibleLeak, reasons: leakReasons, tier: remote.provider};
+    possibleLeak = true;
+    leakReasons.push('guidance_rejected');
   }
-
-  // Tier 2: Python microservice fallback
-  try {
-    const response = await axios.post(
-      `${AI_SERVICE_URL}/coding/assist`,
-      {
-        title,
-        problem_statement: problemStatement,
-        constraints,
-        language,
-        code,
-        question,
-        level,
-        action,
-        usage_number: usageNumber,
-        input_format: inputFormat,
-        output_format: outputFormat,
-        error_context: errorContext,
-        conversation,
-      },
-      { timeout: HTTP_TIMEOUT, headers: { 'Content-Type': 'application/json' } }
-    );
-    const text = response.data?.assist;
-    if (text && typeof text === 'string' && text.trim()) {
-      const safe = guard(text.trim(), 'ai-service');
-      if (safe) return { text: safe, possibleLeak, reasons: leakReasons, tier: 'ai-service' };
-    }
-  } catch (err) {
-    logger.warn('[CodingAiAssistant] Python AI service call failed', { error: err.message });
-  }
-
-  // Tier 3: Local intelligent Socratic generator (Offline safety fallback)
-  const localOutput = generateLocalSocraticGuidance({
-    title,
-    problemStatement,
-    language,
-    code,
-    question,
-    level,
-    action,
-    errorContext,
-  });
-
-  const safeLocal = guard(localOutput, 'local');
-  return {
-    text: safeLocal || 'Let us take a step back. Read the question once more and tell me, in your own words, what it is asking you to produce. I will guide you from there.',
-    possibleLeak,
-    reasons: leakReasons,
-    tier: 'local',
-  };
+  throw Object.assign(new Error('The AI could not provide guidance without revealing the assessment answer. Please rephrase your question.'), {status: 502, code: 'AI_GUIDANCE_REJECTED'});
 }
 
-/**
- * Local offline rule-based Socratic generator ensuring beginner-friendly, zero-code responses.
- */
-function generateLocalSocraticGuidance({ title, problemStatement, language, code, question, level, action, errorContext }) {
-  const qLower = (question || '').toLowerCase().trim();
-
-  // Multi-lingual Tamil / Tanglish detection
-  if (
-    qLower.includes('purila') ||
-    qLower.includes('puriyala') ||
-    qLower.includes('therila') ||
-    qLower.includes('enna panradhu') ||
-    qLower.includes('solli thanga') ||
-    qLower.includes('tamil')
-  ) {
-    return `Parava illa, simple ah paakalam.
-
-Indha question la first enna input kudukranga nu paarunga, adhula enna maathanum nu yosinga.
-
-Apram enna output venum nu paarunga. Input la irundhu output ku pogum vazhi enna nu yosicha, adhu dhaan answer.
-
-Oru oru step ah try pannunga. First step mattum ezhudhi, enna varudhu nu enkitta sollunga.`;
-  }
-
-  // Student asking for code or syntax
-  if (
-    qLower.includes('give me code') ||
-    qLower.includes('give code') ||
-    qLower.includes('write code') ||
-    qLower.includes('python code') ||
-    qLower.includes('java code') ||
-    qLower.includes('solution') ||
-    qLower.includes('solve this for me') ||
-    qLower.includes('give me an if') ||
-    qLower.includes('syntax')
-  ) {
-    return `I can't write that part for you during the assessment — but let's get you to it.
-
-Start with what the question is actually asking you to produce, and say it back in one plain sentence.
-
-Then think about the single check or calculation that separates the right result from a wrong one.
-
-Write just the input part first, and tell me what you get.`;
-  }
-
-  // Error explanation
-  if (action === 'explain_error' || errorContext || qLower.includes('error') || qLower.includes('wrong') || qLower.includes('fail')) {
-    return `Let's work out why that run didn't pass.
-
-${errorContext ? 'Compare what your program printed against what the question says it should produce — the difference usually points straight at the line to look at.' : 'Check whether every possible input case is handled, not just the obvious one.'}
-
-Watch the exact format too. Extra spaces, capital letters, and a number stored as text all count as a mismatch.
-
-Go to the one line where your decision is made, read it out loud, then run it again.`;
-  }
-
-  // Explain Problem / IO
-  if (action === 'explain_problem' || action === 'explain_io' || qLower.includes('explain') || qLower.includes('input') || qLower.includes('output')) {
-    return `The goal is to read the input you are given and produce the output the rules describe.
-
-Look at the sample input and notice exactly what changes on the way to the answer.
-
-Ask yourself what rule connects those two things. That rule is what you will write in code.
-
-Walk one sample through in your head before you type anything.`;
-  }
-
-  // Level 1: Hint
-  if (level === 1 || action === 'hint') {
-    return `Let's start with a small nudge.
-
-Think about which property of the input actually decides the answer here.
-
-Try splitting the work in two: read the data, then apply that one rule to it.
-
-Take the simplest example you can imagine, and tell me what check it needs.`;
-  }
-
-  // Level 2: Approach
-  if (level === 2 || action === 'approach') {
-    return `Here is the order to think in.
-
-First, get the input into a value you can actually work with.
-
-Then apply the rule from the question to that value. This is the part worth working out on paper first.
-
-Last, put the result into the exact format the question asks for.
-
-Do the first part, then tell me what your value looks like.`;
-  }
-
-  // Level 3: Guided syntax — name the tool, never assemble it
-  return `Let's think about the tool that fits this problem.
-
-Look for the operator or built-in function in ${language || 'your language'} that answers the question's core check directly. Problems like this usually have exactly one.
-
-Once you have it, write it on its own as a bare expression and see what it gives you for a single sample input.
-
-Then decide what each possible result of that expression should mean for your output.
-
-Putting those two together is the part that is yours.`;
-}
-
-/**
- * Backend-enforced AI assistant for a coding participant.
- * Generates guidance and records successful interactions for reporting only.
- */
 async function grantAssist({
   attemptId,
   problemId,
@@ -442,91 +264,76 @@ async function grantAssist({
   const aiEnabled = assessment?.aiAssistantEnabled !== false;
 
   if (!aiEnabled) throw Object.assign(new Error('AI assistant is disabled for this assessment'), { status: 400 });
-  // Serialize exchanges for this attempt so history and usage stay in order.
+  const previousHelps = await CodingAiHelp.findAll({
+    where: { attemptId, problemId, participantId },
+    attributes: ['prompt', 'response'],
+    order: [['id', 'DESC']],
+    limit: 10,
+  });
+  const conversation = previousHelps.reverse().flatMap(help => [
+    { role: 'user', text: String(help.prompt).slice(0, 2000) },
+    ...(!OBSOLETE_RESTRICTION.test(help.response) ? [{ role: 'assistant', text: String(help.response).slice(0, 3000) }] : []),
+  ]);
+
+  // Sanitize context: sample INPUTS only. Expected outputs are deliberately
+  // omitted — handing the model the answer for a public case lets it restate
+  // that answer no matter what the prompt says.
+  const visibleTestCases = await CodingTestCase.findAll({
+    where: { problemId, isHidden: false },
+    order: [['order', 'ASC']],
+    attributes: ['input', 'description'],
+  });
+  const sampleInputs = visibleTestCases.length > 0
+    ? visibleTestCases.map((tc, i) => `Sample ${i + 1} Input: ${tc.input || '(none)'}`).join('\n')
+    : (problem.sampleInput ? `Sample Input: ${problem.sampleInput}` : '');
+
+  // Reference solutions, loaded on a SEPARATE path from the prompt context.
+  // These are passed only to the response guard for comparison and are never
+  // included in anything sent to a model.
+  const referenceSolutions = [];
+  try {
+    const solutionRow = await CodingProblem.findByPk(problemId, {
+      attributes: ['expectedSolution'],
+    });
+    if (solutionRow?.expectedSolution) referenceSolutions.push(String(solutionRow.expectedSolution));
+
+    const langSolutions = await CodingProblemLanguage.findAll({
+      where: { problemId },
+      attributes: ['referenceSolution'],
+    });
+    for (const ls of langSolutions) {
+      if (ls.referenceSolution) referenceSolutions.push(String(ls.referenceSolution));
+    }
+  } catch (err) {
+    throw Object.assign(new Error('The mentor could not load this problem safely. Please retry.'), {status: 503, cause: err});
+  }
+
+  const assist = await callAssist({
+    title: problem.title,
+    problemStatement: problem.description,
+    inputFormat: problem.inputFormat,
+    outputFormat: problem.outputFormat,
+    constraints: problem.constraints || '',
+    language: language || problem.programmingLanguage || 'javascript',
+    code: code || '',
+    question: question || "I'm stuck. Can you guide me?",
+    level: reqLevel,
+    action: action || 'hint',
+    errorContext: errorContext || '',
+    sampleInputs,
+    usageNumber: (Number(attempt.aiHelpUsage?.[String(problemId)]) || 0) + 1,
+    conversation,
+    referenceSolutions,
+  });
+
+  const safeCoachingText = assist.text;
+  const possibleLeak = Boolean(assist.possibleLeak);
+
   const result = await sequelize.transaction(async (t) => {
-    const lockedAttempt = await CodingAttempt.findOne({
-      where: { id: attemptId, participantId, status: 'IN_PROGRESS' },
-      lock: t.LOCK.UPDATE,
-      transaction: t,
-    });
-    if (!lockedAttempt) throw Object.assign(new Error('Attempt not found or already submitted'), { status: 404 });
-    if (String(lockedAttempt.assessmentId) !== String(problem.assessmentId)) {
-      throw Object.assign(new Error('Problem not found for this coding attempt'), { status: 404 });
-    }
-
-    const currentUsage = { ...(lockedAttempt.aiHelpUsage || {}) };
-    const currentUsed = Number(currentUsage[String(problemId)] || 0);
-
-    const nextNumber = currentUsed + 1;
-    const previousHelps = await CodingAiHelp.findAll({
-      where: { attemptId, problemId, participantId },
-      attributes: ['prompt', 'response'],
-      order: [['id', 'DESC']],
-      limit: 10,
-      transaction: t,
-    });
-    const conversation = previousHelps.reverse().flatMap(help => [
-      { role: 'user', text: String(help.prompt).slice(0, 2000) },
-      ...(!OBSOLETE_RESTRICTION.test(help.response) ? [{ role: 'assistant', text: String(help.response).slice(0, 3000) }] : []),
-    ]);
-
-    // Sanitize context: sample INPUTS only. Expected outputs are deliberately
-    // omitted — handing the model the answer for a public case lets it restate
-    // that answer no matter what the prompt says.
-    const visibleTestCases = await CodingTestCase.findAll({
-      where: { problemId, isHidden: false },
-      order: [['order', 'ASC']],
-      attributes: ['input', 'description'],
-      transaction: t,
-    });
-    const sampleInputs = visibleTestCases.length > 0
-      ? visibleTestCases.map((tc, i) => `Sample ${i + 1} Input: ${tc.input || '(none)'}`).join('\n')
-      : (problem.sampleInput ? `Sample Input: ${problem.sampleInput}` : '');
-
-    // Reference solutions, loaded on a SEPARATE path from the prompt context.
-    // These are passed only to the response guard for comparison and are never
-    // included in anything sent to a model.
-    const referenceSolutions = [];
-    try {
-      const solutionRow = await CodingProblem.findByPk(problemId, {
-        attributes: ['expectedSolution'],
-        transaction: t,
-      });
-      if (solutionRow?.expectedSolution) referenceSolutions.push(String(solutionRow.expectedSolution));
-
-      const langSolutions = await CodingProblemLanguage.findAll({
-        where: { problemId },
-        attributes: ['referenceSolution'],
-        transaction: t,
-      });
-      for (const ls of langSolutions) {
-        if (ls.referenceSolution) referenceSolutions.push(String(ls.referenceSolution));
-      }
-    } catch (err) {
-      logger.warn('[CodingAiAssistant] Could not load reference solutions for leak check', { error: err.message });
-    }
-
-    const assist = await callAssist({
-      title: problem.title,
-      problemStatement: problem.description,
-      inputFormat: problem.inputFormat,
-      outputFormat: problem.outputFormat,
-      constraints: problem.constraints || '',
-      language: language || problem.programmingLanguage || 'javascript',
-      code: code || '',
-      question: question || "I'm stuck. Can you guide me?",
-      level: reqLevel,
-      action: action || 'hint',
-      errorContext: errorContext || '',
-      sampleInputs,
-      usageNumber: nextNumber,
-      conversation,
-      referenceSolutions,
-    });
-
-    const safeCoachingText = assist.text;
-    const possibleLeak = Boolean(assist.possibleLeak);
-
+    const lockedAttempt = await CodingAttempt.findOne({where: {id: attemptId, participantId, status: 'IN_PROGRESS'}, lock: t.LOCK.UPDATE, transaction: t});
+    if (!lockedAttempt || String(lockedAttempt.assessmentId) !== String(problem.assessmentId)) throw Object.assign(new Error('Attempt not found or already submitted'), {status: 404});
+    const currentUsage = {...(lockedAttempt.aiHelpUsage || {})};
+    const nextNumber = (Number(currentUsage[String(problemId)]) || 0) + 1;
     // Increment usage atomically
     currentUsage[String(problemId)] = nextNumber;
     await lockedAttempt.update({ aiHelpUsage: currentUsage }, { transaction: t });
@@ -558,11 +365,12 @@ async function grantAssist({
       });
     }
 
-    return { text: safeCoachingText, used: nextNumber, possibleLeak };
+    return { text: safeCoachingText, used: nextNumber, possibleLeak, provider: assist.tier };
   });
 
   return {
     response: result.text,
+    provider: result.provider,
     isLocked: false,
     usageUsed: result.used,
     usageLimit: -1,
@@ -720,5 +528,4 @@ module.exports = {
   callAssist,
   filterAndSanitizeAiResponse,
   buildSystemPrompt,
-  generateLocalSocraticGuidance,
 };

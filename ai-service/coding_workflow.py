@@ -32,6 +32,7 @@ import logging
 from typing import Any, Dict, Optional, Callable, List
 
 from langgraph.graph import StateGraph, END
+from services.ai_provider import AIProviderError
 
 log = logging.getLogger("coding-workflow")
 
@@ -312,6 +313,8 @@ class CodingWorkflowState(dict):
 def _safe_invoke_json(invoke_json: Callable, prompt: str) -> Optional[Any]:
     try:
         raw = invoke_json(prompt)
+    except AIProviderError:
+        raise
     except Exception as e:  # noqa: BLE001
         log.warning("LLM invoke failed in workflow: %s", e)
         return None
@@ -461,7 +464,8 @@ def validate_question_node(state: Dict[str, Any]) -> Dict[str, Any]:
             issues.append(f"problem {i + 1}: no test cases")
 
         parsed = _safe_invoke_json(state["invoke_json"], _validate_problem_prompt(prompt, p))
-        if isinstance(parsed, dict) and parsed.get("isValid") is False:
+        if not isinstance(parsed, dict) or parsed.get("isValid") is not True:
+            parsed = parsed if isinstance(parsed, dict) else {}
             issues.append(f"problem {i + 1}: " + "; ".join(
                 str(r) for r in parsed.get("reasons", [])))
 
@@ -514,7 +518,8 @@ def validate_test_cases_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if execute_fn is not None:
             issues.extend(f"problem {i + 1}: {x}" for x in _sandbox_validate(p, languages, execute_fn))
         parsed = _safe_invoke_json(state["invoke_json"], _validate_test_cases_prompt(prompt, p))
-        if isinstance(parsed, dict) and parsed.get("isValid") is False:
+        if not isinstance(parsed, dict) or parsed.get("isValid") is not True:
+            parsed = parsed if isinstance(parsed, dict) else {}
             issues.append(f"problem {i + 1}: " + "; ".join(
                 str(r) for r in parsed.get("reasons", [])))
 
@@ -540,7 +545,8 @@ def prompt_alignment_check_node(state: Dict[str, Any]) -> Dict[str, Any]:
         return state
 
     parsed = _safe_invoke_json(state["invoke_json"], _alignment_prompt(prompt, draft))
-    if isinstance(parsed, dict) and parsed.get("isAligned") is False:
+    if not isinstance(parsed, dict) or parsed.get("isAligned") is not True:
+        parsed = parsed if isinstance(parsed, dict) else {}
         titles = parsed.get("offTopicProblems") or []
         reasons = parsed.get("reasons") or []
         state["validation"] = {

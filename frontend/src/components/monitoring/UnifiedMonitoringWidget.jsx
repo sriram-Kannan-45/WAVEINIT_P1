@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { API_BASE, BACKEND_ORIGIN } from '../../api/api';
 import monitoringClient from '../../proctoring/engine/MonitoringEngineClient';
+import { useAssessmentCamera } from '../../proctoring/hooks/useAssessmentCamera';
 import '../../styles/dual-camera-widget.css';
 
 const ICE_SERVERS = [
@@ -65,6 +66,7 @@ export default function UnifiedMonitoringWidget({
   isTestActive = true,
   isPaused = false,
   testStartedAt = null,
+  configuredDurationSeconds = 0,
   externalWebcamStream: suppliedWebcamStream = null,
   onWebcamStreamReady = null,
   onCalibrationPassed = null,
@@ -96,7 +98,7 @@ export default function UnifiedMonitoringWidget({
   const [calibrationPassed, setCalibrationPassed] = useState(preCalibrated || isQuizOrCoding);
 
   // Streams & Detection State
-  const [webcamStream, setWebcamStream] = useState(externalWebcamStream || null);
+  const { stream: webcamStream, error: cameraError, retry: retryCamera } = useAssessmentCamera(externalWebcamStream, onWebcamStreamReady);
   const [remoteMobileStream, setRemoteMobileStream] = useState(null);
   const [remoteVideoPlaying, setRemoteVideoPlaying] = useState(false);
   const [lastReceivedFrame, setLastReceivedFrame] = useState(null);
@@ -127,12 +129,8 @@ export default function UnifiedMonitoringWidget({
   const candidateQueueRef = useRef([]);
   const lastMobileActivityRef = useRef(Date.now());
 
-  const webcamStreamRef = useRef(null);
   const remoteMobileStreamRef = useRef(null);
 
-  useEffect(() => {
-    webcamStreamRef.current = webcamStream;
-  }, [webcamStream]);
 
   useEffect(() => {
     remoteMobileStreamRef.current = remoteMobileStream;
@@ -141,11 +139,6 @@ export default function UnifiedMonitoringWidget({
   // Global unmount cleanup: ensure camera tracks are released immediately
   useEffect(() => {
     return () => {
-      if (webcamStreamRef.current) {
-        try {
-          webcamStreamRef.current.getTracks().forEach((t) => t.stop());
-        } catch (_) {}
-      }
       if (remoteMobileStreamRef.current) {
         try {
           remoteMobileStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -158,7 +151,7 @@ export default function UnifiedMonitoringWidget({
         mobileVideoRef.current.srcObject = null;
       }
       try {
-        monitoringClient.destroy();
+        monitoringClient.destroy({ stopTracks: false });
       } catch (_) {}
     };
   }, []);
@@ -263,60 +256,6 @@ export default function UnifiedMonitoringWidget({
       clearInterval(interval);
     };
   }, [activeSessionId, activeToken, mobileEnabled, mobileConnected]);
-
-  // 3. Acquire Local Webcam Stream for Laptop Feed
-  useEffect(() => {
-    if (externalWebcamStream) {
-      setWebcamStream(externalWebcamStream);
-      if (webcamVideoRef.current && webcamVideoRef.current.srcObject !== externalWebcamStream) {
-        webcamVideoRef.current.srcObject = externalWebcamStream;
-        webcamVideoRef.current.play().catch(() => {});
-      }
-      return;
-    }
-
-    let localStream = null;
-    let cancelled = false;
-
-    const startWebcam = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            facingMode: 'user',
-            frameRate: { ideal: 15, max: 20 },
-          },
-          audio: false,
-        });
-
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-
-        localStream = stream;
-        setWebcamStream(stream);
-        onWebcamStreamReady?.(stream);
-
-        if (webcamVideoRef.current) {
-          webcamVideoRef.current.srcObject = stream;
-          webcamVideoRef.current.play().catch(() => {});
-        }
-      } catch (err) {
-        console.error('[UnifiedMonitoringWidget] Webcam access error:', err);
-      }
-    };
-
-    startWebcam();
-
-    return () => {
-      cancelled = true;
-      if (localStream) {
-        localStream.getTracks().forEach((t) => t.stop());
-      }
-    };
-  }, [externalWebcamStream, onWebcamStreamReady]);
 
   // Ensure webcam stream is bound to video element
   useEffect(() => {
@@ -608,6 +547,7 @@ export default function UnifiedMonitoringWidget({
       socket,
       isTestActive,
       testStartedAt,
+      configuredDurationSeconds,
     });
 
     monitoringClient.onEventReported = (data) => {
@@ -631,7 +571,7 @@ export default function UnifiedMonitoringWidget({
         } catch (e) {}
       }
     };
-  }, [activeSessionId, activeToken, contextType, resolvedParticipantId, isTestActive, testStartedAt, getOrCreatePeerConnection]);
+  }, [activeSessionId, activeToken, contextType, resolvedParticipantId, isTestActive, testStartedAt, configuredDurationSeconds, getOrCreatePeerConnection]);
 
   // Sync isTestActive and isPaused changes
   useEffect(() => {
@@ -661,7 +601,7 @@ export default function UnifiedMonitoringWidget({
 
     return () => {
       cancelled = true;
-      monitoringClient.stopLaptopMonitoring();
+      monitoringClient.stopLaptopMonitoring({ stopTracks: false });
     };
   }, [webcamStream, activeSessionId, calibrationPassed, testStartedAt]);
 
@@ -754,10 +694,12 @@ export default function UnifiedMonitoringWidget({
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#16A34A', display: 'inline-block' }} />
-              <span style={{ fontSize: 10, fontWeight: 700, color: '#15803D' }}>Active</span>
+              <span style={{ fontSize: 10, fontWeight: 700, color: cameraError ? '#DC2626' : '#15803D' }}>{cameraError ? 'Camera unavailable' : webcamStream ? 'Active' : 'Starting camera…'}</span>
             </div>
+            {cameraError && <div role="alert" style={{ color: '#DC2626', fontSize: 12 }}>
+              {cameraError} <button type="button" onClick={retryCamera}>Retry camera</button>
+            </div>}
           </div>
-
           {/* Tile 2: Mobile Camera */}
           <div className="dual-proctor-tile">
             <div className="dual-proctor-tile-header">

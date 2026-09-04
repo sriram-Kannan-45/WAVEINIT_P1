@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import monitoringClient from '../engine/MonitoringEngineClient'
 
 export const fsApi = {
@@ -17,52 +17,27 @@ export function useAssessmentFullscreen({ submittedRef, terminated = false, inac
   const [isFullscreen, setIsFullscreen] = useState(() => !!fsApi.element())
   const [warnings, setWarnings] = useState(0)
   const [warningOpen, setWarningOpen] = useState(false)
-  const enteredOnce = useRef(!!fsApi.element())
-  const count = useRef(0)
-
   useEffect(() => {
-    let timer = null
-    let outsideSince = null
-    let confirmed = false
-    const cancel = () => { clearTimeout(timer); timer = null; outsideSince = null }
     const onChange = () => {
-      const inFs = !!fsApi.element()
-      setIsFullscreen(inFs)
-      if (inFs) {
-        enteredOnce.current = true
-        confirmed = false
-        setWarningOpen(false)
-        cancel()
-        return
-      }
-      if (submittedRef.current || terminated || inactive || !enteredOnce.current || timer || confirmed) return
-      outsideSince = Date.now()
-      timer = setTimeout(() => {
-        timer = null
-        if (fsApi.element() || submittedRef.current || terminated || inactive) return
-        confirmed = true
-        const durationMs = Math.max(2000, Date.now() - outsideSince)
-        const endedAt = new Date().toISOString()
-        const startedAt = new Date(Date.now() - durationMs).toISOString()
-        count.current += 1
-        setWarnings(count.current)
-        setWarningOpen(true)
-        // Uses the same engine cooldown/idempotency gates as its browser detector.
-        monitoringClient.reportEvent({
-          source: 'LAPTOP', eventType: 'FULLSCREEN_EXIT', severity: 'HIGH',
-          durationMs, confidence: 0.95, startedAt, endedAt, occurredAt: endedAt,
-          metadata: {
-            duration: durationMs / 1000, trigger: 'confirmed_fullscreen_exit_2s',
-            exitCount: count.current, violationStartTime: startedAt, violationEndTime: endedAt,
-          },
-        }).catch(error => console.warn('[Assessment] Monitoring event dispatch failed:', error))
-      }, 2000)
+      const fullscreen = !!fsApi.element()
+      setIsFullscreen(fullscreen)
+      if (fullscreen) setWarningOpen(false)
     }
+    const onIncident = event => {
+      if (submittedRef.current || terminated || inactive) return
+      setWarnings(event.detail.count)
+      setWarningOpen(true)
+    }
+    const onCount = event => setWarnings(event.detail.count)
+    setWarnings(monitoringClient.browserIncidentCount || 0)
     if (inactive || terminated) setWarningOpen(false)
     fsApi.changeEvents.forEach(event => document.addEventListener(event, onChange))
+    window.addEventListener('assessment:browser-incident', onIncident)
+    window.addEventListener('assessment:browser-count', onCount)
     return () => {
-      cancel()
       fsApi.changeEvents.forEach(event => document.removeEventListener(event, onChange))
+      window.removeEventListener('assessment:browser-incident', onIncident)
+      window.removeEventListener('assessment:browser-count', onCount)
     }
   }, [submittedRef, terminated, inactive])
 

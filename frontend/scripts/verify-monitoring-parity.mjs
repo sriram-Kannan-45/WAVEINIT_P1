@@ -14,6 +14,9 @@ import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import QuizTaking from '/src/components/QuizTaking.jsx';
 import ExamProctorShell from '/src/proctoring/components/ExamProctorShell.jsx';
+import ExamShell from '/src/proctoring/exam/ExamShell.jsx';
+import {ProctorProvider} from '/src/proctoring/ProctorContext.jsx';
+import {AlertModalProvider} from '/src/components/ui/AlertModal.jsx';
 import { SingleAttemptProctoringModal } from '/src/proctoring/components/TrainerMonitoringReport.jsx';
 import { ToastProvider } from '/src/components/Toast.jsx';
 import monitoringClient from '/src/proctoring/engine/MonitoringEngineClient';
@@ -30,13 +33,14 @@ function Fixture() {
   const [inactive, setInactive] = React.useState(false);
   window.endFixture = () => { setInactive(true); monitoringClient.isMonitoringActive = false; };
   return kind === 'REPORT' ? <SingleAttemptProctoringModal attemptId={17} contextType="CODING" onClose={() => {}}/> :
-    kind === 'QUIZ' ? <QuizTaking quizId={10} attemptId={17} quizData={{ id:10, title:'Parity Quiz', timeLimit:60, questions:[{id:1,question:'Choose one',type:'MCQ',options:['A','B']}], copyProtectionEnabled:true }} onSubmit={() => { window.submitCalls++; }}/> :
+    kind === 'LEGACY' ? <ProctorProvider><AlertModalProvider><ExamShell sessionId={41} user={{id:7,token:'fixture-token'}} onSubmitted={()=>window.submitCalls++}/></AlertModalProvider></ProctorProvider> :
+    kind === 'QUIZ' ? <QuizTaking quizId={10} attemptId={17} monitoringSessionId="fixture-QUIZ" monitoringParticipant={{id:7,token:'fixture-token'}} quizData={{ id:10, title:'Parity Quiz', timeLimit:60, questions:[{id:1,question:'Choose one',type:'MCQ',options:['A','B']}], copyProtectionEnabled:true }} onSubmit={() => { window.submitCalls++; }}/> :
       <ExamProctorShell inactive={inactive} onSubmit={() => { window.submitCalls++; return Promise.resolve(); }}><textarea aria-label="Coding editor" defaultValue="Keep my answer"/></ExamProctorShell>;
 }
 createRoot(document.getElementById('root')).render(<MemoryRouter><ToastProvider><Fixture/></ToastProvider></MemoryRouter>);
 `
 const server = await createServer({
-  root, configFile:false, server:{host:'127.0.0.1',port:5189,strictPort:true},
+  root, configFile:false, cacheDir:'node_modules/.vite-monitoring-parity', server:{host:'127.0.0.1',port:5189,strictPort:true},
   plugins:[{
     name:'monitoring-parity-fixture',
     resolveId(id) { if (id === '/monitoring-fixture.jsx') return '\0monitoring-fixture.jsx' },
@@ -53,9 +57,9 @@ const server = await createServer({
 await server.listen()
 let browser
 try {
-  browser = await chromium.launch({headless:true})
+  browser = await chromium.launch({headless:true,args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream']})
   const results = []
-  for (const kind of ['QUIZ','CODING']) {
+  for (const kind of ['QUIZ','CODING','LEGACY']) {
     const page = await browser.newPage({viewport:{width:1440,height:1000}})
     const errors=[], calls=[], violationRoutes=[]
     page.on('pageerror',e=>{errors.push(e.message);console.error(e.message)})
@@ -75,13 +79,24 @@ try {
       localStorage.setItem('user',JSON.stringify({id:7,name:'Test Participant',token:'fixture-token'}))
     })
     await page.route('**/api/**', async route => {
-      if (!new URL(route.request().url()).pathname.startsWith('/api/')) return route.continue()
-      if (route.request().method()==='POST' && route.request().url().endsWith('/events')) calls.push(route.request().postDataJSON())
+      const path = new URL(route.request().url()).pathname
+      if (!path.startsWith('/api/')) return route.continue()
+      const reply = data => route.fulfill({contentType:'application/json',body:JSON.stringify({success:true,data})})
+      const session = {sessionId:41,sessionToken:'legacy-token',status:'ACTIVE',quizId:10,attemptId:17,startedAt:new Date().toISOString(),endsAt:new Date(Date.now()+3600000).toISOString()}
+      if(path.endsWith('/proctor/sessions/active'))return reply(session)
+      if(path.endsWith('/proctor/sessions/41/exam'))return reply({session,quiz:{id:10,title:'Legacy parity'},questions:[{id:1,question:'Choose one',type:'MCQ',options:['A','B']}],savedAnswers:[]})
+      if(path.endsWith('/monitoring/sessions/start'))return reply({session:{sessionId:'fixture-'+kind}})
+      if (route.request().method()==='POST' && route.request().url().endsWith('/events')) {
+        const body = route.request().postDataJSON()
+        if(body.metadata?.browserIncidentId)calls.push(body)
+        return route.fulfill({contentType:'application/json',body:JSON.stringify({success:true,data:{success:true,event:body,browserSwitchCount:calls.length}})})
+      }
       if (route.request().url().includes('/violation')) violationRoutes.push(route.request().url())
       await route.fulfill({contentType:'application/json',body:JSON.stringify({success:true,data:{},status:'IN_PROGRESS'})})
     })
     await page.goto(`http://127.0.0.1:5189/monitoring-fixture?kind=${kind}`)
     await page.waitForFunction(()=>!!window.monitoringClient)
+    if(kind !== 'CODING')await page.waitForFunction(()=>document.querySelector('.dual-proctor-video')?.readyState>=2 && window.monitoringClient.isTestActive)
     await page.clock.install()
     await page.clock.runFor(100)
     // A short exit is ignored, including warning UI.
@@ -132,6 +147,7 @@ try {
     await page.close()
   }
   assert.deepEqual(results[1],results[0])
+  assert.deepEqual(results[2],results[0])
   console.log('PASS: Quiz/Coding repeated exits, transient exits, duplicate browser events, tab switches, focus loss, submission guards, and answer preservation.')
   const reportPage = await browser.newPage()
   const reportRequests = []

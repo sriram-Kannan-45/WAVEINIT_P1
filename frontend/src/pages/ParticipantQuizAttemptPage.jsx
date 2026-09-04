@@ -2,12 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import QuizTaking from '../components/QuizTaking'
 import AssessmentConsentGate from '../components/ai-quizzes/AssessmentConsentGate'
-import UnifiedMonitoringWidget from '../components/monitoring/UnifiedMonitoringWidget'
 import { API_BASE } from '../api/api'
 import { useToast } from '../components/Toast'
 import { Loader2, AlertCircle } from 'lucide-react'
-import { ProctorProvider, useProctor } from '../proctoring/ProctorContext'
-import useDeviceFingerprint from '../proctoring/hooks/useDeviceFingerprint'
 import monitoringClient from '../proctoring/engine/MonitoringEngineClient'
 
 const authHeaders = (token) => ({
@@ -27,8 +24,6 @@ function ParticipantQuizAttemptPageInner({ user }) {
   const { trainingId, quizId } = useParams()
   const [searchParams] = useSearchParams()
   const { error: showError } = useToast()
-  const proctor = useProctor()
-  const fp = useDeviceFingerprint()
 
   let attemptId = searchParams.get('attemptId')
   let sessionToken = searchParams.get('sessionToken')
@@ -56,15 +51,7 @@ function ParticipantQuizAttemptPageInner({ user }) {
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState(null)
   const [quizData, setQuizData] = useState(null)
-  const [qrVerified, setQrVerified] = useState(() => {
-    try {
-      const cached = sessionStorage.getItem(`assessment_verif_QUIZ_${quizId}_${attemptId}`)
-      return !!cached
-    } catch (e) {
-      return false
-    }
-  })
-  const [verifSessionInfo, setVerifSessionInfo] = useState(() => {
+  const [verifSessionInfo] = useState(() => {
     try {
       const cached = sessionStorage.getItem(`assessment_verif_QUIZ_${quizId}_${attemptId}`)
       return cached ? JSON.parse(cached) : null
@@ -73,7 +60,6 @@ function ParticipantQuizAttemptPageInner({ user }) {
     }
   })
   const [consented, setConsented] = useState(false)
-  const [sharedCamStream, setSharedCamStream] = useState(null)
   const [resolvedMonitoringSessionId, setResolvedMonitoringSessionId] = useState(monitoringSessionId || null)
 
   useEffect(() => {
@@ -183,12 +169,6 @@ function ParticipantQuizAttemptPageInner({ user }) {
     } catch (e) {
       console.warn('[handleRecordingStop] Video upload note:', e.message);
     }
-    if (sharedCamStream) {
-      try {
-        sharedCamStream.getTracks().forEach((t) => t.stop());
-      } catch (_) {}
-      setSharedCamStream(null);
-    }
     try {
       monitoringClient.destroy();
     } catch (_) {}
@@ -196,29 +176,31 @@ function ParticipantQuizAttemptPageInner({ user }) {
     if (fsApi.element()) {
       try { await fsApi.exit() } catch {}
     }
-  }, [sharedCamStream, endVerificationSession]);
+  }, [endVerificationSession]);
 
-  useEffect(() => {
-    return () => {
-      if (sharedCamStream) {
-        try {
-          sharedCamStream.getTracks().forEach((t) => t.stop());
-        } catch (_) {}
-      }
-      try {
-        monitoringClient.destroy();
-      } catch (_) {}
-    };
-  }, [sharedCamStream]);
 
-  // Called from QuizTaking's "Back to Dashboard" button / auto-submit
-  const handleSubmit = useCallback(() => {
+  // Called from QuizTaking after submission succeeds and result is ready
+  const handleSubmit = useCallback((submitResult) => {
     try {
       handleRecordingStop();
     } catch (_) {}
     const targetCourseId = quizData?.courseId || trainingId;
-    navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}&subtab=quizzes` : '/participant?tab=myEnrollments', { replace: true });
-  }, [handleRecordingStop, quizData, trainingId, navigate]);
+    const effectiveTrainingId = trainingId || quizData?.trainingId || targetCourseId || 0;
+    const effectiveAttemptId = submitResult?.attemptId || attemptId;
+    const effectiveQuizId = submitResult?.quizId || quizId;
+
+    if (effectiveTrainingId && effectiveTrainingId !== '0') {
+      navigate(`/trainings/${effectiveTrainingId}/quizzes/${effectiveQuizId}/result?attemptId=${effectiveAttemptId}`, {
+        replace: true,
+        state: { result: submitResult?.result, quizData }
+      });
+    } else {
+      navigate(`/quizzes/${effectiveQuizId}/result?attemptId=${effectiveAttemptId}`, {
+        replace: true,
+        state: { result: submitResult?.result, quizData }
+      });
+    }
+  }, [handleRecordingStop, quizData, trainingId, attemptId, quizId, navigate]);
 
   if (loading) {
     return (
@@ -296,34 +278,17 @@ function ParticipantQuizAttemptPageInner({ user }) {
         quizData={quizData}
         sessionToken={sessionToken}
         isStandardQuiz={true}
-        webcamStream={sharedCamStream}
+        monitoringSessionId={resolvedMonitoringSessionId || verifSessionInfo?.sessionId}
+        monitoringParticipant={user}
+        testStartedAt={testStartedAt}
         onSubmit={handleSubmit}
         onRecordingStop={handleRecordingStop}
       />
 
-      {/* Unified AI Monitoring Engine Widget (Laptop MediaPipe + Mobile YOLO11s) */}
-      <UnifiedMonitoringWidget
-        contextType="QUIZ"
-        contextId={parseInt(quizId, 10)}
-        attemptId={parseInt(attemptId, 10)}
-        sessionId={resolvedMonitoringSessionId || verifSessionInfo?.sessionId}
-        participantId={user?.id}
-        userToken={user?.token}
-        mobileEnabled={true}
-        preCalibrated={true}
-        prePaired={true}
-        isTestActive={consented}
-        testStartedAt={testStartedAt}
-        onWebcamStreamReady={setSharedCamStream}
-      />
     </>
   )
 }
 
 export default function ParticipantQuizAttemptPage({ user }) {
-  return (
-    <ProctorProvider>
-      <ParticipantQuizAttemptPageInner user={user} />
-    </ProctorProvider>
-  )
+  return <ParticipantQuizAttemptPageInner user={user} />
 }

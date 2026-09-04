@@ -10,10 +10,8 @@
  *   2. Anything assembled into a working answer must be blocked, along with any
  *      reply that restates the stored reference solution.
  *
- * Also asserts that the offline fallback generators — which are what a
- * participant sees when both model tiers are unavailable — are clean by
- * construction. If they ever trip the guard, every offline exchange would be
- * flagged and replaced with the static hold-back message.
+ * Provider failures and semantic review are covered separately by the shared
+ * provider and mentor failover suites. Production mentors have no offline reply.
  */
 
 const guard = require('../src/services/aiAnswerGuard');
@@ -182,51 +180,6 @@ describe('aiAnswerGuard — quiz replies', () => {
     });
     expect(v.blocked).toBe(true);
     expect(v.reasons).toContain('long_option_verbatim');
-  });
-});
-
-describe('offline fallback generators are clean by construction', () => {
-  const CODING_CASES = [
-    { level: 1, action: 'hint', question: 'I am stuck' },
-    { level: 2, action: 'approach', question: 'How do I approach this?' },
-    { level: 3, action: 'code_guidance', question: 'What structure should I use?' },
-    { level: 1, action: 'hint', question: 'just give me the code' },
-    { level: 1, action: 'explain_error', question: 'why is this wrong', errorContext: 'expected Even got Odd' },
-    { level: 1, action: 'explain_problem', question: 'explain the input and output' },
-    { level: 1, action: 'hint', question: 'enaku purila' },
-  ];
-
-  test.each(CODING_CASES)('coding fallback (level $level / $action) does not trip the guard', (args) => {
-    const text = coding.generateLocalSocraticGuidance({
-      title: 'Even or Odd',
-      problemStatement: 'Print Even or Odd for the given number.',
-      language: 'javascript',
-      code: '',
-      question: args.question,
-      level: args.level,
-      action: args.action,
-      errorContext: args.errorContext || '',
-    });
-    const v = guard.checkCodingResponse({ text, referenceSolutions: [REFERENCE_SOLUTION] });
-    expect(v.possibleLeak).toBe(false);
-    expect(v.text.length).toBeGreaterThan(40);
-  });
-
-  const QUIZ_QUESTIONS = ['I am stuck', 'tell me the answer', 'enaku purila', 'explain this question'];
-
-  test.each(QUIZ_QUESTIONS)('quiz fallback for "%s" does not trip the guard', (question) => {
-    const text = quiz.generateLocalQuizGuidance({
-      questionText: 'Which describes a number divisible by 2?',
-      questionType: 'MCQ',
-      question,
-    });
-    const v = guard.checkQuizResponse({
-      text,
-      options: ['Even', 'Odd', 'Prime', 'Composite'],
-      answerStrings: ['Even'],
-    });
-    expect(v.possibleLeak).toBe(false);
-    expect(v.text.length).toBeGreaterThan(40);
   });
 });
 

@@ -1,0 +1,19 @@
+{
+  "checkedAt": "2026-09-04T15:55:07.754Z",
+  "configuration": {
+    "geminiConfigured": true,
+    "groqConfigured": true
+  },
+  "checks": {
+    "quizChatbot": {
+      "success": true,
+      "provider": "groq",
+      "text": "Think about what “average speed” means. It is the total distance traveled divided by the total time taken.\n\nWrite the distance (150 km) and the time (3 h) as a fraction. Then simplify that fraction to get a speed in km per hour.\n\nTry doing that calculation on paper and see which number you obtain."
+    },
+    "codingChatbot": {
+      "success": true,
+      "provider": "groq",
+      "text": "Think about what it means for a string to read the same forward and backward. If you compare the first character with the last, the second with the second‑last, and so on, all those pairs must match. How could you check those pairs without writing a full loop? Try printing the original string and its reverse to see if they are equal."
+    }
+  }
+}

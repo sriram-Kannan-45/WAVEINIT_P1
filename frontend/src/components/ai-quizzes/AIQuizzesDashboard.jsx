@@ -112,15 +112,6 @@ export default function AIQuizzesDashboard({ user, onStartQuiz, onLogout, embedd
       const result = await startQuiz(quiz);
       if (!result) return; // setError already raised in the hook
       
-      if (result.quiz?.proctoringEnabled) {
-        navigate(`/participant/exam/${quiz.id}`, {
-          state: {
-            attemptId: result.attemptId,
-            quizData: result.quiz
-          }
-        });
-        return;
-      }
 
       setPendingQuiz(result.quiz);
       setPendingAttemptId(result.attemptId);
@@ -137,21 +128,10 @@ export default function AIQuizzesDashboard({ user, onStartQuiz, onLogout, embedd
     }
   }, [startQuiz, onStartQuiz, navigate]);
 
-  // Consent gate accepted → enter QuizTaking
-  // The gate now hands over a named payload and no longer stops the camera it
-  // opened, because the proctored Coding/Quiz attempt screens reuse that stream
-  // for continuous body-in-box monitoring. This practice flow mounts no
-  // monitoring widget, so there is no consumer here — release the device
-  // immediately rather than leaving an unread camera live for the whole quiz.
-  const handleConsented = useCallback((payload) => {
-    const stream = payload?.stream;
-    if (stream && typeof stream.getTracks === 'function') {
-      try {
-        stream.getTracks().forEach((t) => t.stop());
-      } catch (_) {}
-    }
-    setPendingAttemptId(payload?.attemptId ?? null);
-    setPendingQuiz(payload?.quiz ?? null);
+  // Both quiz entry points use the same consent contract and in-test widget.
+  const handleConsented = useCallback((attemptId, quiz) => {
+    setPendingAttemptId(attemptId);
+    setPendingQuiz(quiz);
     setFlow('taking');
   }, []);
 
@@ -171,6 +151,7 @@ export default function AIQuizzesDashboard({ user, onStartQuiz, onLogout, embedd
           attemptId={pendingAttemptId}
           quizData={pendingQuiz}
           sessionToken={pendingSessionToken}
+          monitoringParticipant={user}
           onSubmit={handleQuizTakingSubmit}
         />
       )}

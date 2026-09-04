@@ -31,7 +31,7 @@ createRoot(document.getElementById('root')).render(
   </MemoryRouter></React.StrictMode>);
 `
 const server = await createServer({
-  root, configFile: false, server: { host: '127.0.0.1', port: 5188, strictPort: true },
+  root, configFile: false, cacheDir:'node_modules/.vite-coding-mentor', server: { host: '127.0.0.1', port: 5188, strictPort: true },
   plugins: [{
     name: 'mentor-regression-fixture', enforce: 'pre',
     resolveId(id) {
@@ -81,7 +81,7 @@ try {
   page.on('console', msg => { if (msg.type() === 'error') console.error('Browser console:', msg.text()) })
   page.on('requestfailed', req => { if (!req.url().includes('socket.io')) console.error('Request failed:',req.url(),req.failure()?.errorText) })
   page.on('pageerror', e => { errors.push(e.message); console.error('Browser error:', e.message) })
-  const usage = {}, calls = [], runs = [], submissions = []
+  const usage = {}, calls = [], runs = [], submissions = [], browserEvents = new Map()
   let mode = 'success', pending = null
   await page.route('**/socket.io/**', route => route.abort())
   const problems = [11,12].map((id, i) => ({ id, title: `Problem ${i+1}`, description: 'Read an integer and determine whether it is even or odd.', programmingLanguage: 'javascript', starterCode: '// Write your code here', sampleInput: '4', sampleOutput: 'Even', testCases: [{ input: '4', expectedOutput: 'Even', isHidden: false }] }))
@@ -89,6 +89,11 @@ try {
     const url = new URL(route.request().url()), path = url.pathname
     if (!path.startsWith('/api/')) return route.continue()
     const reply = (data, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) })
+    if (path.endsWith('/events')) {
+      const body = route.request().postDataJSON()
+      if (body.metadata?.browserIncidentId) browserEvents.set(body.idempotencyKey, body)
+      return reply({success:true,data:{success:true,event:body,browserSwitchCount:browserEvents.size}})
+    }
     if (path.includes('/coding/assessments/')) return reply({ assessment: { id:2, title:'Mentor regression', timeLimit:60, problems } })
     if (path.includes('/assist/status/')) {
       const id = path.split('/').at(-1)
@@ -136,6 +141,10 @@ try {
     assert.deepEqual(state,{disabled:false,readOnly:false,hit:true})
   }
   const prompts = ['Can you explain what this problem is asking?', 'Can you give me a hint?', 'I wrote this code but it gives an error.', 'Can you explain the error?', ...Array.from({length:6},(_,i)=>`Follow-up question ${i+5}`)]
+  await page.waitForFunction(async () => {
+    const { default: client } = await import('/src/proctoring/engine/MonitoringEngineClient.js')
+    return client.isMonitoringActive && client.isTestActive && client.sessionId === 'test-monitoring'
+  })
   for (let i = 1; i <= 4; i++) {
     await page.evaluate(() => window.setFixtureFullscreen(false))
     await page.getByRole('heading', { name: `Security Warning (${i})`, exact: true }).waitFor()
@@ -246,9 +255,12 @@ try {
   }
   await page.getByRole('button',{name:'Submit Assessment',exact:true}).click()
   const submissionRequest = page.waitForRequest(req => new URL(req.url()).pathname === '/api/coding/participant/submit/1')
+  const finalAuditRequest = page.waitForRequest(req => new URL(req.url()).pathname === '/api/monitoring/sessions/test-monitoring/end')
   await page.getByRole('button',{name:'Yes, Submit Assessment',exact:true}).click()
   const submitted = (await submissionRequest).postDataJSON()
   assert.equal(submitted.submissions.length,2)
+  assert.ok((await finalAuditRequest).postDataJSON().actualTestDurationSeconds > 0)
+  assert.equal(browserEvents.size,4,'The four Coding switches must reach the shared API exactly once')
   console.log('PASS: Submit Assessment confirms and sends both questions to the API')
   for (const invalid of ['number','object']) {
     await page.goto(`http://127.0.0.1:5188/mentor-test?widget=${invalid}`)

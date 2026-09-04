@@ -133,6 +133,8 @@ class MonitoringEngineClient {
       this._lastEventEmitAt = 0;
     }
     this.sessionId = sessionId;
+    try { this.browserIncidentCount = Number(sessionStorage.getItem('monitoring_browser_count_' + sessionId)) || 0; } catch (_) {}
+    this.restoreBrowserOutbox();
     this.attemptId = attemptId;
     this.participantId = participantId;
     this.contextType = contextType.toUpperCase();
@@ -142,6 +144,7 @@ class MonitoringEngineClient {
     this.configuredDurationSeconds = Number(configuredDurationSeconds || 0);
     this.isMonitoringActive = true;
     this.isTestActive = !!isTestActive;
+    this.testStartedAt = testStartedAt ? new Date(testStartedAt).getTime() : null;
 
     // Hydrate state from sessionStorage if resuming or reloading
     try {
@@ -167,6 +170,7 @@ class MonitoringEngineClient {
       this.isPaused = false;
     }
 
+    this.flushBrowserEvents().catch(() => {});
     this.setupSocketListeners();
     this.setupBrowserEventListeners();
     this._startDurationSyncLoop();
@@ -394,222 +398,128 @@ class MonitoringEngineClient {
     });
   }
 
+  persistBrowserOutbox() {
+    try { sessionStorage.setItem('monitoring_browser_outbox_' + this.sessionId, JSON.stringify(this.browserOutbox || [])); } catch (_) {}
+  }
+
+  restoreBrowserOutbox() {
+    if (this.browserOutboxSession === this.sessionId) return;
+    this.browserOutboxSession = this.sessionId;
+    try { this.browserOutbox = JSON.parse(sessionStorage.getItem('monitoring_browser_outbox_' + this.sessionId) || '[]'); }
+    catch (_) { this.browserOutbox = []; }
+    if (!Array.isArray(this.browserOutbox)) this.browserOutbox = [];
+  }
+
+  async flushBrowserEvents() {
+    if (this.browserFlushPromise) return this.browserFlushPromise;
+    clearTimeout(this.browserRetryTimer);
+    const queue = this.browserOutbox || [];
+    this.browserFlushPromise = (async () => {
+      while (queue.length) {
+        const payload = queue[0];
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        let res;
+        try {
+          res = await fetch(`${API_BASE}/monitoring/sessions/${payload.sessionId}/events`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+            body: JSON.stringify(payload), signal: controller.signal,
+          });
+        } finally { clearTimeout(timeout); }
+        if (!res.ok) throw new Error(`Monitoring event ingestion failed (${res.status})`);
+        const body = await res.json();
+        if (!body.success || (!body.data?.success && body.data?.reason !== 'IDEMPOTENT_DUPLICATE')) {
+          throw new Error('Monitoring event was not acknowledged');
+        }
+        queue.shift();
+        // Acknowledged IDs can be removed; failed requests keep their stable ID
+        // across retry and refresh. Never drop a switch because another AI event
+        // happened within a detector cooldown.
+        try { sessionStorage.setItem('monitoring_browser_outbox_' + payload.sessionId, JSON.stringify(queue)); } catch (_) {}
+        this.onEventReported?.(body.data);
+        if (typeof window !== 'undefined' && body.data?.browserSwitchCount != null) {
+          this.browserIncidentCount = body.data.browserSwitchCount + queue.length;
+          try { sessionStorage.setItem('monitoring_browser_count_' + payload.sessionId, String(this.browserIncidentCount)); } catch (_) {}
+          window.dispatchEvent(new CustomEvent('assessment:browser-count', { detail: { count: this.browserIncidentCount } }));
+        }
+      }
+    })();
+    try { return await this.browserFlushPromise; }
+    catch (error) {
+      if (this.isMonitoringActive) this.browserRetryTimer = setTimeout(() => this.flushBrowserEvents().catch(() => {}), 2000);
+      throw error;
+    } finally { this.browserFlushPromise = null; }
+  }
+
   setupBrowserEventListeners() {
     this.cleanupBrowserEventListeners();
-
-    this.tabHiddenTimer = null;
-    this.tabHiddenStartTime = null;
-    this.windowBlurTimer = null;
-    this.windowBlurStartTime = null;
-    this.fsExitTimer = null;
-    this.fsExitStartTime = null;
-
-    this.handleVisibilityChange = () => {
-      if (!this.isMonitoringActive || !this.isTestActive || this.isPaused) return;
-
-      if (document.hidden || document.visibilityState === 'hidden') {
-        if (!this.tabHiddenTimer) {
-          this.tabHiddenStartTime = Date.now();
-          this.tabHiddenTimer = setTimeout(() => {
-            if (document.hidden || document.visibilityState === 'hidden') {
-              const now = Date.now();
-              const last = this.lastReportedEventTimes['TAB_SWITCH'] || 0;
-              const durationMs = Math.max(2000, now - (this.tabHiddenStartTime || now));
-              if (now - last >= (this.config.browserEventCooldownMs || 15000)) {
-                this.reportEvent({
-                  source: 'LAPTOP',
-                  eventType: 'TAB_SWITCH',
-                  severity: 'WARNING',
-                  durationMs,
-                  confidence: 1.0,
-                  metadata: {
-                    hasFocus: document.hasFocus(),
-                    visibilityState: document.visibilityState,
-                    isFullscreen: !!document.fullscreenElement,
-                    activeElement: document.activeElement?.tagName || 'UNKNOWN',
-                    durationMs,
-                    trigger: 'confirmed_tab_hidden',
-                  },
-                });
-              }
-            }
-            this.tabHiddenTimer = null;
-            this.tabHiddenStartTime = null;
-          }, 2000); // 2.0s confirmation window
-        }
-      } else {
-        // Returned to visible before confirmation duration -> cancel transient flicker
-        if (this.tabHiddenTimer) {
-          clearTimeout(this.tabHiddenTimer);
-          this.tabHiddenTimer = null;
-          this.tabHiddenStartTime = null;
-        }
-      }
-    };
-
-    this.handleFullscreenChange = () => {
-      if (!this.isMonitoringActive || !this.isTestActive || this.isPaused) return;
-
-      const inFs = !!(
-        document.fullscreenElement ||
-        document.webkitFullscreenElement ||
-        document.mozFullScreenElement ||
-        document.msFullscreenElement
-      );
-
-      console.log('[MonitoringEngineClient] Fullscreen event transition:', {
-        inFs,
-        element: document.fullscreenElement?.tagName || null,
-        activeElement: document.activeElement?.tagName || 'UNKNOWN',
-        timestamp: new Date().toISOString(),
-      });
-
-      if (!inFs) {
-        if (!this.fsExitTimer) {
-          this.fsExitStartTime = Date.now();
-          console.warn('[MonitoringEngineClient] Fullscreen exit detected. Starting 2.0s confirmation window...');
-          this.fsExitTimer = setTimeout(() => {
-            const stillOutFs = !(
-              document.fullscreenElement ||
-              document.webkitFullscreenElement ||
-              document.mozFullScreenElement ||
-              document.msFullscreenElement
-            );
-            if (stillOutFs) {
-              const now = Date.now();
-              const last = this.lastReportedEventTimes['FULLSCREEN_EXIT'] || 0;
-              const durationMs = Math.max(2000, now - (this.fsExitStartTime || now));
-              if (now - last >= (this.config.browserEventCooldownMs || 15000)) {
-                console.warn('[MonitoringEngineClient] Confirmed FULLSCREEN_EXIT after 2.0s. Reporting event...');
-                this.reportEvent({
-                  source: 'LAPTOP',
-                  eventType: 'FULLSCREEN_EXIT',
-                  severity: 'HIGH',
-                  durationMs,
-                  confidence: 1.0,
-                  metadata: {
-                    hasFocus: document.hasFocus(),
-                    visibilityState: document.visibilityState,
-                    isFullscreen: false,
-                    activeElement: document.activeElement?.tagName || 'UNKNOWN',
-                    durationMs,
-                    trigger: 'confirmed_fullscreen_exit_2s',
-                  },
-                });
-              }
-            } else {
-              console.log('[MonitoringEngineClient] Fullscreen restored before timer fired. Violation cancelled.');
-            }
-            this.fsExitTimer = null;
-            this.fsExitStartTime = null;
-          }, 2000); // 2.0s confirmation window
-        }
-      } else {
-        // Re-entered fullscreen before confirmation duration -> cancel
-        if (this.fsExitTimer) {
-          console.log('[MonitoringEngineClient] Re-entered fullscreen before confirmation window elapsed. Violation cancelled.');
-          clearTimeout(this.fsExitTimer);
-          this.fsExitTimer = null;
-          this.fsExitStartTime = null;
-        }
-      }
-    };
-
-    this.handleWindowBlur = () => {
-      if (!this.isMonitoringActive || !this.isTestActive || this.isPaused) return;
-
-      // If document is already hidden, TAB_SWITCH handles it
-      if (document.hidden || document.visibilityState === 'hidden') return;
-
-      if (!this.windowBlurTimer) {
-        this.windowBlurStartTime = Date.now();
-        this.windowBlurTimer = setTimeout(() => {
-          // Verify if window is still not focused and document is not hidden
-          if (!document.hasFocus() && !(document.hidden || document.visibilityState === 'hidden')) {
-            const now = Date.now();
-            const last = this.lastReportedEventTimes['WINDOW_BLUR'] || 0;
-            const durationMs = Math.max(2000, now - (this.windowBlurStartTime || now));
-            if (now - last >= (this.config.browserEventCooldownMs || 15000)) {
-              this.reportEvent({
-                source: 'LAPTOP',
-                eventType: 'WINDOW_BLUR',
-                severity: 'INFO',
-                durationMs,
-                confidence: 0.9,
-                metadata: {
-                  hasFocus: document.hasFocus(),
-                  visibilityState: document.visibilityState,
-                  isFullscreen: !!document.fullscreenElement,
-                  activeElement: document.activeElement?.tagName || 'UNKNOWN',
-                  durationMs,
-                  trigger: 'confirmed_window_blur',
-                },
-              });
-            }
-          }
-          this.windowBlurTimer = null;
-          this.windowBlurStartTime = null;
-        }, 2000); // 2.0s confirmation window
-      }
-    };
-
-    this.handleWindowFocus = () => {
-      // Window regained focus -> clear blur timer immediately
-      if (this.windowBlurTimer) {
-        clearTimeout(this.windowBlurTimer);
-        this.windowBlurTimer = null;
-        this.windowBlurStartTime = null;
-      }
-    };
-
     if (typeof document === 'undefined' || typeof window === 'undefined') return;
-
-    document.addEventListener('visibilitychange', this.handleVisibilityChange);
-    document.addEventListener('fullscreenchange', this.handleFullscreenChange);
-    document.addEventListener('webkitfullscreenchange', this.handleFullscreenChange);
-    document.addEventListener('mozfullscreenchange', this.handleFullscreenChange);
-    document.addEventListener('MSFullscreenChange', this.handleFullscreenChange);
-    window.addEventListener('blur', this.handleWindowBlur);
-    window.addEventListener('focus', this.handleWindowFocus);
+    let fullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement);
+    let focused = document.hasFocus();
+    let episode = null;
+    let timer = null;
+    const active = () => this.isMonitoringActive && this.isTestActive && !this.isPaused;
+    const hidden = () => document.hidden || document.visibilityState === 'hidden';
+    const finish = () => { clearTimeout(timer); timer = null; episode = null; };
+    const confirm = () => {
+      timer = null;
+      if (!episode || episode.confirmed || !active()) return;
+      episode.confirmed = true;
+      const eventType = episode.hidden ? 'TAB_SWITCH' : episode.blurred ? 'WINDOW_BLUR' : 'FULLSCREEN_EXIT';
+      const endedAt = new Date().toISOString();
+      const id = episode.id;
+      this.browserIncidentCount = (this.browserIncidentCount || 0) + 1;
+      try { sessionStorage.setItem('monitoring_browser_count_' + this.sessionId, String(this.browserIncidentCount)); } catch (_) {}
+      window.dispatchEvent(new CustomEvent('assessment:browser-incident', { detail: { eventType, count: this.browserIncidentCount } }));
+      this.reportEvent({ source: 'LAPTOP', eventType, severity: eventType === 'FULLSCREEN_EXIT' ? 'HIGH' : 'WARNING',
+        durationMs: Math.max(2000, Date.now() - episode.startedAt), confidence: 1,
+        startedAt: new Date(episode.startedAt).toISOString(), endedAt, occurredAt: endedAt,
+        metadata: { browserIncidentId: id, trigger: 'confirmed_browser_departure',
+          signals: { tabHidden: episode.hidden, windowBlur: episode.blurred, fullscreenExit: episode.fullscreen },
+        },
+      });
+    };
+    const changed = (event) => {
+      const inFs = !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement);
+      const exitedFs = fullscreen && !inFs;
+      fullscreen = inFs;
+      if (event.type === 'blur') focused = false;
+      if (event.type === 'focus') focused = true;
+      if (!active()) { finish(); return; }
+      const away = hidden() || !focused;
+      if (episode && !away && (episode.hidden || episode.blurred || inFs)) {
+        // Background tabs may throttle timers. Confirm elapsed departures on
+        // return before clearing them, even if the timeout never got CPU time.
+        if (!episode.confirmed && Date.now() - episode.startedAt >= 2000) confirm();
+        // A completed away-and-return cycle rearms detection even if the browser
+        // does not restore fullscreen automatically. Vendor duplicate events do not.
+        finish();
+      }
+      if (!episode && (away || exitedFs)) {
+        episode = { startedAt: Date.now(), id: crypto.randomUUID(), hidden: false, blurred: false, fullscreen: exitedFs, confirmed: false };
+        timer = setTimeout(confirm, 2000);
+      }
+      if (episode) {
+        episode.hidden ||= hidden();
+        episode.blurred ||= !focused;
+        episode.fullscreen ||= exitedFs;
+      }
+    };
+    const documentEvents = ['visibilitychange', 'fullscreenchange', 'webkitfullscreenchange', 'msfullscreenchange', 'MSFullscreenChange'];
+    documentEvents.forEach(type => document.addEventListener(type, changed));
+    window.addEventListener('blur', changed);
+    window.addEventListener('focus', changed);
+    this.browserCleanup = () => {
+      finish();
+      documentEvents.forEach(type => document.removeEventListener(type, changed));
+      window.removeEventListener('blur', changed);
+      window.removeEventListener('focus', changed);
+    };
   }
 
   cleanupBrowserEventListeners() {
-    if (this.tabHiddenTimer) {
-      clearTimeout(this.tabHiddenTimer);
-      this.tabHiddenTimer = null;
-    }
-    if (this.windowBlurTimer) {
-      clearTimeout(this.windowBlurTimer);
-      this.windowBlurTimer = null;
-    }
-    if (this.fsExitTimer) {
-      clearTimeout(this.fsExitTimer);
-      this.fsExitTimer = null;
-    }
-
-    if (typeof document !== 'undefined') {
-      if (this.handleVisibilityChange) {
-        document.removeEventListener('visibilitychange', this.handleVisibilityChange);
-        this.handleVisibilityChange = null;
-      }
-      if (this.handleFullscreenChange) {
-        document.removeEventListener('fullscreenchange', this.handleFullscreenChange);
-        document.removeEventListener('webkitfullscreenchange', this.handleFullscreenChange);
-        document.removeEventListener('mozfullscreenchange', this.handleFullscreenChange);
-        document.removeEventListener('MSFullscreenChange', this.handleFullscreenChange);
-        this.handleFullscreenChange = null;
-      }
-    }
-    if (typeof window !== 'undefined') {
-      if (this.handleWindowBlur) {
-        window.removeEventListener('blur', this.handleWindowBlur);
-        this.handleWindowBlur = null;
-      }
-      if (this.handleWindowFocus) {
-        window.removeEventListener('focus', this.handleWindowFocus);
-        this.handleWindowFocus = null;
-      }
-    }
+    this.browserCleanup?.();
+    this.browserCleanup = null;
   }
 
   // ── Pre-test Calibration ──────────────────────────────────────────────────
@@ -1063,12 +973,14 @@ class MonitoringEngineClient {
     this.stopLaptopMonitoring({ stopTracks: false });
     this.laptopStream = stream;
     this.laptopVideo = videoElement;
+    if (videoElement && stream) {
+      videoElement.srcObject = stream;
+      videoElement.play().catch(() => {});
+    }
     this.onLaptopDetection = onDetection;
     this.isMonitoringActive = true;
     if (testStartedAt) {
       this.testStartedAt = new Date(testStartedAt).getTime();
-      this.isTestActive = true;
-      this.isPaused = false;
     }
 
     // Begin background stream recording for post-test review
@@ -1115,25 +1027,6 @@ class MonitoringEngineClient {
     }
   }
 
-  destroy() {
-    this.stopLaptopMonitoring({ stopTracks: true });
-    if (this.durationSyncTimer) {
-      clearInterval(this.durationSyncTimer);
-      this.durationSyncTimer = null;
-    }
-    if (this.mobileInterval) {
-      clearInterval(this.mobileInterval);
-      this.mobileInterval = null;
-    }
-    if (this.segmentTimer) {
-      clearInterval(this.segmentTimer);
-      this.segmentTimer = null;
-    }
-    this.isMonitoringActive = false;
-    this.isTestActive = false;
-    this.isPaused = false;
-  }
-
   async calibrateGazeBaseline(videoEl) {
     if (!this.sessionId || !videoEl) return false;
     if (this.gazeCalibrationSessionId === this.sessionId) return true;
@@ -1166,6 +1059,7 @@ class MonitoringEngineClient {
     if (!this.sessionId) return null;
     const now = Date.now();
     await this._flushOpenIntervals(now);
+    await this.flushBrowserEvents();
 
     // Finalize any open active segment
     if (this.isTestActive && !this.isPaused && this.currentSegmentStartedAt) {
@@ -1643,19 +1537,20 @@ class MonitoringEngineClient {
     const resolvedEnd = occurredAt || endedAt || new Date(now).toISOString();
     const resolvedStart = startedAt || metadata.violationStartTime || new Date(new Date(resolvedEnd).getTime() - resolvedDurationMs).toISOString();
     if (!this.lastReportedEventTimes) this.lastReportedEventTimes = {};
+    const discreteBrowserIncident = !!metadata.browserIncidentId;
     const lastReportTime = this.lastReportedEventTimes[eventType] || 0;
     // Global 1 event/sec emit cap so detection bursts never flood the socket.
     this._lastEventEmitAt = this._lastEventEmitAt || 0;
-    if (now - this._lastEventEmitAt < 1000) return;
+    if (!discreteBrowserIncident && now - this._lastEventEmitAt < 1000) return;
     const isGranularEyeHead = /^GAZE_OFF_SCREEN_(LEFT|RIGHT|UP)$/.test(eventType) || /^HEAD_LOOKING_(LEFT|RIGHT|UP)$/.test(eventType);
     const cooldown = this.config[`${eventType}_cooldown`] || (isGranularEyeHead ? 3000 : 12000);
-    if (now - lastReportTime < cooldown) {
+    if (!discreteBrowserIncident && now - lastReportTime < cooldown) {
       return; // Skip duplicate burst
     }
     this.lastReportedEventTimes[eventType] = now;
     this._lastEventEmitAt = now;
 
-    const idempotencyKey = this.sessionId
+    const idempotencyKey = metadata.browserIncidentId ? ('browser_' + metadata.browserIncidentId) : this.sessionId
       ? `${this.sessionId}_${source}_${eventType}_${new Date(resolvedStart).getTime()}_${new Date(resolvedEnd).getTime()}`
       : null;
     const payload = {
@@ -1678,6 +1573,13 @@ class MonitoringEngineClient {
       },
       idempotencyKey,
     };
+
+    if (discreteBrowserIncident) {
+      this.browserOutbox ||= [];
+      if (!this.browserOutbox.some(item => item.idempotencyKey === payload.idempotencyKey)) this.browserOutbox.push(payload);
+      this.persistBrowserOutbox();
+      return this.flushBrowserEvents().catch(() => null);
+    }
 
     try {
       const headers = {
@@ -1704,20 +1606,22 @@ class MonitoringEngineClient {
     }
   }
 
-  destroy() {
+  destroy({ stopTracks = true } = {}) {
+    clearTimeout(this.browserRetryTimer);
     this.isMonitoringActive = false;
+    this.isTestActive = false;
     if (this.durationSyncTimer) {
       clearInterval(this.durationSyncTimer);
       this.durationSyncTimer = null;
     }
-    this.stopLaptopMonitoring({ stopTracks: true });
-    this.stopMobileMonitoring({ stopTracks: true });
+    this.stopLaptopMonitoring({ stopTracks });
+    this.stopMobileMonitoring({ stopTracks });
     this.cleanupBrowserEventListeners();
-    if (this.laptopStream) {
+    if (stopTracks && this.laptopStream) {
       try { this.laptopStream.getTracks().forEach(t => t.stop()); } catch (_) {}
       this.laptopStream = null;
     }
-    if (this.mobileStream) {
+    if (stopTracks && this.mobileStream) {
       try { this.mobileStream.getTracks().forEach(t => t.stop()); } catch (_) {}
       this.mobileStream = null;
     }

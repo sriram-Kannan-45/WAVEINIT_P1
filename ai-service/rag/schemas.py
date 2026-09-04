@@ -1,3 +1,4 @@
+import re
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -56,6 +57,7 @@ def normalize_question_type(value: Any) -> str:
 
 
 class QuizQuestion(BaseModel):
+    marks: int = Field(default=1, ge=1, le=1000, strict=True)
     questionType: QuestionType = QuestionType.MCQ
     question: str = Field(min_length=8)
     options: List[str] = Field(default_factory=list)
@@ -111,6 +113,8 @@ class QuizQuestion(BaseModel):
     @model_validator(mode="after")
     def validate_by_type(self) -> "QuizQuestion":
         if self.questionType == QuestionType.MCQ:
+            if any(re.fullmatch(r"(?:option|choice)\s*[a-d1-4]", option, re.I) for option in self.options):
+                raise ValueError("Placeholder options are not allowed.")
             if len(self.options) != 4:
                 raise ValueError("MCQ questions must contain exactly four options.")
             if len({option.lower() for option in self.options}) != 4:

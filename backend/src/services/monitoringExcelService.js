@@ -1,5 +1,5 @@
 /**
- * Monitoring Excel Report Generator (2-Sheet: Monitoring Report + Summary)
+ * Monitoring Excel Report Generator (Monitoring Report + Summary + Warnings)
  * ─────────────────────────────────────────────────────────────────────────────
  * Matches the openpyxl template:
  * - Sheet 1: Monitoring Report (Time, Event Type, Direction, Count Number, Duration, Score Added, etc.)
@@ -10,7 +10,7 @@ const ExcelJS = require('exceljs');
 
 class MonitoringExcelService {
   /**
-   * Generates a 2-sheet Excel workbook buffer
+   * Generates the scored report, summary and unscored warning history
    * @param {Array} events - Array of timestamped malpractice events
    * @param {Object} metrics - Session summary metrics
    * @returns {Promise<Buffer>}
@@ -19,6 +19,7 @@ class MonitoringExcelService {
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'LMS AI Monitoring Engine';
     workbook.created = new Date();
+    const graceWarnings = Array.isArray(metrics.graceWarnings) ? metrics.graceWarnings : [];
 
     // ── SHEET 1: Monitoring Report ──────────────────────────────────────────
     const ws1 = workbook.addWorksheet('Monitoring Report');
@@ -70,7 +71,7 @@ class MonitoringExcelService {
         sTime,
         eTime,
         actDurStr,
-        'None (Clean Session)',
+        graceWarnings.length ? 'No scored incidents (warnings recorded)' : 'None (Clean Session)',
         '—',
         '—',
         '0.0s',
@@ -168,6 +169,8 @@ class MonitoringExcelService {
       ['  Participant Name', String(metrics.participantName || metrics.name || 'Participant')],
       ['  Configured Duration', `${cfgDur.toFixed(2)} sec`],
       ['  Actual Test Duration', `${actDur.toFixed(2)} sec`],
+      ['  Total Monitoring Incidents', Number(metrics.totalEvents ?? (events.length + graceWarnings.length))],
+      ['  Grace Warnings', Number(metrics.graceWarningsCount ?? graceWarnings.length)],
       ['', ''],
       ['SCORING SUMMARY (5-PART MARKS)', ''],
       ['  Component', 'Violation / Count | Percentage | Score | Maximum'],
@@ -175,7 +178,7 @@ class MonitoringExcelService {
       ['  2. Mobile Phone Violation', `${mobCnt} Detected | ${(mobScore / 10 * 100).toFixed(1)}% | ${mobScore.toFixed(2)} | 10`],
       ['  3. Multiple Faces / Persons', `${mfCnt} Detected | ${(mfScore / 10 * 100).toFixed(1)}% | ${mfScore.toFixed(2)} | 10`],
       ['  4. No Person / Face Absent', `${npDet ? 'Detected' : 'Not Detected'} | ${(npScore / 10 * 100).toFixed(1)}% | ${npScore.toFixed(2)} | 10`],
-      ['  5. Tab Switch / Fullscreen', `${tsCnt} scored browser incidents | ${(tsScore / 10 * 100).toFixed(1)}% | ${tsScore.toFixed(2)} | 10`],
+      ['  5. Tab Switch / Fullscreen', `${tsCnt} confirmed browser switches | ${(tsScore / 10 * 100).toFixed(1)}% | ${tsScore.toFixed(2)} | 10`],
       ['', ''],
       ['FINAL SCORE', ''],
       ['  Eye + Head Score', `${mScore.toFixed(2)} / 60`],
@@ -200,6 +203,22 @@ class MonitoringExcelService {
       { width: 35 },
       { width: 55 },
     ];
+
+    const warnings = workbook.addWorksheet('Warnings');
+    warnings.columns = [
+      { header: 'Warning Number', key: 'number', width: 18 },
+      { header: 'Event', key: 'event', width: 28 },
+      { header: 'Timestamp', key: 'time', width: 28 },
+      { header: 'Warning Message', key: 'message', width: 75 },
+      { header: 'Score Added', key: 'score', width: 16 },
+    ];
+    warnings.getRow(1).font = { bold: true };
+    for (const warning of graceWarnings) {
+      const row = warnings.addRow({ number: warning.warningNumber, event: warning.eventType,
+        time: warning.occurredAt || warning.timestamp || '', message: warning.warningMessage || '', score: 0 });
+      row.alignment = { vertical: 'top', wrapText: true };
+      row.height = 42;
+    }
 
     return await workbook.xlsx.writeBuffer();
   }
