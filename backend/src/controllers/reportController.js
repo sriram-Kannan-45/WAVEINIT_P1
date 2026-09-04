@@ -161,46 +161,104 @@ const getTrainerReport = async (req, res) => {
       ]
     });
 
-    const participantProgress = await Promise.all(enrollments.map(async e => {
+    // 1. Participant Progress (batch pre-fetch to eliminate N+1 queries)
+    const eCourseIds = Array.from(new Set(enrollments.map(e => e.courseId).filter(Boolean)));
+    const eTrainingIds = Array.from(new Set(enrollments.map(e => e.trainingId).filter(Boolean)));
+    const ePartIds = Array.from(new Set(enrollments.map(e => e.participantId).filter(Boolean)));
+
+    const lessonWhere = [];
+    if (eCourseIds.length) lessonWhere.push({ courseId: { [Op.in]: eCourseIds } });
+    if (eTrainingIds.length) lessonWhere.push({ trainingId: { [Op.in]: eTrainingIds } });
+
+    const [allLessons, allCompletedProgress, allQuizResults] = await Promise.all([
+      lessonWhere.length ? Lesson.findAll({
+        where: { [Op.or]: lessonWhere },
+        attributes: ['id', 'courseId', 'trainingId'],
+        raw: true
+      }) : [],
+      (ePartIds.length && lessonWhere.length) ? LessonProgress.findAll({
+        where: {
+          participantId: { [Op.in]: ePartIds },
+          status: 'COMPLETED'
+        },
+        attributes: ['participantId', 'lessonId'],
+        raw: true
+      }) : [],
+      (ePartIds.length && lessonWhere.length) ? QuizResult.findAll({
+        where: {
+          participantId: { [Op.in]: ePartIds }
+        },
+        include: [{
+          model: AIQuiz,
+          as: 'quiz',
+          attributes: ['id', 'courseId', 'trainingId'],
+          where: { [Op.or]: lessonWhere },
+          required: true
+        }],
+        attributes: ['participantId', 'percentage'],
+        raw: true
+      }) : []
+    ]);
+
+    // Build fast in-memory lookup structures
+    const courseLessonsMap = new Map();
+    const trainingLessonsMap = new Map();
+    for (const l of allLessons) {
+      if (l.courseId) {
+        if (!courseLessonsMap.has(l.courseId)) courseLessonsMap.set(l.courseId, new Set());
+        courseLessonsMap.get(l.courseId).add(l.id);
+      }
+      if (l.trainingId) {
+        if (!trainingLessonsMap.has(l.trainingId)) trainingLessonsMap.set(l.trainingId, new Set());
+        trainingLessonsMap.get(l.trainingId).add(l.id);
+      }
+    }
+
+    const participantCompletedLessonsMap = new Map();
+    for (const cp of allCompletedProgress) {
+      if (!participantCompletedLessonsMap.has(cp.participantId)) {
+        participantCompletedLessonsMap.set(cp.participantId, new Set());
+      }
+      participantCompletedLessonsMap.get(cp.participantId).add(cp.lessonId);
+    }
+
+    const participantQuizPercentagesMap = new Map();
+    for (const qr of allQuizResults) {
+      const cId = qr['quiz.courseId'];
+      const tId = qr['quiz.trainingId'];
+      const key = cId ? `${qr.participantId}_c${cId}` : `${qr.participantId}_t${tId}`;
+      if (!participantQuizPercentagesMap.has(key)) {
+        participantQuizPercentagesMap.set(key, []);
+      }
+      if (qr.percentage != null) {
+        participantQuizPercentagesMap.get(key).push(Number(qr.percentage));
+      }
+    }
+
+    const participantProgress = enrollments.map(e => {
       let totalLessons = 0;
       let completedLessons = 0;
+      const completedSet = participantCompletedLessonsMap.get(e.participantId) || new Set();
 
       if (e.courseId) {
-        totalLessons = await Lesson.count({ where: { courseId: e.courseId } });
-        completedLessons = totalLessons > 0 ? await LessonProgress.count({
-          where: {
-            participantId: e.participantId,
-            status: 'COMPLETED',
-            lessonId: {
-              [Op.in]: sequelize.literal(`(SELECT id FROM lessons WHERE course_id = ${e.courseId})`)
-            }
-          }
-        }) : 0;
+        const lessonIds = courseLessonsMap.get(e.courseId) || new Set();
+        totalLessons = lessonIds.size;
+        for (const lId of lessonIds) {
+          if (completedSet.has(lId)) completedLessons++;
+        }
       } else if (e.trainingId) {
-        totalLessons = await Lesson.count({ where: { trainingId: e.trainingId } });
-        completedLessons = totalLessons > 0 ? await LessonProgress.count({
-          where: {
-            participantId: e.participantId,
-            status: 'COMPLETED',
-            lessonId: {
-              [Op.in]: sequelize.literal(`(SELECT id FROM lessons WHERE training_id = ${e.trainingId})`)
-            }
-          }
-        }) : 0;
+        const lessonIds = trainingLessonsMap.get(e.trainingId) || new Set();
+        totalLessons = lessonIds.size;
+        for (const lId of lessonIds) {
+          if (completedSet.has(lId)) completedLessons++;
+        }
       }
 
-      // Average Quiz Score for this enrollment
-      const avgQuizScore = await QuizResult.aggregate('percentage', 'AVG', {
-        where: {
-          participantId: e.participantId,
-          quizId: {
-            [Op.in]: sequelize.literal(e.courseId
-              ? `(SELECT id FROM ai_quizzes WHERE course_id = ${e.courseId})`
-              : `(SELECT id FROM ai_quizzes WHERE training_id = ${e.trainingId})`
-            )
-          }
-        }
-      }) || 0;
+      const qKey = e.courseId ? `${e.participantId}_c${e.courseId}` : `${e.participantId}_t${e.trainingId}`;
+      const scores = participantQuizPercentagesMap.get(qKey) || [];
+      const avgQuizScore = scores.length > 0
+        ? scores.reduce((sum, val) => sum + val, 0) / scores.length
+        : 0;
 
       return {
         participantId: e.participant?.id,
@@ -210,10 +268,10 @@ const getTrainerReport = async (req, res) => {
         type: e.courseId ? 'Course' : 'Training',
         completedLessons,
         totalLessons,
-        progressPercent: Number(Number(e.progressPercent).toFixed(1)),
+        progressPercent: Number(Number(e.progressPercent || 0).toFixed(1)),
         avgQuizScore: Number(Number(avgQuizScore).toFixed(1))
       };
-    }));
+    });
 
     // 2, 3, 4. Parallelize Quiz Scores, Assessment Scores, and Pending Reviews
     const [quizScores, assessmentScores, pendingReviews] = await Promise.all([
@@ -372,32 +430,59 @@ const getParticipantReport = async (req, res) => {
       if (c.trainingId) certLookupMap.set(`t_${c.trainingId}`, c);
     });
 
-    const progress = await Promise.all(enrollments.map(async e => {
+    const peCourseIds = Array.from(new Set(enrollments.map(e => e.courseId).filter(Boolean)));
+    const peTrainingIds = Array.from(new Set(enrollments.map(e => e.trainingId).filter(Boolean)));
+
+    const pLessonWhere = [];
+    if (peCourseIds.length) pLessonWhere.push({ courseId: { [Op.in]: peCourseIds } });
+    if (peTrainingIds.length) pLessonWhere.push({ trainingId: { [Op.in]: peTrainingIds } });
+
+    const [pAllLessons, pAllCompletedProgress] = await Promise.all([
+      pLessonWhere.length ? Lesson.findAll({
+        where: { [Op.or]: pLessonWhere },
+        attributes: ['id', 'courseId', 'trainingId'],
+        raw: true
+      }) : [],
+      pLessonWhere.length ? LessonProgress.findAll({
+        where: {
+          participantId,
+          status: 'COMPLETED'
+        },
+        attributes: ['lessonId'],
+        raw: true
+      }) : []
+    ]);
+
+    const pCourseLessonsMap = new Map();
+    const pTrainingLessonsMap = new Map();
+    for (const l of pAllLessons) {
+      if (l.courseId) {
+        if (!pCourseLessonsMap.has(l.courseId)) pCourseLessonsMap.set(l.courseId, new Set());
+        pCourseLessonsMap.get(l.courseId).add(l.id);
+      }
+      if (l.trainingId) {
+        if (!pTrainingLessonsMap.has(l.trainingId)) pTrainingLessonsMap.set(l.trainingId, new Set());
+        pTrainingLessonsMap.get(l.trainingId).add(l.id);
+      }
+    }
+    const pCompletedSet = new Set(pAllCompletedProgress.map(p => p.lessonId));
+
+    const progress = enrollments.map(e => {
       let totalLessons = 0;
       let completedLessons = 0;
 
       if (e.courseId) {
-        totalLessons = await Lesson.count({ where: { courseId: e.courseId } });
-        completedLessons = totalLessons > 0 ? await LessonProgress.count({
-          where: {
-            participantId,
-            status: 'COMPLETED',
-            lessonId: {
-              [Op.in]: sequelize.literal(`(SELECT id FROM lessons WHERE course_id = ${e.courseId})`)
-            }
-          }
-        }) : 0;
+        const lessonIds = pCourseLessonsMap.get(e.courseId) || new Set();
+        totalLessons = lessonIds.size;
+        for (const lId of lessonIds) {
+          if (pCompletedSet.has(lId)) completedLessons++;
+        }
       } else if (e.trainingId) {
-        totalLessons = await Lesson.count({ where: { trainingId: e.trainingId } });
-        completedLessons = totalLessons > 0 ? await LessonProgress.count({
-          where: {
-            participantId,
-            status: 'COMPLETED',
-            lessonId: {
-              [Op.in]: sequelize.literal(`(SELECT id FROM lessons WHERE training_id = ${e.trainingId})`)
-            }
-          }
-        }) : 0;
+        const lessonIds = pTrainingLessonsMap.get(e.trainingId) || new Set();
+        totalLessons = lessonIds.size;
+        for (const lId of lessonIds) {
+          if (pCompletedSet.has(lId)) completedLessons++;
+        }
       }
 
       const certKey = e.courseId ? `c_${e.courseId}` : `t_${e.trainingId}`;
@@ -409,11 +494,11 @@ const getParticipantReport = async (req, res) => {
         type: e.courseId ? 'Course' : 'Training',
         completedLessons,
         totalLessons,
-        progressPercent: Number(Number(e.progressPercent).toFixed(1)),
+        progressPercent: Number(Number(e.progressPercent || 0).toFixed(1)),
         certificateAvailable: !!certificate,
         certificateCode: certificate?.certificateCode || null
       };
-    }));
+    });
 
     const quizIds = quizResults.map(qr => qr.quizId);
     const lessonQuizzes = quizIds.length > 0 ? await LessonQuiz.findAll({

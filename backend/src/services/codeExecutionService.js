@@ -25,9 +25,8 @@ async function executeCode(code, language, input, timeLimit = 5, memoryLimit = 2
 }
 
 async function runTests(code, language, testCases, timeLimit, memoryLimit) {
-  const results = [];
-  for (const tc of testCases) {
-    const startTime = Date.now();
+  if (!testCases || testCases.length === 0) return [];
+  const promises = testCases.map(async (tc) => {
     const result = await judgeEngine.runSingleTest({
       code, language, input: tc.input,
       expectedOutput: tc.expectedOutput,
@@ -38,7 +37,7 @@ async function runTests(code, language, testCases, timeLimit, memoryLimit) {
     const actualOutput = tc.isHidden ? (result.verdict === VERDICTS.ACCEPTED ? '[Passed]' : '[Failed]') : (result.actualOutput || '');
     const expectedOutput = tc.isHidden ? '[Hidden]' : (tc.expectedOutput || '');
 
-    results.push({
+    return {
       testCaseId: tc.id || null,
       input: tc.isHidden ? '[Hidden]' : tc.input,
       expectedOutput,
@@ -50,9 +49,9 @@ async function runTests(code, language, testCases, timeLimit, memoryLimit) {
       isHidden: tc.isHidden,
       error: result.error || '',
       compileOutput: result.compileOutput || '',
-    });
-  }
-  return results;
+    };
+  });
+  return Promise.all(promises);
 }
 
 async function runTestCase(code, language, testCase, timeLimit, memoryLimit) {

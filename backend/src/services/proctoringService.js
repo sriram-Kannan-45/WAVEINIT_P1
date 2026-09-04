@@ -78,6 +78,13 @@ const MONITORING_EVENTS = new Set([
   'SESSION_RESUMED',
 ]);
 
+// Browser incidents follow QuizTaking / monitoringService: warn and audit,
+// never terminate. Keep them out of the legacy warning termination budget too.
+const AUDIT_ONLY_BROWSER_TYPES = new Set([
+  'FULLSCREEN_EXIT', 'FULLSCREEN_DISABLED', 'TAB_SWITCH', 'WINDOW_BLUR',
+  'BROWSER_LOST_FOCUS', 'BROWSER_MINIMIZE', 'PAGE_VISIBILITY_HIDDEN', 'WINDOW_FOCUS_LOST',
+]);
+
 // Violations that bump the warning counter (user-facing only)
 const WARNING_TYPES = new Set([
   'FULLSCREEN_EXIT',
@@ -550,33 +557,31 @@ async function recordViolation({ session, type, message, metadata }) {
   // Populate category counts to perform policy checks
   await populateViolationCounts(session);
 
-  const fullscreenCount = session.getDataValue('fullscreenExitsCount') ?? 0;
-  const tabSwitchesCount = session.getDataValue('tabSwitchesCount') ?? 0;
   const screenshotsCount = session.getDataValue('screenshotsCount') ?? 0;
   const devToolsCount = session.getDataValue('devToolsCount') ?? 0;
-  const windowBlursCount = session.getDataValue('windowBlursCount') ?? 0;
 
   const level = session.proctoringLevel || 'MEDIUM';
   const t = thresholdsForLevel(level);
 
-  // Termination policy
+  // Browser warnings remain in the report, but cannot exhaust the security
+  // termination budget, even when followed by a different violation.
+  const securityWarningsCount = await Violation.count({
+    where: {
+      sessionId: session.id,
+      type: { [Op.in]: [...new Set([...WARNING_TYPES, ...CRITICAL_TYPES])].filter(t => !AUDIT_ONLY_BROWSER_TYPES.has(t)) },
+    },
+  });
   let terminated = false;
-  if (
-    fullscreenCount >= t.maxFullscreenExits ||
-    tabSwitchesCount >= 3 ||
+  if (!AUDIT_ONLY_BROWSER_TYPES.has(type) && (
     screenshotsCount >= 3 ||
     devToolsCount >= 3 ||
-    windowBlursCount >= 3 ||
-    session.warningsCount >= t.maxWarnings ||
+    securityWarningsCount >= t.maxWarnings ||
     severity === 'CRITICAL'
-  ) {
+  )) {
     let reason = `Auto-terminated after violation: ${type}`;
-    if (fullscreenCount >= t.maxFullscreenExits) reason = 'Auto-terminated: Exceeded maximum fullscreen exits';
-    else if (tabSwitchesCount >= 3) reason = 'Auto-terminated: Exceeded maximum tab switches';
-    else if (screenshotsCount >= 3) reason = 'Auto-terminated: Exceeded maximum screenshot attempts';
+    if (screenshotsCount >= 3) reason = 'Auto-terminated: Exceeded maximum screenshot attempts';
     else if (devToolsCount >= 3) reason = 'Auto-terminated: Developer Tools detection limit reached';
-    else if (windowBlursCount >= 3) reason = 'Auto-terminated: Exceeded maximum window focus losses';
-    else if (session.warningsCount >= t.maxWarnings) reason = 'Auto-terminated: Exceeded maximum warnings limit';
+    else if (securityWarningsCount >= t.maxWarnings) reason = 'Auto-terminated: Exceeded maximum warnings limit';
     else if (severity === 'CRITICAL') reason = `Auto-terminated: Critical violation - ${type}`;
 
     await terminateSession({

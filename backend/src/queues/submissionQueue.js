@@ -44,11 +44,15 @@ async function enqueueSubmission({ submissionId, attemptId, problemId, code, lan
     }
   }
 
-  logger.info('[SubmissionQueue] Processing submission synchronously (Redis queue not active)');
+  logger.info('[SubmissionQueue] Processing submission in background (Redis queue not active)');
   const { evaluateSubmission } = require('../workers/submissionWorker');
-  await evaluateSubmission({
+  // Fire-and-forget so the HTTP response is NOT blocked by synchronous Docker
+  // evaluation. Progress is delivered via Socket.IO / polling.
+  evaluateSubmission({
     submissionId, attemptId, problemId, code, language, timeLimit, memoryLimit,
     testCases, participantId, assessmentId, io,
+  }).catch(err => {
+    logger.error('[SubmissionQueue] Background evaluateSubmission failed', { submissionId, error: err.message });
   });
 }
 

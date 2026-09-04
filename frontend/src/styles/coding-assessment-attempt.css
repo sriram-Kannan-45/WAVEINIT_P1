@@ -1,0 +1,79 @@
+.coding-mentor-rail {
+  width: 340px;
+  min-width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+}
+
+.coding-mentor-panel {
+  min-height: 420px;
+  height: min(65vh, 580px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06);
+  position: relative;
+}
+
+.coding-monitoring-panel {
+  width: 100%;
+  min-width: 0;
+}
+
+.coding-mentor-reopen {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 12px;
+  color: #5b21b6;
+  background: #f5f3ff;
+  border: 1px solid #ddd6fe;
+  border-radius: 8px;
+  font: 600 12px inherit;
+  cursor: pointer;
+}
+
+@media (max-width: 1280px) {
+  .coding-assessment-problem-panel {
+    min-width: 300px !important;
+  }
+
+  .coding-mentor-rail {
+    width: 300px;
+    min-width: 280px;
+  }
+}
+
+@media (max-width: 1050px) {
+  .coding-assessment-main {
+    overflow: auto !important;
+    flex-wrap: wrap;
+  }
+
+  .coding-assessment-editor-panel {
+    min-width: 520px;
+  }
+
+  .coding-mentor-rail {
+    width: 100%;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(270px, 340px);
+    align-items: start;
+  }
+}
+
+@media (max-width: 640px) {
+  .coding-mentor-rail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

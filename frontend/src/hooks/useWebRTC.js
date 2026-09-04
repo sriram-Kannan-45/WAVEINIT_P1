@@ -410,7 +410,7 @@ export function useWebRTC(socket, interviewId, localStreamRef) {
     pc._polite = polite
     peerConnections.current.set(peerSocketId, pc)
     return pc
-  }, [addTracksToPeer, getPoliteFlag, logRemoteMediaDiagnostics])
+  }, [addTracksToPeer, getPoliteFlag, logRemoteMediaDiagnostics, localStreamRef])
 
   const createOffer = useCallback(async (peerSocketId) => {
     const localStream = localStreamRef?.current
@@ -477,7 +477,7 @@ export function useWebRTC(socket, interviewId, localStreamRef) {
     } finally {
       makingOffer.current.set(peerSocketId, false)
     }
-  }, [getOrCreatePeer, addTracksToPeer])
+  }, [getOrCreatePeer, addTracksToPeer, localStreamRef])
 
   const preparePeer = useCallback((peerSocketId) => {
     const localStream = localStreamRef?.current
@@ -488,7 +488,7 @@ export function useWebRTC(socket, interviewId, localStreamRef) {
       pendingOfferPeers.current.add(peerSocketId)
     }
     return pc
-  }, [getOrCreatePeer, addTracksToPeer])
+  }, [getOrCreatePeer, addTracksToPeer, localStreamRef])
 
   const handleOffer = useCallback(async (fromSocketId, offer) => {
     const isMobile = typeof window !== 'undefined' && window.location.pathname.includes('mobile-join')
@@ -552,7 +552,7 @@ export function useWebRTC(socket, interviewId, localStreamRef) {
     } catch (err) {
       console.error(`[WebRTC] handleOffer error for ${fromSocketId}:`, err)
     }
-  }, [getOrCreatePeer, addTracksToPeer])
+  }, [getOrCreatePeer, addTracksToPeer, localStreamRef])
 
   const handleAnswer = useCallback(async (fromSocketId, answer) => {
     console.log(`[${new Date().toLocaleTimeString()}] [WebRTC] 📥 Answer received from ${fromSocketId}`)

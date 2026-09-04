@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   MapPin, BookOpen, Users, Award,
@@ -17,7 +17,7 @@ export default function AdminTrainerProfile({ user }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  const fetchProfile = async (signal) => {
+  const fetchProfile = useCallback(async (signal) => {
     try {
       setLoading(true)
       setError(null)
@@ -36,13 +36,13 @@ export default function AdminTrainerProfile({ user }) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [userId, user?.token, showError])
 
   useEffect(() => {
     const controller = new AbortController()
     fetchProfile(controller.signal)
     return () => controller.abort()
-  }, [userId])
+  }, [fetchProfile])
 
   const initials = (name) => getTwoLetterInitials(name)
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined, { year: 'numeric', month: 'short' }) : 'Present'

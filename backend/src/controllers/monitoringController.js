@@ -465,7 +465,7 @@ class MonitoringController {
   async getAttemptReport(req, res) {
     try {
       const attemptId = req.params.attemptId;
-      const report = await monitoringService.getReport({ attemptId });
+      const report = await monitoringService.getReport({ attemptId, contextType: req.query.contextType || 'QUIZ', contextId: req.query.contextId || null });
       return ok(res, report);
     } catch (err) {
       return fail(res, 404, err.message);
@@ -549,13 +549,13 @@ class MonitoringController {
         violationPercentage: report.violationPercentage ?? 0,
         monitoringScore: report.eyeHeadScore ?? report.scoringBreakdown?.eyeHead?.score ?? 0,
         multipleFaceCount: report.multipleFaceCount || (report.multiFaceScore > 0 ? 1 : 0),
-        multipleFaceScore: report.multiFaceScore || report.scoringBreakdown?.multiPerson?.score || 0.0,
+        multipleFaceScore: report.multiFaceScore ?? report.scoringBreakdown?.multiPerson?.score ?? 0.0,
         noPersonDetected: Boolean(report.noPersonDetected || report.noPersonScore > 0),
-        noPersonScore: report.noPersonScore || report.scoringBreakdown?.noPerson?.score || 0.0,
+        noPersonScore: report.noPersonScore ?? report.scoringBreakdown?.noPerson?.score ?? 0.0,
         mobileCount: report.phoneViolationCount || report.mobileCount || (report.mobileScore > 0 ? 1 : 0),
-        mobileScore: report.mobileScore || report.scoringBreakdown?.mobile?.score || 0.0,
+        mobileScore: report.mobileScore ?? report.scoringBreakdown?.mobile?.score ?? 0.0,
         tabSwitchCount: report.tabSwitchCount || 0,
-        tabSwitchScore: report.tabSwitchScore || report.scoringBreakdown?.tabSwitch?.score || 0.0,
+        tabSwitchScore: report.tabSwitchScore ?? report.scoringBreakdown?.tabSwitch?.score ?? 0.0,
         finalScore: report.finalScore ?? report.score ?? 0,
         videoUrl: report.videoUrl ? (report.videoUrl.startsWith('http') ? report.videoUrl : `${req.protocol}://${req.get('host')}${report.videoUrl}`) : null,
       };
@@ -579,7 +579,7 @@ class MonitoringController {
     try {
       const contextId = req.params.contextId;
       const contextType = (req.query.contextType || 'QUIZ').toUpperCase();
-      const { QuizAttempt, CodingAttempt, AIQuiz, CodingAssessment, User } = require('../models');
+      const { QuizAttempt, CodingAttempt, CodingResult, AIQuiz, CodingAssessment, User } = require('../models');
 
       let assessmentTitle = 'Assessment';
       let configuredDuration = '—';
@@ -593,7 +593,7 @@ class MonitoringController {
         }
         attempts = await CodingAttempt.findAll({
           where: { assessmentId: contextId },
-          include: [{ model: User, as: 'participant' }],
+          include: [{ model: User, as: 'participant' }, { model: CodingResult, as: 'result', required: false }],
           order: [['id', 'DESC']]
         });
       } else {
@@ -611,14 +611,12 @@ class MonitoringController {
 
       // Populate each participant row with exact 5-component proctoring metrics
       const participants = await Promise.all(attempts.map(async (att) => {
-        let rep = null;
-        try {
-          rep = await monitoringService.getReport({ attemptId: att.id });
-        } catch (_) {}
+        // Do not turn a failed report calculation into a clean zero-score row.
+        const rep = await monitoringService.getReport({ attemptId: att.id, contextType, contextId });
 
         const userName = att.participant?.name || att.participantName || `Candidate #${att.id}`;
         const userEmail = att.participant?.email || '—';
-        const quizScore = att.score != null ? att.score : (att.percentage != null ? att.percentage : (att.totalScore != null ? att.totalScore : null));
+        const quizScore = contextType === 'CODING' ? (att.result?.percentage ?? null) : (att.percentage ?? att.score ?? null);
         const durSec = rep?.actualTestDurationSeconds || att.timeTaken || (att.submittedAt && att.startedAt ? Math.round((new Date(att.submittedAt) - new Date(att.startedAt)) / 1000) : 0);
 
         return {
@@ -631,14 +629,14 @@ class MonitoringController {
           actualDurationSeconds: durSec,
           actualDuration: durSec > 0 ? `${Math.floor(durSec / 60)}m ${durSec % 60}s` : '—',
           quizScore: quizScore,
-          eyeHeadScore: rep?.eyeHeadScore || rep?.scoringBreakdown?.eyeHead?.score || 0.0,
-          noPersonScore: rep?.noPersonScore || rep?.scoringBreakdown?.noPerson?.score || 0.0,
-          multiFaceScore: rep?.multiFaceScore || rep?.scoringBreakdown?.multiPerson?.score || 0.0,
-          tabSwitchScore: rep?.tabSwitchScore || rep?.scoringBreakdown?.tabSwitch?.score || 0.0,
+          eyeHeadScore: rep?.eyeHeadScore ?? rep?.scoringBreakdown?.eyeHead?.score ?? 0.0,
+          noPersonScore: rep?.noPersonScore ?? rep?.scoringBreakdown?.noPerson?.score ?? 0.0,
+          multiFaceScore: rep?.multiFaceScore ?? rep?.scoringBreakdown?.multiPerson?.score ?? 0.0,
+          tabSwitchScore: rep?.tabSwitchScore ?? rep?.scoringBreakdown?.tabSwitch?.score ?? 0.0,
           tabSwitchCount: rep?.tabSwitchCount || 0,
-          mobileScore: rep?.mobileScore || rep?.scoringBreakdown?.mobile?.score || 0.0,
+          mobileScore: rep?.mobileScore ?? rep?.scoringBreakdown?.mobile?.score ?? 0.0,
           mobileCount: rep?.phoneViolationCount || 0,
-          finalScore: rep?.finalScore || rep?.score || 0.0,
+          finalScore: rep?.finalScore ?? rep?.score ?? 0.0,
           riskLevel: rep?.riskLevel || 'LOW',
           videoUrl: rep?.videoUrl ? `${req.protocol}://${req.get('host')}${rep.videoUrl}` : null,
         };

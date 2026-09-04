@@ -420,6 +420,7 @@ const Leaderboard = ({ data = [], title = 'Quiz Leaderboard', showChart = true, 
 
                           {/* Participant */}
                           <td className="px-5 py-4">
+                            <div className="flex items-center gap-3">
                               <UserAvatar
                                 src={entry.avatar || entry.profilePic || entry.profileImage || entry.image}
                                 name={entry.name}

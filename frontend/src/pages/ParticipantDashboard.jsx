@@ -40,7 +40,7 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const auth = useCallback(
     () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${user?.token || ''}` }),
-    [user]
+    [user?.token]
   )
 
   const handleResponse = useCallback(async (res) => {
@@ -149,11 +149,12 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
     fetchTrainings(); fetchEnrollments(); fetchFeedbacks(); fetchQuizzes();
   }, [fetchTrainings, fetchEnrollments, fetchFeedbacks, fetchQuizzes])
 
+  const userToken = user?.token
   useEffect(() => {
-    if (user && user.token) {
+    if (userToken) {
       fetchAll()
     }
-  }, [fetchAll, user?.token])
+  }, [fetchAll, userToken])
 
   useEffect(() => {
     if (tab === 'reports' || tab === 'certificates') {

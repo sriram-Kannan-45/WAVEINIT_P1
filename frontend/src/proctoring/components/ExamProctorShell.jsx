@@ -30,18 +30,10 @@ import {
 import { API_BASE } from '../../api/api';
 import { getAuthHeaders } from '../../api/request';
 
-const MAX_WARNINGS = 3;
+import { fsApi, useAssessmentFullscreen } from '../hooks/useAssessmentFullscreen';
+import { FullscreenWarningTitle, FullscreenWarningDescription } from './FullscreenWarningContent';
 const SCREEN_SHARE_RECONNECT_TIMEOUT_MS = 30000;
 
-const fsApi = {
-  request: (el = document.documentElement) =>
-    (el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen)?.call(el),
-  exit: () =>
-    (document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen)?.call(document),
-  element: () =>
-    document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement,
-  changeEvents: ['fullscreenchange', 'webkitfullscreenchange', 'msfullscreenchange'],
-};
 
 function formatTime(totalSec) {
   const m = Math.floor(totalSec / 60);
@@ -57,14 +49,12 @@ export default function ExamProctorShell({
   onScreenShareResumed,
   title = 'Assessment',
   requireScreenShare = false,
+  inactive = false,
 }) {
   /* ── Fullscreen state ─────────────────────────────────────────────── */
-  const [isFullscreen, setIsFullscreen] = useState(!!fsApi.element());
-  const [warnings, setWarnings] = useState(0);
-  const [warningOpen, setWarningOpen] = useState(false);
   const [terminated, setTerminated] = useState(false);
-  const enteredFullscreenOnce = useRef(!!fsApi.element());
   const submittedRef = useRef(false);
+  const { isFullscreen, warnings, warningOpen, setWarningOpen } = useAssessmentFullscreen({ submittedRef, terminated, inactive });
 
   /* ── Screen share state ───────────────────────────────────────────── */
   const [isScreenSharing, setIsScreenSharing] = useState(requireScreenShare ? !!screenStream : true);
@@ -78,49 +68,6 @@ export default function ExamProctorShell({
   useEffect(() => {
     Promise.resolve(fsApi.request()).catch(() => {});
   }, []);
-
-  /* ── fullscreenchange listener — 3-strike rule ────────────────────── */
-  useEffect(() => {
-    const onChange = () => {
-      const inFs = !!fsApi.element();
-      setIsFullscreen(inFs);
-
-      if (inFs) {
-        enteredFullscreenOnce.current = true;
-        setWarningOpen(false);
-        return;
-      }
-
-      if (submittedRef.current || terminated) return;
-      if (!enteredFullscreenOnce.current) return;
-
-      setWarnings((prev) => {
-        const next = prev + 1;
-        if (next >= MAX_WARNINGS) {
-          setTerminated(true);
-          setWarningOpen(false);
-          setTimeout(() => {
-            onSubmit?.({ silent: true }).finally(() => {
-              if (fsApi.element()) {
-                try {
-                  fsApi.exit();
-                } catch {}
-              }
-              setTimeout(() => onSubmit?.(null), 1800);
-            });
-          }, 50);
-        } else {
-          setWarningOpen(true);
-        }
-        return next;
-      });
-    };
-
-    fsApi.changeEvents.forEach((evt) => document.addEventListener(evt, onChange));
-    return () => {
-      fsApi.changeEvents.forEach((evt) => document.removeEventListener(evt, onChange));
-    };
-  }, [terminated, onSubmit]);
 
   /* ── Violation reporting ──────────────────────────────────────────── */
   const reportViolation = useCallback(
@@ -311,7 +258,7 @@ export default function ExamProctorShell({
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       {children}
 
-      {/* ── Fullscreen warning modal (strikes 1 & 2) ──────────────── */}
+      {/* ── Fullscreen warning modal ──────────────── */}
       <AnimatePresence>
         {warningOpen && !terminated && (
           <motion.div
@@ -345,12 +292,10 @@ export default function ExamProctorShell({
                 <AlertTriangle size={32} />
               </div>
               <h2 id="eps-warn-title" style={{ fontSize: 20, fontWeight: 700, color: '#0f172a', margin: '0 0 8px' }}>
-                Warning {warnings} of {MAX_WARNINGS}
+                <FullscreenWarningTitle warnings={warnings} />
               </h2>
               <p style={{ fontSize: 14, color: '#64748b', lineHeight: 1.6, margin: '0 0 20px' }}>
-                You exited fullscreen mode. Return to fullscreen immediately. After{' '}
-                <strong>{MAX_WARNINGS} violations</strong>, your exam will be{' '}
-                <strong>automatically terminated</strong>.
+                <FullscreenWarningDescription />
               </p>
               <button type="button" style={btnPrimary} onClick={reEnterFullscreen} autoFocus>
                 <Maximize2 size={15} /> Return to fullscreen
@@ -360,7 +305,7 @@ export default function ExamProctorShell({
         )}
       </AnimatePresence>
 
-      {/* ── Termination overlay (strike 3) ────────────────────────── */}
+      {/* ── Screen-share timeout overlay ────────────────────────── */}
       <AnimatePresence>
         {terminated && (
           <motion.div
@@ -395,7 +340,7 @@ export default function ExamProctorShell({
                 Exam terminated
               </h2>
               <p style={{ fontSize: 14, color: '#64748b', lineHeight: 1.6, margin: '0 0 16px' }}>
-                You exited fullscreen {MAX_WARNINGS} times. Your attempt has been automatically submitted with the answers you provided.
+                Screen sharing was not restored in time. Your attempt has been automatically submitted with the answers you provided.
               </p>
               <div style={{ color: '#94a3b8', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                 <Loader2 size={14} className="animate-spin" />

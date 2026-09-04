@@ -141,43 +141,53 @@ class JudgeEngine {
   }
 
   async evaluate({ code, language, testCases, timeLimit, memoryLimit }) {
-    const results = [];
-    let anyCompileError = false;
+    if (!testCases || testCases.length === 0) {
+      return { results: [], passed: 0, total: 0, verdict: VERDICTS.ACCEPTED, maxExecutionTime: 0, maxMemory: 0 };
+    }
 
-    for (let i = 0; i < testCases.length; i++) {
-      const tc = testCases[i];
-      const hasCompilerOutput = results.some(r => r.compileOutput);
+    const langCfg = getLanguageConfig(language);
 
-      if (!anyCompileError && !hasCompilerOutput) {
-        const result = await this.runSingleTest({
-          code,
-          language,
-          input: tc.input,
-          expectedOutput: tc.expectedOutput,
-          timeLimit: tc.timeout || timeLimit,
-          memoryLimit: tc.memoryLimit || memoryLimit,
-          floatingPointTolerance: tc.floatingPointTolerance,
-          unordered: tc.unordered,
-        });
-
-        if (result.verdict === VERDICTS.COMPILATION_ERROR) {
-          anyCompileError = true;
-        }
-
-        results.push({ ...result, testCaseIndex: i });
-      } else {
-        results.push({
-          verdict: anyCompileError ? VERDICTS.COMPILATION_ERROR : VERDICTS.ACCEPTED,
+    // If compilation is required, compile once first
+    if (langCfg.compile) {
+      const compileRes = await this.compile({ code, language, timeLimit });
+      if (!compileRes.success) {
+        const results = testCases.map((tc, i) => ({
+          verdict: VERDICTS.COMPILATION_ERROR,
           actualOutput: '',
           expectedOutput: tc.expectedOutput,
           executionTime: 0,
           memoryUsed: 0,
           testCaseIndex: i,
-          skipped: true,
-        });
+          compileOutput: compileRes.compileOutput || compileRes.output,
+          error: compileRes.output,
+        }));
+        return {
+          results,
+          passed: 0,
+          total: testCases.length,
+          verdict: VERDICTS.COMPILATION_ERROR,
+          maxExecutionTime: 0,
+          maxMemory: 0,
+        };
       }
     }
 
+    // Run test cases concurrently in parallel
+    const promises = testCases.map(async (tc, i) => {
+      const result = await this.runSingleTest({
+        code,
+        language,
+        input: tc.input,
+        expectedOutput: tc.expectedOutput,
+        timeLimit: tc.timeout || timeLimit,
+        memoryLimit: tc.memoryLimit || memoryLimit,
+        floatingPointTolerance: tc.floatingPointTolerance,
+        unordered: tc.unordered,
+      });
+      return { ...result, testCaseIndex: i };
+    });
+
+    const results = await Promise.all(promises);
     const passed = results.filter(r => r.verdict === VERDICTS.ACCEPTED).length;
     const total = testCases.length;
     const aggregate = aggregateVerdict(results);

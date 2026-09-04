@@ -109,6 +109,7 @@ export default function TrainerProfile({ user, onLogout }) {
     const controller = new AbortController()
     fetchAll(controller.signal)
     return () => controller.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const startEdit = () => {

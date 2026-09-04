@@ -396,7 +396,7 @@ function AssessmentMobileJoinContent() {
         frameIntervalRef.current = null;
       }
     };
-  }, [phase, info?.sessionId, socketConnected]);
+  }, [phase, info?.sessionId, info?.participantId, socketConnected]);
 
   // 2. Setup Socket Connection for real-time synchronization with Laptop (Stable lifecycle)
   const sessionId = info?.sessionId;
@@ -526,7 +526,7 @@ function AssessmentMobileJoinContent() {
         } catch (e) {}
       }
     };
-  }, [sessionId, socketToken, startWebRTCOffer, handleSessionClosed]);
+  }, [sessionId, socketToken, info?.token, token, startWebRTCOffer, handleSessionClosed]);
 
   // 3. Request Mobile Camera Access (Defaults to Back Camera / Environment)
   const enableCamera = useCallback(async (requestedFacingMode = 'environment') => {
@@ -623,7 +623,7 @@ function AssessmentMobileJoinContent() {
           : err.message || 'Unable to access mobile camera.'
       );
     }
-  }, [token, startWebRTCOffer]);
+  }, [token, info?.sessionId, info?.token, startWebRTCOffer]);
 
   // 4. Switch / Toggle Camera between Back and Front
   const toggleCamera = useCallback(async () => {

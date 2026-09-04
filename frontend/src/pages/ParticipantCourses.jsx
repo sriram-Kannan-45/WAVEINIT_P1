@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -98,9 +98,12 @@ function MyCoursesList({ user, onOpen }) {
   const [currentPage, setCurrentPage] = useState(1)
   const PAGE_SIZE = 4
 
+  const coursesRef = useRef(courses)
+  coursesRef.current = courses
+
   const loadCourses = useCallback(async (signal) => {
     try {
-      if (!courses || courses.length === 0) setLoading(true)
+      if (!coursesRef.current || coursesRef.current.length === 0) setLoading(true)
       setErrorMsg(null)
       const r = await fetchWithTimeout(API.PARTICIPANT_COURSES.LIST, {
         headers: auth(user?.token || ''),
@@ -116,7 +119,7 @@ function MyCoursesList({ user, onOpen }) {
         } catch (_) {}
       } else {
         const msg = d.error || 'Unable to load your enrolled courses. Please try again.'
-        if (!courses || courses.length === 0) {
+        if (!coursesRef.current || coursesRef.current.length === 0) {
           setErrorMsg(msg)
         }
         showError(msg)
@@ -124,7 +127,7 @@ function MyCoursesList({ user, onOpen }) {
     } catch (e) {
       if (e.name !== 'AbortError') {
         const msg = e.message || 'Unable to load your enrolled courses. Please try again.'
-        if (!courses || courses.length === 0) {
+        if (!coursesRef.current || coursesRef.current.length === 0) {
           setErrorMsg(msg)
         }
         showError(msg)
@@ -132,7 +135,7 @@ function MyCoursesList({ user, onOpen }) {
     } finally {
       setLoading(false)
     }
-  }, [user?.token, user?.id, cacheKey, courses.length, showError])
+  }, [user?.token, cacheKey, showError])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -140,7 +143,7 @@ function MyCoursesList({ user, onOpen }) {
     return () => {
       controller.abort()
     }
-  }, [user?.id])
+  }, [loadCourses])
 
   const activeCourses = useMemo(() => courses || [], [courses])
 
@@ -663,12 +666,12 @@ function CourseView({ user, courseId, onBack, onOpenLesson }) {
     navigate({ pathname: location.pathname, search: newParams.toString() }, { replace: true })
   }
 
+  const qTab = searchParams.get('subtab')
   useEffect(() => {
-    const qTab = searchParams.get('subtab')
     if (qTab && qTab !== tab) {
       setTabState(qTab)
     }
-  }, [searchParams])
+  }, [qTab, tab])
 
   useEffect(() => {
     let aborted = false
@@ -685,7 +688,7 @@ function CourseView({ user, courseId, onBack, onOpenLesson }) {
       finally { if (!aborted) setLoading(false) }
     })()
     return () => { aborted = true }
-  }, [courseId])
+  }, [courseId, user?.token, showError])
 
   if (loading) {
     return (
@@ -1050,7 +1053,7 @@ function LessonsView({ user, courseId, onOpenLesson }) {
       finally { if (!aborted) setLoading(false) }
     })()
     return () => { aborted = true }
-  }, [courseId])
+  }, [courseId, user?.token, showError])
 
   const completedCount = lessons.filter(l => l.progress?.status === 'COMPLETED').length
 
@@ -1170,7 +1173,7 @@ function ResourcesView({ user, courseId }) {
       } catch (e) { if (!aborted) showError(e.message) }
     })()
     return () => { aborted = true }
-  }, [courseId])
+  }, [courseId, user?.token, showError])
 
   if (!resources) {
     return (
@@ -2221,7 +2224,7 @@ function AssessmentModal({ user, assessmentId, onClose }) {
       } catch {}
     })()
     return () => { aborted = true }
-  }, [assessmentId])
+  }, [assessmentId, user?.token])
 
   const submit = async () => {
     if (!content.trim() && !fileUrl.trim()) {

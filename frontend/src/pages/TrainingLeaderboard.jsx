@@ -74,7 +74,7 @@ export default function TrainingLeaderboard({ user, onLogout }) {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [currentTrainingId, user?.token, showError, showSuccess])
+  }, [currentTrainingId, user, showError, showSuccess])
 
   useEffect(() => {
     const controller = new AbortController()

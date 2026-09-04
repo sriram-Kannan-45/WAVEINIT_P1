@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import {
   Search, ChevronUp, ChevronDown, Download, X, Star, Award,
   TrendingUp, Eye, RefreshCw, Users, Loader2, Clock, UserPlus, Check,
@@ -20,11 +20,7 @@ function InviteParticipantsModal({ courseId, user, onClose, onSuccess }) {
   const [selectedIds, setSelectedIds] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
 
-  useEffect(() => {
-    fetchAvailable()
-  }, [courseId])
-
-  const fetchAvailable = async () => {
+  const fetchAvailable = useCallback(async () => {
     setLoading(true)
     try {
       const res = await fetch(API.TRAINER_COURSES.AVAILABLE_PARTICIPANTS(courseId), {
@@ -41,7 +37,11 @@ function InviteParticipantsModal({ courseId, user, onClose, onSuccess }) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [courseId, user?.token, showError])
+
+  useEffect(() => {
+    fetchAvailable()
+  }, [fetchAvailable])
 
   const filtered = useMemo(() => {
     if (!searchTerm) return availableParticipants
@@ -449,7 +449,7 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
   const [detail, setDetail] = useState(null)
   const [showInviteModal, setShowInviteModal] = useState(false)
 
-  const loadParticipants = async (targetPage = page) => {
+  const loadParticipants = useCallback(async (targetPage = page) => {
     setLoading(true)
     try {
       const r = await fetch(API.TRAINER_COURSES.PARTICIPANTS(courseId), {
@@ -471,11 +471,11 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [courseId, user?.token, page, showError])
 
   useEffect(() => {
     loadParticipants()
-  }, [courseId, user?.token])
+  }, [loadParticipants])
 
   const handleSort = (key) => {
     setSortConfig(prev => {

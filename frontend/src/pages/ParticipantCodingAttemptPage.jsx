@@ -7,15 +7,23 @@ import { useToast } from '../components/Toast'
 import { useConfirm } from '../components/ui/AlertModal'
 import { ProctorProvider, useProctor } from '../proctoring/ProctorContext'
 import useDeviceFingerprint from '../proctoring/hooks/useDeviceFingerprint'
+import { useQuizProtection } from '../hooks/useQuizProtection.jsx'
 import { Loader2, AlertCircle, Play, Check, Clock, Send, Save, Terminal, Bug, Trash2, CheckCircle2, XCircle, ChevronRight, Award, Sparkles } from 'lucide-react'
 import CodeEditor from '../components/CodeEditor'
 import ProblemPanel from '../components/ProblemPanel'
-import CodingAiAssistant from '../components/CodingAiAssistant'
+import AssessmentAIMentor from '../components/ai-mentor/AssessmentAIMentor'
 import ExamProctorShell from '../proctoring/components/ExamProctorShell'
 import monitoringClient from '../proctoring/engine/MonitoringEngineClient'
+import {
+  buildAttemptScope,
+  readAttemptDraft,
+  writeAttemptDraft,
+  clearAttemptDraft,
+  purgeStaleAttemptDrafts,
+} from '../utils/attemptDraftStorage'
 import { io as socketIO } from 'socket.io-client'
+import '../styles/coding-assessment-attempt.css'
 
-const STORAGE_PREFIX = 'coding_attempt_state_'
 const AUTO_SAVE_INTERVAL = 10000
 const SERVER_SAVE_INTERVAL = 30000
 const WS_URL = BACKEND_ORIGIN
@@ -43,8 +51,14 @@ const authHeaders = (token) => ({
   Authorization: `Bearer ${token}`
 })
 
-function getStorageKey(attemptId) {
-  return `${STORAGE_PREFIX}${attemptId}`
+/**
+ * Key for the attempt's *credentials* record (sessionToken / monitoringSessionId).
+ * Scoped by user as well as attempt so two participants sharing a browser can
+ * never resolve each other's session token. Draft answer content uses
+ * attemptStorageKey() from attemptDraftStorage instead — see that module.
+ */
+function getCredentialsKey(userId, attemptId) {
+  return `coding_attempt_cred_u${userId ?? '0'}_a${attemptId ?? '0'}`
 }
 
 const fsApi = {
@@ -105,7 +119,7 @@ function createInitialQuestionState(problem, saved = null, latestSub = null) {
     submitTotal: saved?.submitTotal ?? (latestSub?.totalTestCases != null ? latestSub.totalTestCases : null),
     submissionId: saved?.submissionId || latestSub?.id || null,
     judgeStatus: null,
-    activeTab: saved?.activeTab || 'output',
+    activeTab: saved?.activeTab === 'testcases' ? 'testcases' : 'output',
     customInput: saved?.customInput || '',
     timeSpentSeconds: saved?.timeSpentSeconds || 0,
     editCount: saved?.editCount || 0,
@@ -120,43 +134,103 @@ function getLangStarter(problem, lang) {
   return (found && found.starterCode) || problem?.starterCode || ''
 }
 
+/**
+ * Countdown for the attempt.
+ *
+ * The remaining time is always derived from an authoritative end timestamp
+ * (`endsAt = startedAt + timeLimit`), never from counter increments, so the
+ * displayed value never jumps, skips or repeats regardless of interval drift or
+ * a throttled background tab. The timer re-schedules itself to the exact next
+ * whole-second boundary and only re-renders when the remaining-second value
+ * actually changes. A refresh or tab switch cannot reset or zombie it.
+ */
 const AssessmentTimer = React.memo(function AssessmentTimer({
   timeLimitMinutes = 60,
-  testStartKey,
+  startedAt,
   onExpire,
   submitted
 }) {
   const totalSeconds = (timeLimitMinutes || 60) * 60
-  const [timeLeft, setTimeLeft] = useState(() => {
+  const endsAtKeyRef = useRef(null)
+
+  const readNumber = (key) => {
     try {
-      const stored = sessionStorage.getItem(testStartKey)
-      if (stored) {
-        const elapsed = Math.floor((Date.now() - parseInt(stored, 10)) / 1000)
-        return Math.max(0, totalSeconds - elapsed)
-      }
+      const raw = sessionStorage.getItem(key)
+      const n = raw ? parseInt(raw, 10) : 0
+      return Number.isFinite(n) ? n : 0
+    } catch (_) {
+      return 0
+    }
+  }
+
+  // The authoritative end timestamp, persisted so a refresh resumes the same
+  // countdown. It is fixed for the life of the attempt (never recomputed from a
+  // drifting start), which is what guarantees the timer ends exactly at 0.
+  const [endsAt, setEndsAt] = useState(() => {
+    const key = `coding_ends_at_${typeof startedAt === 'number' ? startedAt : 'na'}`
+    endsAtKeyRef.current = key
+    try {
+      const cached = readNumber(key)
+      if (cached) return cached
     } catch (_) {}
-    return totalSeconds
+    const start = typeof startedAt === 'number' && startedAt > 0 ? startedAt : Date.now()
+    const computed = start + totalSeconds * 1000
+    try {
+      sessionStorage.setItem(key, String(computed))
+    } catch (_) {}
+    return computed
   })
 
+  const computeTimeLeft = useCallback(() => {
+    if (!endsAt) return totalSeconds
+    return Math.max(0, Math.ceil((endsAt - Date.now()) / 1000))
+  }, [endsAt, totalSeconds])
+
+  const [timeLeft, setTimeLeft] = useState(computeTimeLeft)
+  const timerExpired = timeLeft <= 0
+
   const expiredRef = useRef(false)
+  const onExpireRef = useRef(onExpire)
+  useEffect(() => { onExpireRef.current = onExpire }, [onExpire])
 
   useEffect(() => {
-    if (submitted || timeLeft <= 0) return
-    const interval = setInterval(() => {
+    if (submitted || timerExpired || !endsAt) return
+    let raf = 0
+    let timeout = null
+    let cancelled = false
+
+    const tick = () => {
+      const next = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000))
       setTimeLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(interval)
-          if (!expiredRef.current) {
-            expiredRef.current = true
-            onExpire?.()
-          }
-          return 0
-        }
-        return prev - 1
+        // Only re-render when the whole-second value changed — prevents
+        // duplicate renders and stale closures from causing visual jumps.
+        if (prev === next) return prev
+        return next
       })
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [submitted, onExpire])
+      if (next <= 0) {
+        if (!expiredRef.current) {
+          expiredRef.current = true
+          onExpireRef.current?.()
+        }
+        return
+      }
+      // Re-schedule at the next exact second boundary so the tick always lands
+      // on a fresh second (no drift, no skipping a number).
+      const now = Date.now()
+      const msIntoSecond = now % 1000
+      timeout = setTimeout(tick, (1000 - (msIntoSecond || 1000)) + 1)
+    }
+
+    // Kick off immediately, then follow the aligned schedule.
+    const boot = () => { cancelled = false; tick() }
+    raf = requestAnimationFrame(boot)
+
+    return () => {
+      cancelled = true
+      if (raf) cancelAnimationFrame(raf)
+      if (timeout) clearTimeout(timeout)
+    }
+  }, [submitted, timerExpired, endsAt])
 
   const formatTime = (s) => {
     const m = Math.floor(s / 60)
@@ -164,21 +238,24 @@ const AssessmentTimer = React.memo(function AssessmentTimer({
     return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
   }
 
+  const danger = timeLeft < 300
   return (
-    <div style={{
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 6,
-      background: timeLeft < 300 ? '#FEF2F2' : '#F0FDF4',
-      border: `1px solid ${timeLeft < 300 ? '#FECACA' : '#BBF7D0'}`,
-      color: timeLeft < 300 ? '#DC2626' : '#15803D',
-      padding: '4px 10px',
-      borderRadius: 8,
-      fontSize: 13,
-      fontWeight: 700,
-      fontVariantNumeric: 'tabular-nums'
-    }}>
-      <Clock size={13} color={timeLeft < 300 ? '#DC2626' : '#15803D'} />
+    <div
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        background: danger ? '#FEF2F2' : '#F0FDF4',
+        border: `1px solid ${danger ? '#FECACA' : '#BBF7D0'}`,
+        color: danger ? '#DC2626' : '#15803D',
+        padding: '4px 10px',
+        borderRadius: 8,
+        fontSize: 13,
+        fontWeight: 700,
+        fontVariantNumeric: 'tabular-nums'
+      }}
+    >
+      <Clock size={13} color={danger ? '#DC2626' : '#15803D'} />
       <span>{formatTime(timeLeft)}</span>
     </div>
   )
@@ -192,26 +269,61 @@ function ParticipantCodingAttemptInner({ user }) {
   const proctor = useProctor()
   const fp = useDeviceFingerprint()
 
+  // Problem-set identity, part of the draft scope. Held in a ref (the scope is
+  // read inside callbacks) with a version counter so the memo below recomputes
+  // once the real problem ids arrive.
+  const problemIdsRef = useRef(null)
+  const [problemScopeVersion, setProblemScopeVersion] = useState(0)
+
   let attemptId = searchParams.get('attemptId')
   let sessionToken = searchParams.get('sessionToken')
   let monitoringSessionId = searchParams.get('monitoringSessionId')
-  const storageKey = getStorageKey(attemptId)
 
-  if (assessmentId) {
-    if (attemptId && sessionToken) {
-      sessionStorage.setItem(storageKey, JSON.stringify({ attemptId, sessionToken, monitoringSessionId }))
+  if (assessmentId && attemptId) {
+    // Persist/resolve credentials under a key namespaced by user + attemptId.
+    // AttemptId is authoritative and is never swapped for a cached value, so a
+    // stale attemptId (e.g. from a previous assessment) can never leak into a
+    // new attempt's storage, and the user scope keeps two participants on one
+    // browser from resolving each other's session token.
+    const credKey = getCredentialsKey(user?.id, attemptId)
+    if (sessionToken) {
+      sessionStorage.setItem(credKey, JSON.stringify({ attemptId, sessionToken, monitoringSessionId }))
     } else {
-      const cached = sessionStorage.getItem(storageKey)
+      const cached = sessionStorage.getItem(credKey)
       if (cached) {
         try {
           const p = JSON.parse(cached)
-          attemptId = attemptId || p.attemptId
-          sessionToken = sessionToken || p.sessionToken
-          monitoringSessionId = monitoringSessionId || p.monitoringSessionId
+          // Only adopt cached credentials issued for THIS attempt.
+          if (String(p.attemptId) === String(attemptId)) {
+            sessionToken = sessionToken || p.sessionToken || null
+            monitoringSessionId = monitoringSessionId || p.monitoringSessionId || null
+          }
         } catch {}
       }
     }
   }
+  const credentialsKey = getCredentialsKey(user?.id, attemptId || '')
+
+  // Composite scope every draft read/write is bound to: {userId, attemptId,
+  // sessionToken digest, problem-set digest}. Built before the problem list
+  // loads (problems: 'any'), then rebuilt with ids once the payload arrives.
+  const draftScope = React.useMemo(
+    () => buildAttemptScope({
+      kind: 'coding',
+      userId: user?.id,
+      attemptId,
+      sessionToken,
+      problemIds: problemIdsRef.current,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [user?.id, attemptId, sessionToken, problemScopeVersion],
+  )
+  // persistState() is reached through memoised autosave callbacks that do not
+  // list it as a dependency (pre-existing), so reading the scope out of a ref is
+  // what keeps writes stamped with the *current* problem-set digest instead of
+  // the 'any' placeholder captured on the first render.
+  const draftScopeRef = useRef(draftScope)
+  draftScopeRef.current = draftScope
 
   const confirm = useConfirm()
 
@@ -220,7 +332,6 @@ function ParticipantCodingAttemptInner({ user }) {
   const [assessment, setAssessment] = useState(null)
   const [problems, setProblems] = useState([])
   const [consented, setConsented] = useState(false)
-  const [sharedCamStream, setSharedCamStream] = useState(null)
   const [resolvedMonitoringSessionId, setResolvedMonitoringSessionId] = useState(monitoringSessionId || null)
 
   const [currentProblemIndex, setCurrentProblemIndex] = useState(0)
@@ -230,7 +341,7 @@ function ParticipantCodingAttemptInner({ user }) {
   const [submitAllProgress, setSubmitAllProgress] = useState(null)
   const [submitted, setSubmitted] = useState(false)
   const [saveStatus, setSaveStatus] = useState('')
-  const [showCustomInput, setShowCustomInput] = useState(false)
+  const [mentorOpen, setMentorOpen] = useState(true)
   const [debugMode, setDebugMode] = useState(() => {
     try { return sessionStorage.getItem('coding_debug_mode') === '1' } catch { return false }
   })
@@ -247,6 +358,31 @@ function ParticipantCodingAttemptInner({ user }) {
   const submittingRef = useRef(false)
   const submittedRef = useRef(false)
   const activeSubmissionPollingRef = useRef({})
+
+  // ── Violation Protection (same as Quiz) ──
+  // Uses the same useQuizProtection hook that Quiz uses, so TAB_SWITCH and other
+  // browser events follow identical rules: warn/audit only, never terminate.
+  // Map assessment fields to quiz fields for compatibility.
+  const quizCompatible = assessment ? {
+    id: assessment.id,
+    title: assessment.title,
+    maxCopyWarnings: assessment.maxCopyWarnings || 3,
+  } : null
+
+  const { disqualified, warningOpen, setWarningOpen, lastViolationType } = useQuizProtection({
+    attemptId: attemptId || null,
+    quiz: quizCompatible,
+    initialViolationCount: 0,
+    initialStatus: 'IN_PROGRESS',
+    answers: questionState,
+    onSubmit: null, // Will be set after submitAssessment is defined
+    currentQ: currentProblemIndex,
+    enabled: consented && !submitted,
+    monitorBrowserEvents: true,
+    participantName: user?.name || '',
+    participantId: user?.id || '',
+    violationEndpoint: '/coding/participant/attempts', // Use coding endpoint
+  })
 
   useEffect(() => { questionStateRef.current = questionState }, [questionState])
   useEffect(() => { submittedRef.current = submitted }, [submitted])
@@ -354,7 +490,7 @@ function ParticipantCodingAttemptInner({ user }) {
         debugLog.api('GET /coding/assessments/:id', { assessmentId, attemptId })
         const token = user?.token || user?.accessToken
         const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 15000)
+        const timeoutId = setTimeout(() => controller.abort(), 20000)
 
         const res = await fetch(`${API_BASE}/coding/assessments/${assessmentId}${qParams}`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -374,11 +510,26 @@ function ParticipantCodingAttemptInner({ user }) {
         setAssessment(a)
         setProblems(problemList)
 
-        // Load saved state from localStorage
-        const savedState = loadSavedState(attemptId)
+        // Bind the draft scope to this attempt's actual problem set before any
+        // draft is read, so a blob written for a different problem list (a reset
+        // attempt, a reused id) is rejected rather than pre-filling the editor.
+        problemIdsRef.current = problemList.map(p => p.id)
+        const scope = buildAttemptScope({
+          kind: 'coding',
+          userId: user?.id,
+          attemptId,
+          sessionToken,
+          problemIds: problemIdsRef.current,
+        })
+        setProblemScopeVersion(v => v + 1)
+        purgeStaleAttemptDrafts(scope)
+
+        const savedState = loadSavedState(scope)
         const initialQState = {}
 
         problemList.forEach(p => {
+          // Only a draft that passed the scope check can seed the editor; the
+          // server's starter template is the fallback for every other case.
           const savedQ = savedState?.questions?.[p.id] || null
           const latestSub = p.latestSubmission || null
           initialQState[p.id] = createInitialQuestionState(p, savedQ, latestSub)
@@ -408,7 +559,10 @@ function ParticipantCodingAttemptInner({ user }) {
         setLoading(false)
       } catch (err) {
         if (!aborted) {
-          setErrorMsg(err.message || 'Server error loading assessment.')
+          const isTimeout = err.name === 'AbortError';
+          setErrorMsg(isTimeout
+            ? 'Assessment loading timed out. Please check your connection and try again.'
+            : (err.message || 'Server error loading assessment.'));
           setLoading(false)
         }
       }
@@ -417,32 +571,37 @@ function ParticipantCodingAttemptInner({ user }) {
     return () => { aborted = true }
   }, [assessmentId, attemptId, user.token])
 
-  function loadSavedState(attId) {
-    try {
-      const raw = localStorage.getItem(getStorageKey(attId))
-      return raw ? JSON.parse(raw) : null
-    } catch {
+  /**
+   * Reads this attempt's draft, or null. A draft written under any other scope
+   * (different user, attempt, session, or problem set) is rejected and deleted
+   * by the storage layer rather than returned, so the caller falls back to the
+   * server's starter template — which is the correct initial state for every one
+   * of those cases.
+   */
+  function loadSavedState(scope = draftScopeRef.current) {
+    const { data, rejected } = readAttemptDraft(scope)
+    if (rejected) {
+      console.warn('[attempt] discarded a saved draft that did not belong to this attempt:', rejected)
       return null
     }
+    return data
   }
 
   function persistState() {
     if (!attemptId) return
-    try {
-      const merged = { ...questionStateRef.current }
-      for (const [pId, q] of Object.entries(merged)) {
-        merged[pId] = {
-          ...q,
-          timeSpentSeconds: activeTimeRef.current[pId] || q.timeSpentSeconds || 0
-        }
+    const merged = { ...questionStateRef.current }
+    for (const [pId, q] of Object.entries(merged)) {
+      merged[pId] = {
+        ...q,
+        timeSpentSeconds: activeTimeRef.current[pId] || q.timeSpentSeconds || 0
       }
-      localStorage.setItem(getStorageKey(attemptId), JSON.stringify({
-        questions: merged,
-        currentProblemIndex,
-        startedAt: startTimeRef.current || Date.now(),
-        updatedAt: Date.now()
-      }))
-    } catch {}
+    }
+    writeAttemptDraft(draftScopeRef.current, {
+      questions: merged,
+      currentProblemIndex,
+      startedAt: startTimeRef.current || Date.now(),
+      updatedAt: Date.now()
+    })
   }
 
   const autoSaveCallback = useCallback(() => {
@@ -503,8 +662,9 @@ function ParticipantCodingAttemptInner({ user }) {
     }
   })
 
-  const handleConsented = useCallback((stream) => {
-    if (stream) setSharedCamStream(stream)
+  // Consent passes (attemptId, quiz), not a MediaStream. The gate releases its
+  // calibration camera; UnifiedMonitoringWidget owns the assessment camera.
+  const handleConsented = useCallback(() => {
     const start = Date.now()
     setTestStartedAt(start)
     try {
@@ -516,19 +676,8 @@ function ParticipantCodingAttemptInner({ user }) {
     setConsented(true)
   }, [assessmentId, attemptId, assessment?.timeLimit])
 
-  // Watch for focus/blur to pause/resume active duration tracking
-  useEffect(() => {
-    if (!consented || submitted) return
-    const onBlur = () => monitoringClient.pauseActiveTestTimer('TAB_SWITCH')
-    const onFocus = () => monitoringClient.resumeActiveTestTimer('RESUMED')
-
-    window.addEventListener('blur', onBlur)
-    window.addEventListener('focus', onFocus)
-    return () => {
-      window.removeEventListener('blur', onBlur)
-      window.removeEventListener('focus', onFocus)
-    }
-  }, [consented, submitted])
+  // As in Quiz, a tab switch stays part of the active assessment. Pausing
+  // monitoring on blur would suppress the very browser violation being detected.
 
   // ── Active Time Tracking per Question (High Performance - Ref Based) ──
   useEffect(() => {
@@ -650,7 +799,7 @@ function ParticipantCodingAttemptInner({ user }) {
           language: q.language || currentProblem.programmingLanguage || 'javascript',
           timeLimit: currentProblem.timeLimit || 5,
           memoryLimit: currentProblem.memoryLimit || 256,
-          input: showCustomInput ? q.customInput : undefined
+          input: currentQState.activeTab === 'custom' ? q.customInput : undefined
         })
       })
       const data = await res.json()
@@ -733,12 +882,11 @@ function ParticipantCodingAttemptInner({ user }) {
 
     let attempts = 0
     const maxAttempts = 15
-    const pollInterval = 1500
+    let pollTimeoutId = null
 
-    const pollTimer = setInterval(async () => {
+    const runPoll = async () => {
       attempts++
       if (attempts > maxAttempts || submittedRef.current) {
-        clearInterval(pollTimer)
         activeSubmissionPollingRef.current[pId] = false
         updateQuestion(pId, { isSubmitting: false, judgeStatus: null })
         return
@@ -750,45 +898,50 @@ function ParticipantCodingAttemptInner({ user }) {
           headers: authHeaders(user.token)
         })
         const data = await res.json()
-        if (!res.ok || !data.submission) return
+        if (res.ok && data.submission) {
+          const s = data.submission
+          if (s.status && s.status !== 'PENDING') {
+            activeSubmissionPollingRef.current[pId] = false
 
-        const s = data.submission
-        if (s.status && s.status !== 'PENDING') {
-          clearInterval(pollTimer)
-          activeSubmissionPollingRef.current[pId] = false
+            const durationMs = performance.now() - startT
+            debugLog.perf(`Question ${currentProblemIndex + 1} Evaluation (Polled #${attempts})`, durationMs)
+            debugLog.info(`Submission Result for Problem ${pId}:`, s.status, `Passed: ${s.passedTestCases}/${s.totalTestCases}`)
 
-          const durationMs = performance.now() - startT
-          debugLog.perf(`Question ${currentProblemIndex + 1} Evaluation (Polled)`, durationMs)
-          debugLog.info(`Submission Result for Problem ${pId}:`, s.status, `Passed: ${s.passedTestCases}/${s.totalTestCases}`)
+            const updatedQState = {
+              ...questionStateRef.current[pId],
+              isSubmitting: false,
+              isCompleted: true,
+              status: 'completed',
+              isModified: false,
+              lastSubmittedCode: questionStateRef.current[pId]?.code || '',
+              judgeStatus: null,
+              submitVerdict: s.status,
+              submitPassed: s.passedTestCases,
+              submitTotal: s.totalTestCases,
+              submitScore: s.score,
+              sampleResults: s.results || [],
+              output: s.compilerOutput || s.errorMessage || '',
+              conceptValidation: s.conceptValidation || null,
+            }
 
-          const updatedQState = {
-            ...questionStateRef.current[pId],
-            isSubmitting: false,
-            isCompleted: true,
-            status: 'completed',
-            isModified: false,
-            lastSubmittedCode: questionStateRef.current[pId]?.code || '',
-            judgeStatus: null,
-            submitVerdict: s.status,
-            submitPassed: s.passedTestCases,
-            submitTotal: s.totalTestCases,
-            submitScore: s.score,
-            sampleResults: s.results || [],
-            output: s.compilerOutput || s.errorMessage || '',
-            conceptValidation: s.conceptValidation || null,
+            setQuestionState(prev => {
+              const nextState = { ...prev, [pId]: updatedQState }
+              triggerAutoNavigation(pId, nextState)
+              return nextState
+            })
+            persistState()
+            return
           }
-
-          setQuestionState(prev => {
-            const nextState = { ...prev, [pId]: updatedQState }
-            triggerAutoNavigation(pId, nextState)
-            return nextState
-          })
-          persistState()
         }
       } catch (e) {
         debugLog.warn('Submission polling error:', e.message)
       }
-    }, pollInterval)
+
+      const nextDelay = attempts <= 2 ? 300 : (attempts <= 5 ? 600 : 1000)
+      pollTimeoutId = setTimeout(runPoll, nextDelay)
+    }
+
+    pollTimeoutId = setTimeout(runPoll, 200)
   }, [user.token, currentProblemIndex, triggerAutoNavigation, updateQuestion])
 
   // ── SUBMIT CODE (Single Question Only) ──
@@ -938,11 +1091,6 @@ function ParticipantCodingAttemptInner({ user }) {
 
   // ── Exit Fullscreen & Cleanup ──
   const handleRecordingCleanup = useCallback(async () => {
-    try {
-      if (sharedCamStream) {
-        sharedCamStream.getTracks().forEach(t => t.stop())
-      }
-    } catch (_) {}
     try { await monitoringClient.finishSession() } catch (_) {}
     try { await monitoringClient.stopAndUploadRecording() } catch (_) {}
     try { monitoringClient.destroy() } catch (_) {}
@@ -950,7 +1098,7 @@ function ParticipantCodingAttemptInner({ user }) {
     if (fsApi.element()) {
       try { await fsApi.exit() } catch {}
     }
-  }, [endVerificationSession, sharedCamStream])
+  }, [endVerificationSession])
 
   useEffect(() => {
     return () => {
@@ -965,6 +1113,12 @@ function ParticipantCodingAttemptInner({ user }) {
       return
     }
 
+    // Set refs immediately to prevent concurrent auto-save / polling races,
+    // even before state updates propagate.
+    submittingRef.current = true
+    submittedRef.current = true
+    let submitSucceeded = false
+
     const uncompletedCount = problems.filter(p => !questionState[p.id]?.isCompleted || questionState[p.id]?.isModified).length
 
     if (!isTimeout) {
@@ -976,10 +1130,13 @@ function ParticipantCodingAttemptInner({ user }) {
         type: 'submit',
         confirmText: 'Yes, Submit Assessment',
       })
-      if (!ok) return
+      if (!ok) {
+        submittingRef.current = false
+        submittedRef.current = false
+        return
+      }
     }
 
-    submittingRef.current = true
     setSubmitting(true)
     setSubmitAllProgress('Submitting assessment and evaluating answers...')
 
@@ -987,6 +1144,7 @@ function ParticipantCodingAttemptInner({ user }) {
     debugLog.info(`Submit All started for ${problems.length} questions (${uncompletedCount} need evaluation)`)
 
     try {
+      await monitoringClient._flushOpenIntervals(Date.now())
       const activeDurationSec = monitoringClient.getActiveDurationSeconds()
       const submissions = problems.map(p => ({
         problemId: p.id,
@@ -1030,21 +1188,23 @@ function ParticipantCodingAttemptInner({ user }) {
       }
 
       setSubmitted(true)
+      submitSucceeded = true
+
+      // Immediately stop autosave intervals to prevent further writes.
+      if (autoSaveRef.current) { clearInterval(autoSaveRef.current); autoSaveRef.current = null; }
+      if (serverSaveRef.current) { clearInterval(serverSaveRef.current); serverSaveRef.current = null; }
 
       // Fast non-blocking media & proctoring teardown
-      try {
-        if (sharedCamStream) {
-          sharedCamStream.getTracks().forEach(t => t.stop())
-        }
-      } catch (_) {}
       try { monitoringClient.destroy() } catch (_) {}
       endVerificationSession()
       if (fsApi.element()) {
         try { fsApi.exit() } catch {}
       }
 
-      localStorage.removeItem(getStorageKey(attemptId))
-      sessionStorage.removeItem(storageKey)
+      // Draft and cached credentials are both dead the moment the attempt is
+      // submitted; leaving either behind is what lets stale answers reappear.
+      clearAttemptDraft(draftScopeRef.current)
+      sessionStorage.removeItem(credentialsKey)
 
       const targetCourseId = assessment?.courseId || trainingId
       navigate(targetCourseId ? `/participant?tab=myEnrollments&courseId=${targetCourseId}&subtab=coding` : '/participant?tab=myEnrollments', { replace: true })
@@ -1055,6 +1215,11 @@ function ParticipantCodingAttemptInner({ user }) {
       setSubmitting(false)
       setSubmitAllProgress(null)
       submittingRef.current = false
+      // Only allow a retry if the submission did NOT succeed (on success we
+      // navigate away). If it failed, unblock the duplicate-submit guard.
+      if (!submitSucceeded) {
+        submittedRef.current = false
+      }
     }
   }
 
@@ -1350,6 +1515,7 @@ function ParticipantCodingAttemptInner({ user }) {
 
   return (
     <ExamProctorShell
+      inactive={submitting || submitted}
       onSubmit={handleSubmit}
       title={assessment?.title || 'Coding Assessment'}
       requireScreenShare={false}
@@ -1414,7 +1580,7 @@ function ParticipantCodingAttemptInner({ user }) {
           <div style={s.headerRight}>
             <AssessmentTimer
               timeLimitMinutes={assessment?.timeLimit || 60}
-              testStartKey={`coding_${assessmentId}_test_start_${attemptId}`}
+              startedAt={testStartedAt}
               onExpire={() => handleSubmit(true)}
               submitted={submitted}
             />
@@ -1439,10 +1605,10 @@ function ParticipantCodingAttemptInner({ user }) {
           </div>
         </div>
 
-        {/* ── MAIN 2-COLUMN LAYOUT ── */}
-        <div style={s.main}>
+        {/* Assessment workspace with a dedicated AI mentor rail. */}
+        <div style={s.main} className="coding-assessment-main">
           {/* Left Problem Panel */}
-          <div style={s.leftPanel}>
+          <div style={s.leftPanel} className="coding-assessment-problem-panel">
             {problems.length > 1 && (
               <div style={s.problemNav}>
                 {problems.map((p, idx) => {
@@ -1487,7 +1653,7 @@ function ParticipantCodingAttemptInner({ user }) {
           </div>
 
           {/* Right Editor + Output Panel */}
-          <div style={s.rightPanel}>
+          <div style={s.rightPanel} className="coding-assessment-editor-panel">
             {/* All Questions Completed Notification Banner */}
             {allProblemsCompleted && (
               <div style={s.allDoneBanner}>
@@ -1521,8 +1687,8 @@ function ParticipantCodingAttemptInner({ user }) {
                     Execution Output
                   </button>
                   <button
-                    onClick={() => setShowCustomInput(prev => !prev)}
-                    style={s.tabBtn(showCustomInput)}
+                    onClick={() => updateQuestion(currentProblem?.id, { activeTab: 'custom' })}
+                    style={s.tabBtn(currentQState.activeTab === 'custom')}
                   >
                     Custom Input
                   </button>
@@ -1530,21 +1696,7 @@ function ParticipantCodingAttemptInner({ user }) {
                     onClick={() => updateQuestion(currentProblem?.id, { activeTab: 'testcases' })}
                     style={s.tabBtn(currentQState.activeTab === 'testcases')}
                   >
-                    Test Cases {(currentQState.sampleResults?.length > 0) ? `(${currentQState.sampleResults.length})` : ''}
-                  </button>
-                  <button
-                    onClick={() => updateQuestion(currentProblem?.id, { activeTab: currentQState.activeTab === 'ai' ? 'output' : 'ai' })}
-                    style={{
-                      ...s.tabBtn(currentQState.activeTab === 'ai'),
-                      background: currentQState.activeTab === 'ai' ? '#7C3AED' : '#F5F3FF',
-                      color: currentQState.activeTab === 'ai' ? '#FFFFFF' : '#6D28D9',
-                      border: currentQState.activeTab === 'ai' ? '1px solid #7C3AED' : '1px solid #DDD6FE',
-                      fontWeight: 600,
-                    }}
-                    title="AI Coding Assistant (Socratic hints & approach)"
-                  >
-                    <Sparkles size={13} color={currentQState.activeTab === 'ai' ? '#FFFFFF' : '#7C3AED'} />
-                    <span>✨ AI Coding Assistant</span>
+                    Test Cases
                   </button>
                 </div>
 
@@ -1582,7 +1734,7 @@ function ParticipantCodingAttemptInner({ user }) {
                 </div>
               </div>
 
-              {showCustomInput && (
+              {currentQState.activeTab === 'custom' && (
                 <div style={{ padding: '10px 16px', background: '#F8FAF9', borderBottom: '1px solid #E2E8F0' }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: '#64748B', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
                     Custom Input (stdin):
@@ -1608,21 +1760,6 @@ function ParticipantCodingAttemptInner({ user }) {
                 </div>
               )}
 
-              {currentQState.activeTab === 'ai' ? (
-                <div style={{ flex: 1, overflow: 'hidden', background: '#FFFFFF' }}>
-                  <CodingAiAssistant
-                    user={user}
-                    attemptId={attemptId}
-                    problem={currentProblem}
-                    questionState={{
-                      ...currentQState,
-                      timeSpentSeconds: activeTimeRef.current[currentProblem?.id] || currentQState.timeSpentSeconds || 0
-                    }}
-                    sessionToken={sessionToken}
-                    onError={showError}
-                  />
-                </div>
-              ) : (
               <div style={s.outputArea}>
                 {currentQState.judgeStatus && (
                   <div style={{ color: '#D97706', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 12.5, marginBottom: 8 }}>
@@ -1752,12 +1889,12 @@ function ParticipantCodingAttemptInner({ user }) {
                 )}
 
                 {/* Test Case Results list */}
-                {currentQState.sampleResults?.length > 0 && currentQState.activeTab === 'testcases' && (
+                {currentQState.activeTab === 'testcases' && (
                   <div style={{ marginTop: 10 }}>
                     <div style={{ fontSize: 11.5, fontWeight: 700, color: '#15803D', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                      TEST CASE RESULTS:
+                      {currentQState.sampleResults?.length > 0 ? 'TEST CASE RESULTS:' : 'TEST CASES (Run code to see results)'}
                     </div>
-                    {currentQState.sampleResults.map((tr, idx) => (
+                    {currentQState.sampleResults?.length > 0 ? currentQState.sampleResults.map((tr, idx) => (
                       <div key={idx} style={{
                         padding: '8px 12px',
                         borderRadius: 6,
@@ -1792,31 +1929,194 @@ function ParticipantCodingAttemptInner({ user }) {
                           </div>
                         )}
                       </div>
-                    ))}
+                    )) : (
+                      <div style={{ color: '#94A3B8', fontSize: 12.5, fontStyle: 'italic', padding: '8px 0' }}>
+                        Run your code to see test case results for Question {currentProblemIndex + 1}.
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-              )}
+            </div>
+          </div>
+
+          <aside className="coding-mentor-rail" aria-label="AI Mentor">
+            <section className="coding-mentor-panel" aria-label="AI Mentor" style={mentorOpen ? undefined : { display: 'none' }}>
+              <AssessmentAIMentor
+                assessmentType="CODING"
+                user={user}
+                attemptId={attemptId}
+                problem={currentProblem}
+                questionState={currentQState}
+                sessionToken={sessionToken}
+                onError={showError}
+                onClose={() => setMentorOpen(false)}
+              />
+            </section>
+            {!mentorOpen && (
+              <button type="button" className="coding-mentor-reopen" onClick={() => setMentorOpen(true)}>
+                <Sparkles size={15} /> Open AI Mentor
+              </button>
+            )}
+
+            <div className="coding-monitoring-panel">
+              <UnifiedMonitoringWidget
+                placement="inline"
+                contextType="CODING"
+                contextId={Number(assessmentId)}
+                attemptId={Number(attemptId)}
+                sessionId={resolvedMonitoringSessionId}
+                participantId={user?.id}
+                userToken={user?.token}
+                mobileEnabled={true}
+                preCalibrated={true}
+                prePaired={true}
+                isTestActive={consented}
+                testStartedAt={testStartedAt}
+              />
+            </div>
+          </aside>
+        </div>
+      </div>
+
+      {/* Violation Warning Modal */}
+      {warningOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          backgroundColor: 'rgba(15, 23, 42, 0.4)',
+          backdropFilter: 'blur(8px)',
+          zIndex: 99999,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+          <div style={{
+            backgroundColor: '#ffffff',
+            borderRadius: '16px',
+            padding: '32px',
+            maxWidth: '480px',
+            width: '90%',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.15)',
+            textAlign: 'center',
+            border: '1px solid #f1f5f9',
+          }}>
+            <div style={{ fontSize: '48px', marginBottom: '16px' }}>⚠️</div>
+            <h3 style={{
+              fontSize: '20px',
+              fontWeight: 700,
+              color: '#0f172a',
+              margin: '0 0 8px 0',
+            }}>
+              {lastViolationType === 'TAB_SWITCH' || lastViolationType === 'WINDOW_BLUR' ? 'Focus Warning' : 'Security Warning'}
+            </h3>
+            <p style={{
+              fontSize: '14px',
+              lineHeight: 1.5,
+              color: '#dc2626',
+              margin: '0 0 16px 0',
+              fontWeight: 600,
+            }}>
+              {lastViolationType === 'TAB_SWITCH' ? 'Tab switching is monitored during the assessment.' :
+               lastViolationType === 'WINDOW_BLUR' ? 'Leaving the assessment window is monitored.' :
+               'Action not allowed during the assessment.'}
+            </p>
+            <p style={{
+              fontSize: '15px',
+              lineHeight: 1.6,
+              color: '#475569',
+              margin: '0 0 24px 0',
+              fontWeight: 500,
+            }}>
+              Please remain focused on your assessment. This incident has been recorded.
+            </p>
+            <button
+              type="button"
+              onClick={() => setWarningOpen(false)}
+              style={{
+                padding: '12px 32px',
+                backgroundColor: '#0d9488',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '10px',
+                fontSize: '15px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              Continue Assessment
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Disqualified Modal */}
+      {disqualified && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          backgroundColor: '#0f172a',
+          zIndex: 100000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexDirection: 'column',
+          color: '#ffffff',
+          padding: '24px',
+          textAlign: 'center',
+        }}>
+          <div style={{
+            maxWidth: '520px',
+            padding: '40px',
+            borderRadius: '24px',
+            backgroundColor: '#1e293b',
+            border: '1px solid #334155',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+          }}>
+            <div style={{
+              fontSize: '64px',
+              marginBottom: '20px',
+            }}>
+              🚫
+            </div>
+            <h1 style={{
+              fontSize: '28px',
+              fontWeight: 800,
+              color: '#ef4444',
+              margin: '0 0 16px 0',
+            }}>
+              Disqualified
+            </h1>
+            <p style={{
+              fontSize: '16px',
+              lineHeight: 1.7,
+              color: '#94a3b8',
+              margin: '0 0 28px 0',
+              fontWeight: 500,
+            }}>
+              You have been disqualified for repeated policy violations. Your attempt has been submitted and flagged for review.
+            </p>
+            <div style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              fontSize: '14px',
+              color: '#64748b',
+              fontWeight: 600,
+            }}>
+              <Clock size={16} />
+              <span>Auto-submitted at {new Date().toLocaleTimeString()}</span>
             </div>
           </div>
         </div>
-
-        {/* Unified AI Monitoring Engine Widget */}
-        <UnifiedMonitoringWidget
-          contextType="CODING"
-          contextId={Number(assessmentId)}
-          attemptId={Number(attemptId)}
-          sessionId={resolvedMonitoringSessionId}
-          participantId={user?.id}
-          userToken={user?.token}
-          mobileEnabled={true}
-          preCalibrated={true}
-          prePaired={true}
-          isTestActive={consented}
-          testStartedAt={testStartedAt}
-          existingStream={sharedCamStream}
-        />
-      </div>
+      )}
     </ExamProctorShell>
   )
 }

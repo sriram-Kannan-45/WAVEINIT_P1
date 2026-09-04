@@ -138,9 +138,20 @@ export default function AIQuizzesDashboard({ user, onStartQuiz, onLogout, embedd
   }, [startQuiz, onStartQuiz, navigate]);
 
   // Consent gate accepted → enter QuizTaking
-  const handleConsented = useCallback((attemptId, quiz) => {
-    setPendingAttemptId(attemptId);
-    setPendingQuiz(quiz);
+  // The gate now hands over a named payload and no longer stops the camera it
+  // opened, because the proctored Coding/Quiz attempt screens reuse that stream
+  // for continuous body-in-box monitoring. This practice flow mounts no
+  // monitoring widget, so there is no consumer here — release the device
+  // immediately rather than leaving an unread camera live for the whole quiz.
+  const handleConsented = useCallback((payload) => {
+    const stream = payload?.stream;
+    if (stream && typeof stream.getTracks === 'function') {
+      try {
+        stream.getTracks().forEach((t) => t.stop());
+      } catch (_) {}
+    }
+    setPendingAttemptId(payload?.attemptId ?? null);
+    setPendingQuiz(payload?.quiz ?? null);
     setFlow('taking');
   }, []);
 

@@ -17,10 +17,24 @@ export default function useScreenRecorder({
   const [, forceUpdate] = useState(0)
   const [error, setError] = useState(null)
 
+  const cleanup = useCallback(() => {
+    if (globalStream) {
+      if (!globalExternalStream) {
+        globalStream.getTracks().forEach(track => track.stop())
+      }
+      globalStream = null
+    }
+    if (globalUserStream) {
+      globalUserStream.getTracks().forEach(track => track.stop())
+      globalUserStream = null
+    }
+    forceUpdate(n => n + 1)
+  }, [])
+
   useEffect(() => {
     if (autoStop === false) return
     return () => cleanup()
-  }, [autoStop])
+  }, [autoStop, cleanup])
 
   const startUserMedia = useCallback(async () => {
     if (globalUserStream) return globalUserStream
@@ -97,7 +111,7 @@ export default function useScreenRecorder({
       }
       return false
     }
-  }, [startUserMedia])
+  }, [assessmentId, startUserMedia])
 
   const stopRecording = useCallback(async () => {
     if (globalStream) {
@@ -112,20 +126,6 @@ export default function useScreenRecorder({
     }
     forceUpdate(n => n + 1)
     return null
-  }, [])
-
-  const cleanup = useCallback(() => {
-    if (globalStream) {
-      if (!globalExternalStream) {
-        globalStream.getTracks().forEach(track => track.stop())
-      }
-      globalStream = null
-    }
-    if (globalUserStream) {
-      globalUserStream.getTracks().forEach(track => track.stop())
-      globalUserStream = null
-    }
-    forceUpdate(n => n + 1)
   }, [])
 
   return {

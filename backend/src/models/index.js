@@ -99,6 +99,7 @@ const CodingAttempt = require('./codingAttempt');
 const CodingSubmission = require('./codingSubmission');
 const CodingResult = require('./codingResult');
 const CodingAiHelp = require('./codingAiHelp');
+const QuizAiHelp = require('./quizAiHelp');
 
 // Registration Application module
 const RegistrationApplication = require('./registrationApplication');
@@ -433,6 +434,13 @@ CodingAiHelp.belongsTo(CodingProblem, { foreignKey: 'problemId', as: 'problem' }
 CodingAiHelp.belongsTo(User, { foreignKey: 'participantId', as: 'participant' });
 CodingAttempt.hasMany(CodingAiHelp, { foreignKey: 'attemptId', as: 'aiHelps' });
 CodingProblem.hasMany(CodingAiHelp, { foreignKey: 'problemId', as: 'aiHelps' });
+User.hasMany(CodingAiHelp, { foreignKey: 'participantId', as: 'codingAiHelps' });
+
+QuizAiHelp.belongsTo(QuizAttempt, { foreignKey: 'attemptId', as: 'attempt' });
+QuizAiHelp.belongsTo(AIQuestion, { foreignKey: 'questionId', as: 'question' });
+QuizAiHelp.belongsTo(User, { foreignKey: 'participantId', as: 'participant' });
+QuizAttempt.hasMany(QuizAiHelp, { foreignKey: 'attemptId', as: 'aiHelps' });
+AIQuestion.hasMany(QuizAiHelp, { foreignKey: 'questionId', as: 'aiHelps' });
 
 CodingResult.belongsTo(CodingAttempt, { foreignKey: 'attemptId', as: 'attempt' });
 CodingResult.belongsTo(CodingAssessment, { foreignKey: 'assessmentId', as: 'assessment' });
@@ -613,6 +621,7 @@ module.exports = {
   CodingSubmission,
   CodingResult,
   CodingAiHelp,
+  QuizAiHelp,
   RegistrationApplication,
   // User Profile module
   UserProfile,

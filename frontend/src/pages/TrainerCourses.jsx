@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -108,6 +108,7 @@ function CoursesList({ user, onOpenCourse, onLogout, onTabChange }) {
     const controller = new AbortController()
     fetchCourses(controller.signal)
     return () => controller.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Assigned courses for current trainer
@@ -638,14 +639,20 @@ function CourseDetail({ user, courseId, initialCourse, onBack }) {
   })
   const [loading, setLoading] = useState(() => !course)
   const [error, setError] = useState(null)
-  const auth = () => ({ Authorization: `Bearer ${user?.token || ''}` })
+  const courseRef = useRef(course)
+  courseRef.current = course
+
+  const auth = useCallback(() => ({ Authorization: `Bearer ${user?.token || ''}` }), [user?.token])
+
+  const searchSection = searchParams.get('section')
+  const searchSubtab = searchParams.get('subtab')
 
   useEffect(() => {
-    const sec = normalizeTrainerTab(searchParams.get('section') || searchParams.get('subtab'))
+    const sec = normalizeTrainerTab(searchSection || searchSubtab)
     if (sec && sec !== tab) {
       setTab(sec)
     }
-  }, [searchParams.get('section'), searchParams.get('subtab')])
+  }, [searchSection, searchSubtab, tab])
 
   const handleTabSelect = (tabKey) => {
     setTab(tabKey)
@@ -654,9 +661,9 @@ function CourseDetail({ user, courseId, initialCourse, onBack }) {
     setSearchParams(next, { replace: true })
   }
 
-  const fetchCourse = async (signal, isQuiet = false) => {
+  const fetchCourse = useCallback(async (signal, isQuiet = false) => {
     try {
-      if (!isQuiet && !course) {
+      if (!isQuiet && !courseRef.current) {
         setLoading(true)
       }
       setError(null)
@@ -669,13 +676,13 @@ function CourseDetail({ user, courseId, initialCourse, onBack }) {
         try {
           sessionStorage.setItem(`course_detail_${courseId}`, JSON.stringify(d.course))
         } catch (_) {}
-      } else if (!isQuiet && !course) {
+      } else if (!isQuiet && !courseRef.current) {
         throw new Error(d.error || 'Failed to load course details')
       }
     } catch (e) {
       if (e.name === 'AbortError' || signal?.aborted) return
       console.error('CourseDetail fetch error:', e.message)
-      if (!isQuiet && !course) {
+      if (!isQuiet && !courseRef.current) {
         setError(e.message || 'Failed to load course details')
         showError(e.message)
       }
@@ -684,21 +691,21 @@ function CourseDetail({ user, courseId, initialCourse, onBack }) {
         setLoading(false)
       }
     }
-  }
+  }, [courseId, auth, showError])
 
   const fetchCourseQuiet = useCallback(() => {
     fetchCourse(null, true)
-  }, [courseId])
+  }, [fetchCourse])
 
   useEffect(() => {
-    if (!course) setLoading(true)
+    if (!courseRef.current) setLoading(true)
     setError(null)
     const controller = new AbortController()
-    fetchCourse(controller.signal, !!course)
+    fetchCourse(controller.signal, !!courseRef.current)
     return () => {
       controller.abort()
     }
-  }, [courseId])
+  }, [fetchCourse])
 
   if (!course && loading) {
     return (
@@ -972,9 +979,9 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
   const [form, setForm] = useState({ title: '', description: '', content: '', status: 'PENDING' })
   const [materialsFor, setMaterialsFor] = useState(null)
   const [expandedRows, setExpandedRows] = useState({})
-  const auth = () => ({ Authorization: `Bearer ${user.token}` })
+  const auth = useCallback(() => ({ Authorization: `Bearer ${user.token}` }), [user.token])
 
-  const fetchLessons = async () => {
+  const fetchLessons = useCallback(async () => {
     try {
       setLoading(true)
       const r = await fetch(API.TRAINER_COURSES.LESSONS(courseId), { headers: auth() })
@@ -988,8 +995,8 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
       else showError(d.error || 'Failed to load lessons')
     } catch (e) { showError(e.message) }
     finally { setLoading(false) }
-  }
-  useEffect(() => { fetchLessons() }, [courseId])
+  }, [courseId, auth, showError])
+  useEffect(() => { fetchLessons() }, [fetchLessons])
 
   const toggleRow = (id) => {
     setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
@@ -1323,7 +1330,7 @@ export default function TrainerCourses({ user, onLogout, onTabChange, initialCou
       next.set('courseId', String(stateCourseId))
       setSearchParams(next, { replace: true })
     }
-  }, [stateCourseId])
+  }, [stateCourseId, urlCourseId, searchParams, setSearchParams])
 
   const handleOpenCourse = (courseId) => {
     if (!courseId) return

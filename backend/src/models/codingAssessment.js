@@ -138,9 +138,9 @@ const CodingAssessment = sequelize.define('CodingAssessment', {
   aiHelpLimit: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    defaultValue: 1,
+    defaultValue: -1,
     field: 'ai_help_limit',
-    comment: 'Number of AI assistant hints allowed per question. 0 = disabled, -1 = unlimited.'
+    comment: 'Legacy column retained for compatibility; coding mentor usage is unlimited.'
   },
   aiAssistantEnabled: {
     type: DataTypes.BOOLEAN,
@@ -152,7 +152,7 @@ const CodingAssessment = sequelize.define('CodingAssessment', {
     type: DataTypes.JSON,
     allowNull: true,
     field: 'ai_unlock_thresholds',
-    comment: 'Configurable unlock thresholds for AI assistant levels (minSeconds, minEdits, runAttempts required)'
+    comment: 'Legacy column retained for compatibility; coding mentor no longer uses unlock thresholds.'
   },
   originalPrompt: {
     type: DataTypes.TEXT,

@@ -264,6 +264,7 @@ export const API = {
     PUBLISH_RESULT:(id) => `${API_BASE}/coding/assessments/${id}/publish-result`,
     HIDE_RESULT:   (id) => `${API_BASE}/coding/assessments/${id}/hide-result`,
     RESULTS:       (id) => `${API_BASE}/coding/assessments/${id}/results`,
+    RESULTS_EXPORT:(id) => `${API_BASE}/coding/assessments/${id}/results/export`,
     PARTICIPANTS:  (id) => `${API_BASE}/coding/assessments/${id}/participants`,
     RESULTS_SUMMARY:(id) => `${API_BASE}/coding/assessments/${id}/results-summary`,
     ANALYTICS:     (id) => `${API_BASE}/coding/assessments/${id}/analytics`,

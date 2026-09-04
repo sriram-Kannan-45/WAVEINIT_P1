@@ -52,6 +52,7 @@ const ICE_SERVERS = [
 ];
 
 export default function UnifiedMonitoringWidget({
+  placement = 'floating',
   contextType = 'QUIZ',
   contextId,
   attemptId,
@@ -64,10 +65,15 @@ export default function UnifiedMonitoringWidget({
   isTestActive = true,
   isPaused = false,
   testStartedAt = null,
-  externalWebcamStream = null,
+  externalWebcamStream: suppliedWebcamStream = null,
   onWebcamStreamReady = null,
   onCalibrationPassed = null,
 }) {
+  // Only browser MediaStreams can be assigned to a video element. Ignore
+  // invalid caller values and acquire the local webcam through the normal path.
+  const externalWebcamStream = typeof MediaStream !== 'undefined' && suppliedWebcamStream instanceof MediaStream
+    ? suppliedWebcamStream
+    : null;
   const isQuizOrCoding = ['QUIZ', 'CODING'].includes(contextType?.toUpperCase());
   const [isMinimized, setIsMinimized] = useState(false);
   const [viewLayout, setViewLayout] = useState('side_by_side'); // 'side_by_side' | 'pip'
@@ -687,7 +693,7 @@ export default function UnifiedMonitoringWidget({
   };
 
   return (
-    <div className="dual-proctor-container">
+    <div className={`dual-proctor-container${placement === 'inline' ? ' dual-proctor-inline' : ''}`}>
       {isMinimized && (
         <div
           onClick={() => setIsMinimized(false)}

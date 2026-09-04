@@ -80,6 +80,9 @@ export default function TestPage({ user }) {
     enabled: testStarted && !showModal,
   });
 
+  const handleSubmitRef = useRef(handleSubmit);
+  handleSubmitRef.current = handleSubmit;
+
   // ── Socket listeners ───────────────────────────────────────────────────
   useEffect(() => {
     if (!socket || !attemptId) return;
@@ -91,7 +94,7 @@ export default function TestPage({ user }) {
     };
 
     const onForceSubmit = ({ reason }) => {
-      handleSubmit(true, reason);
+      handleSubmitRef.current?.(true, reason);
     };
 
     socket.on('trainer-warning', onTrainerWarning);

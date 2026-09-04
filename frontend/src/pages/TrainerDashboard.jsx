@@ -263,10 +263,12 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
     fetchTrainings()
     fetchFeedbacks()
     fetchInterviews()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
     if (tab === 'reports') fetchTrainerReport()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab])
 
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'

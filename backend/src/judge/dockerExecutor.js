@@ -332,9 +332,10 @@ class DockerExecutor {
 
       return await new Promise((resolve) => {
         startTime = Date.now();
+        const isDirect = ['node', 'python', 'java', 'javac', 'gcc', 'g++', 'dotnet', 'go'].includes(runCmdStr.toLowerCase());
         const child = spawn(runCmdStr, runArgs, {
           cwd: workDir,
-          shell: true,
+          shell: !isDirect,
           windowsHide: true,
           env: { PATH: process.env.PATH },
         });

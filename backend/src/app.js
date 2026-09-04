@@ -466,6 +466,12 @@ const startServer = async () => {
     // 5. Connect to database
     await connectDB();
 
+    // Required by mentor INSERTs and reporting SELECTs. Run independently of
+    // the late alter-sync group, where an unrelated table error can skip it.
+    const { ensureAiMentorAuditSchema } = require('./config/bootstrapAiMentorAuditSchema');
+    await ensureAiMentorAuditSchema(sequelize);
+    logger.info('AI Mentor audit schema verified');
+
     // Scale-out infrastructure tables — additive sync (distributed locks,
     // shared token blacklist, socket relay outbox). Created EARLY (right after
     // the main schema sync) and BEFORE the (slow) per-table sync chain + cron /
@@ -590,6 +596,17 @@ const startServer = async () => {
       logger.info('discussion_posts table ready');
     } catch (e) {
       logger.error('Could not sync discussion_posts', { error: e.message });
+    }
+
+    // Run AI usage tracking enhancement migration
+    try {
+      const path = require('path');
+      const migration = require(path.join(__dirname, '../database/migrations/20260904-enhance-ai-usage-tracking'));
+      const { sequelize } = require('./config/db');
+      await migration.up(sequelize.getQueryInterface(), sequelize.Sequelize);
+      logger.info('AI usage tracking migration completed');
+    } catch (e) {
+      logger.warn('AI usage tracking migration failed (may already exist)', { error: e.message });
     }
 
     // Sync RegistrationApplication table
@@ -757,7 +774,7 @@ const startServer = async () => {
       await CodingAttempt.sync({ alter: true });
       await CodingSubmission.sync({ alter: true });
       await CodingResult.sync({ alter: true });
-      await CodingAiHelp.sync({ alter: true });
+      await CodingAiHelp.sync({ alter: false });
       logger.info('coding_assessment tables ready');
     } catch (e) {
       logger.error('Could not sync coding_assessment tables', { error: e.message });

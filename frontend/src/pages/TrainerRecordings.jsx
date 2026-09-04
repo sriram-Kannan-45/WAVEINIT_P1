@@ -73,6 +73,7 @@ export default function TrainerRecordings({ user }) {
   useEffect(() => {
     fetchRecordings()
     fetchQuizzes()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const applyFilters = () => {

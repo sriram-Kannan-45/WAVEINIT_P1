@@ -23,56 +23,73 @@ async function emitProgress(io, submissionId, progress) {
 }
 
 async function evaluateSubmission({ submissionId, attemptId, problemId, code, language, timeLimit, memoryLimit, testCases, participantId, assessmentId, io }) {
-  const t = await sequelize.transaction();
+  // NOTE: Docker evaluation is intentionally done OUTSIDE any DB transaction
+  // so we do NOT hold a DB connection / row lock during expensive I/O.
+  await emitProgress(io, submissionId, { status: VERDICTS.COMPILING, message: 'Compiling...', testCase: null });
+
+  let evalResult;
+  let problem;
   try {
-    await emitProgress(io, submissionId, { status: VERDICTS.COMPILING, message: 'Compiling...', testCase: null });
-    const evalResult = await judgeEngine.evaluate({
+    evalResult = await judgeEngine.evaluate({
       code, language, testCases, timeLimit, memoryLimit,
     });
+    problem = problemId ? await CodingProblem.findByPk(problemId, { attributes: ['marks', 'requiredConcepts'] }) : null;
+  } catch (evalErr) {
+    logger.error(`[SubmissionWorker] Judge engine error evaluating submission ${submissionId}`, { error: evalErr.message });
+    await emitProgress(io, submissionId, { status: VERDICTS.INTERNAL_ERROR, message: 'Internal judge error' });
+    try {
+      const sub = await CodingSubmission.findByPk(submissionId);
+      if (sub) await sub.update({ status: VERDICTS.INTERNAL_ERROR, errorMessage: evalErr.message });
+    } catch {}
+    return;
+  }
 
-    const totalTestCases = testCases.length;
-    const passedTestCases = evalResult.passed;
-    const compileOutput = evalResult.results.find(r => r.compileOutput)?.compileOutput || '';
-    const compileError = evalResult.results.find(r => r.verdict === VERDICTS.COMPILATION_ERROR)?.error || '';
-    const runtimeError = evalResult.results.find(r => r.verdict === VERDICTS.RUNTIME_ERROR)?.error || '';
+  // ── Compute results (pure computation, no DB) ──
+  const totalTestCases = testCases.length;
+  const passedTestCases = evalResult.passed;
+  const compileOutput = evalResult.results.find(r => r.compileOutput)?.compileOutput || '';
+  const compileError = evalResult.results.find(r => r.verdict === VERDICTS.COMPILATION_ERROR)?.error || '';
+  const runtimeError = evalResult.results.find(r => r.verdict === VERDICTS.RUNTIME_ERROR)?.error || '';
 
-    const problem = problemId ? await CodingProblem.findByPk(problemId, { attributes: ['marks', 'requiredConcepts'], transaction: t }) : null;
-    const problemMarks = problem?.marks || 10;
-    const conceptValidation = checkRequiredConcepts(code, language, problem?.requiredConcepts || []);
+  const problemMarks = problem?.marks || 10;
+  const conceptValidation = checkRequiredConcepts(code, language, problem?.requiredConcepts || []);
 
-    let score = 0;
-    if (totalTestCases > 0) {
-      const totalWeight = testCases.reduce((s, tc) => s + (tc.weight || 1), 0);
-      const earnedWeight = testCases.reduce((s, tc, i) => {
-        const r = evalResult.results[i];
-        if (r && r.verdict === VERDICTS.ACCEPTED) return s + (tc.weight || 1);
-        return s;
-      }, 0);
-      score = totalWeight > 0 ? Math.min(Math.round((earnedWeight / totalWeight) * problemMarks * 100) / 100, problemMarks) : 0;
-    }
+  let score = 0;
+  if (totalTestCases > 0) {
+    const totalWeight = testCases.reduce((s, tc) => s + (tc.weight || 1), 0);
+    const earnedWeight = testCases.reduce((s, tc, i) => {
+      const r = evalResult.results[i];
+      if (r && r.verdict === VERDICTS.ACCEPTED) return s + (tc.weight || 1);
+      return s;
+    }, 0);
+    score = totalWeight > 0 ? Math.min(Math.round((earnedWeight / totalWeight) * problemMarks * 100) / 100, problemMarks) : 0;
+  }
 
-    let finalVerdict = evalResult.verdict;
-    let finalError = runtimeError;
-    if (evalResult.verdict === VERDICTS.ACCEPTED && !conceptValidation.ok) {
-      finalVerdict = 'FAILED_REQUIREMENTS';
-      score = 0;
-      finalError = conceptValidation.message || 'Required concept missing from solution';
-    }
+  let finalVerdict = evalResult.verdict;
+  let finalError = runtimeError;
+  if (evalResult.verdict === VERDICTS.ACCEPTED && !conceptValidation.ok) {
+    finalVerdict = 'FAILED_REQUIREMENTS';
+    score = 0;
+    finalError = conceptValidation.message || 'Required concept missing from solution';
+  }
 
-    const outputResults = evalResult.results.map((r, i) => ({
-      testCaseId: testCases[i]?.id || null,
-      input: testCases[i]?.isHidden ? '[Hidden]' : (testCases[i]?.input || ''),
-      expectedOutput: testCases[i]?.isHidden ? '[Hidden]' : (testCases[i]?.expectedOutput || ''),
-      actualOutput: testCases[i]?.isHidden ? (r.verdict === VERDICTS.ACCEPTED ? '[Passed]' : '[Failed]') : (r.actualOutput || ''),
-      verdict: (!conceptValidation.ok && r.verdict === VERDICTS.ACCEPTED) ? 'FAILED_REQUIREMENTS' : r.verdict,
-      passed: r.verdict === VERDICTS.ACCEPTED && conceptValidation.ok,
-      executionTime: r.executionTime,
-      memoryUsed: r.memoryUsed,
-      isHidden: testCases[i]?.isHidden || false,
-      error: r.error || (!conceptValidation.ok ? conceptValidation.message : null),
-      compileOutput: r.compileOutput || null,
-    }));
+  const outputResults = evalResult.results.map((r, i) => ({
+    testCaseId: testCases[i]?.id || null,
+    input: testCases[i]?.isHidden ? '[Hidden]' : (testCases[i]?.input || ''),
+    expectedOutput: testCases[i]?.isHidden ? '[Hidden]' : (testCases[i]?.expectedOutput || ''),
+    actualOutput: testCases[i]?.isHidden ? (r.verdict === VERDICTS.ACCEPTED ? '[Passed]' : '[Failed]') : (r.actualOutput || ''),
+    verdict: (!conceptValidation.ok && r.verdict === VERDICTS.ACCEPTED) ? 'FAILED_REQUIREMENTS' : r.verdict,
+    passed: r.verdict === VERDICTS.ACCEPTED && conceptValidation.ok,
+    executionTime: r.executionTime,
+    memoryUsed: r.memoryUsed,
+    isHidden: testCases[i]?.isHidden || false,
+    error: r.error || (!conceptValidation.ok ? conceptValidation.message : null),
+    compileOutput: r.compileOutput || null,
+  }));
 
+  // ── Short DB write transaction (fast, no Docker inside) ──
+  const t = await sequelize.transaction();
+  try {
     const submission = await CodingSubmission.findByPk(submissionId, { transaction: t });
     if (!submission) {
       await t.rollback();
@@ -96,25 +113,35 @@ async function evaluateSubmission({ submissionId, attemptId, problemId, code, la
     }, { transaction: t });
 
     await t.commit();
+  } catch (err) {
+    await t.rollback();
+    logger.error(`[SubmissionWorker] DB write error for submission ${submissionId}`, { error: err.message });
+    try {
+      const sub = await CodingSubmission.findByPk(submissionId);
+      if (sub) await sub.update({ status: VERDICTS.INTERNAL_ERROR, errorMessage: err.message });
+    } catch {}
+    await emitProgress(io, submissionId, { status: VERDICTS.INTERNAL_ERROR, message: 'Internal judge error' });
+    return;
+  }
 
-    await emitProgress(io, submissionId, {
-      status: finalVerdict,
-      message: !conceptValidation.ok ? finalError : `Evaluation complete: ${finalVerdict}`,
-      testCase: totalTestCases,
-      totalTestCases,
-      passedTestCases: conceptValidation.ok ? passedTestCases : 0,
-      score,
-      executionTime: evalResult.maxExecutionTime,
-      memoryUsed: evalResult.maxMemory,
-      results: outputResults,
-      conceptValidation,
-    });
+  await emitProgress(io, submissionId, {
+    status: finalVerdict,
+    message: !conceptValidation.ok ? finalError : `Evaluation complete: ${finalVerdict}`,
+    testCase: totalTestCases,
+    totalTestCases,
+    passedTestCases: conceptValidation.ok ? passedTestCases : 0,
+    score,
+    executionTime: evalResult.maxExecutionTime,
+    memoryUsed: evalResult.maxMemory,
+    results: outputResults,
+    conceptValidation,
+  });
 
-    if (io) {
-      const { CodingAttempt, CodingResult, CodingAssessment } = require('../models');
-      const { Op } = require('sequelize');
-
-      if (attemptId) {
+  // Best-effort result-update emit (fire-and-forget, never blocks).
+  if (io && attemptId) {
+    setImmediate(async () => {
+      try {
+        const { CodingAttempt, CodingResult, CodingAssessment } = require('../models');
         const attempt = await CodingAttempt.findByPk(attemptId);
         if (attempt && attempt.status === 'SUBMITTED') {
           const assessment = await CodingAssessment.findByPk(assessmentId);
@@ -148,37 +175,25 @@ async function evaluateSubmission({ submissionId, attemptId, problemId, code, la
               });
             }
 
-            try {
-              relay.relayEmit(io, 'user-room', participantId, 'coding:result-update', {
-                attemptId,
-                assessmentId,
-                totalScore,
-                maxScore,
-                percentage,
-                problemsSolved,
-                totalProblems: problems.length,
-                verdict: evalResult.verdict,
-              });
-            } catch (emitErr) {
-              logger.warn('[SubmissionWorker] Failed to emit result update', { error: emitErr.message });
-            }
+            relay.relayEmit(io, 'user-room', participantId, 'coding:result-update', {
+              attemptId,
+              assessmentId,
+              totalScore,
+              maxScore,
+              percentage,
+              problemsSolved,
+              totalProblems: problems.length,
+              verdict: evalResult.verdict,
+            });
           }
         }
+      } catch (emitErr) {
+        logger.warn('[SubmissionWorker] Failed to emit result update', { error: emitErr.message });
       }
-    }
-
-    logger.info(`[SubmissionWorker] Evaluated submission ${submissionId}: ${evalResult.verdict} (${passedTestCases}/${totalTestCases})`);
-  } catch (err) {
-    await t.rollback();
-    logger.error(`[SubmissionWorker] Error evaluating submission ${submissionId}`, { error: err.message, stack: err.stack });
-    try {
-      const sub = await CodingSubmission.findByPk(submissionId);
-      if (sub) {
-        await sub.update({ status: VERDICTS.INTERNAL_ERROR, errorMessage: err.message });
-      }
-    } catch {}
-    await emitProgress(io, submissionId, { status: VERDICTS.INTERNAL_ERROR, message: 'Internal judge error' });
+    });
   }
+
+  logger.info(`[SubmissionWorker] Evaluated submission ${submissionId}: ${evalResult.verdict} (${passedTestCases}/${totalTestCases})`);
 }
 
 let submissionWorker = null;

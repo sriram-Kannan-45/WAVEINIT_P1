@@ -16,6 +16,7 @@ const { uploadAIQuizMaterial } = require('../middleware/uploadAIQuizMaterial');
 
 const { gradeAnswer } = require('../utils/gradeAnswer');
 const { areResultsVisible } = require('../utils/quizStateMachine');
+const { grantQuizAssist, getQuizStatus } = require('../services/quizAiAssistantService');
  
 const router = express.Router();
 
@@ -1197,54 +1198,81 @@ router.post('/participant/submit/:attemptId',
           }
         }
 
-        for (const question of (quiz.questions || [])) {
+        const qList = quiz.questions || [];
+        const gradingResults = new Array(qList.length);
+
+        // Phase 1: Compute grades for objective questions (sync) and
+        // launch AI evaluations for subjective ones in parallel.
+        const evalPromises = [];
+        for (let i = 0; i < qList.length; i++) {
+          const question = qList[i];
           const qMarks = question.marks || 1;
           maxScore += qMarks;
           const ans = submittedAnswerMap.get(Number(question.id));
 
-          let score = 0;
-          let feedback = 'Unanswered';
-          let isCorrect = false;
+          if (!ans) {
+            gradingResults[i] = { score: 0, feedback: 'Unanswered', isCorrect: false };
+            continue;
+          }
 
-          if (ans) {
-            if (['MCQ', 'TRUE_FALSE', 'FILL_BLANK', 'MATCHING'].includes(question.questionType)) {
-              const result = gradeAnswer(question, {
-                selectedOption: ans.selectedOption !== undefined ? ans.selectedOption : null,
-                answer: ans.answerText || ans.answer || '',
-                answerText: ans.answerText || ans.answer || '',
-                matches: ans.matches
-              });
-              isCorrect = result.isCorrect;
-              score = result.score > 0 ? (result.score / 100) * qMarks : 0;
-              if (question.questionType === 'MATCHING') {
-                feedback = `Score: ${result.score}%. Matched ${result.correctCount} of ${result.total} correctly.`;
-              } else {
-                feedback = isCorrect ? 'Correct!' : `Incorrect. Correct answer: ${question.correctAnswer}`;
-              }
-            } else if (ans.answerText && ans.answerText.trim()) {
-              const evaluation = await aiService.evaluateShortAnswer(
+          if (['MCQ', 'TRUE_FALSE', 'FILL_BLANK', 'MATCHING'].includes(question.questionType)) {
+            const result = gradeAnswer(question, {
+              selectedOption: ans.selectedOption !== undefined ? ans.selectedOption : null,
+              answer: ans.answerText || ans.answer || '',
+              answerText: ans.answerText || ans.answer || '',
+              matches: ans.matches
+            });
+            const isCorrect = result.isCorrect;
+            const score = result.score > 0 ? (result.score / 100) * qMarks : 0;
+            const feedback = question.questionType === 'MATCHING'
+              ? `Score: ${result.score}%. Matched ${result.correctCount} of ${result.total} correctly.`
+              : isCorrect ? 'Correct!' : `Incorrect. Correct answer: ${question.correctAnswer}`;
+            gradingResults[i] = { score, feedback, isCorrect };
+          } else if (ans.answerText && ans.answerText.trim()) {
+            // Fire all AI evaluations in parallel (not sequential).
+            evalPromises.push(
+              aiService.evaluateShortAnswer(
                 question.questionText,
                 question.correctAnswer,
                 ans.answerText.trim()
-              );
-              score = evaluation.score || 0;
-              feedback = evaluation.feedback || '';
-              isCorrect = evaluation.isCorrect || false;
-            }
+              ).then(evaluation => {
+                gradingResults[i] = {
+                  score: evaluation.score || 0,
+                  feedback: evaluation.feedback || '',
+                  isCorrect: evaluation.isCorrect || false
+                };
+              }).catch(err => {
+                console.error(`[submit] AI evaluation failed for Q${question.id}:`, err.message);
+                gradingResults[i] = { score: 0, feedback: '', isCorrect: false };
+              })
+            );
           }
+        }
 
-          await QuizAnswer.create({
+        if (evalPromises.length > 0) {
+          await Promise.all(evalPromises);
+        }
+
+        // Phase 2: Bulk-create all answers in parallel (not one-by-one sequential).
+        const answersToCreate = [];
+        for (let i = 0; i < qList.length; i++) {
+          const question = qList[i];
+          const ans = submittedAnswerMap.get(Number(question.id));
+          const g = gradingResults[i] || { score: 0, feedback: 'Unanswered', isCorrect: false };
+          totalScore += g.score;
+          answersToCreate.push({
             attemptId: attempt.id,
             questionId: question.id,
             answerText: ans?.answerText || '',
             selectedOption: ans?.selectedOption !== undefined ? ans.selectedOption : null,
-            isCorrect,
-            score,
-            feedback,
+            isCorrect: g.isCorrect,
+            score: g.score,
+            feedback: g.feedback,
             evaluatedByAI: true
-          }, { transaction: t });
-
-          totalScore += score;
+          });
+        }
+        if (answersToCreate.length > 0) {
+          await QuizAnswer.bulkCreate(answersToCreate, { transaction: t });
         }
 
         const percentage = maxScore > 0 ? (totalScore / maxScore) * 100 : 0;
@@ -1829,5 +1857,54 @@ async function resolveTrainingId(trainerId, trainingId) {
   console.log(`[resolveTrainingId] No training found for trainer #${trainerId}`);
   return null;
 }
+
+// AI Mentor (Socratic study helper) for quiz attempts
+// Anti-leak: the service NEVER loads/sends correctAnswer, acceptableAnswers,
+// pairs, or explanation to the model.
+router.post('/participant/:attemptId/quiz-ai-assist',
+  authenticateToken,
+  roleMiddleware('PARTICIPANT'),
+  optionalAssessmentSession,
+  async (req, res) => {
+    try {
+      const { questionId, question = '' } = req.body || {};
+      if (!questionId) {
+        return res.status(422).json({ error: 'questionId is required' });
+      }
+      if (!question.trim()) {
+        return res.status(422).json({ error: 'question (student prompt) is required' });
+      }
+      const result = await grantQuizAssist({
+        attemptId: req.params.attemptId,
+        questionId,
+        participantId: req.user.id,
+        question,
+      });
+      return res.json(result);
+    } catch (err) {
+      if (err.status) return res.status(err.status).json({ error: err.message, code: err.code, remaining: err.remaining });
+      console.error('[quiz-ai-assist]', err);
+      return res.status(500).json({ error: 'Failed to get AI assistance' });
+    }
+  }
+);
+
+router.get('/participant/:attemptId/quiz-ai-status',
+  authenticateToken,
+  roleMiddleware('PARTICIPANT'),
+  optionalAssessmentSession,
+  async (req, res) => {
+    try {
+      const status = await getQuizStatus({
+        attemptId: req.params.attemptId,
+        participantId: req.user.id,
+      });
+      return res.json(status);
+    } catch (err) {
+      console.error('[quiz-ai-status]', err);
+      return res.status(500).json({ error: 'Failed to fetch AI mentor status' });
+    }
+  }
+);
 
 module.exports = router;

@@ -376,37 +376,46 @@ const markAttendance = async (req, res) => {
 
     const validStatuses = ['PRESENT', 'ABSENT', 'LATE', 'EXCUSED'];
     const absentStudentIds = [];
+    const validRecords = records.filter(r => r && r.studentId);
+    const studentIds = validRecords.map(r => r.studentId);
 
-    for (const rec of records) {
+    // Batch fetch existing records in 1 query
+    const existingRecords = await AttendanceRecord.findAll({
+      where: { sessionId, studentId: { [Op.in]: studentIds } },
+      transaction: t,
+    });
+    const existingMap = new Map();
+    existingRecords.forEach(er => existingMap.set(String(er.studentId), er));
+
+    const toCreate = [];
+    const updatePromises = [];
+    const now = new Date();
+
+    for (const rec of validRecords) {
       const studentId = rec.studentId;
       const status = validStatuses.includes(rec.status) ? rec.status : 'PRESENT';
       const remarks = rec.remarks || null;
 
-      if (!studentId) continue;
-
-      // Upsert to ensure no duplicate records for same student & session
-      const existing = await AttendanceRecord.findOne({
-        where: { sessionId, studentId },
-        transaction: t,
-      });
-
+      const existing = existingMap.get(String(studentId));
       if (existing) {
-        await existing.update({
-          status,
-          remarks,
-          markedBy,
-          markedAt: new Date(),
-        }, { transaction: t });
+        updatePromises.push(
+          existing.update({
+            status,
+            remarks,
+            markedBy,
+            markedAt: now,
+          }, { transaction: t })
+        );
       } else {
-        await AttendanceRecord.create({
+        toCreate.push({
           sessionId,
           studentId,
           courseId: session.courseId,
           status,
           remarks,
           markedBy,
-          markedAt: new Date(),
-        }, { transaction: t });
+          markedAt: now,
+        });
       }
 
       if (status === 'ABSENT') {
@@ -414,20 +423,29 @@ const markAttendance = async (req, res) => {
       }
     }
 
+    if (updatePromises.length > 0) {
+      await Promise.all(updatePromises);
+    }
+    if (toCreate.length > 0) {
+      await AttendanceRecord.bulkCreate(toCreate, { transaction: t });
+    }
+
     await t.commit();
 
-    // Trigger absent notifications in background (non-blocking)
+    // Trigger absent notifications in background (non-blocking, parallel)
     try {
       const io = req.app.get('io');
       const NotificationService = require('../services/notificationService');
-      for (const studentId of absentStudentIds) {
-        await NotificationService.createNotification({
-          userId: studentId,
-          message: `You were marked ABSENT for session "${session.title}" (${session.sessionType || 'Session'}) on ${session.sessionDate}.`,
-          type: 'OTHER',
-          actionUrl: '/participant?tab=attendance',
-        }, io).catch(() => {});
-      }
+      await Promise.allSettled(
+        absentStudentIds.map(studentId =>
+          NotificationService.createNotification({
+            userId: studentId,
+            message: `You were marked ABSENT for session "${session.title}" (${session.sessionType || 'Session'}) on ${session.sessionDate}.`,
+            type: 'OTHER',
+            actionUrl: '/participant?tab=attendance',
+          }, io)
+        )
+      );
     } catch (_) {}
 
     res.json({ success: true, message: `Attendance updated for ${records.length} students` });

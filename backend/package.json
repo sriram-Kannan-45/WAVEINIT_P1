@@ -4,6 +4,7 @@
   "description": "Training Management Backend",
   "main": "src/app.js",
   "scripts": {
+    "migrate:ai-mentor-audit": "node src/scripts/migrateAiMentorAudit.js",
     "start": "node src/app.js",
     "start:clean": "kill-port 3001 && node src/app.js",
     "dev": "nodemon src/app.js",

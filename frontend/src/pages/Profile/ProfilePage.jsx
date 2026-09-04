@@ -132,7 +132,7 @@ export default function ProfilePage({ user }) {
     } finally {
       setLoading(false);
     }
-  }, [user?.id, user?.role]);
+  }, [user]);
 
   useEffect(() => {
     const controller = new AbortController();

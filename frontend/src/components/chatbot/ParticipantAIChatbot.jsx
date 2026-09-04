@@ -634,6 +634,7 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
     <>
       {/* ── Floating Draggable AI Trigger Button ── */}
       <div
+        className="participant-ai-chatbot-assessment-hide"
         style={{
           position: 'fixed',
           left: currentPosition.x,
@@ -721,6 +722,7 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
       <AnimatePresence>
         {isOpen && (
           <motion.div
+            className="participant-ai-chatbot-assessment-hide"
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{
               opacity: 1,

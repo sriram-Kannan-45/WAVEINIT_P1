@@ -2,7 +2,7 @@
  * InterviewDashboard Page
  * Enterprise admin table view — matches RegistrationApplications design exactly.
  */
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -96,7 +96,7 @@ export default function InterviewDashboard({ user }) {
   const [editForm, setEditForm] = useState(EMPTY_EDIT_FORM)
   const limit = 15
 
-  const fetchData = async (page = 1) => {
+  const fetchData = useCallback(async (page = 1) => {
     try {
       setLoading(true)
       const params = { page, limit }
@@ -115,9 +115,9 @@ export default function InterviewDashboard({ user }) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [statusFilter, typeFilter, search, showError])
 
-  useEffect(() => { fetchData() }, [statusFilter, typeFilter])
+  useEffect(() => { fetchData() }, [fetchData])
 
   // Show the success toast passed from the ScheduleInterview page after save.
   useEffect(() => {

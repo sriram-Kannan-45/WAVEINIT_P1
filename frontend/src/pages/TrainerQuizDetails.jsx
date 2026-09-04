@@ -67,7 +67,10 @@ export default function TrainerQuizDetails({ user, onLogout }) {
   const navigate = useNavigate()
   const toast = useToast()
   const confirm = useConfirm()
-  const auth = () => ({ Authorization: `Bearer ${user?.token}`, 'Content-Type': 'application/json' })
+  const auth = useCallback(() => ({
+    Authorization: `Bearer ${user?.token || ''}`,
+    'Content-Type': 'application/json'
+  }), [user?.token])
 
   const [quiz, setQuiz] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -86,7 +89,7 @@ export default function TrainerQuizDetails({ user, onLogout }) {
     } finally {
       setLoading(false)
     }
-  }, [quizId])
+  }, [quizId, auth, toast])
 
   useEffect(() => { fetchQuiz() }, [fetchQuiz])
 
@@ -489,7 +492,7 @@ function ParticipantsTab({ quiz, auth, toast }) {
       } catch { /* ignore */ }
       finally { setLoading(false) }
     })()
-  }, [quiz.id])
+  }, [quiz.id, auth])
 
   useEffect(() => {
     setPage(1)
@@ -596,7 +599,7 @@ function ResultsTab({ quiz, onRefresh, auth, toast }) {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
 
-  const loadResults = async () => {
+  const loadResults = useCallback(async () => {
     setLoading(true)
     try {
       const r = await fetch(API.TRAINER_COURSES.QUIZ_RESULTS(quiz.id), { headers: auth() })
@@ -604,9 +607,9 @@ function ResultsTab({ quiz, onRefresh, auth, toast }) {
       setResults(d.results || [])
     } catch { /* ignore */ }
     finally { setLoading(false) }
-  }
+  }, [quiz.id, auth])
 
-  useEffect(() => { loadResults() }, [quiz.id])
+  useEffect(() => { loadResults() }, [loadResults])
 
   useEffect(() => {
     setPage(1)
@@ -885,7 +888,7 @@ function LeaderboardTab({ quiz, auth }) {
       } catch { /* ignore */ }
       finally { setLoading(false) }
     })()
-  }, [quiz.id])
+  }, [quiz.id, auth])
 
   const pagedLeaders = leaders.slice((page - 1) * pageSize, page * pageSize)
 
@@ -982,7 +985,7 @@ function AnalyticsTab({ quiz, auth }) {
       } catch { /* ignore */ }
       finally { setLoading(false) }
     })()
-  }, [quiz.id])
+  }, [quiz.id, auth])
 
   if (loading) return <div style={{ padding: 40, textAlign: 'center' }}><Loader2 size={20} className="reg-spin" /></div>
 

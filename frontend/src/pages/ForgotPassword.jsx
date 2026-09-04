@@ -134,7 +134,7 @@ export default function ForgotPassword() {
     const key = `fp_cooldown_${email}`
     const until = parseInt(localStorage.getItem(key) || '0', 10)
     const remaining = Math.max(0, Math.round((until - Date.now()) / 1000))
-    if (remaining > 0 && countdown === 0) setCountdown(remaining)
+    if (remaining > 0) setCountdown(c => (c === 0 ? remaining : c))
   }, [step, email])
 
   const post = async (url, body) => {

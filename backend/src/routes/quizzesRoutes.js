@@ -31,6 +31,7 @@ const roleMiddleware = require('../middleware/roles');
 const NotificationService = require('../services/notificationService');
 const { assertTransition } = require('../utils/quizStateMachine');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
+const { assertQuizPayloadClean } = require('../services/starterCodeIntegrity');
 
 const router = express.Router();
 
@@ -911,6 +912,19 @@ router.get('/:id/questions', async (req, res) => {
         }))
       };
 
+      // Pre-fill guard (quiz side): assert the live payload carries no answer
+      // key. The attribute whitelist above already excludes them, so a hit here
+      // means a regression upstream — the loud alert is the point.
+      assertQuizPayloadClean({
+        questions: apiResponse.questions,
+        context: {
+          surface: 'quizzes.getQuestions',
+          participantId: userId,
+          quizId: quiz.id,
+          attemptId: hasAttempt.id,
+        },
+      });
+
       return res.json(apiResponse);
     } else {
       console.log(`[GET /api/quizzes/${quizId}/questions] Permission denied: Unknown/Unmatched role: ${userRole}`);
@@ -1601,60 +1615,86 @@ router.post('/:quizId/attempts/:attemptId/submit', async (req, res) => {
         }
       }
 
-      for (const question of questions) {
+      const { gradeAnswer } = require('../utils/gradeAnswer');
+      const aiService = require('../services/aiService');
+
+      const gradingResults = new Array(questions.length);
+      const evalPromises = [];
+
+      // Phase 1: Grade objective questions synchronously, fire AI evaluations in parallel.
+      for (let i = 0; i < questions.length; i++) {
+        const question = questions[i];
         const qMarks = question.marks || 1;
         const ans = submittedAnswerMap.get(Number(question.id));
+        const isObj = ['MCQ', 'TRUE_FALSE', 'FILL_BLANK', 'MATCHING'].includes(question.questionType);
 
-        let score = 0;
-        let feedback = 'Unanswered';
-        let isCorrect = false;
-
-        if (ans) {
-          if (['MCQ', 'TRUE_FALSE', 'FILL_BLANK', 'MATCHING'].includes(question.questionType)) {
-            const { gradeAnswer } = require('../utils/gradeAnswer');
-            const result = gradeAnswer(question, {
-              selectedOption: ans.selectedOption !== undefined ? ans.selectedOption : null,
-              answer: ans.answerText || ans.answer || '',
-              answerText: ans.answerText || ans.answer || '',
-              matches: ans.matches
-            });
-            isCorrect = result.isCorrect;
-            score = result.score > 0 ? (result.score / 100) * qMarks : 0;
-            if (question.questionType === 'MATCHING') {
-              feedback = `Score: ${result.score}%. Matched ${result.correctCount} of ${result.total} correctly.`;
-            } else {
-              feedback = isCorrect ? 'Correct!' : `Incorrect. Correct answer: ${question.correctAnswer}`;
-            }
-          } else if (ans.answerText && ans.answerText.trim()) {
-            // Fallback to AI evaluation
-            const aiService = require('../services/aiService');
-            try {
-              const evaluation = await aiService.evaluateShortAnswer(
-                question.questionText,
-                question.correctAnswer,
-                ans.answerText.trim()
-              );
-              score = evaluation.score || 0;
-              feedback = evaluation.feedback || '';
-              isCorrect = evaluation.isCorrect || false;
-            } catch (aiErr) {
-              console.error('AI evaluation failed, defaulting to 0:', aiErr.message);
-            }
-          }
+        if (!ans) {
+          gradingResults[i] = { score: 0, feedback: 'Unanswered', isCorrect: false, evaluatedByAI: !isObj };
+          continue;
         }
 
-        await QuizAnswer.create({
+        if (isObj) {
+          const result = gradeAnswer(question, {
+            selectedOption: ans.selectedOption !== undefined ? ans.selectedOption : null,
+            answer: ans.answerText || ans.answer || '',
+            answerText: ans.answerText || ans.answer || '',
+            matches: ans.matches
+          });
+          const isCorrect = result.isCorrect;
+          const score = result.score > 0 ? (result.score / 100) * qMarks : 0;
+          const feedback = question.questionType === 'MATCHING'
+            ? `Score: ${result.score}%. Matched ${result.correctCount} of ${result.total} correctly.`
+            : isCorrect ? 'Correct!' : `Incorrect. Correct answer: ${question.correctAnswer}`;
+          gradingResults[i] = { score, feedback, isCorrect, evaluatedByAI: false };
+        } else if (ans.answerText && ans.answerText.trim()) {
+          // Fire ALL AI evaluations in parallel (critical speed-up).
+          const idx = i;
+          evalPromises.push(
+            aiService.evaluateShortAnswer(
+              question.questionText,
+              question.correctAnswer,
+              ans.answerText.trim()
+            ).then(evaluation => {
+              gradingResults[idx] = {
+                score: evaluation.score || 0,
+                feedback: evaluation.feedback || '',
+                isCorrect: evaluation.isCorrect || false,
+                evaluatedByAI: true
+              };
+            }).catch(aiErr => {
+              console.error('AI evaluation failed, defaulting to 0:', aiErr.message);
+              gradingResults[idx] = { score: 0, feedback: '', isCorrect: false, evaluatedByAI: true };
+            })
+          );
+        } else {
+          gradingResults[i] = { score: 0, feedback: 'Unanswered', isCorrect: false, evaluatedByAI: !isObj };
+        }
+      }
+
+      if (evalPromises.length > 0) {
+        await Promise.all(evalPromises);
+      }
+
+      // Phase 2: Bulk-create answers in one round-trip.
+      const answersToCreate = [];
+      for (let i = 0; i < questions.length; i++) {
+        const question = questions[i];
+        const ans = submittedAnswerMap.get(Number(question.id));
+        const g = gradingResults[i] || { score: 0, feedback: 'Unanswered', isCorrect: false, evaluatedByAI: true };
+        totalScore += g.score;
+        answersToCreate.push({
           attemptId: attempt.id,
           questionId: question.id,
           answerText: ans?.answerText || '',
           selectedOption: ans?.selectedOption !== undefined ? ans.selectedOption : null,
-          isCorrect,
-          score,
-          feedback,
-          evaluatedByAI: !['MCQ', 'TRUE_FALSE', 'FILL_BLANK', 'MATCHING'].includes(question.questionType)
-        }, { transaction: t });
-
-        totalScore += score;
+          isCorrect: g.isCorrect,
+          score: g.score,
+          feedback: g.feedback,
+          evaluatedByAI: g.evaluatedByAI
+        });
+      }
+      if (answersToCreate.length > 0) {
+        await QuizAnswer.bulkCreate(answersToCreate, { transaction: t });
       }
 
       const submittedAt = new Date();
@@ -1706,14 +1746,14 @@ router.post('/:quizId/attempts/:attemptId/submit', async (req, res) => {
       );
     });
 
-    // Best-effort: expire assessment session
+    // Best-effort: expire assessment session (fire-and-forget, non-blocking)
     try {
       const sessionToken = req.headers['x-assessment-session'] || req.headers['X-Assessment-Session'];
       if (sessionToken) {
-        await AssessmentSession.update(
+        AssessmentSession.update(
           { status: 'EXPIRED' },
           { where: { sessionToken, attemptId: attempt.id, status: 'ACTIVE' } }
-        );
+        ).catch(() => {});
       }
     } catch (sessionErr) {
       console.warn('Failed to expire assessment session:', sessionErr.message);
@@ -1727,10 +1767,12 @@ router.post('/:quizId/attempts/:attemptId/submit', async (req, res) => {
       console.error('[submit] Non-blocking proctoring report generation failure:', reportErr.message);
     }
 
-    // Conclude verification session and close mobile camera stream
+    // Conclude verification session in background (non-blocking)
     try {
       const verificationService = require('../services/assessmentVerificationService');
-      await verificationService.endSession({ attemptId: attempt.id, participantId }).catch(() => {});
+      setImmediate(() => {
+        verificationService.endSession({ attemptId: attempt.id, participantId }).catch(() => {});
+      });
     } catch (_) {}
 
     // Participant-safe response: NEVER leak internal proctoring reports or risk scores

@@ -39,7 +39,7 @@ const SEVERITY_BADGE = {
  * Renders the complete Proctoring Report for one participant's attempt.
  * Visible ONLY to Trainers & Admins.
  */
-export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
+export function SingleAttemptProctoringModal({ attemptId, auth, onClose, contextType = 'QUIZ' }) {
   const [loading, setLoading] = useState(true)
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
@@ -61,10 +61,7 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
         if (token) headers.Authorization = `Bearer ${token}`
       }
 
-      let res = await fetch(`${API_BASE}/monitoring/reports/attempt/${attemptId}`, { headers });
-      if (!res.ok && res.status === 404) {
-        res = await fetch(`${API_BASE}/proctoring/reports/${attemptId}`, { headers });
-      }
+      const res = await fetch(`${API_BASE}/monitoring/reports/attempt/${attemptId}?contextType=${encodeURIComponent(contextType)}`, { headers });
       if (res.status === 401) {
         throw new Error('Session expired. Please log in again.');
       }
@@ -84,7 +81,7 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
     } finally {
       setLoading(false)
     }
-  }, [attemptId, auth])
+  }, [attemptId, auth, contextType])
 
   useEffect(() => {
     fetchReport()
@@ -435,17 +432,17 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                 <div style={{
                   padding: '12px 14px',
                   borderRadius: 10,
-                  background: (data?.noPersonScore > 0) ? '#fef2f2' : '#f8fafc',
-                  border: (data?.noPersonScore > 0) ? '1px solid #fca5a5' : '1px solid #e2e8f0'
+                  background: (noPersonScore > 0) ? '#fef2f2' : '#f8fafc',
+                  border: (noPersonScore > 0) ? '1px solid #fca5a5' : '1px solid #e2e8f0'
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase' }}>Face Absence</span>
                     <span style={{
                       fontSize: 12,
                       fontWeight: 800,
-                      color: (data?.noPersonScore > 0) ? '#dc2626' : '#0d9488'
+                      color: (noPersonScore > 0) ? '#dc2626' : '#0d9488'
                     }}>
-                      {(data?.noPersonScore ?? 0).toFixed(1)} / 10
+                      {noPersonScore.toFixed(1)} / 10
                     </span>
                   </div>
                   <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
@@ -457,21 +454,21 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                 <div style={{
                   padding: '12px 14px',
                   borderRadius: 10,
-                  background: (data?.multiFaceScore > 0 || categories.persons > 0) ? '#fef2f2' : '#f8fafc',
-                  border: (data?.multiFaceScore > 0 || categories.persons > 0) ? '1px solid #fca5a5' : '1px solid #e2e8f0'
+                  background: (multiFaceScore > 0) ? '#fef2f2' : '#f8fafc',
+                  border: (multiFaceScore > 0) ? '1px solid #fca5a5' : '1px solid #e2e8f0'
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase' }}>Multi Persons</span>
                     <span style={{
                       fontSize: 12,
                       fontWeight: 800,
-                      color: (data?.multiFaceScore > 0 || categories.persons > 0) ? '#dc2626' : '#0d9488'
+                      color: (multiFaceScore > 0) ? '#dc2626' : '#0d9488'
                     }}>
-                      {(data?.multiFaceScore ?? (categories.persons > 0 ? 10 : 0)).toFixed(1)} / 10
+                      {multiFaceScore.toFixed(1)} / 10
                     </span>
                   </div>
                   <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
-                    {(data?.multiFaceScore > 0 || categories.persons > 0) ? 'Multiple faces detected' : 'Single person verified'}
+                    {(multiFaceScore > 0) ? 'Multiple faces detected' : 'Single person verified'}
                   </div>
                 </div>
 
@@ -479,21 +476,21 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                 <div style={{
                   padding: '12px 14px',
                   borderRadius: 10,
-                  background: (data?.tabSwitchScore > 0 || (data?.tabSwitchCount || 0) > 3) ? '#fef2f2' : '#f8fafc',
-                  border: (data?.tabSwitchScore > 0 || (data?.tabSwitchCount || 0) > 3) ? '1px solid #fca5a5' : '1px solid #e2e8f0'
+                  background: (tabSwitchScore > 0) ? '#fef2f2' : '#f8fafc',
+                  border: (tabSwitchScore > 0) ? '1px solid #fca5a5' : '1px solid #e2e8f0'
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase' }}>Tab Switches</span>
                     <span style={{
                       fontSize: 12,
                       fontWeight: 800,
-                      color: (data?.tabSwitchScore > 0 || (data?.tabSwitchCount || 0) > 3) ? '#dc2626' : '#0d9488'
+                      color: (tabSwitchScore > 0) ? '#dc2626' : '#0d9488'
                     }}>
-                      {(data?.tabSwitchScore ?? ((data?.tabSwitchCount || 0) > 3 ? 10 : 0)).toFixed(1)} / 10
+                      {tabSwitchScore.toFixed(1)} / 10
                     </span>
                   </div>
                   <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
-                    {`${data?.tabSwitchCount || 0} switch attempt(s) ${((data?.tabSwitchCount || 0) > 3) ? '(Penalty Applied)' : '(Allowed ≤3)'}`}
+                    {`${data?.tabSwitchCount ?? data?.scoringBreakdown?.tabSwitch?.count ?? 0} scored browser incident(s) ${tabSwitchScore > 0 ? '(Audit penalty applied)' : '(No audit penalty)'}`}
                   </div>
                 </div>
 
@@ -501,21 +498,21 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose }) {
                 <div style={{
                   padding: '12px 14px',
                   borderRadius: 10,
-                  background: (data?.mobileScore > 0 || (summary.objectMonitoring?.phoneEvents > 0) || (categories.objects > 0)) ? '#fef2f2' : '#f8fafc',
-                  border: (data?.mobileScore > 0 || (summary.objectMonitoring?.phoneEvents > 0) || (categories.objects > 0)) ? '1px solid #fca5a5' : '1px solid #e2e8f0'
+                  background: (mobileScore > 0) ? '#fef2f2' : '#f8fafc',
+                  border: (mobileScore > 0) ? '1px solid #fca5a5' : '1px solid #e2e8f0'
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase' }}>Mobile Phone</span>
                     <span style={{
                       fontSize: 12,
                       fontWeight: 800,
-                      color: (data?.mobileScore > 0 || (summary.objectMonitoring?.phoneEvents > 0) || (categories.objects > 0)) ? '#dc2626' : '#0d9488'
+                      color: (mobileScore > 0) ? '#dc2626' : '#0d9488'
                     }}>
-                      {(data?.mobileScore ?? ((summary.objectMonitoring?.phoneEvents > 0 || categories.objects > 0) ? 10 : 0)).toFixed(1)} / 10
+                      {mobileScore.toFixed(1)} / 10
                     </span>
                   </div>
                   <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
-                    {(data?.mobileScore > 0 || (summary.objectMonitoring?.phoneEvents > 0) || (categories.objects > 0)) ? 'Phone detected in view' : 'No mobile device detected'}
+                    {(mobileScore > 0) ? 'Phone detected in view' : 'No mobile device detected'}
                   </div>
                 </div>
               </div>

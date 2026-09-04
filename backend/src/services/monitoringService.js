@@ -206,23 +206,6 @@ const DEFAULT_CONFIGS = {
       token_expiry_minutes: 3,
     },
   },
-  CODING: {
-    // Coding assessments tolerate slightly longer looking away (e.g. typing/thinking)
-    duration_thresholds_ms: {
-      gaze_deviation: 4000,
-      head_pose_deviation: 3500,
-      face_absence_grace: 4000,
-      mobile_disconnect_grace: 45000,
-    },
-    score_weights: {
-      GAZE_OFF_SCREEN_DOWN: 2,
-      HEAD_LOOKING_DOWN: 2,
-    },
-    grace_counts: {
-      gaze: 8,                      // Coding tolerates more gaze deviation
-      head_pose: 8,                 // Coding tolerates more head movement
-    },
-  },
   INTERVIEW: {
     // Interview assessments are conversational
     duration_thresholds_ms: {
@@ -247,6 +230,9 @@ class MonitoringEngineService {
   // ── Configuration Resolution ─────────────────────────────────────────────
 
   async getConfig(contextType = null) {
+    // Coding inherits Quiz policy, including persisted overrides and fallback.
+    contextType = contextType ? String(contextType).toUpperCase() : null;
+    if (contextType === 'CODING') contextType = 'QUIZ';
     try {
       const dbConfigs = await MonitoringConfig.findAll();
       const merged = JSON.parse(JSON.stringify(DEFAULT_CONFIGS.global));
@@ -292,6 +278,8 @@ class MonitoringEngineService {
   }
 
   async updateConfig({ key, contextType = null, value, updatedBy = null }) {
+    contextType = contextType ? String(contextType).toUpperCase() : null;
+    if (contextType === 'CODING') contextType = 'QUIZ';
     if (!key || value === undefined) {
       throw new Error('key and value are required');
     }
@@ -493,7 +481,7 @@ class MonitoringEngineService {
 
   async startTestSession({ sessionId, attemptId = null, testStartedAt = null, configuredDurationSeconds = null }) {
     const session = await MonitoringSession.findOne({
-      where: { [Op.or]: [{ sessionId: String(sessionId) }, ...(attemptId ? [{ attemptId: Number(attemptId) }] : [])] }
+      where: { sessionId: String(sessionId) }
     });
     if (!session) throw new Error('Monitoring session not found');
 
@@ -1098,34 +1086,16 @@ class MonitoringEngineService {
         }
       } catch (_) {}
 
-      // Final fallback: find any in-progress attempt for this participant
-      if (!resolvedAttemptId && session.participantId) {
-        try {
-          const qa = await QuizAttempt.findOne({
-            where: {
-              participantId: session.participantId,
-              status: 'IN_PROGRESS',
-            },
+      if (!resolvedAttemptId && session.participantId && session.contextId) {
+        const Attempt = session.contextType === 'CODING' ? CodingAttempt : session.contextType === 'QUIZ' ? QuizAttempt : null;
+        if (Attempt) {
+          const att = await Attempt.findOne({
+            where: { participantId: session.participantId, status: 'IN_PROGRESS',
+              [session.contextType === 'CODING' ? 'assessmentId' : 'quizId']: session.contextId },
             order: [['id', 'DESC']],
           });
-          if (qa) {
-            resolvedAttemptId = qa.id;
-          } else {
-            const ca = await CodingAttempt.findOne({
-              where: {
-                participantId: session.participantId,
-                status: 'IN_PROGRESS',
-              },
-              order: [['id', 'DESC']],
-            });
-            if (ca) resolvedAttemptId = ca.id;
-          }
-          if (resolvedAttemptId) {
-            session.attemptId = resolvedAttemptId;
-            await session.save();
-            logger.info(`[MonitoringEngine] reportEvent: backfilled attemptId=${resolvedAttemptId} for session ${session.sessionId}`);
-          }
-        } catch (_) {}
+          if (att) { resolvedAttemptId = att.id; session.attemptId = att.id; await session.save(); }
+        }
       }
     }
 
@@ -1182,12 +1152,7 @@ class MonitoringEngineService {
 
     // 4. Grace Warnings Check (First 3 Alerts are Live Warnings Only & Unscored)
     const existingEventsCount = await MonitoringEvent.count({
-      where: {
-        [Op.or]: [
-          { monitoringSessionId: session.sessionId },
-          ...(session.attemptId ? [{ attemptId: session.attemptId }] : []),
-        ],
-      },
+      where: { monitoringSessionId: session.sessionId },
     });
 
     const isGraceWarning = existingEventsCount < 3;
@@ -1294,7 +1259,7 @@ class MonitoringEngineService {
               monitoringSessionId: session.sessionId,
               attemptId: resolvedAttemptId || session.attemptId,
               participantId: session.participantId,
-              quizId: session.contextId,
+              quizId: session.contextType === 'QUIZ' ? session.contextId : null,
               eventType,
               severity: normalizedSeverity,
               confidence: conf,
@@ -1487,14 +1452,16 @@ class MonitoringEngineService {
     return this.getReport({ sessionId: session.sessionId });
   }
 
-  async getReport({ sessionId, attemptId = null }) {
+  async getReport({ sessionId, attemptId = null, contextType = 'QUIZ', contextId = null }) {
+    contextType = String(contextType).toUpperCase();
+    if (!['QUIZ', 'CODING', 'INTERVIEW'].includes(contextType)) throw new Error('Invalid monitoring context type');
     let session = null;
     if (sessionId) {
       session = await this.getSession(sessionId);
     }
     if (!session && attemptId) {
       session = await MonitoringSession.findOne({
-        where: { attemptId: Number(attemptId) },
+        where: { attemptId: Number(attemptId), contextType, ...(contextId ? { contextId: Number(contextId) } : {}) },
         order: [['id', 'DESC']],
         include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email'] }],
       });
@@ -1507,15 +1474,13 @@ class MonitoringEngineService {
       let isQuiz = true;
 
       if (attemptId) {
-        att = await QuizAttempt.findByPk(attemptId, {
+        isQuiz = contextType === 'QUIZ';
+        if (!['QUIZ', 'CODING'].includes(contextType)) throw new Error('Monitoring session not found');
+        const Attempt = isQuiz ? QuizAttempt : CodingAttempt;
+        att = await Attempt.findOne({
+          where: { id: Number(attemptId), ...(contextId ? { [isQuiz ? 'quizId' : 'assessmentId']: Number(contextId) } : {}) },
           include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email'] }],
         });
-        if (!att) {
-          att = await CodingAttempt.findByPk(attemptId, {
-            include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email'] }],
-          });
-          if (att) isQuiz = false;
-        }
       } else if (sessionId) {
         att = await QuizAttempt.findOne({
           where: { monitoringSessionId: sessionId },
@@ -1533,12 +1498,7 @@ class MonitoringEngineService {
       if (att) {
         const sId = att.monitoringSessionId || sessionId || `ms_${isQuiz ? 'quiz' : 'coding'}_${att.id}_${Date.now()}`;
         const [monSess] = await MonitoringSession.findOrCreate({
-          where: {
-            [Op.or]: [
-              { attemptId: att.id },
-              { sessionId: sId },
-            ]
-          },
+          where: { sessionId: sId, contextType: isQuiz ? 'QUIZ' : 'CODING' },
           defaults: {
             sessionId: sId,
             attemptId: att.id,
@@ -1562,12 +1522,7 @@ class MonitoringEngineService {
     // Query from both MonitoringEvent and ProctoringEvent to guarantee 0 missing events
     const { ProctoringEvent } = require('../models');
     const monitoringEvents = await MonitoringEvent.findAll({
-      where: {
-        [Op.or]: [
-          { monitoringSessionId: session.sessionId },
-          ...(session.attemptId ? [{ attemptId: session.attemptId }] : []),
-        ],
-      },
+      where: { monitoringSessionId: session.sessionId },
       order: [['occurredAt', 'ASC']],
     });
 
@@ -1575,12 +1530,7 @@ class MonitoringEngineService {
     if (ProctoringEvent && session.attemptId) {
       try {
         proctoringEvents = await ProctoringEvent.findAll({
-          where: {
-            [Op.or]: [
-              { attemptId: session.attemptId },
-              { monitoringSessionId: session.sessionId },
-            ],
-          },
+          where: { monitoringSessionId: session.sessionId },
           order: [['timestamp', 'ASC']],
         });
       } catch (_) {}
@@ -1727,16 +1677,16 @@ class MonitoringEngineService {
     if (session.attemptId) {
       try {
         const { QuizAttempt, CodingAttempt, AIQuiz, CodingAssessment } = require('../models');
-        const qa = await QuizAttempt.findByPk(session.attemptId, {
+        const qa = session.contextType === 'QUIZ' ? await QuizAttempt.findByPk(session.attemptId, {
           include: [{ model: AIQuiz, as: 'quiz' }]
-        });
+        }) : null;
         if (qa) {
           if (qa.timeTaken && qa.timeTaken > 0) attemptTimeTakenSec = Number(qa.timeTaken);
           if (!sessionEndedAt && qa.submittedAt) sessionEndedAt = qa.submittedAt;
           if (!configuredDurationSec && qa.quiz?.timeLimit) {
             configuredDurationSec = Number(qa.quiz.timeLimit) * 60;
           }
-        } else {
+        } else if (session.contextType === 'CODING') {
           const ca = await CodingAttempt.findByPk(session.attemptId, {
             include: [{ model: CodingAssessment, as: 'assessment' }]
           });
@@ -2016,14 +1966,14 @@ class MonitoringEngineService {
     };
 
     let finalVideoUrl = session.videoUrl || null;
-    if (!finalVideoUrl && (session.attemptId || session.participantId)) {
+    if (!finalVideoUrl && session.attemptId) {
       try {
         const otherSession = await MonitoringSession.findOne({
           where: {
-            [Op.or]: [
-              ...(session.attemptId ? [{ attemptId: session.attemptId }] : []),
-              { participantId: session.participantId },
-            ],
+            attemptId: session.attemptId,
+            participantId: session.participantId,
+            contextType: session.contextType,
+            contextId: session.contextId,
             videoUrl: { [Op.ne]: null }
           },
           order: [['id', 'DESC']]
@@ -2130,19 +2080,29 @@ class MonitoringEngineService {
     if (contextType) where.contextType = String(contextType).toUpperCase();
     if (contextId) where.contextId = Number(contextId);
     if (participantId) where.participantId = Number(participantId);
-    if (riskLevel) where.riskLevel = String(riskLevel).toUpperCase();
+
+    const pageLimit = Math.min(100, Math.max(1, Number(limit) || 50));
+    const pageOffset = Math.max(0, Number(offset) || 0);
 
     const { count, rows } = await MonitoringSession.findAndCountAll({
       where,
-      limit: Math.min(100, Number(limit) || 50),
-      offset: Number(offset) || 0,
+      // Stored session.score is the live event accumulator. Filter on the
+      // authoritative final audit below, not on that provisional score.
+      ...(riskLevel ? {} : { limit: pageLimit, offset: pageOffset }),
       order: [['id', 'DESC']],
       include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email'] }],
     });
 
+    const reports = await Promise.all(rows.map(async row => ({
+      ...(row.toJSON ? row.toJSON() : row),
+      ...await this.getReport({ sessionId: row.sessionId }),
+    })));
+    const filtered = riskLevel
+      ? reports.filter(report => report.riskLevel === String(riskLevel).toUpperCase())
+      : reports;
     return {
-      total: count,
-      sessions: rows,
+      total: riskLevel ? filtered.length : count,
+      sessions: riskLevel ? filtered.slice(pageOffset, pageOffset + pageLimit) : filtered,
     };
   }
 }

@@ -968,6 +968,28 @@ const connectDB = async () => {
       }
     }
 
+    // Ensure ai_quizzes has ai_assistant_enabled and ai_help_limit (AI mentor config),
+    // and quiz_attempts has ai_help_usage. The migration block above is gated behind
+    // `if (!isPostgres)` and skips all of these on PostgreSQL, so these AI mentor
+    // columns used by the AIQuiz / QuizAttempt models and quizAiAssistantService were
+    // missing there. Add them idempotently for BOTH dialects (mirrors the
+    // coding_assessments AI-assistant handling, but runs unconditionally so it also
+    // covers Postgres). Existing rows receive the NOT NULL DEFAULT, so no existing
+    // quiz/attempt is broken.
+    try {
+      if (isPostgres) {
+        await sequelize.query('ALTER TABLE "ai_quizzes" ADD COLUMN IF NOT EXISTS "ai_assistant_enabled" BOOLEAN NOT NULL DEFAULT TRUE;');
+        await sequelize.query('ALTER TABLE "ai_quizzes" ADD COLUMN IF NOT EXISTS "ai_help_limit" INTEGER NOT NULL DEFAULT 0;');
+        await sequelize.query('ALTER TABLE "quiz_attempts" ADD COLUMN IF NOT EXISTS "ai_help_usage" INTEGER NOT NULL DEFAULT 0;');
+      } else {
+        try { await sequelize.query('ALTER TABLE `ai_quizzes` ADD COLUMN `ai_assistant_enabled` TINYINT(1) NOT NULL DEFAULT 1'); } catch (_) {}
+        try { await sequelize.query('ALTER TABLE `ai_quizzes` ADD COLUMN `ai_help_limit` INT NOT NULL DEFAULT 0'); } catch (_) {}
+        try { await sequelize.query('ALTER TABLE `quiz_attempts` ADD COLUMN `ai_help_usage` INT NOT NULL DEFAULT 0'); } catch (_) {}
+      }
+    } catch (quizAiErr) {
+      logger.error('⚠️ Error adding quiz AI mentor columns (ai_quizzes / quiz_attempts)', { error: quizAiErr.message });
+    }
+
     try {
       await bootstrapPerformanceIndexes(sequelize);
     } catch (idxErr) {

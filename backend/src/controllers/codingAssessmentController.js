@@ -10,6 +10,7 @@ const logger = require('../utils/logger');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 const { LANGUAGES: JUDGE_LANGUAGES } = require('../judge/languageConfig');
 const { getDefaultStarterCode } = require('../utils/languageTemplates');
+const { sanitiseServedProblem, auditSavedCode } = require('../services/starterCodeIntegrity');
 
 // ── Helpers ──
 // Follow the same response format as aiQuizRoutes / trainerRoutes:
@@ -316,23 +317,39 @@ exports.getOne = async (req, res) => {
     if (isParticipant) {
       if (assessment.status !== 'PUBLISHED') return fail(res, 403, 'Assessment is not available');
       // For participants: do NOT expose reference solutions or hidden test cases.
-      // Load user's latest submission for each problem so they see their current saved/submitted code.
-      let attemptIds = [];
+      // Load user's saved/submitted code for a SINGLE attempt only (strict isolation).
+      // NEVER merge submissions across attempts: code/answers from one attempt must not
+      // bleed into a participant's view of another attempt.
+      let currentAttemptId = null;
       if (req.query.attemptId) {
-        attemptIds = [req.query.attemptId];
-      } else {
-        const userAttempts = await CodingAttempt.findAll({
-          where: { assessmentId: assessment.id, participantId: req.user.id },
+        const parsed = parseInt(req.query.attemptId, 10);
+        // Resolve the requested attempt and confirm it belongs to this participant.
+        const requested = await CodingAttempt.findOne({
+          where: { id: parsed, assessmentId: assessment.id, participantId: req.user.id },
           attributes: ['id']
-        });
-        attemptIds = userAttempts.map(a => a.id);
+        }).catch(() => null);
+        currentAttemptId = requested ? requested.id : null;
+      } else {
+        // No attemptId supplied: resolve the participant's single current attempt.
+        // Prefer the most recent IN_PROGRESS attempt, else the most recent attempt overall.
+        const inProgress = await CodingAttempt.findOne({
+          where: { assessmentId: assessment.id, participantId: req.user.id, status: 'IN_PROGRESS' },
+          attributes: ['id'],
+          order: [['id', 'DESC']]
+        }).catch(() => null);
+        const latest = inProgress || (await CodingAttempt.findOne({
+          where: { assessmentId: assessment.id, participantId: req.user.id },
+          attributes: ['id'],
+          order: [['id', 'DESC']]
+        }).catch(() => null));
+        currentAttemptId = latest ? latest.id : null;
       }
 
-      // Batch query all latest submissions for this attempt in ONE single query
+      // Load submissions for that single attempt only.
       let allSubmissions = [];
-      if (attemptIds.length > 0) {
+      if (currentAttemptId) {
         allSubmissions = await CodingSubmission.findAll({
-          where: { attemptId: { [Op.in]: attemptIds } },
+          where: { attemptId: currentAttemptId },
           order: [['id', 'DESC']]
         });
       }
@@ -347,10 +364,28 @@ exports.getOne = async (req, res) => {
       const problemsJson = [];
       for (const p of assessment.problems || []) {
         const pJson = p.toJSON();
+
+        // Resolve languages WITH references first, so the integrity guard can
+        // compare each served starter against the answer key. The guard returns
+        // participant-safe rows (references and trainer-only fields stripped),
+        // so the shape here is identical to the old includeReference:false call.
+        const withReference = getProblemLanguages(pJson, { includeReference: true });
+        const guarded = sanitiseServedProblem({
+          problem: pJson,
+          languages: withReference,
+          context: {
+            surface: 'codingAssessment.getOne',
+            participantId: req.user.id,
+            assessmentId: assessment.id,
+            attemptId: currentAttemptId,
+          },
+        });
+
         delete pJson.referenceSolution;
         delete pJson.expectedSolution;
         delete pJson.solution;
-        pJson.languages = getProblemLanguages(pJson, { includeReference: false });
+        pJson.starterCode = guarded.starterCode;
+        pJson.languages = guarded.languages;
         pJson.allowedLanguages = pJson.languages.map(l => l.language);
         pJson.testCases = (pJson.testCases || []).filter(tc => !tc.isHidden);
 
@@ -359,6 +394,21 @@ exports.getOne = async (req, res) => {
         if (latestSub) {
           pJson.lastLanguage = latestSub.language;
           pJson.lastSavedCode = latestSub.code;
+          // The participant's own code is served untouched even when it matches
+          // the answer key — a correct solution can legitimately converge on the
+          // reference text. Record it for review instead of rewriting their work.
+          // (`p` still carries the reference fields; `pJson` has had them deleted.)
+          auditSavedCode({
+            problem: p,
+            code: latestSub.code,
+            context: {
+              surface: 'codingAssessment.getOne',
+              participantId: req.user.id,
+              assessmentId: assessment.id,
+              attemptId: currentAttemptId,
+              submissionId: latestSub.id,
+            },
+          });
           pJson.latestSubmission = {
             id: latestSub.id,
             status: latestSub.status,
@@ -429,7 +479,7 @@ exports.update = async (req, res) => {
     if (!allowed) return fail(res, 403, 'Permission denied');
 
     // NOTE: 'status' is intentionally excluded — status transitions must go through /publish, /close endpoints
-    const allowedFields = ['title', 'description', 'timeLimit', 'difficulty', 'startTime', 'endTime', 'showResultImmediately', 'allowMultipleAttempts', 'maxAttempts', 'proctoringEnabled', 'proctoringLevel', 'gracePeriodMinutes', 'maxCopyWarnings', 'aiHelpLimit', 'aiAssistantEnabled', 'aiUnlockThresholds'];
+    const allowedFields = ['title', 'description', 'timeLimit', 'difficulty', 'startTime', 'endTime', 'showResultImmediately', 'allowMultipleAttempts', 'maxAttempts', 'proctoringEnabled', 'proctoringLevel', 'gracePeriodMinutes', 'maxCopyWarnings', 'aiAssistantEnabled'];
     const updates = {};
     for (const key of allowedFields) {
       if (req.body[key] !== undefined) {
@@ -1653,7 +1703,6 @@ exports.runCode = async (req, res) => {
     const { attemptId, problemId, code, language = 'javascript', timeLimit, memoryLimit, input: customInput } = req.body;
     const { JudgeEngine } = require('../judge/engine');
     const engine = new JudgeEngine();
-
     let problem = null;
     let execTimeLimit = 5;
     let execMemoryLimit = 256;
@@ -1718,21 +1767,24 @@ exports.runCode = async (req, res) => {
     const stderr = sampleResults.find(r => r.error && !r.compileOutput)?.error || '';
 
     if (attemptId && problemId) {
-      try {
-        const attempt = await CodingAttempt.findOne({
-          where: { id: attemptId, participantId: req.user.id, status: 'IN_PROGRESS' }
-        });
-        if (attempt) {
-          let submission = await CodingSubmission.findOne({ where: { attemptId, problemId } });
-          if (submission) {
-            await submission.update({ code, language });
-          } else {
-            await CodingSubmission.create({ attemptId, problemId, code, language, status: 'PENDING' });
+      // Fire-and-forget auto-save so it never delays the run response.
+      (async () => {
+        try {
+          const attempt = await CodingAttempt.findOne({
+            where: { id: attemptId, participantId: req.user.id, status: 'IN_PROGRESS' }
+          });
+          if (attempt) {
+            let submission = await CodingSubmission.findOne({ where: { attemptId, problemId } });
+            if (submission) {
+              await submission.update({ code, language });
+            } else {
+              await CodingSubmission.create({ attemptId, problemId, code, language, status: 'PENDING' });
+            }
           }
+        } catch (saveErr) {
+          logger.warn('Failed to auto-save during run', { error: saveErr.message });
         }
-      } catch (saveErr) {
-        logger.warn('Failed to auto-save during run', { error: saveErr.message });
-      }
+      })().catch(() => {});
     }
 
     const { checkRequiredConcepts } = require('../services/requiredConceptValidator');
@@ -1817,15 +1869,28 @@ exports.saveCodeBatch = async (req, res) => {
     });
     if (!attempt) return fail(res, 404, 'Attempt not found or already submitted');
 
+    const uniqueSaves = new Map();
     for (const item of saves) {
       if (!item.problemId) continue;
-      let submission = await CodingSubmission.findOne({
-        where: { attemptId, problemId: item.problemId }
-      });
-      if (submission) {
-        submission.code = item.code || '';
-        if (item.language) submission.language = item.language;
-        await submission.save();
+      uniqueSaves.set(item.problemId, item);
+    }
+
+    const items = [...uniqueSaves.values()];
+    if (items.length === 0) return ok(res, { saved: true, count: 0 });
+
+    // First, fetch all existing submissions in one query.
+    const existingSubs = await CodingSubmission.findAll({
+      where: { attemptId, problemId: { [Op.in]: items.map(i => i.problemId) } }
+    });
+    const existingMap = new Map(existingSubs.map(s => [s.problemId, s]));
+
+    // Parallelize creates and saves.
+    const ops = items.map(async (item) => {
+      const sub = existingMap.get(item.problemId);
+      if (sub) {
+        sub.code = item.code || '';
+        if (item.language) sub.language = item.language;
+        await sub.save();
       } else {
         await CodingSubmission.create({
           attemptId,
@@ -1835,9 +1900,11 @@ exports.saveCodeBatch = async (req, res) => {
           status: 'PENDING',
         });
       }
-    }
+    });
 
-    ok(res, { saved: true, count: saves.length });
+    await Promise.all(ops);
+
+    ok(res, { saved: true, count: items.length });
   } catch (err) { fail(res, 500, err.message); }
 };
 
@@ -1937,26 +2004,26 @@ exports.submitCode = async (req, res) => {
       io,
     });
 
-    const updatedSubmission = await CodingSubmission.findByPk(submission.id);
-    const visibleResults = Array.isArray(updatedSubmission?.output)
-      ? updatedSubmission.output.filter(r => !r.isHidden)
+    // Return immediately. The submission is PENDING and will be evaluated
+    // asynchronously by the queue worker / websocket. No need to re-read the
+    // DB row (it will still be PENDING at this point since the job is queued).
+    const visibleResults = Array.isArray(submission.output)
+      ? submission.output.filter(r => !r.isHidden)
       : [];
 
     ok(res, {
       submission: {
-        id: updatedSubmission?.id || submission.id,
-        status: updatedSubmission?.status || 'PENDING',
-        score: updatedSubmission?.score != null ? Number(updatedSubmission.score) : 0,
-        passedTestCases: updatedSubmission?.passedTestCases || 0,
-        totalTestCases: updatedSubmission?.totalTestCases || tcData.length,
-        executionTime: updatedSubmission?.executionTime || 0,
-        memoryUsed: updatedSubmission?.memoryUsed || 0,
-        compilerOutput: updatedSubmission?.compilerOutput || null,
-        errorMessage: updatedSubmission?.errorMessage || null,
+        id: submission.id,
+        status: submission.status || 'PENDING',
+        score: submission.score != null ? Number(submission.score) : 0,
+        passedTestCases: submission.passedTestCases || 0,
+        totalTestCases: submission.totalTestCases || tcData.length,
+        executionTime: submission.executionTime || 0,
+        memoryUsed: submission.memoryUsed || 0,
+        compilerOutput: submission.compilerOutput || null,
+        errorMessage: submission.errorMessage || null,
         results: visibleResults,
-        message: updatedSubmission?.status && updatedSubmission.status !== 'PENDING'
-          ? 'Submission evaluated'
-          : 'Submission queued for evaluation',
+        message: 'Submission queued for evaluation',
         hiddenCount: tcData.filter(tc => tc.isHidden).length,
       }
     });
@@ -2025,7 +2092,7 @@ exports.getSubmission = async (req, res) => {
 
 exports.aiAssist = async (req, res) => {
   try {
-    const { attemptId, problemId, code, language, question, level, action, errorContext, activity } = req.body;
+    const { attemptId, problemId, code, language, question, level, action, errorContext } = req.body;
     if (!attemptId || !problemId) return fail(res, 400, 'attemptId and problemId are required');
 
     const service = require('../services/codingAiAssistantService');
@@ -2039,7 +2106,6 @@ exports.aiAssist = async (req, res) => {
       level: Number(level) || 1,
       action: action || 'hint',
       errorContext: errorContext || '',
-      activity: activity || {},
     });
     ok(res, result);
   } catch (err) {
@@ -2053,18 +2119,11 @@ exports.aiAssistStatus = async (req, res) => {
   try {
     const { attemptId, problemId } = req.params;
     const service = require('../services/codingAiAssistantService');
-    const activity = {
-      timeSpentSeconds: req.query.timeSpentSeconds,
-      editCount: req.query.editCount,
-      typedChars: req.query.typedChars,
-      runAttempts: req.query.runAttempts,
-    };
 
     const status = await service.getStatus({
       attemptId: Number(attemptId),
       problemId: Number(problemId),
       participantId: req.user.id,
-      activity,
     });
 
     ok(res, status);
@@ -2219,122 +2278,146 @@ exports.submitAssessment = async (req, res) => {
     const { attemptId } = req.params;
     const executionService = require('../services/codeExecutionService');
 
-    // Use a transaction with row lock to prevent duplicate submissions atomically
+    // STEP 1: Quick re-verification and load (NO transaction / row lock)
+    // We first read the attempt outside any transaction to check status and load data.
+    const attempt = await CodingAttempt.findOne({
+      where: { id: attemptId, participantId: req.user.id }
+    });
+    if (!attempt) throw Object.assign(new Error('Attempt not found'), { status: 404 });
+    if (attempt.status !== 'IN_PROGRESS') throw Object.assign(new Error('Attempt already submitted'), { status: 409 });
+
+    const assessment = await CodingAssessment.findByPk(attempt.assessmentId, {
+      include: [{ model: CodingProblem, as: 'problems', include: [{ model: CodingTestCase, as: 'testCases' }] }]
+    });
+    const problems = assessment?.problems || [];
+    const existingSubs = await CodingSubmission.findAll({
+      where: { attemptId: attempt.id }
+    });
+    const problemData = req.body.submissions || [];
+
+    // Determine which problems need evaluation:
+    // Skip problems that already have an evaluated submission with identical code and language.
+    const toEvaluate = [];
+    for (const pd of problemData) {
+      const problem = problems.find(p => p.id === pd.problemId);
+      if (!problem) continue;
+      const testCases = problem.testCases || [];
+      if (testCases.length === 0) continue;
+
+      const existingSub = existingSubs.find(s => s.problemId === pd.problemId);
+      const isAlreadyEvaluated = existingSub &&
+        existingSub.status !== 'PENDING' &&
+        existingSub.totalTestCases > 0 &&
+        existingSub.code === pd.code &&
+        (existingSub.language || 'javascript') === (pd.language || 'javascript');
+
+      if (!isAlreadyEvaluated) {
+        toEvaluate.push({ pd, problem, testCases, existingSub });
+      }
+    }
+
+    // STEP 2: Evaluate remaining/modified problems in parallel --- OUTSIDE any transaction.
+    // This is the critical fix: Docker container execution no longer holds a DB row lock.
+    const evalResultsMap = new Map(); // problemId -> { status, score, outputData, totalTC, passedTC, maxExecTime, maxMem }
+    if (toEvaluate.length > 0) {
+      const evalPromises = toEvaluate.map(async ({ pd, problem, testCases, existingSub }) => {
+        const evalStart = Date.now();
+        try {
+          const results = await executionService.runTests(pd.code, pd.language || 'javascript', testCases, problem.timeLimit, problem.memoryLimit);
+          const { checkRequiredConcepts } = require('../services/requiredConceptValidator');
+          const conceptValidation = checkRequiredConcepts(pd.code, pd.language || 'javascript', problem.requiredConcepts || []);
+          const totalTC = results.length;
+          const passedTC = results.filter(r => r.passed).length;
+          const maxExecTime = Math.max(...results.map(r => r.executionTime || 0), 0);
+          const maxMem = Math.max(...results.map(r => r.memoryUsed || 0), 0);
+          const problemMarks = problem.marks || 10;
+          logger.info(`[SubmitAssessment] Evaluated problem ${problem.id} in ${Date.now() - evalStart}ms (Passed ${passedTC}/${totalTC})`);
+          let score = totalTC > 0 ? Math.min((passedTC / totalTC) * problemMarks, problemMarks) : 0;
+          const isAccepted = totalTC > 0 && passedTC === totalTC;
+          let status = 'FAILED';
+          if (isAccepted) {
+            if (conceptValidation.ok) {
+              status = 'ACCEPTED';
+            } else {
+              status = 'FAILED_REQUIREMENTS';
+              score = 0;
+            }
+          }
+          else if (results.some(r => r.status === 'TIME_LIMIT_EXCEEDED')) status = 'TIME_LIMIT_EXCEEDED';
+          else if (results.some(r => r.status === 'RUNTIME_ERROR')) status = 'RUNTIME_ERROR';
+          else if (results.some(r => r.status === 'COMPILATION_ERROR')) status = 'COMPILATION_ERROR';
+          else if (passedTC > 0) status = 'WRONG_ANSWER';
+
+          const outputData = results.map(r => ({
+            testCaseId: r.testCaseId,
+            input: r.input,
+            expectedOutput: r.expectedOutput,
+            actualOutput: r.actualOutput,
+            passed: r.passed,
+            status: r.status,
+            executionTime: r.executionTime,
+            memoryUsed: r.memoryUsed,
+            isHidden: r.isHidden
+          }));
+
+          evalResultsMap.set(problem.id, {
+            status, score: Math.round(score * 100) / 100,
+            totalTC, passedTC, maxExecTime, maxMem, outputData,
+            code: pd.code, language: pd.language || 'javascript',
+            existingSub: existingSub || null
+          });
+        } catch (evalErr) {
+          logger.error('Error evaluating problem during submission', { problemId: pd.problemId, error: evalErr.message });
+        }
+      });
+
+      await Promise.allSettled(evalPromises);
+    }
+
+    // STEP 3: Short transaction ONLY for writing results.
+    // Row lock is held only for the fast DB writes, not for Docker execution.
     const result = await sequelize.transaction(async (t) => {
-      const attempt = await CodingAttempt.findOne({
+      // Re-check attempt status inside transaction to prevent duplicate submissions atomically
+      const lockedAttempt = await CodingAttempt.findOne({
         where: { id: attemptId, participantId: req.user.id },
         lock: t.LOCK.UPDATE,
         transaction: t
       });
-      if (!attempt) throw Object.assign(new Error('Attempt not found'), { status: 404 });
-      if (attempt.status !== 'IN_PROGRESS') throw Object.assign(new Error('Attempt already submitted'), { status: 409 });
+      if (!lockedAttempt) throw Object.assign(new Error('Attempt not found'), { status: 404 });
+      if (lockedAttempt.status !== 'IN_PROGRESS') throw Object.assign(new Error('Attempt already submitted'), { status: 409 });
 
-      const assessment = await CodingAssessment.findByPk(attempt.assessmentId, {
-        include: [{ model: CodingProblem, as: 'problems', include: [{ model: CodingTestCase, as: 'testCases' }] }],
-        transaction: t
-      });
-      const problems = assessment?.problems || [];
-      const existingSubs = await CodingSubmission.findAll({
-        where: { attemptId: attempt.id },
-        transaction: t
-      });
-      const problemData = req.body.submissions || [];
-
-      // Determine which problems need evaluation:
-      // Skip problems that already have an evaluated submission with identical code and language.
-      const toEvaluate = [];
-      for (const pd of problemData) {
-        const problem = problems.find(p => p.id === pd.problemId);
-        if (!problem) continue;
-        const testCases = problem.testCases || [];
-        if (testCases.length === 0) continue;
-
-        const existingSub = existingSubs.find(s => s.problemId === pd.problemId);
-        const isAlreadyEvaluated = existingSub &&
-          existingSub.status !== 'PENDING' &&
-          existingSub.totalTestCases > 0 &&
-          existingSub.code === pd.code &&
-          (existingSub.language || 'javascript') === (pd.language || 'javascript');
-
-        if (!isAlreadyEvaluated) {
-          toEvaluate.push({ pd, problem, testCases, existingSub });
+      // Write all evaluated submissions in parallel (fast DB ops only)
+      const writePromises = [];
+      for (const [problemIdVal, ev] of evalResultsMap) {
+        if (ev.existingSub) {
+          writePromises.push(ev.existingSub.update({
+            code: ev.code,
+            language: ev.language,
+            status: ev.status,
+            totalTestCases: ev.totalTC,
+            passedTestCases: ev.passedTC,
+            executionTime: ev.maxExecTime,
+            memoryUsed: ev.maxMem,
+            score: ev.score,
+            output: ev.outputData
+          }, { transaction: t }));
+        } else {
+          writePromises.push(CodingSubmission.create({
+            attemptId,
+            problemId: problemIdVal,
+            code: ev.code,
+            language: ev.language,
+            status: ev.status,
+            totalTestCases: ev.totalTC,
+            passedTestCases: ev.passedTC,
+            executionTime: ev.maxExecTime,
+            memoryUsed: ev.maxMem,
+            score: ev.score,
+            output: ev.outputData
+          }, { transaction: t }));
         }
       }
-
-      // Evaluate remaining/modified problems in parallel (fast & non-blocking)
-      if (toEvaluate.length > 0) {
-        const evalPromises = toEvaluate.map(async ({ pd, problem, testCases, existingSub }) => {
-          try {
-            const results = await executionService.runTests(pd.code, pd.language || 'javascript', testCases, problem.timeLimit, problem.memoryLimit);
-            const { checkRequiredConcepts } = require('../services/requiredConceptValidator');
-            const conceptValidation = checkRequiredConcepts(pd.code, pd.language || 'javascript', problem.requiredConcepts || []);
-            const totalTC = results.length;
-            const passedTC = results.filter(r => r.passed).length;
-            const maxExecTime = Math.max(...results.map(r => r.executionTime || 0), 0);
-            const maxMem = Math.max(...results.map(r => r.memoryUsed || 0), 0);
-            const problemMarks = problem.marks || 10;
-            let score = totalTC > 0 ? Math.min((passedTC / totalTC) * problemMarks, problemMarks) : 0;
-            const isAccepted = totalTC > 0 && passedTC === totalTC;
-            let status = 'FAILED';
-            if (isAccepted) {
-              if (conceptValidation.ok) {
-                status = 'ACCEPTED';
-              } else {
-                status = 'FAILED_REQUIREMENTS';
-                score = 0;
-              }
-            }
-            else if (results.some(r => r.status === 'TIME_LIMIT_EXCEEDED')) status = 'TIME_LIMIT_EXCEEDED';
-            else if (results.some(r => r.status === 'RUNTIME_ERROR')) status = 'RUNTIME_ERROR';
-            else if (results.some(r => r.status === 'COMPILATION_ERROR')) status = 'COMPILATION_ERROR';
-            else if (passedTC > 0) status = 'WRONG_ANSWER';
-
-            const outputData = results.map(r => ({
-              testCaseId: r.testCaseId,
-              input: r.input,
-              expectedOutput: r.expectedOutput,
-              actualOutput: r.actualOutput,
-              passed: r.passed,
-              status: r.status,
-              executionTime: r.executionTime,
-              memoryUsed: r.memoryUsed,
-              isHidden: r.isHidden
-            }));
-
-            if (existingSub) {
-              await existingSub.update({
-                code: pd.code,
-                language: pd.language || 'javascript',
-                status,
-                totalTestCases: totalTC,
-                passedTestCases: passedTC,
-                executionTime: maxExecTime,
-                memoryUsed: maxMem,
-                score: Math.round(score * 100) / 100,
-                output: outputData
-              }, { transaction: t });
-            } else {
-              await CodingSubmission.create({
-                attemptId,
-                problemId: pd.problemId,
-                code: pd.code,
-                language: pd.language || 'javascript',
-                status,
-                totalTestCases: totalTC,
-                passedTestCases: passedTC,
-                executionTime: maxExecTime,
-                memoryUsed: maxMem,
-                score: Math.round(score * 100) / 100,
-                output: outputData
-              }, { transaction: t });
-            }
-          } catch (evalErr) {
-            logger.error('Error evaluating problem during submission', { problemId: pd.problemId, error: evalErr.message });
-          }
-        });
-
-        await Promise.allSettled(evalPromises);
-      }
+      if (writePromises.length > 0) await Promise.all(writePromises);
 
       const finalSubs = await CodingSubmission.findAll({ where: { attemptId }, transaction: t });
       let totalScore = 0;
@@ -2359,31 +2442,44 @@ exports.submitAssessment = async (req, res) => {
           timeTaken = Number(req.body.actualTestDurationSeconds);
         } else if (req.body?.timeTaken != null && Number(req.body.timeTaken) > 0) {
           timeTaken = Number(req.body.timeTaken);
-        } else if (attempt.monitoringSessionId) {
+        } else if (lockedAttempt.monitoringSessionId) {
           const { MonitoringSession } = require('../models');
-          const ms = await MonitoringSession.findOne({ where: { sessionId: attempt.monitoringSessionId } });
+          const ms = await MonitoringSession.findOne({ where: { sessionId: lockedAttempt.monitoringSessionId } });
           if (ms?.metadata?.actualTestDurationSeconds) {
             timeTaken = Number(ms.metadata.actualTestDurationSeconds);
           } else if (ms?.metadata?.activeDurationSeconds) {
             timeTaken = Number(ms.metadata.activeDurationSeconds);
           }
         }
-        if (timeTaken == null && attempt.startedAt) {
-          timeTaken = Math.max(0, Math.round((Date.now() - new Date(attempt.startedAt).getTime()) / 1000));
+        if (timeTaken == null && lockedAttempt.startedAt) {
+          timeTaken = Math.max(0, Math.round((Date.now() - new Date(lockedAttempt.startedAt).getTime()) / 1000));
         }
       } catch (_) {}
 
-      await attempt.update({
+      await lockedAttempt.update({
         status: 'SUBMITTED', submittedAt: new Date(),
         ...(timeTaken != null ? { timeTaken } : {})
       }, { transaction: t });
+
+      // Calculate AI usage statistics for this attempt
+      const aiAssistantService = require('../services/codingAiAssistantService');
+      const aiStats = await aiAssistantService.calculateAiUsageStats({
+        attemptId: lockedAttempt.id,
+        assessmentId: lockedAttempt.assessmentId,
+        participantId: req.user.id,
+      });
+
       const codingResult = await CodingResult.create({
-        attemptId: attempt.id, assessmentId: attempt.assessmentId, participantId: req.user.id,
+        attemptId: lockedAttempt.id, assessmentId: lockedAttempt.assessmentId, participantId: req.user.id,
         totalScore: Math.min(totalScore, 999.99),
         maxScore: Math.min(maxScore, 999.99),
         percentage: Math.min(percentage, 100),
         problemsSolved, totalProblems: problems.length,
-        totalTestCases, passedTestCases
+        totalTestCases, passedTestCases,
+        aiUsed: aiStats.aiUsed,
+        aiInteractionCount: aiStats.totalInteractions,
+        aiUsageDetails: aiStats.problemUsage,
+        aiUsageLevel: aiStats.aiUsageLevel,
       }, { transaction: t });
       return codingResult;
     });
@@ -2471,6 +2567,113 @@ exports.getResults = async (req, res) => {
   } catch (err) { fail(res, 500, err.message); }
 };
 
+/**
+ * Exports assessment results to Excel format with AI usage information.
+ */
+exports.exportResultsToExcel = async (req, res) => {
+  try {
+    const { CodingAiHelp, CodingProblem } = require('../models');
+    const assessment = await CodingAssessment.findByPk(req.params.id);
+    if (!assessment) return fail(res, 404, 'Assessment not found');
+
+    const results = await CodingResult.findAll({
+      where: { assessmentId: req.params.id },
+      include: [
+        { model: User, as: 'participant', attributes: ['id', 'name', 'email'] },
+        {
+          model: CodingAttempt,
+          as: 'attempt',
+          attributes: ['id', 'status', 'timeTaken', 'startedAt', 'submittedAt'],
+        }
+      ],
+      order: [['percentage', 'DESC']],
+    });
+
+    // Get detailed AI usage for each result
+    const resultsWithAiDetails = await Promise.all(results.map(async (result) => {
+      const aiHelpRecords = await CodingAiHelp.findAll({
+        where: { attemptId: result.attemptId, participantId: result.participantId },
+        include: [
+          {
+            model: CodingProblem,
+            as: 'problem',
+            attributes: ['id', 'title'],
+          }
+        ],
+        order: [['created_at', 'ASC']],
+      });
+
+      const totalInteractions = aiHelpRecords.length;
+      const questionsWithAi = new Set(aiHelpRecords.map(r => String(r.problemId))).size;
+
+      // Group by problem for question-level breakdown
+      const problemBreakdown = {};
+      aiHelpRecords.forEach(record => {
+        const problemId = String(record.problemId);
+        if (!problemBreakdown[problemId]) {
+          problemBreakdown[problemId] = {
+            problemId,
+            problemTitle: record.problem?.title || 'Unknown',
+            aiUsed: true,
+            interactions: 0,
+          };
+        }
+        problemBreakdown[problemId].interactions += 1;
+      });
+
+      return {
+        ...result.toJSON(),
+        participantName: result.participant?.name || '—',
+        participantEmail: result.participant?.email || '—',
+        aiUsed: result.aiUsed || false,
+        aiInteractionCount: result.aiInteractionCount || 0,
+        questionsWithAi,
+        problemBreakdown: Object.values(problemBreakdown),
+      };
+    }));
+
+    // Create Excel-compatible CSV format
+    const headers = [
+      'Participant Name',
+      'Participant Email',
+      'Score',
+      'Percentage',
+      'Problems Solved',
+      'Total Problems',
+      'Time Taken (seconds)',
+      'AI Used',
+      'AI Interaction Count',
+      'Questions With AI',
+      'AI Usage Level',
+      'Submitted At',
+    ];
+
+    const rows = resultsWithAiDetails.map(r => [
+      r.participantName,
+      r.participantEmail,
+      r.totalScore,
+      r.percentage,
+      r.problemsSolved,
+      r.totalProblems,
+      r.attempt?.timeTaken || 0,
+      r.aiUsed ? 'Yes' : 'No',
+      r.aiInteractionCount,
+      r.questionsWithAi,
+      r.aiUsageLevel || 'NONE',
+      r.attempt?.submittedAt ? new Date(r.attempt.submittedAt).toISOString() : '—',
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(',')),
+    ].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="coding-assessment-${assessment.title}-${Date.now()}.csv"`);
+    res.send(csvContent);
+  } catch (err) { fail(res, 500, err.message); }
+};
+
 exports.getParticipants = async (req, res) => {
   try {
     const { search = '', status: filterStatus = '' } = req.query;
@@ -2550,6 +2753,75 @@ exports.getParticipants = async (req, res) => {
       totalPages: paginationMeta.totalPages
     });
   } catch (err) { fail(res, 500, err.message); }
+};
+
+/**
+ * POST /api/coding/participant/attempts/:attemptId/violation
+ * Logs a coding assessment violation (same rules as Quiz).
+ * Uses proctoringService.recordViolation which already handles both Quiz and Coding identically.
+ */
+exports.recordViolation = async (req, res) => {
+  try {
+    const { attemptId } = req.params;
+    const { type, weight, questionNumber } = req.body;
+    const participantId = req.user.id;
+
+    console.log('[CODING_VIOLATION] Payload received:', { attemptId, type, weight, participantId, body: req.body });
+
+    const { CodingAttempt } = require('../models');
+    const proctoringService = require('../services/proctoringService');
+
+    const attempt = await CodingAttempt.findOne({
+      where: { id: attemptId, participantId }
+    });
+    if (!attempt) {
+      console.log('[CODING_VIOLATION] Attempt not found:', { attemptId, participantId });
+      return res.status(404).json({ error: 'Attempt not found' });
+    }
+
+    // Get the proctoring session for this attempt
+    const { ExamSession } = require('../models');
+    const session = await ExamSession.findOne({
+      where: { codingAttemptId: attemptId, status: { [Op.in]: ['PENDING', 'ACTIVE'] } }
+    });
+
+    if (!session) {
+      console.log('[CODING_VIOLATION] No active proctoring session found for attempt:', attemptId);
+      // Still record the violation even without a session
+    }
+
+    // Use proctoringService.recordViolation - it handles Quiz and Coding identically
+    // TAB_SWITCH and other browser types are in AUDIT_ONLY_BROWSER_TYPES and never terminate
+    if (session) {
+      const { violation, terminated } = await proctoringService.recordViolation({
+        session,
+        type: type || 'TAB_SWITCH',
+        message: `${type || 'TAB_SWITCH'} detected during coding assessment`,
+        metadata: { questionNumber, weight }
+      });
+
+      console.log('[CODING_VIOLATION] Recorded:', { violationId: violation?.id, terminated });
+
+      return res.json({
+        success: true,
+        disqualified: terminated,
+        violationCount: session.warningsCount || 0,
+        message: terminated ? 'Assessment terminated due to violation' : 'Violation recorded'
+      });
+    } else {
+      // Fallback: just acknowledge the violation if no session exists
+      console.log('[CODING_VIOLATION] No session - acknowledging violation without recording');
+      return res.json({
+        success: true,
+        disqualified: false,
+        violationCount: 0,
+        message: 'Violation acknowledged (no active session)'
+      });
+    }
+  } catch (err) {
+    console.error('[CODING_VIOLATION] Error:', err.message);
+    fail(res, 500, err.message);
+  }
 };
 
 exports.getResultsSummary = async (req, res) => {

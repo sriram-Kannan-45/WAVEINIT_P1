@@ -3,9 +3,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Changes (2026-05-27):
  *   1. Auto-enters native fullscreen on mount — no "Begin Secure Exam" gate.
- *   2. Listens for fullscreenchange and enforces a 3-strike rule:
- *        exit #1 + #2 → warning modal with "Return to Fullscreen" button
- *        exit #3      → auto-submit (terminate exam)
+ *   2. Shares confirmed fullscreen warnings and audit reporting with Coding.
  *   3. New white + blue UI matching the dark mock the user shared, but in a
  *      light, professional theme. Header with title + timer + warning badge,
  *      question card with letter-coded MCQ rows, and right sidebar holding
@@ -37,26 +35,24 @@ import { API_BASE } from '../api/api'
 import { getAuthHeaders } from '../api/request'
 import { useQuizProtection } from '../hooks/useQuizProtection.jsx'
 import QuizWatermark from './ai-quizzes/QuizWatermark'
+import AssessmentAIMentor from './ai-mentor/AssessmentAIMentor'
 import monitoringClient from '../proctoring/engine/MonitoringEngineClient'
+import {
+  buildAttemptScope,
+  readAttemptDraft,
+  writeAttemptDraft,
+  clearAttemptDraft,
+  purgeStaleAttemptDrafts,
+} from '../utils/attemptDraftStorage'
 import '../styles/quiz-taking.css'
 
-const MAX_WARNINGS = 3
+import { fsApi, useAssessmentFullscreen } from '../proctoring/hooks/useAssessmentFullscreen'
+import { FullscreenWarningTitle, FullscreenWarningDescription } from '../proctoring/components/FullscreenWarningContent'
 
 const formatTime = (totalSec) => {
   const m = Math.floor(totalSec / 60)
   const s = totalSec % 60
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-}
-
-/* ── Native Fullscreen helpers (cross-browser) ───────────────────────────── */
-const fsApi = {
-  request: (el = document.documentElement) =>
-    (el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen)?.call(el),
-  exit: () =>
-    (document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen)?.call(document),
-  element: () =>
-    document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement,
-  changeEvents: ['fullscreenchange', 'webkitfullscreenchange', 'msfullscreenchange'],
 }
 
 /* ── Animated SVG progress ring (sidebar) ────────────────────────────────── */
@@ -127,6 +123,9 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
   const [submitting, setSubmitting] = useState(false)
   const [showConfirmSubmit, setShowConfirmSubmit] = useState(false)
   const [attemptInvalidMsg, setAttemptInvalidMsg] = useState(null)
+  // AI Mentor panel visibility — the panel's own close (X) collapses it to a
+  // reopen button, so the participant can reclaim sidebar space mid-quiz.
+  const [mentorOpen, setMentorOpen] = useState(true)
   const timerRef = useRef(null)
   const answersRef = useRef(answers)
 
@@ -138,16 +137,9 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
   const [resultData, setResultData] = useState(null)
 
   /* ── Fullscreen + warning state ──────────────────────────────────────── */
-  const [isFullscreen, setIsFullscreen] = useState(!!fsApi.element())
-  const [warnings, setWarnings] = useState(0)
-  const [warningOpen, setWarningOpen] = useState(false)
   const [terminated, setTerminated] = useState(false)
-  // If the consent gate already put us in fullscreen, treat that as the
-  // initial entry so the very first ESC counts as strike #1. Without this,
-  // the auto-fullscreen request on mount (no user gesture) is blocked by the
-  // browser and warnings never fire.
-  const enteredFullscreenOnce = useRef(!!fsApi.element())
   const submittedRef = useRef(false)
+  const { isFullscreen, warnings, warningOpen, setWarningOpen } = useAssessmentFullscreen({ submittedRef, terminated })
 
   /* ── Screen share monitoring state ───────────────────────────────────── */
   const [isScreenSharing, setIsScreenSharing] = useState(!!screenStream)
@@ -178,6 +170,8 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
     },
     currentQ,
     enabled: quizData?.copyProtectionEnabled ?? true,
+    // The shared monitoring engine owns browser events and their audit budget.
+    monitorBrowserEvents: false,
     participantName: userData?.name || '',
     participantId: String(userData?.id || ''),
   })
@@ -186,28 +180,29 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
   const total = questions.length
   const q = questions[currentQ]
 
-  /* ── Monitoring event bridge ───────────────────────────────────────── */
-  const reportMonitoringEvent = useCallback(async (eventType, severity = 'WARNING', metadata = {}) => {
-    if (!attemptId) return
-    try {
-      const endedAt = metadata.violationEndTime || new Date().toISOString()
-      const durationMs = Math.max(0, Number(metadata.durationMs ?? (Number(metadata.duration) || 0) * 1000) || 0)
-      const startedAt = metadata.violationStartTime || new Date(new Date(endedAt).getTime() - durationMs).toISOString()
-      await monitoringClient.reportEvent({
-        source: 'LAPTOP',
-        eventType,
-        severity,
-        durationMs,
-        confidence: metadata.confidence || 0.95,
-        startedAt,
-        endedAt,
-        occurredAt: endedAt,
-        metadata: { ...metadata, violationStartTime: startedAt, violationEndTime: endedAt },
-      })
-    } catch (e) {
-      console.warn('[QuizTaking] Monitoring event dispatch failed:', e)
-    }
-  }, [attemptId])
+  /* ── Draft scope ──────────────────────────────────────────────────────────
+     Saved answers are bound to {userId, attemptId, sessionToken digest,
+     question-set digest}. A draft written under any other scope is rejected and
+     deleted on read instead of restored, so a reused attempt id, a shared
+     browser, or a stale previous-session entry cannot pre-fill this attempt's
+     answers. Storage stays in sessionStorage — the same per-tab lifetime this
+     screen has always had. */
+  const draftStore = useMemo(
+    () => (typeof window !== 'undefined' ? window.sessionStorage : null),
+    [],
+  )
+  const questionIdsKey = questions.map(x => x?.id).join(',')
+  const draftScope = useMemo(
+    () => buildAttemptScope({
+      kind: 'quiz',
+      userId: userData?.id,
+      attemptId,
+      sessionToken,
+      problemIds: questions.map(x => x?.id),
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [userData?.id, attemptId, sessionToken, questionIdsKey],
+  )
 
   const flushOpenProctoringIntervals = useCallback(async () => {
     try {
@@ -215,7 +210,7 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
     } catch (_) {}
   }, [])
 
-  /* ── handleSubmit (memoised — used by timer, manual click, and 3rd strike) */
+  /* ── handleSubmit (memoised — used by timer and manual submission) */
   const handleSubmit = useCallback(
     async ({ silent = false, autoSubmit = false } = {}) => {
       if (submitting || submittedRef.current) return
@@ -303,7 +298,7 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
         } catch (_) {}
         
         try {
-          sessionStorage.removeItem(`quiz_progress_${attemptId}`)
+          clearAttemptDraft(draftScope, { store: draftStore })
         } catch (_) {}
 
         if (fsApi.element()) { try { fsApi.exit().catch(() => {}) } catch (_) {} }
@@ -316,12 +311,10 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
           }
         }
 
-        if (autoSubmit) {
-          setResultData(null)
-          onSubmit?.({ status: 'PENDING_RESULT', autoSubmitted: true })
-        } else {
-          setResultData({ status: 'PENDING_RESULT' })
-        }
+        // Navigate immediately after successful submission for BOTH
+        // manual and auto-submit so the participant is not stuck.
+        setResultData(null)
+        onSubmit?.({ status: 'PENDING_RESULT', autoSubmitted: autoSubmit })
       } catch (err) {
         submittedRef.current = false
         setSubmitting(false)
@@ -331,7 +324,7 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
         }
       }
     },
-    [attemptId, isStandardQuiz, quizId, quizData?.questions, sessionToken, flushOpenProctoringIntervals, onRecordingStop, webcamStream, screenStream, showSuccess, showError, onSubmit]
+    [attemptId, isStandardQuiz, quizId, quizData?.questions, sessionToken, flushOpenProctoringIntervals, onRecordingStop, webcamStream, screenStream, showSuccess, showError, onSubmit, draftScope, draftStore]
   )
 
   /* ── Auto-fullscreen on mount & lock active test start time ───────────── */
@@ -381,91 +374,6 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
       } catch (_) {}
     }
   }, [webcamStream, screenStream])
-
-  const fsExitTimerRef = useRef(null)
-  const fsExitStartTimeRef = useRef(null)
-
-  /* ── fullscreenchange listener — debounced 2.0s confirmation window ──────── */
-  useEffect(() => {
-    const onChange = () => {
-      const inFs = !!fsApi.element()
-      setIsFullscreen(inFs)
-
-      console.log('[QuizTaking] Fullscreen state transition detected:', {
-        inFs,
-        fullscreenElement: document.fullscreenElement?.tagName || null,
-        activeElement: document.activeElement?.tagName || 'UNKNOWN',
-        enteredOnce: enteredFullscreenOnce.current,
-        timestamp: new Date().toISOString(),
-      })
-
-      if (inFs) {
-        // Entered / returned to fullscreen
-        enteredFullscreenOnce.current = true
-        setWarningOpen(false)
-
-        // Cancel any pending exit violation confirmation timer
-        if (fsExitTimerRef.current) {
-          console.log('[QuizTaking] Fullscreen re-established within 2.0s confirmation window. Violation cancelled.')
-          clearTimeout(fsExitTimerRef.current)
-          fsExitTimerRef.current = null
-          fsExitStartTimeRef.current = null
-        }
-        return
-      }
-
-      // Exited fullscreen — check guards
-      if (submittedRef.current || terminated) return
-      if (!enteredFullscreenOnce.current) {
-        console.log('[QuizTaking] Fullscreen not active on initial mount. Awaiting candidate user gesture...')
-        return
-      }
-
-      // Start 2000ms debounce confirmation window before logging violation
-      if (!fsExitTimerRef.current) {
-        fsExitStartTimeRef.current = Date.now()
-        console.warn('[QuizTaking] Candidate exited fullscreen. Starting 2.0s confirmation window before logging violation...')
-
-        fsExitTimerRef.current = setTimeout(() => {
-          const stillOut = !fsApi.element()
-          console.log('[QuizTaking] Checking fullscreen status after 2.0s confirmation window:', { stillOut })
-
-          if (stillOut && !submittedRef.current && !terminated) {
-            const durationSec = Math.max(2.0, (Date.now() - (fsExitStartTimeRef.current || Date.now())) / 1000)
-            console.warn(`[QuizTaking] Confirmed FULLSCREEN_EXIT (duration: ${durationSec}s). Reporting violation to proctoring engine.`)
-
-            reportMonitoringEvent('FULLSCREEN_EXIT', 'HIGH', {
-              duration: durationSec,
-              trigger: 'confirmed_fullscreen_exit_2s',
-              exitCount: warnings + 1,
-            })
-
-            setWarnings((prev) => {
-              const next = prev + 1
-              setWarningOpen(true)
-              return next
-            })
-          }
-
-          fsExitTimerRef.current = null
-          fsExitStartTimeRef.current = null
-        }, 2000) // 2000ms debounce
-      }
-    }
-
-    fsApi.changeEvents.forEach((evt) =>
-      document.addEventListener(evt, onChange)
-    )
-    return () => {
-      if (fsExitTimerRef.current) {
-        clearTimeout(fsExitTimerRef.current)
-        fsExitTimerRef.current = null
-      }
-      fsApi.changeEvents.forEach((evt) =>
-        document.removeEventListener(evt, onChange)
-      )
-    }
-  }, [terminated, handleSubmit, onSubmit, warnings, reportMonitoringEvent])
 
   /* ── Screen share violation reporting ──────────────────────────────── */
   const reportViolation = useCallback(async (type, message) => {
@@ -562,16 +470,20 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
     }
   }, [screenStream, reportViolation, startReconnectTimer])
 
-  /* ── Status verification on question change ────────────────────────── */
+  /* ── Status verification ONCE on mount (not on every question change) ──── */
+  const statusCheckedRef = useRef(false)
   useEffect(() => {
     if (submittedRef.current || terminated || !attemptId) return
+    if (statusCheckedRef.current) return
+    statusCheckedRef.current = true
 
+    let cancelled = false
     const verifyAttemptStatus = async () => {
       try {
-        console.log(`[QuizTaking] Verifying attempt status for attemptId: ${attemptId} on question change to: ${currentQ}`)
         const res = await fetch(`${API_BASE}/quizzes/attempts/${attemptId}`, {
           headers: getAuthHeaders()
         })
+        if (cancelled) return
         if (!res.ok) {
           if (res.status === 404) {
             setAttemptInvalidMsg('This attempt was not found on the server.')
@@ -591,36 +503,66 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
           }
         }
       } catch (err) {
-        console.error('[QuizTaking] Failed to verify attempt status:', err)
+        if (!cancelled) console.error('[QuizTaking] Failed to verify attempt status:', err)
       }
     }
 
     verifyAttemptStatus()
+    return () => { cancelled = true }
   }, [attemptId, terminated])
 
   /* ── Countdown timer ─────────────────────────────────────────────────── */
+  // Authoritative end timestamp derived once from the quiz start (persisted so a
+  // refresh resumes the same countdown). The display is always recomputed from
+  // this end timestamp rather than decremented, so it never jumps, skips or
+  // repeats and always reaches exactly 0 at the exam end.
+  const [endsAt, setEndsAt] = useState(() => {
+    const totalSec = (quizData?.timeLimit || 30) * 60
+    try {
+      const startKey = `quiz_${quizId}_test_start_${attemptId}`
+      const storedStart = parseInt(sessionStorage.getItem(startKey), 10)
+      if (Number.isFinite(storedStart) && storedStart > 0) {
+        return storedStart + totalSec * 1000
+      }
+    } catch (_) {}
+    const start = parseInt(sessionStorage.getItem(`quiz_${quizId}_test_start_${attemptId}`), 10)
+    const base = Number.isFinite(start) && start > 0 ? start : Date.now()
+    try {
+      sessionStorage.setItem(`quiz_${quizId}_test_start_${attemptId}`, String(base))
+    } catch (_) {}
+    return base + totalSec * 1000
+  })
+
   useEffect(() => {
     if (isCopyDisqualified || isPaused || submittedRef.current) return
-    if (timeLeft <= 0) return
+    if (!endsAt) return
 
-    timerRef.current = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(timerRef.current)
-          timerRef.current = null
-          return 0
-        }
-        return prev - 1
+    let timeout = null
+    let cancelled = false
+
+    const tick = () => {
+      if (cancelled) return
+      const next = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000))
+      setTimeLeft(prev => {
+        if (prev === next) return prev
+        return next
       })
-    }, 1000)
+      if (next <= 0) return
+      const msIntoSecond = Date.now() % 1000
+      timeout = setTimeout(tick, (1000 - (msIntoSecond || 1000)) + 1)
+    }
+
+    tick()
 
     return () => {
+      cancelled = true
+      if (timeout) clearTimeout(timeout)
       if (timerRef.current) {
         clearInterval(timerRef.current)
         timerRef.current = null
       }
     }
-  }, [isCopyDisqualified, isPaused])
+  }, [isCopyDisqualified, isPaused, endsAt])
 
   /* ── Auto-submit trigger when timer reaches exactly 0 ────────────────── */
   useEffect(() => {
@@ -630,26 +572,40 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
     }
   }, [timeLeft, submitting, isCopyDisqualified, handleSubmit])
 
-  /* ── Autosave to localStorage ─────────────────────────────────────────── */
-  const PROGRESS_KEY = `quiz_progress_${attemptId}`
+  /* ── Autosave (scoped draft storage) ──────────────────────────────────── */
   const autosaveTimerRef = useRef(null)
 
   // Restore saved answers on mount
   useEffect(() => {
-    try {
-      const saved = sessionStorage.getItem(PROGRESS_KEY)
-      if (saved) {
-        const parsed = JSON.parse(saved)
-        if (parsed.answers && Object.keys(parsed.answers).length > 0) {
-          setAnswers(parsed.answers)
-        }
-        if (typeof parsed.currentQ === 'number' && parsed.currentQ > 0) {
-          setCurrentQ(parsed.currentQ)
-        }
-      }
+    // Two independent gates, both of which must pass before anything is
+    // restored into the answer state:
+    //   1. The backend is the source of truth for attempt lifecycle — only an
+    //      attempt the server still reports as IN_PROGRESS may be restored.
+    //   2. The draft must have been written under this exact scope; readAttemptDraft
+    //      deletes and reports anything else rather than returning it.
+    // Failing either gate leaves the attempt at its clean initial state (nothing
+    // selected, nothing typed), which is the correct start for a fresh attempt.
+    const attemptActive = quizData?.initialStatus === 'IN_PROGRESS'
+    if (!attemptActive) {
+      clearAttemptDraft(draftScope, { store: draftStore })
+      return
+    }
 
+    purgeStaleAttemptDrafts(draftScope, { store: draftStore })
 
-    } catch { /* ignore corrupt data */ }
+    const { data, rejected } = readAttemptDraft(draftScope, { store: draftStore })
+    if (rejected) {
+      console.warn('[QuizTaking] discarded a saved draft that did not belong to this attempt:', rejected)
+      return
+    }
+    if (!data) return
+
+    if (data.answers && Object.keys(data.answers).length > 0) {
+      setAnswers(data.answers)
+    }
+    if (typeof data.currentQ === 'number' && data.currentQ > 0) {
+      setCurrentQ(data.currentQ)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -658,19 +614,17 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
     if (submittedRef.current) return
     clearTimeout(autosaveTimerRef.current)
     autosaveTimerRef.current = setTimeout(() => {
-      try {
-        sessionStorage.setItem(PROGRESS_KEY, JSON.stringify({ answers, currentQ }))
-      } catch { /* storage full — ignore */ }
+      writeAttemptDraft(draftScope, { answers, currentQ }, { store: draftStore })
     }, 2000)
     return () => clearTimeout(autosaveTimerRef.current)
-  }, [answers, currentQ, PROGRESS_KEY])
+  }, [answers, currentQ, draftScope, draftStore])
 
   // Clear saved progress on submit
   useEffect(() => {
     if (submittedRef.current) {
-      try { sessionStorage.removeItem(PROGRESS_KEY) } catch { /* ignore */ }
+      clearAttemptDraft(draftScope, { store: draftStore })
     }
-  }, [PROGRESS_KEY])
+  }, [draftScope, draftStore])
 
   /* ── Helpers / derived state ─────────────────────────────────────────── */
   const handleAnswer = (questionId, value) => {
@@ -758,7 +712,7 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
                 aria-live="assertive"
               >
                 <AlertTriangle size={13} aria-hidden />
-                {warnings > 0 && `Exit: ${warnings}/${MAX_WARNINGS}`}
+                {warnings > 0 && `Exits: ${warnings}`}
                 {warnings > 0 && copyViolationCount > 0 && ' | '}
                 {copyViolationCount > 0 && `Copy: ${copyViolationCount}/${quizData?.maxCopyWarnings || 3}`}
               </span>
@@ -973,6 +927,33 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
 
         {/* SIDEBAR */}
         <aside className="qt-side" aria-label="Quiz progress and navigator">
+          {/* The assessment exposes one mentor surface, fixed at the top of the rail. */}
+          {!submitting && !submittedRef.current && !isCopyDisqualified && q && (
+            mentorOpen ? (
+              <div className="qt-side__panel qt-side__panel--mentor">
+                <div className="qt-mentor-box">
+                  <AssessmentAIMentor
+                    assessmentType="QUIZ"
+                    user={userData}
+                    attemptId={attemptId}
+                    question={q}
+                    sessionToken={sessionToken}
+                    onError={(msg) => showError(msg)}
+                    onClose={() => setMentorOpen(false)}
+                  />
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="qt-mentor-reopen"
+                onClick={() => setMentorOpen(true)}
+              >
+                Open AI Mentor
+              </button>
+            )
+          )}
+
           <div className="qt-side__panel qt-side__panel--ring">
             <ProgressRing percent={answeredPercent} />
           </div>
@@ -1102,7 +1083,7 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
         )}
       </AnimatePresence>
 
-      {/* ─── Fullscreen warning modal (strikes 1 & 2) ──────────────── */}
+      {/* ─── Fullscreen warning modal ──────────────── */}
       <AnimatePresence>
         {warningOpen && !terminated && (
           <motion.div
@@ -1124,20 +1105,10 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
                 <AlertTriangle size={32} />
               </div>
               <h2 id="qt-warn-title" className="qt-modal__title">
-                {warnings <= MAX_WARNINGS ? `Security Warning (${warnings} of ${MAX_WARNINGS})` : `Security Alert (${warnings} Attempts)`}
+                <FullscreenWarningTitle warnings={warnings} />
               </h2>
               <p className="qt-modal__desc">
-                {warnings <= MAX_WARNINGS ? (
-                  <>
-                    You switched tabs or exited fullscreen mode. Please return to fullscreen immediately. You are allowed
-                    <strong> up to {MAX_WARNINGS} attempts</strong> before a 10-mark penalty is added to your proctoring audit score.
-                  </>
-                ) : (
-                  <>
-                    You have exceeded the <strong>3 allowed tab switch / exit attempts</strong>. A
-                    <strong style={{ color: '#dc2626' }}> 10-mark malpractice penalty</strong> has been added to your proctoring audit report. Please return to fullscreen to continue your test.
-                  </>
-                )}
+                <FullscreenWarningDescription />
               </p>
               <button
                 type="button"
@@ -1152,7 +1123,7 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
         )}
       </AnimatePresence>
 
-      {/* ─── Termination overlay (strike 3) ───────────────────────────── */}
+      {/* ─── Invalid / ended attempt overlay ───────────────────────────── */}
       <AnimatePresence>
         {terminated && (
           <motion.div
@@ -1173,7 +1144,7 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
               </div>
               <h2 id="qt-term-title" className="qt-modal__title">Exam terminated</h2>
               <p className="qt-modal__desc">
-                {attemptInvalidMsg || `You exited fullscreen ${MAX_WARNINGS} times. Your attempt has been automatically submitted with the answers you provided.`}
+                {attemptInvalidMsg || 'Your attempt has ended. Your submitted answers have been saved.'}
               </p>
               <div className="qt-modal__hint">
                 {attemptInvalidMsg ? (

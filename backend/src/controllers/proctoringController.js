@@ -12,6 +12,7 @@ const { acquireLock, releaseLock } = require('../config/redis');
 const logger = require('../utils/logger');
 
 const { gradeAnswer } = require('../utils/gradeAnswer');
+const { sanitiseServedProblem, assertQuizPayloadClean } = require('../services/starterCodeIntegrity');
 
 function ok(res, data) { return res.json({ success: true, data }); }
 function fail(res, status, message) { return res.status(status).json({ success: false, message }); }
@@ -266,20 +267,36 @@ exports.getExamData = async (req, res, next) => {
       const problems = (assessment.problems || [])
         .slice()
         .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-        .map(p => ({
-          id: p.id,
-          title: p.title,
-          description: p.description,
-          constraints: p.constraints,
-          inputFormat: p.inputFormat,
-          outputFormat: p.outputFormat,
-          sampleInput: p.sampleInput,
-          sampleOutput: p.sampleOutput,
-          difficulty: p.difficulty,
-          marks: p.marks,
-          order: p.order,
-          starterCode: p.starterCode,
-        }));
+        .map(p => {
+          // The starter template is the participant's initial editor content, so
+          // it goes through the integrity guard: a starter that matches the
+          // stored reference solution is replaced with the clean per-language
+          // skeleton and alerted on, rather than pre-filling the answer.
+          const guarded = sanitiseServedProblem({
+            problem: p,
+            context: {
+              surface: 'proctoring.getExamData',
+              participantId: session.participantId,
+              sessionId: session.id,
+              attemptId: session.attemptId,
+              assessmentId: session.assessmentId,
+            },
+          });
+          return {
+            id: p.id,
+            title: p.title,
+            description: p.description,
+            constraints: p.constraints,
+            inputFormat: p.inputFormat,
+            outputFormat: p.outputFormat,
+            sampleInput: p.sampleInput,
+            sampleOutput: p.sampleOutput,
+            difficulty: p.difficulty,
+            marks: p.marks,
+            order: p.order,
+            starterCode: guarded.starterCode,
+          };
+        });
 
       return ok(res, {
         session: proctoring.buildClientView(session),
@@ -324,6 +341,20 @@ exports.getExamData = async (req, res, next) => {
       selectedOption: a.selectedOption,
       answerText: a.answerText || '',
     }));
+
+    // Quiz analogue of the pre-fill guard: assert the live payload carries no
+    // answer-key field. The whitelist above already excludes them, so a hit here
+    // means a regression upstream — the loud alert is the point.
+    assertQuizPayloadClean({
+      questions,
+      context: {
+        surface: 'proctoring.getExamData',
+        participantId: session.participantId,
+        sessionId: session.id,
+        attemptId: session.attemptId,
+        quizId: session.quizId,
+      },
+    });
 
     ok(res, {
       session: proctoring.buildClientView(session),
@@ -444,8 +475,10 @@ exports.finalize = async (req, res, next) => {
 
     const finalAnswers = Array.isArray(req.body?.answers) ? req.body.answers : null;
     if (finalAnswers && finalAnswers.length) {
-      for (const a of finalAnswers) {
-        if (!a || a.questionId == null) continue;
+      // Upsert all final answers in parallel (was sequential before — a big
+      // latency bottleneck when the quiz has many questions).
+      await Promise.all(finalAnswers.map(async (a) => {
+        if (!a || a.questionId == null) return;
         const [row] = await QuizAnswer.findOrCreate({
           where: { attemptId: session.attemptId, questionId: a.questionId },
           defaults: {
@@ -458,7 +491,7 @@ exports.finalize = async (req, res, next) => {
         row.selectedOption = a.selectedOption ?? row.selectedOption;
         row.answerText = a.answerText ?? row.answerText;
         await row.save();
-      }
+      }));
     }
 
     await proctoring.submitSession(session);
@@ -473,13 +506,13 @@ exports.finalize = async (req, res, next) => {
 
     const qById = new Map((quiz.questions || []).map(q => [q.id, q]));
     let totalScore = 0;
+
+    // Grade all rows: objective questions synchronously; fire AI evaluations
+    // for subjective questions in parallel (was sequential before).
+    const gradePromises = [];
     for (const row of savedRows) {
       const q = qById.get(row.questionId);
       if (!q) continue;
-
-      let score = 0;
-      let isCorrect = false;
-      let feedback = '';
 
       if (['MCQ', 'TRUE_FALSE', 'FILL_BLANK', 'MATCHING'].includes(q.questionType)) {
         const result = gradeAnswer(q, {
@@ -488,34 +521,41 @@ exports.finalize = async (req, res, next) => {
           answerText: row.answerText || '',
           matches: null
         });
-        isCorrect = result.isCorrect;
-        score = result.score;
-        if (q.questionType === 'MATCHING') {
-          feedback = `Score: ${score}%. Matched ${result.correctCount} of ${result.total} correctly.`;
-        } else {
-          feedback = isCorrect ? 'Correct!' : 'Incorrect';
-        }
+        row.isCorrect = result.isCorrect;
+        row.score = result.score;
+        row.feedback = q.questionType === 'MATCHING'
+          ? `Score: ${result.score}%. Matched ${result.correctCount} of ${result.total} correctly.`
+          : result.isCorrect ? 'Correct!' : 'Incorrect';
       } else {
-        try {
-          const evalResult = await aiService.evaluateShortAnswer(
-            q.questionText, q.correctAnswer, row.answerText || '',
-          );
-          score = evalResult.score || 0;
-          feedback = evalResult.feedback || '';
-          isCorrect = evalResult.isCorrect || false;
-        } catch (e) {
-          logger.warn('AI eval failed; awarding 0', { err: e.message });
-          score = 0; feedback = 'Could not evaluate'; isCorrect = false;
-        }
+        gradePromises.push(
+          (async () => {
+            try {
+              const evalResult = await aiService.evaluateShortAnswer(
+                q.questionText, q.correctAnswer, row.answerText || '',
+              );
+              row.isCorrect = evalResult.isCorrect || false;
+              row.score = evalResult.score || 0;
+              row.feedback = evalResult.feedback || '';
+            } catch (e) {
+              logger.warn('AI eval failed; awarding 0', { err: e.message });
+              row.isCorrect = false;
+              row.score = 0;
+              row.feedback = 'Could not evaluate';
+            }
+          })()
+        );
       }
-
-      row.isCorrect = isCorrect;
-      row.score = score;
-      row.feedback = feedback;
       row.evaluatedByAI = true;
-      await row.save();
+    }
 
-      totalScore += Number(score);
+    if (gradePromises.length > 0) {
+      await Promise.all(gradePromises);
+    }
+
+    // Save all graded rows in parallel (was sequential).
+    await Promise.all(savedRows.map(row => row.save()));
+    for (const row of savedRows) {
+      totalScore += Number(row.score || 0);
     }
 
     const totalQuestions = (quiz.questions || []).length;

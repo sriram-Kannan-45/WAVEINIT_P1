@@ -50,6 +50,13 @@ const QuizAttempt = sequelize.define('QuizAttempt', {
     allowNull: true,
     field: 'monitoring_session_id',
     comment: 'Linked ProctoringSession.session_id'
+  },
+  aiHelpUsage: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    field: 'ai_help_usage',
+    comment: 'Number of AI mentor exchanges used this attempt'
   }
 }, {
   tableName: 'quiz_attempts',

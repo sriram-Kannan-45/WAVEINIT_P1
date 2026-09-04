@@ -267,11 +267,12 @@ function InterviewRoomInner({ user }) {
           videoHeight: localVideoRef.current.videoHeight,
         })
       }
-      localVideoRef.current.addEventListener('loadedmetadata', onLoadedMetadata)
+      const videoEl = localVideoRef.current
+      videoEl.addEventListener('loadedmetadata', onLoadedMetadata)
       
       return () => {
-        if (localVideoRef.current) {
-          localVideoRef.current.removeEventListener('loadedmetadata', onLoadedMetadata)
+        if (videoEl) {
+          videoEl.removeEventListener('loadedmetadata', onLoadedMetadata)
         }
       }
     }
@@ -399,7 +400,7 @@ function InterviewRoomInner({ user }) {
       setPhase(PHASE.ERROR)
       onJoined?.(false)
     }
-  }, [socket, isConnected, interviewId, createOffer, setInterview, setPeers, joined])
+  }, [socket, interviewId, createOffer, setInterview, setPeers, joined, isInterviewer, preparePeer, setDevices, user?.id, user?.role])
 
   /**
    * Trainer: flip the interview to IN_PROGRESS via the backend and announce

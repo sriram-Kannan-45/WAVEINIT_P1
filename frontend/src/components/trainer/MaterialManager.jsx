@@ -59,6 +59,7 @@ function uploadWithProgress({ url, formData, token, onProgress }) {
 }
 
 function NoteEditor({ value, onChange }) {
+  const prompt = usePrompt()
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -92,8 +93,6 @@ function NoteEditor({ value, onChange }) {
       {children}
     </button>
   )
-
-  const prompt = usePrompt()
 
   const setLink = async () => {
     const previousUrl = editor.getAttributes('link').href

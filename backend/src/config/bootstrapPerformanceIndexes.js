@@ -206,6 +206,22 @@ async function bootstrapPerformanceIndexes(sequelize) {
       table: 'interviews', name: 'idx_perf_int_trainer_part',
       cols: [{ candidates: ['trainerId', 'trainer_id'] }, { candidates: ['participantId', 'participant_id'] }, { candidates: ['status'] }]
     },
+    {
+      table: 'coding_ai_help', name: 'idx_perf_cah_att_prob',
+      cols: [{ candidates: ['attemptId', 'attempt_id'] }, { candidates: ['problemId', 'problem_id'] }]
+    },
+    {
+      table: 'quiz_ai_help', name: 'idx_perf_qah_att_q',
+      cols: [{ candidates: ['attemptId', 'attempt_id'] }, { candidates: ['questionId', 'question_id'] }]
+    },
+    {
+      table: 'device_fingerprints', name: 'idx_perf_df_user',
+      cols: [{ candidates: ['userId', 'user_id'] }, { candidates: ['visitorId', 'visitor_id'] }]
+    },
+    {
+      table: 'token_blacklists', name: 'idx_perf_tb_hash',
+      cols: [{ candidates: ['tokenHash', 'token_hash'] }]
+    },
   ];
 
   for (const def of indexDefinitions) {

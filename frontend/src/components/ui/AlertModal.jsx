@@ -52,28 +52,6 @@ export function AlertModalProvider({ children }) {
     return () => clearTimeout(timer)
   }, [modalState])
 
-  // Keyboard accessibility: Escape to cancel, Enter to confirm (unless in textarea)
-  useEffect(() => {
-    if (!modalState) return
-
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        handleCancel()
-      } else if (e.key === 'Enter' && !e.shiftKey) {
-        // If focused on cancel button, let normal click trigger cancel
-        if (document.activeElement?.classList?.contains('wam-btn-cancel')) {
-          return
-        }
-        e.preventDefault()
-        handleConfirm()
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [modalState, inputValue, loading])
-
   const handleCancel = useCallback(() => {
     if (loading) return
     if (resolverRef.current) {
@@ -106,6 +84,28 @@ export function AlertModalProvider({ children }) {
       setModalState(null)
     }
   }, [loading, modalState, inputValue])
+
+  // Keyboard accessibility: Escape to cancel, Enter to confirm (unless in textarea)
+  useEffect(() => {
+    if (!modalState) return
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        handleCancel()
+      } else if (e.key === 'Enter' && !e.shiftKey) {
+        // If focused on cancel button, let normal click trigger cancel
+        if (document.activeElement?.classList?.contains('wam-btn-cancel')) {
+          return
+        }
+        e.preventDefault()
+        handleConfirm()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [modalState, handleCancel, handleConfirm])
 
   /**
    * confirm({ title, message, type, confirmText, cancelText, ... }) -> Promise<boolean>

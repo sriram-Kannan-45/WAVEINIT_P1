@@ -59,6 +59,7 @@ router.post('/assessments/:id/hide-result', roleMiddleware('TRAINER', 'ADMIN'), 
 
 // ── Results & Participants ──
 router.get('/assessments/:id/results', roleMiddleware('TRAINER', 'ADMIN'), ctrl.getResults);
+router.get('/assessments/:id/results/export', roleMiddleware('TRAINER', 'ADMIN'), ctrl.exportResultsToExcel);
 router.get('/assessments/:id/participants', roleMiddleware('TRAINER', 'ADMIN'), ctrl.getParticipants);
 router.get('/assessments/:id/results-summary', roleMiddleware('TRAINER', 'ADMIN'), ctrl.getResultsSummary);
 router.get('/assessments/:id/analytics', roleMiddleware('TRAINER', 'ADMIN'), ctrl.getAnalytics);
@@ -78,5 +79,8 @@ router.get('/participant/assessments/:id/result', roleMiddleware('PARTICIPANT'),
 // ── PARTICIPANT: AI assistant ──
 router.post('/participant/assist', roleMiddleware('PARTICIPANT'), optionalAssessmentSession, ctrl.aiAssist);
 router.get('/participant/assist/status/:attemptId/:problemId', roleMiddleware('PARTICIPANT'), ctrl.aiAssistStatus);
+
+// ── PARTICIPANT: Violation tracking (same as Quiz) ──
+router.post('/participant/attempts/:attemptId/violation', roleMiddleware('PARTICIPANT'), ctrl.recordViolation);
 
 module.exports = router;

@@ -63,6 +63,32 @@ const CodingResult = sequelize.define('CodingResult', {
     defaultValue: 0,
     field: 'passed_test_cases'
   },
+  aiUsed: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    field: 'ai_used',
+    comment: 'Whether AI assistance was used during the assessment'
+  },
+  aiInteractionCount: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    field: 'ai_interaction_count',
+    comment: 'Total number of AI interactions across all questions'
+  },
+  aiUsageDetails: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    field: 'ai_usage_details',
+    comment: 'Detailed AI usage breakdown per question: { problemId: { used: boolean, interactions: number, firstUsed: timestamp, lastUsed: timestamp } }'
+  },
+  aiUsageLevel: {
+    type: DataTypes.STRING(20),
+    allowNull: true,
+    field: 'ai_usage_level',
+    comment: 'AI usage level category: NONE, LIGHT, MODERATE, HIGH'
+  },
   rank: {
     type: DataTypes.INTEGER,
     allowNull: true

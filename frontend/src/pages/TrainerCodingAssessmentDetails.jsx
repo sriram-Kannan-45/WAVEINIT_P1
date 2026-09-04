@@ -8,10 +8,10 @@ import {
   Plus, Pencil, Trash2, Save, X, Check, Send, Loader2, Star,
   Search, Clock, Calendar, AlertCircle, AlertTriangle, RefreshCw,
   Code, Shield, ShieldCheck, Copy, Info, BarChart2, Sparkles,
-  Eye, MoreVertical, ChevronDown, ChevronUp, GripVertical
+  Eye, MoreVertical, ChevronDown, ChevronUp, GripVertical, Download
 } from 'lucide-react'
 import { SingleAttemptProctoringModal } from '../proctoring/components/TrainerMonitoringReport'
-import { API } from '../api/api'
+import { API, API_BASE } from '../api/api'
 import { getAuthHeaders } from '../api/request'
 import { useToast } from '../components/Toast'
 import { useConfirm } from '../components/ui/AlertModal'
@@ -214,6 +214,9 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
   }), [user])
 
   const [assessment, setAssessment] = useState(null)
+  const assessmentRef = useRef(assessment)
+  assessmentRef.current = assessment
+
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('general')
   const [publishing, setPublishing] = useState(false)
@@ -237,7 +240,7 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
 
   const fetchAssessment = useCallback(async (isQuiet = false) => {
     if (!assessmentId) return
-    if (!isQuiet && !assessment) {
+    if (!isQuiet && !assessmentRef.current) {
       setLoading(true)
     }
     try {
@@ -255,15 +258,15 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
         toast.error('Assessment not found')
       }
     } catch (e) {
-      if (!isQuiet && !assessment) {
+      if (!isQuiet && !assessmentRef.current) {
         toast.error('Failed to load assessment')
       }
     } finally {
       setLoading(false)
     }
-  }, [assessmentId, auth, assessment])
+  }, [assessmentId, auth, toast])
 
-  useEffect(() => { fetchAssessment(false) }, [assessmentId])
+  useEffect(() => { fetchAssessment(false) }, [fetchAssessment])
 
   const handlePublish = async () => {
     setPublishing(true)
@@ -1994,7 +1997,7 @@ function ParticipantsTab({ assessment, auth, toast }) {
       .then(d => { setParticipants(d.participants || []) })
       .catch(() => toast.error('Failed to load participants'))
       .finally(() => setLoading(false))
-  }, [assessment.id])
+  }, [assessment.id, auth, toast])
 
   useEffect(() => {
     setPage(1)
@@ -2091,7 +2094,7 @@ function ResultsTab({ assessment, auth, toast, onRefresh }) {
       .then(d => { setResults(d.results || []) })
       .catch(() => toast.error('Failed to load results'))
       .finally(() => setLoading(false))
-  }, [assessment.id])
+  }, [assessment.id, auth, toast])
 
   useEffect(() => {
     setPage(1)
@@ -2114,13 +2117,72 @@ function ResultsTab({ assessment, auth, toast, onRefresh }) {
         <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0F172A' }}>
           {results.length} Results
         </h3>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', border: '1px solid #E2E8F0', borderRadius: 8, width: 240 }}>
-          <Search size={14} color="#94A3B8" />
-          <input
-            value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search results…"
-            style={{ border: 'none', outline: 'none', fontSize: 12.5, width: '100%', background: 'transparent' }}
-          />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', border: '1px solid #E2E8F0', borderRadius: 8, width: 240 }}>
+            <Search size={14} color="#94A3B8" />
+            <input
+              value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Search results…"
+              style={{ border: 'none', outline: 'none', fontSize: 12.5, width: '100%', background: 'transparent' }}
+            />
+          </div>
+          <button
+            onClick={async () => {
+              try {
+                const res = await fetch(API.CODING.RESULTS_EXPORT(assessment.id), { headers: auth() })
+                if (!res.ok) throw new Error('Export failed')
+                const blob = await res.blob()
+                const url = window.URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `coding-assessment-results-${assessment.id}.csv`
+                document.body.appendChild(a)
+                a.click()
+                window.URL.revokeObjectURL(url)
+                document.body.removeChild(a)
+                toast.success('Results exported successfully')
+              } catch (err) {
+                toast.error('Failed to export results')
+              }
+            }}
+            style={{
+              padding: '6px 12px',
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 600,
+              background: '#0D9488',
+              color: '#FFFFFF',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            <Download size={14} /> Export CSV
+          </button>
+          <button
+            onClick={async () => {
+              try {
+                const response = await fetch(
+                  `${API_BASE}/monitoring/reports/assessment/${assessment.id}/excel?contextType=CODING`,
+                  { headers: auth() }
+                )
+                if (!response.ok) throw new Error('Download failed')
+                const url = URL.createObjectURL(await response.blob())
+                const link = document.createElement('a')
+                link.href = url
+                link.download = `coding-assessment-monitoring-${assessment.id}.xlsx`
+                document.body.appendChild(link)
+                link.click()
+                link.remove()
+                URL.revokeObjectURL(url)
+              } catch { toast.error('Failed to export monitoring report') }
+            }}
+            style={{ padding:'6px 12px', borderRadius:6, fontSize:12, fontWeight:600, background:'#0D9488', color:'#FFFFFF', border:'none', cursor:'pointer', display:'flex', alignItems:'center', gap:6 }}
+          >
+            <Download size={14} /> Monitoring Excel
+          </button>
         </div>
       </div>
 
@@ -2136,6 +2198,7 @@ function ResultsTab({ assessment, auth, toast, onRefresh }) {
                 <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B' }}>PARTICIPANT</th>
                 <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B', textAlign: 'center' }}>SCORE</th>
                 <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B', textAlign: 'center' }}>PERCENTAGE</th>
+                <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B', textAlign: 'center' }}>AI ASSISTANCE</th>
                 <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B', textAlign: 'center' }}>STATUS</th>
                 <th style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: '#64748B', textAlign: 'center' }}>PROCTORING</th>
               </tr>
@@ -2146,6 +2209,25 @@ function ResultsTab({ assessment, auth, toast, onRefresh }) {
                   <td style={{ padding: '12px 16px', fontWeight: 600, color: '#0F172A' }}>{r.participantName || r.name || `Participant #${r.participantId}`}</td>
                   <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 700, color: '#16A34A' }}>{r.score ?? '—'}</td>
                   <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 700 }}>{r.percentage != null ? `${Math.round(r.percentage)}%` : '—'}</td>
+                  <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                    {r.aiUsed ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                        <span style={{
+                          padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700,
+                          background: r.aiUsageLevel === 'HIGH' ? '#FEF2F2' : r.aiUsageLevel === 'MODERATE' ? '#FFFBEB' : '#F0FDFA',
+                          color: r.aiUsageLevel === 'HIGH' ? '#DC2626' : r.aiUsageLevel === 'MODERATE' ? '#D97706' : '#0D9488',
+                          border: `1px solid ${r.aiUsageLevel === 'HIGH' ? '#FECACA' : r.aiUsageLevel === 'MODERATE' ? '#FDE68A' : '#99F6E4'}`,
+                        }}>
+                          {r.aiUsageLevel || 'AI Assisted'}
+                        </span>
+                        <span style={{ fontSize: 10, color: '#64748B' }}>{r.aiInteractionCount || 0} interactions</span>
+                      </div>
+                    ) : (
+                      <span style={{ padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700, background: '#F1F5F9', color: '#64748B' }}>
+                        AI Not Used
+                      </span>
+                    )}
+                  </td>
                   <td style={{ padding: '12px 16px', textAlign: 'center' }}>
                     <span style={{ padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700, background: '#EAF8F0', color: '#16A34A' }}>
                       Submitted
@@ -2177,6 +2259,7 @@ function ResultsTab({ assessment, auth, toast, onRefresh }) {
 
       {selectedProctorAttempt && (
         <SingleAttemptProctoringModal
+          contextType="CODING"
           attemptId={selectedProctorAttempt}
           auth={auth}
           onClose={() => setSelectedProctorAttempt(null)}
@@ -2201,7 +2284,7 @@ function LeaderboardTab({ assessment, auth }) {
       .then(d => setLeaderboard(d.leaderboard || []))
       .catch(() => setLeaderboard([]))
       .finally(() => setLoading(false))
-  }, [assessment.id])
+  }, [assessment.id, auth])
 
   const pagedLeaderboard = leaderboard.slice((page - 1) * pageSize, page * pageSize)
 
@@ -2290,7 +2373,7 @@ function AnalyticsTab({ assessment, auth }) {
       .then(d => setSummary(d))
       .catch(() => setSummary(null))
       .finally(() => setLoading(false))
-  }, [assessment.id])
+  }, [assessment.id, auth])
 
   return (
     <div style={{ background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 16, padding: 22 }}>
@@ -2330,7 +2413,6 @@ function SettingsTab({ assessment, onRefresh, auth, toast }) {
     maxAttempts: assessment.maxAttempts || 1,
     passingMarks: assessment.passingMarks || 50,
     aiAssistantEnabled: assessment.aiAssistantEnabled !== false,
-    aiHelpLimit: assessment.aiHelpLimit ?? 1,
   })
 
   const handleSave = async (e) => {
@@ -2380,10 +2462,8 @@ function SettingsTab({ assessment, onRefresh, auth, toast }) {
               Enable AI hints for participants
             </label>
             <div>
-              <label style={{ ...lblStyle, margin: 0, fontSize: 12.5 }}>Hints allowed per question (0 = disabled, -1 = unlimited)</label>
-              <input style={inputStyle} type="number" min={-1} value={form.aiHelpLimit} onChange={e => setForm({ ...form, aiHelpLimit: parseInt(e.target.value) || 0 })} />
               <div style={{ fontSize: 11.5, color: '#64748B', marginTop: 4 }}>
-                Hints are Socratic (guided questions, never full solutions). When exhausted, participants are blocked.
+                Participants can ask throughout the assessment. The mentor gives guidance, never full solutions. Interaction counts are recorded for reporting.
               </div>
             </div>
           </div>

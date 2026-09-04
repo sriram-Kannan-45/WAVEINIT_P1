@@ -3,15 +3,10 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Matches the openpyxl template:
  * - Sheet 1: Monitoring Report (Time, Event Type, Direction, Count Number, Duration, Score Added, etc.)
- * - Sheet 2: Summary (Session Info, Scoring Summary with 60/20/10/10 components, Final Score)
+ * - Sheet 2: Summary (Session Info, Scoring Summary with 60/10/10/10/10 components, Final Score)
  */
 
 const ExcelJS = require('exceljs');
-
-const MONITORING_SCORE_MAX = 60.0;
-const MULTIPLE_FACE_SCORE_MAX = 10.0;
-const NO_PERSON_SCORE_MAX = 10.0;
-const MOBILE_SCORE_MAX = 20.0;
 
 class MonitoringExcelService {
   /**
@@ -79,7 +74,7 @@ class MonitoringExcelService {
         '—',
         '—',
         '0.0s',
-        `${(metrics.monitoringScore || metrics.eyeHeadScore || 0).toFixed(2)} / 60`,
+        `${(metrics.monitoringScore ?? metrics.eyeHeadScore ?? 0).toFixed(2)} / 60`,
         `${(metrics.finalScore || 0).toFixed(2)} / 100`,
         vidUrl,
       ]);
@@ -129,7 +124,7 @@ class MonitoringExcelService {
           vStart,
           vEnd,
           `${evDur.toFixed(1)}s`,
-          ev.eyeHeadScore || ev['Eye + Head Score'] || `${(metrics.monitoringScore || metrics.eyeHeadScore || 0).toFixed(2)} / 60`,
+          ev.eyeHeadScore || ev['Eye + Head Score'] || `${(metrics.monitoringScore ?? metrics.eyeHeadScore ?? 0).toFixed(2)} / 60`,
           ev.finalScore || ev['Final Score'] || `${(metrics.finalScore || 0).toFixed(2)} / 100`,
           vidUrl,
         ]);
@@ -155,13 +150,13 @@ class MonitoringExcelService {
     const vPct = Number(metrics.violationPercentage ?? metrics.violation_percentage ?? 0);
     const mScore = Number(metrics.monitoringScore ?? metrics.monitoring_score ?? metrics.eyeHeadScore ?? 0);
     const mobCnt = Number(metrics.mobileCount || metrics.mobile_count || 0);
-    const mobScore = Number(metrics.mobileScore || metrics.mobile_score || (mobCnt > 0 ? 10.0 : 0.0));
+    const mobScore = Number(metrics.mobileScore ?? metrics.mobile_score ?? metrics.scoringBreakdown?.mobile?.score ?? 0);
     const mfCnt = Number(metrics.multipleFaceCount || metrics.multiple_face_count || 0);
-    const mfScore = Number(metrics.multipleFaceScore || metrics.multiple_face_score || (mfCnt > 0 ? 10.0 : 0.0));
+    const mfScore = Number(metrics.multipleFaceScore ?? metrics.multiFaceScore ?? metrics.multiple_face_score ?? metrics.scoringBreakdown?.multiPerson?.score ?? 0);
     const npDet = Boolean(metrics.noPersonDetected || metrics.no_person_detected);
-    const npScore = Number(metrics.noPersonScore || metrics.no_person_score || (npDet ? 10.0 : 0.0));
+    const npScore = Number(metrics.noPersonScore ?? metrics.no_person_score ?? metrics.scoringBreakdown?.noPerson?.score ?? 0);
     const tsCnt = Number(metrics.tabSwitchCount || metrics.tab_switch_count || 0);
-    const tsScore = Number(metrics.tabSwitchScore || metrics.tab_switch_score || (tsCnt > 3 ? 10.0 : 0.0));
+    const tsScore = Number(metrics.tabSwitchScore ?? metrics.tab_switch_score ?? metrics.scoringBreakdown?.tabSwitch?.score ?? 0);
     const finalScore = Number(metrics.finalScore ?? metrics.final_score ?? 0);
     const finalPct = finalScore;
 
@@ -180,7 +175,7 @@ class MonitoringExcelService {
       ['  2. Mobile Phone Violation', `${mobCnt} Detected | ${(mobScore / 10 * 100).toFixed(1)}% | ${mobScore.toFixed(2)} | 10`],
       ['  3. Multiple Faces / Persons', `${mfCnt} Detected | ${(mfScore / 10 * 100).toFixed(1)}% | ${mfScore.toFixed(2)} | 10`],
       ['  4. No Person / Face Absent', `${npDet ? 'Detected' : 'Not Detected'} | ${(npScore / 10 * 100).toFixed(1)}% | ${npScore.toFixed(2)} | 10`],
-      ['  5. Tab Switch / Fullscreen (>3)', `${tsCnt} switches | ${(tsScore / 10 * 100).toFixed(1)}% | ${tsScore.toFixed(2)} | 10`],
+      ['  5. Tab Switch / Fullscreen', `${tsCnt} scored browser incidents | ${(tsScore / 10 * 100).toFixed(1)}% | ${tsScore.toFixed(2)} | 10`],
       ['', ''],
       ['FINAL SCORE', ''],
       ['  Eye + Head Score', `${mScore.toFixed(2)} / 60`],
@@ -247,7 +242,7 @@ class MonitoringExcelService {
       'Submission Status',
       'Submitted At',
       'Actual Test Duration',
-      'Quiz Score (%)',
+      'Assessment Score (%)',
       'Eye + Head Score (/60)',
       'Face Absence Score (/10)',
       'Multi Persons Score (/10)',

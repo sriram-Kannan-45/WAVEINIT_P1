@@ -43,8 +43,10 @@ export function useQuizProtection({
   onSubmit,
   currentQ = 0,
   enabled = true,
+  monitorBrowserEvents = true,
   participantName = '',
   participantId = '',
+  violationEndpoint = '/quizzes/attempts', // Optional: custom endpoint for coding
 }) {
   console.log('[useQuizProtection] Initialized', {
     attemptId,
@@ -52,6 +54,7 @@ export function useQuizProtection({
     quizTitle: quiz?.title,
     enabled,
     copyProtectionEnabled: quiz?.copyProtectionEnabled,
+    violationEndpoint,
   })
   const [violationCount, setViolationCount] = useState(initialViolationCount)
   const [softViolationCount, setSoftViolationCount] = useState(0)
@@ -75,6 +78,7 @@ export function useQuizProtection({
     enabled,
     participantName,
     participantId,
+    violationEndpoint,
   })
 
   useEffect(() => {
@@ -88,8 +92,9 @@ export function useQuizProtection({
       enabled,
       participantName,
       participantId,
+      violationEndpoint,
     }
-  }, [answers, currentQ, violationCount, softViolationCount, disqualified, quiz, enabled, participantName, participantId])
+  }, [answers, currentQ, violationCount, softViolationCount, disqualified, quiz, enabled, participantName, participantId, violationEndpoint])
 
   const triggerViolation = useCallback(async (actionType) => {
     const { maxWarnings, enabled: protEnabled } = stateRef.current
@@ -131,7 +136,8 @@ export function useQuizProtection({
       }
       console.log('[useQuizProtection] Violation payload:', violationPayload)
 
-      const res = await fetch(`${API_BASE}/quizzes/attempts/${attemptId}/violation`, {
+      const endpoint = stateRef.current.violationEndpoint || '/quizzes/attempts'
+      const res = await fetch(`${API_BASE}${endpoint}/${attemptId}/violation`, {
         method: 'POST',
         headers,
         body: JSON.stringify(violationPayload),
@@ -203,7 +209,7 @@ export function useQuizProtection({
         }
       }
     }
-  }, [attemptId, onSubmit])
+  }, [attemptId, quiz?.id, onSubmit])
 
   useEffect(() => {
     const { enabled: protEnabled } = stateRef.current
@@ -367,7 +373,7 @@ export function useQuizProtection({
 
   useEffect(() => {
     const { enabled: protEnabled } = stateRef.current
-    if (!protEnabled || disqualified) return
+    if (!protEnabled || disqualified || !monitorBrowserEvents) return
 
     const handleVisibility = () => {
       if (document.hidden) {
@@ -401,7 +407,7 @@ export function useQuizProtection({
       window.removeEventListener('blur', handleBlur)
       window.removeEventListener('focus', handleFocus)
     }
-  }, [triggerViolation, disqualified])
+  }, [triggerViolation, disqualified, monitorBrowserEvents])
 
   const renderModals = () => {
     const maxWarnings = quiz?.maxCopyWarnings ?? 3

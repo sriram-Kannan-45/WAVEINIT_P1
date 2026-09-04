@@ -123,6 +123,20 @@ const AIQuiz = sequelize.define('AIQuiz', {
     defaultValue: false,
     field: 'shuffle_questions'
   },
+  aiAssistantEnabled: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: true,
+    field: 'ai_assistant_enabled',
+    comment: 'Whether the AI mentor (Socratic study helper) is enabled for this quiz.'
+  },
+  aiHelpLimit: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    field: 'ai_help_limit',
+    comment: 'Number of AI mentor exchanges allowed per quiz attempt. 0 = default, -1 = unlimited.'
+  },
   // ── Timestamps for lifecycle events ──
   publishedAt: {
     type: DataTypes.DATE,
