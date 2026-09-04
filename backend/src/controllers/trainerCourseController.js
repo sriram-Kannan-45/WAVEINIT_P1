@@ -46,6 +46,16 @@ const {
   ProctorActivity,
   AssessmentSession,
   User,
+  QuizAiHelp,
+  QuizCopyViolation,
+  QuizAssignment,
+  QuizRecording,
+  QuizResultsAudit,
+  Feedback,
+  Screenshot,
+  MonitorAttempt,
+  MonitorViolation,
+  MonitorScreenshot,
 } = require('../models');
 const { TYPE_LIMITS, ROOT: MATERIALS_ROOT } = require('../middleware/uploadMaterial');
 const { calculateCourseCompletion, calculateTrainingCompletion } = require('../services/trainingProgressService');
@@ -981,6 +991,143 @@ async function updateCourseQuiz(req, res) {
   }
 }
 
+/**
+ * Helper to safely delete quizzes and all dependent child records in strict FK order.
+ */
+async function cleanupAndDestroyQuizzes(quizIds, courseId, t) {
+  if (!quizIds || quizIds.length === 0) return 0;
+
+  // 1. Gather all dependent child IDs
+  const attempts = await QuizAttempt.findAll({
+    where: { quizId: { [Op.in]: quizIds } },
+    attributes: ['id'],
+    transaction: t
+  });
+  const attemptIds = attempts.map(a => a.id);
+
+  const questions = await AIQuestion.findAll({
+    where: { quizId: { [Op.in]: quizIds } },
+    attributes: ['id'],
+    transaction: t
+  });
+  const questionIds = questions.map(q => q.id);
+
+  const examSessionConditions = [{ quizId: { [Op.in]: quizIds } }];
+  if (attemptIds.length > 0) examSessionConditions.push({ attemptId: { [Op.in]: attemptIds } });
+  const examSessions = await ExamSession.findAll({
+    where: { [Op.or]: examSessionConditions },
+    attributes: ['id'],
+    transaction: t
+  });
+  const examSessionIds = examSessions.map(es => es.id);
+
+  const lessonQuizzes = await LessonQuiz.findAll({
+    where: { quizId: { [Op.in]: quizIds } },
+    attributes: ['id'],
+    transaction: t
+  });
+  const lessonQuizIds = lessonQuizzes.map(lq => lq.id);
+
+  const monitorAttempts = await MonitorAttempt.findAll({
+    where: { testId: { [Op.in]: quizIds } },
+    attributes: ['id'],
+    transaction: t
+  });
+  const monitorAttemptIds = monitorAttempts.map(ma => ma.id);
+
+  // 2. Delete grandchildren & leaf nodes
+  if (examSessionIds.length > 0) {
+    if (Screenshot) await Screenshot.destroy({ where: { sessionId: { [Op.in]: examSessionIds } }, transaction: t });
+    if (ProctorActivity) await ProctorActivity.destroy({ where: { sessionId: { [Op.in]: examSessionIds } }, transaction: t });
+    if (Violation) await Violation.destroy({ where: { sessionId: { [Op.in]: examSessionIds } }, transaction: t });
+  }
+  await ExamSession.destroy({
+    where: { [Op.or]: examSessionConditions },
+    transaction: t
+  });
+
+  if (monitorAttemptIds.length > 0) {
+    if (MonitorViolation) await MonitorViolation.destroy({ where: { attemptId: { [Op.in]: monitorAttemptIds } }, transaction: t });
+    if (MonitorScreenshot) await MonitorScreenshot.destroy({ where: { attemptId: { [Op.in]: monitorAttemptIds } }, transaction: t });
+  }
+  if (MonitorAttempt) {
+    await MonitorAttempt.destroy({ where: { testId: { [Op.in]: quizIds } }, transaction: t });
+  }
+
+  if (lessonQuizIds.length > 0) {
+    if (QuizProgress) await QuizProgress.destroy({ where: { lessonQuizId: { [Op.in]: lessonQuizIds } }, transaction: t });
+  }
+  await LessonQuiz.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
+
+  // 3. Delete attempt-level and question-level dependencies before attempts & questions
+  const aiHelpConditions = [];
+  if (attemptIds.length > 0) aiHelpConditions.push({ attemptId: { [Op.in]: attemptIds } });
+  if (questionIds.length > 0) aiHelpConditions.push({ questionId: { [Op.in]: questionIds } });
+  if (aiHelpConditions.length > 0 && QuizAiHelp) {
+    await QuizAiHelp.destroy({ where: { [Op.or]: aiHelpConditions }, transaction: t });
+  }
+
+  const answerConditions = [];
+  if (attemptIds.length > 0) answerConditions.push({ attemptId: { [Op.in]: attemptIds } });
+  if (questionIds.length > 0) answerConditions.push({ questionId: { [Op.in]: questionIds } });
+  if (answerConditions.length > 0 && QuizAnswer) {
+    await QuizAnswer.destroy({ where: { [Op.or]: answerConditions }, transaction: t });
+  }
+
+  const copyConditions = [{ quizId: { [Op.in]: quizIds } }];
+  if (attemptIds.length > 0) copyConditions.push({ attemptId: { [Op.in]: attemptIds } });
+  if (QuizCopyViolation) {
+    await QuizCopyViolation.destroy({ where: { [Op.or]: copyConditions }, transaction: t });
+  }
+
+  const assessConditions = [{ quizId: { [Op.in]: quizIds } }];
+  if (attemptIds.length > 0) assessConditions.push({ attemptId: { [Op.in]: attemptIds } });
+  if (AssessmentSession) {
+    await AssessmentSession.destroy({ where: { [Op.or]: assessConditions }, transaction: t });
+  }
+
+  const resultConditions = [{ quizId: { [Op.in]: quizIds } }];
+  if (attemptIds.length > 0) resultConditions.push({ attemptId: { [Op.in]: attemptIds } });
+  if (QuizResult) {
+    await QuizResult.destroy({ where: { [Op.or]: resultConditions }, transaction: t });
+  }
+
+  // 4. Delete attempts
+  if (QuizAttempt) {
+    await QuizAttempt.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
+  }
+
+  // 5. Delete question options and questions
+  if (questionIds.length > 0 && AIQuestionOption) {
+    await AIQuestionOption.destroy({ where: { questionId: { [Op.in]: questionIds } }, transaction: t });
+  }
+  if (AIQuestion) {
+    await AIQuestion.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
+  }
+
+  // 6. Delete quiz-level direct references
+  if (QuizAssignment) {
+    await QuizAssignment.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
+  }
+  if (QuizRecording) {
+    await QuizRecording.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
+  }
+  if (QuizResultsAudit) {
+    await QuizResultsAudit.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
+  }
+  if (Feedback) {
+    await Feedback.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
+  }
+
+  // 7. Finally delete the AIQuizzes
+  const deleteWhere = { id: { [Op.in]: quizIds } };
+  if (courseId) {
+    deleteWhere.courseId = courseId;
+  }
+  const deletedCount = await AIQuiz.destroy({ where: deleteWhere, transaction: t });
+  return deletedCount;
+}
+
 // DELETE /api/trainer/courses/:courseId/quizzes/:quizId
 async function deleteCourseQuiz(req, res) {
   try {
@@ -997,49 +1144,8 @@ async function deleteCourseQuiz(req, res) {
     const quiz = await AIQuiz.findOne({ where: { id: numericId, courseId: course.id } });
     if (!quiz) return res.status(404).json({ error: 'Quiz not found' });
 
-    const quizId = quiz.id;
-
     await sequelize.transaction(async (t) => {
-      // 1. Find all dependent entity IDs to handle deep child records
-      const attempts = await QuizAttempt.findAll({ where: { quizId }, transaction: t });
-      const attemptIds = attempts.map(a => a.id);
-
-      const examSessions = await ExamSession.findAll({ where: { quizId }, transaction: t });
-      const examSessionIds = examSessions.map(es => es.id);
-
-      const questions = await AIQuestion.findAll({ where: { quizId }, transaction: t });
-      const questionIds = questions.map(q => q.id);
-
-      const lessonQuizzes = await LessonQuiz.findAll({ where: { quizId }, transaction: t });
-      const lessonQuizIds = lessonQuizzes.map(lq => lq.id);
-
-      // 2. Delete leaf nodes and child records in order of dependency constraints
-      if (examSessionIds.length > 0) {
-        await ProctorActivity.destroy({ where: { sessionId: { [Op.in]: examSessionIds } }, transaction: t });
-        await Violation.destroy({ where: { sessionId: { [Op.in]: examSessionIds } }, transaction: t });
-      }
-
-      await AssessmentSession.destroy({ where: { quizId }, transaction: t });
-      await ExamSession.destroy({ where: { quizId }, transaction: t });
-
-      if (lessonQuizIds.length > 0) {
-        await QuizProgress.destroy({ where: { lessonQuizId: { [Op.in]: lessonQuizIds } }, transaction: t });
-      }
-      await LessonQuiz.destroy({ where: { quizId }, transaction: t });
-
-      if (attemptIds.length > 0) {
-        await QuizAnswer.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t });
-      }
-      await QuizResult.destroy({ where: { quizId }, transaction: t });
-      await QuizAttempt.destroy({ where: { quizId }, transaction: t });
-
-      if (questionIds.length > 0) {
-        await AIQuestionOption.destroy({ where: { questionId: { [Op.in]: questionIds } }, transaction: t });
-      }
-      await AIQuestion.destroy({ where: { quizId }, transaction: t });
-
-      // 3. Delete the parent quiz
-      await quiz.destroy({ transaction: t });
+      await cleanupAndDestroyQuizzes([quiz.id], course.id, t);
     });
 
     res.json({ success: true, message: 'Quiz deleted successfully' });
@@ -2326,55 +2432,21 @@ async function bulkDeleteCourseQuizzes(req, res) {
       return res.status(422).json({ error: 'An array of quiz IDs is required' });
     }
 
+    const quizIds = ids.map(Number).filter(n => !isNaN(n));
+    if (quizIds.length === 0) {
+      return res.status(422).json({ error: 'Valid quiz IDs are required' });
+    }
+
+    let deletedCount = 0;
     await sequelize.transaction(async (t) => {
-      const quizIds = ids.map(Number).filter(n => !isNaN(n));
-
-      const attempts = await QuizAttempt.findAll({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
-      const attemptIds = attempts.map(a => a.id);
-
-      const examSessions = await ExamSession.findAll({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
-      const examSessionIds = examSessions.map(es => es.id);
-
-      const questions = await AIQuestion.findAll({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
-      const questionIds = questions.map(q => q.id);
-
-      const lessonQuizzes = await LessonQuiz.findAll({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
-      const lessonQuizIds = lessonQuizzes.map(lq => lq.id);
-
-      if (examSessionIds.length > 0) {
-        await ProctorActivity.destroy({ where: { sessionId: { [Op.in]: examSessionIds } }, transaction: t });
-        await Violation.destroy({ where: { sessionId: { [Op.in]: examSessionIds } }, transaction: t });
-      }
-
-      await AssessmentSession.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
-      await ExamSession.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
-
-      if (lessonQuizIds.length > 0) {
-        await QuizProgress.destroy({ where: { lessonQuizId: { [Op.in]: lessonQuizIds } }, transaction: t });
-      }
-      await LessonQuiz.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
-
-      if (attemptIds.length > 0) {
-        await QuizAnswer.destroy({ where: { attemptId: { [Op.in]: attemptIds } }, transaction: t });
-      }
-      await QuizResult.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
-      await QuizAttempt.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
-
-      if (questionIds.length > 0) {
-        await AIQuestionOption.destroy({ where: { questionId: { [Op.in]: questionIds } }, transaction: t });
-      }
-      await AIQuestion.destroy({ where: { quizId: { [Op.in]: quizIds } }, transaction: t });
-
-      let deletedCount = 0;
-      deletedCount = await AIQuiz.destroy({ where: { id: { [Op.in]: quizIds }, courseId: course.id }, transaction: t });
-      return deletedCount;
+      deletedCount = await cleanupAndDestroyQuizzes(quizIds, course.id, t);
     });
 
     res.json({
       success: true,
-      count: ids.length,
-      deletedIds: ids,
-      message: `${ids.length} quizzes deleted successfully`
+      count: deletedCount,
+      deletedIds: quizIds,
+      message: `${deletedCount} quizzes deleted successfully`
     });
   } catch (e) {
     console.error('bulkDeleteCourseQuizzes error:', e);
