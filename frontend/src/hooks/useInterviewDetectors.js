@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { API_BASE } from '../api/api';
+import { getStoredToken } from '../services/auth';
 import monitoringClient from '../proctoring/engine/MonitoringEngineClient';
 
 export class AIMonitorProvider {
@@ -23,8 +24,10 @@ export class AIMonitorProvider {
 export function useInterviewDetectors({
   socket,
   sessionId,
+  monitoringSessionId,
   interviewId,
   participantId,
+  startedAt, durationMinutes,
   enabled = true,
   mediaStream = null,
 }) {
@@ -76,20 +79,7 @@ export function useInterviewDetectors({
   useEffect(() => {
     if (!enabled) return;
 
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        emitAlert('TAB_SWITCH', 'HIGH', 'LAPTOP', 'Candidate switched browser tab', {
-          hidden: document.hidden,
-        });
-      }
-    };
-
-    const handleBlur = () => {
-      emitAlert('TAB_BLUR', 'MEDIUM', 'LAPTOP', 'Interview window lost focus', {
-        url: window.location.href,
-      });
-    };
-
+    // Visibility and focus are handled once by MonitoringEngineClient's shared incident policy.
     const handleCopy = () => {
       emitAlert('COPY_PASTE', 'MEDIUM', 'LAPTOP', 'Copy action detected', {
         type: 'copy',
@@ -102,14 +92,10 @@ export function useInterviewDetectors({
       });
     };
 
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('blur', handleBlur);
     document.addEventListener('copy', handleCopy);
     document.addEventListener('paste', handlePaste);
 
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('blur', handleBlur);
       document.removeEventListener('copy', handleCopy);
       document.removeEventListener('paste', handlePaste);
     };
@@ -117,7 +103,7 @@ export function useInterviewDetectors({
 
   // 2. Unified MediaPipe Laptop Monitoring Loop
   useEffect(() => {
-    if (!enabled || !mediaStream || !sessionId) return;
+    if (!enabled || !mediaStream || !monitoringSessionId) return;
 
     if (!videoElementRef.current) {
       const video = document.createElement('video');
@@ -132,13 +118,14 @@ export function useInterviewDetectors({
     videoEl.play().catch(() => {});
 
     monitoringClient.init({
-      sessionId,
-      participantId: participantId || 1,
+      sessionId:monitoringSessionId,
+      participantId, token: getStoredToken(), isTestActive: true, testStartedAt: startedAt, configuredDurationSeconds: Number(durationMinutes||60)*60,
       contextType: 'INTERVIEW',
       socket,
     });
 
     monitoringClient.startLaptopMonitoring(mediaStream, videoEl, (metrics) => {
+      socket?.emit('interview:monitoring-status',{interviewId,sessionId,faceDetected:metrics.faceDetected===true,cameraActive:mediaStream.getVideoTracks().some(track=>track.readyState==='live'&&track.enabled)});
       setAiStatus((prev) => ({
         ...prev,
         faceDetected: metrics.faceDetected,
@@ -150,9 +137,9 @@ export function useInterviewDetectors({
     });
 
     return () => {
-      monitoringClient.stopLaptopMonitoring();
+      monitoringClient.stopLaptopMonitoring({stopTracks:false});
     };
-  }, [enabled, mediaStream, sessionId, participantId, socket]);
+  }, [enabled, mediaStream, monitoringSessionId, participantId, socket]);
 
   // 3. Detect Camera Disabled / Track Ended
   const monitorTrack = useCallback(
@@ -160,6 +147,7 @@ export function useInterviewDetectors({
       if (!track) return;
       const handleEnded = () => {
         if (track.readyState === 'ended') {
+          socket?.emit('interview:monitoring-status',{interviewId,sessionId,faceDetected:false,cameraActive:false});
           emitAlert('CAMERA_DISABLED', 'HIGH', deviceType, `${deviceType} camera track ended`, {
             kind: track.kind,
           });

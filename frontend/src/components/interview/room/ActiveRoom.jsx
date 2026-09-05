@@ -8,6 +8,7 @@ import InterviewShell from './InterviewShell'
 import VideoTile from '../VideoTile'
 import QRPairing from '../QRPairing'
 import MobileFeedTile from './MobileFeedTile'
+import GroupDiscussionRoom from './GroupDiscussionRoom'
 import interviewService from '../../../services/interviewService'
 import {
   Mic,
@@ -75,10 +76,13 @@ export default function ActiveRoom({
   started = false,
   peerConnected,
   connectionStatus,
+  mobileFrames = {}, mobileEvidence = {}, localStream, onStart, notice, aiStatus,
+  candidateMonitoring = {},
 }) {
   const [notes, setNotes] = useState('')
   const [savingNotes, setSavingNotes] = useState(false)
   const [showQrModal, setShowQrModal] = useState(false)
+  const [reconnectError,setReconnectError]=useState('')
   const [screenShareLive, setScreenShareLive] = useState(false)
   const [screenShareStatus, setScreenShareStatus] = useState('none') // 'none' | 'connecting' | 'live' | 'failed'
 
@@ -170,7 +174,7 @@ export default function ActiveRoom({
   const scheduledTime = interviewData?.scheduledAt || interviewData?.scheduled_at
     ? new Date(interviewData.scheduledAt || interviewData.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : 'Scheduled'
-  const durationMinutes = interviewData?.duration || 60
+  const durationMinutes = interviewData?.durationMinutes || interviewData?.duration_minutes || 60
   const durationSeconds = durationMinutes * 60
   const remainingSeconds = Math.max(0, durationSeconds - elapsed)
 
@@ -181,7 +185,7 @@ export default function ActiveRoom({
   const remoteEntries = Object.entries(remoteStreams || {})
 
   // Mobile peer & stream (from participant's phone)
-  const mobilePeer = peers.find(p => p.deviceType === 'MOBILE')
+  const mobilePeer = peers.find(p => p.deviceType === 'MOBILE' && (isInterviewer || String(p.userId)===String(user?.id)))
   const mobileStream = mobilePeer
     ? remoteStreams[mobilePeer.socketId]
     : (remoteEntries.find(([id]) => peers.find(p => p.socketId === id)?.deviceType === 'MOBILE')?.[1] || null)
@@ -342,6 +346,8 @@ export default function ActiveRoom({
   const isScreenDone = ['fullscreen', 'room'].includes(setupStep)
   const isFullscreenDone = setupStep === 'room'
 
+  if(interviewData?.mode==='GROUP_DISCUSSION') return <GroupDiscussionRoom {...{interviewData,user,isInterviewer,localStream,peers,remoteStreams,socket,mobileFrames,mobileEvidence,qrPayload,onRefreshQr,onStart,started,elapsed,formatTime,handleEndInterview,handleLeaveInterview,isMuted,onToggleMute,isCameraOff,onToggleCamera,chatMessages,onSendMessage,notice,aiStatus,candidateMonitoring,isRecording,onToggleRecording}} />
+
   return (
     <InterviewShell
       interviewId={interviewId}
@@ -359,6 +365,8 @@ export default function ActiveRoom({
         </button>
       }
     >
+      {!isInterviewer&&started&&aiStatus?.faceDetected===false&&<p role="alert" style={{padding:12,background:'#fffbeb'}}>Your face is not visible in the laptop camera. Adjust your position; your interview stays open.</p>}
+      {!isInterviewer && interviewData?.require_mobile_pairing!==false && <div style={{maxWidth:340,marginBottom:16}}><MobileFeedTile name={user?.name||'Your camera'} stream={mobileStream} frame={mobileFrames[user?.id]} evidence={mobileEvidence[user?.id]} onReconnect={async()=>{try{await onRefreshQr();setShowQrModal(true);setReconnectError('')}catch(e){setReconnectError(e.message)}}} /></div>}
       {/* 3-Column SaaS Grid */}
       <div className="interview-room-grid">
 
@@ -907,7 +915,7 @@ export default function ActiveRoom({
                 onClick={() => setPinnedStreamKey(pinnedStreamKey === 'mobile' ? null : 'mobile')}
                 title="Click to pin/unpin to main stage"
               >
-                <MobileFeedTile stream={mobileStream} name={candidateName} />
+                <MobileFeedTile frame={mobileFrames[mobilePeer?.userId]} evidence={mobileEvidence[mobilePeer?.userId]} stream={mobileStream} name={candidateName} />
               </div>
             </>
           ) : (
@@ -1043,6 +1051,8 @@ export default function ActiveRoom({
         </div>
       </div>
 
+      {reconnectError&&<p role="alert">{reconnectError}</p>}
+      {showQrModal&&!isInterviewer&&<div role="dialog" aria-label="Reconnect mobile camera" style={{position:'fixed',inset:0,background:'#0008',zIndex:9999,display:'grid',placeItems:'center'}}><div style={{background:'white',padding:24,borderRadius:16,maxWidth:360}}><p>Reconnect your camera to this interview. Your session continues.</p><QRPairing qrPayload={qrPayload} onRefresh={onRefreshQr}/><button className="reg-admin-btn" onClick={()=>setShowQrModal(false)}>Close</button></div></div>}
       {/* Quick End Interview Outcome Modal (Trainer View) */}
       {showEndModal && (
         <div style={{

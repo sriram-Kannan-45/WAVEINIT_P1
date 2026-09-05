@@ -75,6 +75,10 @@ function InterviewRoomInner({ user }) {
   // Local state
   const [interviewData, setInterviewData] = useState(null)
   const [sessionId, setSessionId] = useState(null)
+  const [monitoringSessionId,setMonitoringSessionId]=useState(null)
+  const [mobileFrames,setMobileFrames]=useState({})
+  const [mobileEvidence,setMobileEvidence]=useState({})
+  const [candidateMonitoring,setCandidateMonitoring]=useState({})
   const [qrPayload, setQrPayload] = useState(null)
   const [phase, setPhase] = useState(PHASE.LOADING)
   const [flowStep, setFlowStep] = useState(() => {
@@ -174,7 +178,9 @@ function InterviewRoomInner({ user }) {
     sessionId,
     interviewId,
     participantId: user?.id,
-    enabled: !isInterviewer && consentGiven,
+    enabled: !isInterviewer && consentGiven && started && !ended,
+    startedAt, durationMinutes: interviewData?.durationMinutes,
+    monitoringSessionId,
     mediaStream: localStreams?.laptop || localStreamRef?.current,
   })
 
@@ -199,7 +205,7 @@ function InterviewRoomInner({ user }) {
 
   const markStarted = useCallback((from) => {
     setStarted(true)
-    setStartedAt((prev) => prev || from || new Date().toISOString())
+    setStartedAt((prev) => from || prev || new Date().toISOString())
   }, [])
 
   /**
@@ -220,7 +226,8 @@ function InterviewRoomInner({ user }) {
       setInterviewData(iv)
       setInterview(iv)
       if (iv.status === 'IN_PROGRESS') {
-        markStarted(iv.startedAt || new Date().toISOString())
+        const activeSession=iv.sessions?.find(s=>s.status==='ACTIVE')
+        if(activeSession?.started_at)markStarted(activeSession.started_at)
       }
       setPhase(PHASE.INVITE)
     } catch (err) {
@@ -308,6 +315,8 @@ function InterviewRoomInner({ user }) {
         if (response?.success) {
           setJoined(true)
           setSessionId(response.sessionId)
+          if(response.monitoringSessionId) setMonitoringSessionId(response.monitoringSessionId)
+          if(response.status==='ACTIVE') markStarted(response.startedAt)
           if (response.interview) {
             setInterviewData((prev) => prev || response.interview)
             setInterview(response.interview)
@@ -346,10 +355,10 @@ function InterviewRoomInner({ user }) {
             if (leavingRef.current) return
             console.log('[WEBRTC SIGNALING] trainer: get-room-state response:', roomState)
             if (!roomState?.success) return
-            if (roomState.mobilePaired) {
+            if ((roomState.peers||[]).some(p=>p.deviceType==='MOBILE'&&(isInterviewer||String(p.userId)===String(user?.id)))) {
               setDevices(prev => ({ ...prev, mobile: true }))
             }
-            const syncPeers = roomState.peers || []
+            const syncPeers = (roomState.peers || []).filter(p=>p.socketId!==socket.id&&(p.deviceType!=='MOBILE'||isInterviewer||String(p.userId)===String(user?.id)))
             if (syncPeers.length) {
               setPeers(prev => {
                 const merged = new Map(prev.map(p => [p.socketId, p]))
@@ -406,12 +415,13 @@ function InterviewRoomInner({ user }) {
    * Trainer: flip the interview to IN_PROGRESS via the backend and announce
    * it over the socket so the participant leaves the waiting state.
    */
-  const attemptStart = useCallback(async () => {
+  const attemptStart = useCallback(async (manual=false) => {
+    if(interviewData?.mode==='GROUP_DISCUSSION' && manual!==true) return
     if (!isInterviewer || started || startAttemptedRef.current) return
     startAttemptedRef.current = true
     try {
-      await interviewService.start(interviewId)
-      markStarted()
+      const response=await interviewService.start(interviewId)
+      markStarted(response.session?.started_at||response.startedAt)
       socket?.emit('interview-started', { interviewId })
       setNotice(null)
     } catch (err) {
@@ -423,7 +433,7 @@ function InterviewRoomInner({ user }) {
         setNotice(msg || 'Could not start the interview yet.')
       }
     }
-  }, [interviewId, isInterviewer, started, markStarted, socket])
+  }, [interviewId, interviewData?.mode, isInterviewer, started, markStarted, socket])
 
   /**
    * Create/join the backend session + signaling room. Called after consent
@@ -441,6 +451,7 @@ function InterviewRoomInner({ user }) {
     try {
       const joinRes = await interviewService.join(interviewId)
       setSessionId(joinRes.session?.id)
+      setMonitoringSessionId(joinRes.monitoringSessionId)
       setQrPayload(joinRes.qrPayload || null)
       if (joinRes.interview) {
         const joinedIv = normalizeInterview(joinRes.interview)
@@ -496,22 +507,12 @@ function InterviewRoomInner({ user }) {
   useSocketEvent('room:state', useCallback((snapshot) => {
     if (!snapshot || String(snapshot.roomId) !== String(interviewId)) return
     console.log(`[ROOM STATE] client: received room:state snapshot for roomId=${snapshot.roomId}`, snapshot)
-    setDevices(prev => ({ ...prev, mobile: snapshot.mobilePaired }))
+    setDevices(prev => ({ ...prev, mobile: (snapshot.peers||[]).some(p=>p.deviceType==='MOBILE'&&(isInterviewer||String(p.userId)===String(user?.id))) }))
 
     if (snapshot.peers) {
-      setPeers(prev => {
-        const peerMap = new Map(prev.map(p => [p.socketId, p]))
-        snapshot.peers.forEach(p => {
-          if (p.socketId !== socket?.id) peerMap.set(p.socketId, p)
-        })
-        return Array.from(peerMap.values())
-      })
-
-      snapshot.peers.forEach(p => {
-        if (p.socketId && p.socketId !== socket?.id) {
-          preparePeer(p.socketId)
-        }
-      })
+      const allowed=snapshot.peers.filter(p=>p.socketId!==socket?.id&&(p.deviceType!=='MOBILE'||isInterviewer||String(p.userId)===String(user?.id)))
+      setPeers(allowed)
+      allowed.forEach(p=>{if(p.socketId) preparePeer(p.socketId)})
     }
   }, [interviewId, setDevices, setPeers, preparePeer, socket]))
   useSocketEvent('peer-joined', useCallback((data) => {
@@ -519,7 +520,7 @@ function InterviewRoomInner({ user }) {
     const matchesRoom = String(interviewId) === String(interviewId) // Matches current interview session
     console.log(`[TRAINER] Received mobile-joined event for room: ${interviewId}, matches current interview: ${matchesRoom}`, data)
     
-    if (isMobilePeer) {
+    if (isMobilePeer && (isInterviewer||String(data.userId)===String(user?.id))) {
       console.log('[TRAINER] Participant Mobile Feed status updated to: Paired / Connected')
       setDevices(prev => ({ ...prev, mobile: true }))
     }
@@ -532,7 +533,7 @@ function InterviewRoomInner({ user }) {
     if (isMobilePeer) {
       // Only the interviewer receives the participant's mobile camera feed.
       // Mobile is always the joiner, so they will send the offer.
-      if (isInterviewer) {
+      if (isInterviewer||String(data.userId)===String(user?.id)) {
         // We are existing; prepare the peer connection (polite mode) and wait.
         preparePeer(data.socketId)
         if (!started) attemptStart()
@@ -547,6 +548,7 @@ function InterviewRoomInner({ user }) {
 
   useSocketEvent('device-status', useCallback((data) => {
     console.log('[TRAINER] Received device-status event:', data)
+    if (!isInterviewer && data.fromUserId && String(data.fromUserId)!==String(user?.id)) return
     if (data.deviceType === 'MOBILE' && data.connected) {
       console.log('[TRAINER] Participant Mobile Feed status updated to: Paired / Connected')
       setDevices(prev => ({ ...prev, mobile: true }))
@@ -557,6 +559,7 @@ function InterviewRoomInner({ user }) {
   // Emitted by the server in the mobile's join-room success handler, and on
   // leave/disconnect. The Trainer UI must never fake "Paired"/"Live".
   useSocketEvent('mobile-camera-paired', useCallback((data) => {
+    if(!isInterviewer && String(data.participantId)!==String(user?.id)) return
     if (String(data.roomId) !== String(interviewId)) {
       console.log(`[WEBRTC SIGNALING] trainer: mobile-camera-paired IGNORED (roomId=${data.roomId} !== current=${interviewId})`)
       return
@@ -579,7 +582,7 @@ function InterviewRoomInner({ user }) {
             deviceType: 'MOBILE',
           }])
       // Mobile is always the offerer; prepare in polite mode and wait.
-      if (isInterviewer) {
+      if (isInterviewer||String(data.participantId)===String(user?.id)) {
         preparePeer(data.socketId)
         if (!started) attemptStart()
       }
@@ -587,6 +590,7 @@ function InterviewRoomInner({ user }) {
   }, [interviewId, setDevices, setPeers, preparePeer, isInterviewer, started, attemptStart]))
 
   useSocketEvent('mobile-camera-disconnected', useCallback((data) => {
+    if(!isInterviewer && String(data.participantId)!==String(user?.id)) return
     if (String(data.roomId) !== String(interviewId)) {
       console.log(`[WEBRTC SIGNALING] trainer: mobile-camera-disconnected IGNORED (roomId=${data.roomId} !== current=${interviewId})`)
       return
@@ -603,8 +607,9 @@ function InterviewRoomInner({ user }) {
   }, [interviewId, setDevices, setPeers, closePeer]))
 
   useSocketEvent('peer-left', useCallback((data) => {
+    prevOfferPeersRef.current.delete(data.socketId)
     setPeers(prev => prev.filter(p => p.socketId !== data.socketId))
-    if (data.deviceType === 'MOBILE') {
+    if (data.deviceType === 'MOBILE' && (isInterviewer||String(data.userId)===String(user?.id))) {
       setDevices(prev => ({ ...prev, mobile: false }))
     }
     closePeer(data.socketId)
@@ -673,8 +678,12 @@ function InterviewRoomInner({ user }) {
   }, [addChatMessage]))
 
   useSocketEvent('device-status', useCallback((data) => {
-    updateDevice(data.deviceType, data.connected)
+    if(isInterviewer||String(data.fromUserId)===String(user?.id)) updateDevice(data.deviceType, data.connected)
   }, [updateDevice]))
+
+  useSocketEvent('interview:mobile-frame',useCallback(data=>{setMobileFrames(prev=>({...prev,[data.participantId]:data}))},[]))
+  useSocketEvent('interview:monitoring-status',useCallback(data=>setCandidateMonitoring(prev=>({...prev,[data.participantId]:data})),[]))
+  useSocketEvent('interview:mobile-evidence',useCallback(data=>{setMobileEvidence(prev=>({...prev,[data.participantId]:data.success?data.mobileEvidence:null}))},[]))
 
   useSocketEvent('interview-alert', useCallback((data) => {
     addAlert(data)
@@ -687,7 +696,7 @@ function InterviewRoomInner({ user }) {
   }, [socket]))
 
   useSocketEvent('interview-started', useCallback((data) => {
-    markStarted()
+    markStarted(data?.startedAt)
   }, [markStarted]))
 
   useSocketEvent('interview-ended', useCallback((data) => {
@@ -740,9 +749,9 @@ function InterviewRoomInner({ user }) {
     try {
       await interviewService.end(interviewId)
     } catch (err) {
-      console.error('Failed to end interview:', err)
+      setNotice(err.message||'Could not end the session. Please retry.')
+      return
     }
-    socket?.emit('end-interview', { interviewId })
     cleanupResources()
     navigate('/interviews')
   }, [interviewId, cleanupResources, navigate, socket, confirm])
@@ -788,6 +797,7 @@ function InterviewRoomInner({ user }) {
     try {
       await interviewService.recordConsent(interviewId)
       setConsentGiven(true)
+      setFlowStep(interviewData?.require_mobile_pairing===false?'screenshare':'pair')
       setIsBusy(false)
       if (joined) {
         setPhase(PHASE.WAITING)
@@ -928,6 +938,8 @@ function InterviewRoomInner({ user }) {
     )
   }
 
+  if (phase===PHASE.CONSENT) return <ConsentScreen interviewId={interviewId} onConsent={handleAcceptConsent} onDecline={()=>navigate('/interviews')} isBusy={isBusy} error={error}/>
+
   // ── STEP 1: Ready Check (Pre-Join) ───────────────────────────────────────
   if (flowStep === 'ready') {
     return (
@@ -952,6 +964,7 @@ function InterviewRoomInner({ user }) {
         isBusy={isBusy}
         onBack={() => setPhase(PHASE.INVITE)}
         onContinue={async () => {
+          if(!isInterviewer&&!consentGiven){setPhase(PHASE.CONSENT);return}
           if (!joined && !isBusy) {
             await beginJoin()
           }
@@ -971,7 +984,7 @@ function InterviewRoomInner({ user }) {
 
   // ── STEP 2: Pair Mobile Device (QR Step — Participant Only, Mandatory) ───
   if (flowStep === 'pair') {
-    const isMobileConnected = sessionDevices?.mobile || peers.some(p => p.deviceType === 'MOBILE')
+    const isMobileConnected = sessionDevices?.mobile || peers.some(p => p.deviceType === 'MOBILE' && String(p.userId)===String(user?.id))
     return (
       <PairMobileStep
         interviewId={interviewId}
@@ -980,6 +993,8 @@ function InterviewRoomInner({ user }) {
         qrPayload={qrPayload}
         onRefreshQr={handleRefreshQr}
         isMobileConnected={isMobileConnected}
+        mobileStream={remoteStreams[peers.find(p=>p.deviceType==='MOBILE'&&String(p.userId)===String(user?.id))?.socketId]}
+        mobileFrame={mobileFrames[user?.id]} mobileEvidence={mobileEvidence[user?.id]}
         isBusy={isBusy}
         onBack={() => setFlowStep('ready')}
         onContinue={() => setFlowStep('screenshare')}
@@ -1062,7 +1077,10 @@ function InterviewRoomInner({ user }) {
         started={started}
         peerConnected={peerConnected}
         connectionStatus={connectionStatus}
-        notice={notice}
+        mobileFrames={mobileFrames} mobileEvidence={mobileEvidence}
+        candidateMonitoring={candidateMonitoring}
+        localStream={localStreams?.laptop||localStreamRef.current} onStart={()=>attemptStart(true)}
+        notice={notice} aiStatus={aiStatus}
         handleEndInterview={() => {
           try { sessionStorage.removeItem(`iv_step_${interviewId}`) } catch {}
           handleEndInterview()

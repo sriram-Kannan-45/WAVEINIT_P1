@@ -67,8 +67,8 @@ class YOLOClientProctoringService {
 
     // Setup canvas for resizing and JPEG extraction (320x240 for optimal transmission)
     const canvas = document.createElement('canvas');
-    canvas.width = 320;
-    canvas.height = 240;
+    canvas.width = moduleType==='INTERVIEW'?640:320;
+    canvas.height = moduleType==='INTERVIEW'?480:240;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
     let isProcessing = false;
@@ -89,6 +89,7 @@ class YOLOClientProctoringService {
 
       try {
         isProcessing = true;
+        if(moduleType==='INTERVIEW') canvas.height=Math.round(canvas.width*videoEl.videoHeight/videoEl.videoWidth);
         ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
         const b64Frame = canvas.toDataURL('image/jpeg', 0.5);
 
@@ -138,7 +139,7 @@ class YOLOClientProctoringService {
       videoEl,
       canvas,
       active: true,
-      cameraSource,
+      cameraSource, ownsVideo: source instanceof MediaStream,
     });
 
     console.log(`[YOLOProctoring] Monitoring started: ${monitorId} (${fps} FPS)`);
@@ -153,7 +154,7 @@ class YOLOClientProctoringService {
     const monitor = this.monitors.get(monitorId);
     if (monitor) {
       if (monitor.intervalId) clearInterval(monitor.intervalId);
-      if (monitor.videoEl && monitor.videoEl.srcObject && !(monitor.videoEl instanceof HTMLVideoElement)) {
+      if (monitor.videoEl && monitor.videoEl.srcObject && monitor.ownsVideo) {
         try {
           monitor.videoEl.pause();
           monitor.videoEl.srcObject = null;

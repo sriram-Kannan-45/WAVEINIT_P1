@@ -6,11 +6,11 @@ import InterviewShell from './InterviewShell'
 import { ShieldCheck, Check, AlertTriangle, XCircle } from 'lucide-react'
 
 const CONSENT_POINTS = [
-  'Video and audio will be recorded from your camera and microphone during the interview.',
+  'Your camera and microphone are used for the live interview. Recording is available when enabled for this session.',
   'Screen sharing content may be recorded if screen share is activated.',
   'Camera and microphone inputs are monitored for identity and presence verification.',
   'Tab changes, copy/paste events, and system activity may be logged for audit purposes.',
-  'Authorized access to interview recordings and logs is strictly limited to relevant LMS admins and trainers.',
+  'Interview recordings and logs are available through the LMS to authorized session users.',
 ]
 
 export default function ConsentScreen({ onConsent, onDecline, isBusy, error, interviewId }) {

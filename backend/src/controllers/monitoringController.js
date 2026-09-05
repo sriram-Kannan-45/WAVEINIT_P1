@@ -464,6 +464,7 @@ class MonitoringController {
    */
   async getAttemptReport(req, res) {
     try {
+      if(String(req.query.contextType).toUpperCase()==='INTERVIEW')return fail(res,400,'Use the interview report or a candidate monitoring session ID');
       const attemptId = req.params.attemptId;
       const report = await monitoringService.getReport({ attemptId, contextType: req.query.contextType || 'QUIZ', contextId: req.query.contextId || null });
       return ok(res, report);
@@ -482,6 +483,13 @@ class MonitoringController {
         limit,
         offset,
       });
+      const visible=[];
+      for(const report of data.sessions||[]) {
+        if(report.contextType!=='INTERVIEW'){visible.push(report);continue;}
+        try{const service=require('../services/interviewLifecycleService');const interview=await service.access(report.contextId,req.user);if(String(report.participantId)===String(req.user.id)||service.isManager(interview,req.user))visible.push(report)}catch(_){}
+      }
+      if(visible.length!==(data.sessions||[]).length)data.total=visible.length;
+      data.sessions=visible;
       return ok(res, data);
     } catch (err) {
       return fail(res, 500, err.message);

@@ -19,7 +19,13 @@ class InterviewTokenService {
    * Generate a one-time pairing token for a device in a session.
    * Rate-limited: max MAX_TOKENS_PER_SESSION per session per user with cooldown.
    */
-  async generatePairingToken(sessionId, userId, deviceType) {
+  async generatePairingToken(sessionId, userId, deviceType, transaction = null) {
+    const {sequelize,InterviewSession}=require('../models');
+    if(!transaction) return sequelize.transaction(tx=>this.generatePairingToken(sessionId,userId,deviceType,tx));
+    const session=await InterviewSession.findByPk(sessionId,{transaction,lock:transaction.LOCK.UPDATE});
+    if(!session || !['WAITING','ACTIVE'].includes(session.status)) throw new Error('Interview session has ended');
+    const paired=await InterviewDevice.findOne({transaction,where:{session_id:sessionId,user_id:userId,device_type:deviceType,token_status:{[Op.in]:['PENDING','CONSUMED']}},order:[['id','DESC']]});
+    if(paired && (paired.token_status==='CONSUMED'||new Date(paired.token_expires_at)>new Date())) return {token:paired.pairing_token,expiresAt:paired.token_expires_at,deviceId:paired.id,reusable:paired.token_status==='CONSUMED'};
     // Rate-limit check: count recent tokens for this session+user
     const recentCount = await InterviewDevice.count({
       where: {
@@ -43,6 +49,7 @@ class InterviewTokenService {
     // Reuse an existing PENDING device row for this session+user+device so
     // refreshes don't grow the table unboundedly (the QR refresh path).
     const existing = await InterviewDevice.findOne({
+      transaction,
       where: {
         session_id: sessionId,
         user_id: userId,
@@ -59,7 +66,7 @@ class InterviewTokenService {
           status: 'PAIRED',
           connected_at: null,
           disconnected_at: null,
-        })
+        }, {transaction})
       : await InterviewDevice.create({
           session_id: sessionId,
           user_id: userId,
@@ -68,10 +75,10 @@ class InterviewTokenService {
           token_status: 'PENDING',
           token_expires_at: expiresAt,
           status: 'PAIRED',
-        });
+        }, {transaction});
 
     logger.info('Pairing token generated', { sessionId, userId, deviceType, expiresAt });
-    return { token, expiresAt, deviceId: device.id };
+    return { token, expiresAt, deviceId: device.id, reusable:false };
   }
 
   /**
@@ -80,58 +87,16 @@ class InterviewTokenService {
    * Returns the device record on success, null on failure.
    */
   async consumePairingToken(token, expectedUserId) {
-    // Atomic: find and mark as CONSUMED in one operation
-    const [updatedCount] = await InterviewDevice.update(
-      { token_status: 'CONSUMED' },
-      {
-        where: {
-          pairing_token: token,
-          token_status: 'PENDING',
-        },
-        returning: true,
-      }
-    );
-
-    if (updatedCount === 0) {
-      // Token not found or already consumed/expired
-      const existing = await InterviewDevice.findOne({ where: { pairing_token: token } });
-      if (!existing) {
-        return { success: false, status: 404, message: 'Invalid pairing token' };
-      }
-      if (existing.token_status === 'CONSUMED') {
-        // If device was previously consumed for an active session, allow mobile socket reconnection
-        const { InterviewSession } = require('../models');
-        const session = await InterviewSession.findByPk(existing.session_id);
-        if (session && (session.status === 'WAITING' || session.status === 'ACTIVE')) {
-          logger.info('Mobile socket reconnected to active session', { deviceId: existing.id, sessionId: existing.session_id });
-          return { success: true, device: existing, reconnected: true };
-        }
-        return { success: false, status: 410, message: 'Token already used. Please request a new QR code.' };
-      }
-      if (existing.token_status === 'EXPIRED') {
-        return { success: false, status: 410, message: 'Token expired. Please request a new QR code.' };
-      }
-      return { success: false, status: 410, message: 'Token no longer valid' };
+    const result=await this.validatePairingToken(token);
+    if(!result.success) return result;
+    if(expectedUserId && String(result.device.user_id)!==String(expectedUserId)) return {success:false,status:403,message:'Token does not belong to this user'};
+    if(result.device.token_status==='PENDING') {
+      await InterviewDevice.update({token_status:'CONSUMED'},{where:{id:result.device.id,user_id:result.device.user_id,token_status:'PENDING',token_expires_at:{[Op.gt]:new Date()}}});
+      const current=await this.validatePairingToken(token);
+      if(!current.success || current.device.token_status!=='CONSUMED') return {success:false,status:410,message:'Pairing expired. Please refresh the QR code.'};
+      return current;
     }
-
-    // Fetch the updated record
-    const device = await InterviewDevice.findOne({
-      where: { pairing_token: token },
-    });
-
-    // Validate user identity
-    if (expectedUserId && String(device.user_id) !== String(expectedUserId)) {
-      return { success: false, status: 403, message: 'Token does not belong to this user' };
-    }
-
-    // Check expiry (belt-and-suspenders with the DB constraint)
-    if (device.token_expires_at && new Date(device.token_expires_at) < new Date()) {
-      await device.update({ token_status: 'EXPIRED' });
-      return { success: false, status: 410, message: 'Token expired. Please request a new QR code.' };
-    }
-
-    logger.info('Pairing token consumed', { deviceId: device.id, sessionId: device.session_id });
-    return { success: true, device };
+    return {...result,reconnected:true};
   }
 
   /**
@@ -139,21 +104,15 @@ class InterviewTokenService {
    * Returns the device record if valid (PENDING or CONSUMED for socket reconnects), or an error.
    */
   async validatePairingToken(token) {
-    const device = await InterviewDevice.findOne({ where: { pairing_token: token } });
-    if (!device) {
-      return { success: false, status: 404, message: 'Invalid pairing token' };
-    }
-
-    if (device.token_expires_at && new Date(device.token_expires_at) < new Date()) {
-      await device.update({ token_status: 'EXPIRED' });
-      return { success: false, status: 410, message: 'Pairing code has expired. Please scan a new QR code.' };
-    }
-
-    if (device.token_status === 'EXPIRED') {
-      return { success: false, status: 410, message: 'This QR code is no longer valid. Please scan a new one.' };
-    }
-
-    return { success: true, device };
+    if(!token) return {success:false,status:400,message:'Pairing token required'};
+    const device=await InterviewDevice.findOne({where:{pairing_token:token}});
+    if(!device || device.token_status==='EXPIRED') return {success:false,status:404,message:'Invalid pairing code'};
+    const {InterviewSession,Interview}=require('../models');
+    const session=await InterviewSession.findByPk(device.session_id);
+    const interview=session && await Interview.findByPk(session.interview_id);
+    if(!session || !['WAITING','ACTIVE'].includes(session.status) || !interview || !['SCHEDULED','IN_PROGRESS'].includes(interview.status)) return {success:false,status:410,message:'This interview session has ended'};
+    if(device.token_status==='PENDING' && new Date(device.token_expires_at)<=new Date()) return {success:false,status:410,message:'Pairing code expired. Refresh the QR code.'};
+    return {success:true,device};
   }
 
   /**

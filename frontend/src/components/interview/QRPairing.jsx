@@ -17,7 +17,7 @@ export default function QRPairing({ qrPayload, onRefresh, expiresAt, tokenStatus
 
   useEffect(() => {
     const targetExpiry = expiresAt || qrPayload?.expiresAt
-    if (!targetExpiry) return
+    if (!targetExpiry || qrPayload?.reusable) return
     const update = () => {
       const remaining = Math.max(0, Math.floor((new Date(targetExpiry) - Date.now()) / 1000))
       setTimeLeft(remaining)
@@ -40,7 +40,7 @@ export default function QRPairing({ qrPayload, onRefresh, expiresAt, tokenStatus
   // Ensure protocol is always https://
   const pairUrl = rawPairUrl ? rawPairUrl.replace(/^http:\/\//i, 'https://') : null
 
-  const isExpired = timeLeft <= 0
+  const isExpired = !qrPayload?.reusable && timeLeft <= 0
 
   const handleRefresh = async () => {
     if (!onRefresh || refreshing) return
@@ -92,7 +92,7 @@ export default function QRPairing({ qrPayload, onRefresh, expiresAt, tokenStatus
         )}
       </div>
 
-      {isExpired ? (
+      {qrPayload?.reusable?<p className="text-surface-600 text-xs mt-2">Reconnect to this active session</p>:isExpired ? (
         <div className="text-rose-600 text-[11px] mt-2 font-medium flex items-center gap-1">
           <AlertTriangle size={12} /> QR code expired
         </div>

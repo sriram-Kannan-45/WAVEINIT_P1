@@ -20,6 +20,8 @@ const tokenService = require('../services/interviewTokenService');
 const aiMonitorService = require('../services/interviewAiMonitorService');
 const relay = require('./crossInstance');
 const logger = require('../utils/logger');
+const lifecycle = require('../services/interviewLifecycleService');
+const monitoring = require('../services/monitoringService');
 
 // In-memory room state: interviewId → InterviewRoomState instance
 const rooms = new Map();
@@ -103,28 +105,43 @@ function broadcastRoomState(io, interviewId) {
  * Validate socket has permission to join this interview room.
  */
 async function validateRoomAccess(socket, interviewId) {
-  const userId = socket.userId;
-  const role = socket.userRole;
-
-  const interview = await Interview.findByPk(interviewId);
-  if (!interview) return { allowed: false, error: 'Interview not found' };
-
-  if (role === 'ADMIN' || role === 'TRAINER' || socket.deviceType === 'MOBILE') return { allowed: true, interview };
-  if (String(interview.candidate_id) === String(userId)) return { allowed: true, interview };
-  if (String(interview.interviewer_id) === String(userId)) return { allowed: true, interview };
-  if (String(interview.created_by) === String(userId)) return { allowed: true, interview };
-
-  return { allowed: false, error: 'Not authorized for this interview' };
+  try {
+    if(socket.deviceType==='MOBILE' && String(socket.currentInterviewId)!==String(interviewId)) return {allowed:false,error:'Pairing belongs to a different interview'};
+    const interview=await lifecycle.access(interviewId,{id:socket.userId,role:socket.userRole});
+    lifecycle.assertOpen(interview);
+    return {allowed:true,interview};
+  } catch(error) { return {allowed:false,error:error.message}; }
+}
+function canExchange(a,b) {
+  if(!a||!b) return false;
+  if(a.deviceType!=='MOBILE' && b.deviceType!=='MOBILE') return true;
+  if(a.deviceType==='MOBILE' && b.deviceType==='MOBILE') return false;
+  const laptop=a.deviceType==='MOBILE'?b:a;
+  return String(a.userId)===String(b.userId)||['ADMIN','TRAINER'].includes(laptop.role);
 }
 
 /**
  * Register interview socket events on a socket instance.
  */
 function registerInterviewEvents(io, socket) {
+  // Bind every mutation and signal to the room joined by this authenticated socket.
+  const on=(event,handler)=>socket.on(event,async (data,ack)=>{
+    if(event==='disconnect') return handler(data,ack);
+    try {
+      if(event!=='join-room') {
+        const room=rooms.get(String(socket.currentInterviewId));
+        if(!room?.peers.has(socket.id) || (data?.interviewId!=null && String(data.interviewId)!==String(socket.currentInterviewId)) || (data?.sessionId!=null && String(data.sessionId)!==String(socket.interviewSessionId))) return ack?.({ok:false,success:false,error:'Not joined to this session'});
+        if(data?.targetSocketId && !canExchange(room.peers.get(socket.id),room.peers.get(data.targetSocketId))) return;
+        if(socket.deviceType==='MOBILE' && !['get-room-state','leave-room','offer','answer','ice-candidate','ice-restart','device-status','interview:yolo_frame'].includes(event)) return;
+        data={...data,interviewId:socket.currentInterviewId,sessionId:socket.interviewSessionId,participantId:socket.userId};
+      }
+      return await handler(data,ack);
+    } catch(error) { logger.warn('Interview event failed',{event,error:error.message}); ack?.({ok:false,success:false,error:error.message}); }
+  });
   /**
    * join-room: Join an interview room for WebRTC signalling.
    */
-  socket.on('join-room', async (data, callback) => {
+  on('join-room', async (data, callback) => {
     try {
       // CRITICAL: coerce to String so the in-memory `rooms` Map always uses
       // the same key type regardless of whether the client sent a string
@@ -135,7 +152,9 @@ function registerInterviewEvents(io, socket) {
         return;
       }
 
+      if(socket.currentInterviewId && String(socket.currentInterviewId)!==interviewId && rooms.get(String(socket.currentInterviewId))?.peers.has(socket.id)) return callback?.({success:false,error:'Leave the current interview before joining another'});
       const deviceType = data.deviceType === 'MOBILE' ? 'MOBILE' : 'LAPTOP';
+      if((socket.deviceType==='MOBILE')!==(deviceType==='MOBILE')) return callback?.({success:false,error:'Invalid device role'});
 
       const { allowed, interview, error } = await validateRoomAccess(socket, interviewId);
       if (!allowed) {
@@ -184,17 +203,17 @@ function registerInterviewEvents(io, socket) {
         relay.relayEmit(io, 'room', `interview_${interviewId}`, 'mobile-camera-paired', pairedPayload);
       }
 
-      // Find or create session
-      let session = await InterviewSession.findOne({
-        where: { interview_id: interviewId, status: { [Op.in]: ['WAITING', 'ACTIVE'] } },
-      });
-      if (!session) {
-        session = await InterviewSession.create({
-          interview_id: interviewId,
-          status: 'WAITING',
-        });
+      const session=await lifecycle.session(interviewId);
+      socket.interviewSessionId=session.id;
+      if(deviceType==='LAPTOP') {
+        const member=await lifecycle.member(interview,socket.userId);
+        if(member) socket.interviewMonitoringId=(await lifecycle.ensureMonitor(interview,session,socket.userId))?.sessionId;
+        const [device]=await InterviewDevice.findOrCreate({where:{session_id:session.id,user_id:socket.userId,device_type:'LAPTOP'},defaults:{status:'CONNECTED',connected_at:new Date()}});
+        await device.update({status:'CONNECTED',connected_at:new Date()});
+        await lifecycle.presence(interview,session,socket.userId,true);
+      } else {
+        socket.interviewMonitoringId=(await lifecycle.ensureMonitor(interview,session,socket.userId))?.sessionId;
       }
-
       const room = getRoom(interviewId);
 
       // Notify all peers in the room across instances about new joiner
@@ -207,7 +226,7 @@ function registerInterviewEvents(io, socket) {
       }, { excludingSocket: socket });
 
       // Add this socket to the room
-      socket.join(`interview_${interviewId}`);
+      await socket.join(`interview_${interviewId}`);
       room.addPeer(socket.id, {
         userId: socket.userId,
         role: socket.userRole,
@@ -224,7 +243,7 @@ function registerInterviewEvents(io, socket) {
       // Send existing peers to the new joiner
       const existingPeers = [];
       for (const [peerSocketId, peerInfo] of room.peers) {
-        if (peerSocketId !== socket.id) {
+        if (peerSocketId !== socket.id && canExchange(room.peers.get(socket.id),peerInfo)) {
           existingPeers.push({
             socketId: peerSocketId,
             userId: peerInfo.userId,
@@ -247,6 +266,9 @@ function registerInterviewEvents(io, socket) {
       if (callback) callback({
         success: true,
         sessionId: session.id,
+        monitoringSessionId:socket.interviewMonitoringId||null,
+        startedAt:session.started_at,
+        status:session.status,
         peers: existingPeers,
         roomState: snapshot,
         interview: {
@@ -266,10 +288,12 @@ function registerInterviewEvents(io, socket) {
    * get-room-state: One-shot "current room state" query so a peer that joins
    * (or refreshes) after the mobile camera already paired can sync immediately.
    */
-  socket.on('get-room-state', (data, callback) => {
+  on('get-room-state', (data, callback) => {
     const interviewId = data?.interviewId != null ? String(data.interviewId) : null;
     const room = getRoom(interviewId);
     const snapshot = room.toSnapshot();
+    snapshot.peers=snapshot.peers.filter(p=>p.socketId!==socket.id&&canExchange(room.peers.get(socket.id),p));
+    snapshot.mobilePaired=snapshot.peers.some(p=>p.deviceType==='MOBILE');
     console.log(`[WEBRTC SIGNALING] server: get-room-state for roomId=${interviewId} → peers=${snapshot.peers.length}, mobilePaired=${snapshot.mobilePaired}`);
     if (callback) callback({ success: true, roomId: interviewId, peers: snapshot.peers, mobilePaired: snapshot.mobilePaired, roomState: snapshot });
   });
@@ -277,7 +301,7 @@ function registerInterviewEvents(io, socket) {
   /**
    * leave-room: Leave an interview room.
    */
-  socket.on('leave-room', async (data) => {
+  on('leave-room', async (data) => {
     const interviewId = data?.interviewId != null ? String(data.interviewId) : null;
     if (!interviewId) return;
 
@@ -288,62 +312,26 @@ function registerInterviewEvents(io, socket) {
    * interview-started: Trainer/Admin announces the interview has officially
    * started so participants leave the waiting state.
    */
-  socket.on('interview-started', (data) => {
-    const interviewId = data?.interviewId != null ? String(data.interviewId) : null;
-    if (!interviewId) return;
-
-    relay.relayEmit(io, 'room', `interview_${interviewId}`, 'interview-started', {
-      startedBy: socket.userId,
-      startedByName: socket.userName,
-      timestamp: new Date().toISOString(),
-    });
+  on('interview-started', async data => {
+    const interview=await lifecycle.access(data.interviewId,{id:socket.userId,role:socket.userRole},true);
+    const session=await InterviewSession.findByPk(socket.interviewSessionId);
+    if(session?.status==='ACTIVE') relay.relayEmit(io,'room',`interview_${interview.id}`,'interview-started',{startedAt:session.started_at});
   });
 
   /**
    * end-interview: Trainer/Admin ends the interview.
    * Marks the session ENDED and notifies all peers so they leave the room.
    */
-  socket.on('end-interview', async (data, callback) => {
-    const interviewId = data?.interviewId != null ? String(data.interviewId) : null;
-    if (!interviewId) {
-      if (callback) callback({ success: false, error: 'interviewId required' });
-      return;
-    }
-
-    const role = socket.userRole;
-    if (role !== 'TRAINER' && role !== 'ADMIN') {
-      if (callback) callback({ success: false, error: 'Only the interviewer can end the interview' });
-      return;
-    }
-
-    try {
-      const session = await InterviewSession.findOne({
-        where: { interview_id: interviewId, status: { [Op.in]: ['WAITING', 'ACTIVE'] } },
-      });
-      if (session) {
-        session.status = 'ENDED';
-        session.ended_at = new Date();
-        await session.save();
-      }
-
-      // Notify everyone in the room (including the trainer)
-      relay.relayEmit(io, 'room', `interview_${interviewId}`, 'interview-ended', {
-        endedBy: socket.userId,
-        endedByName: socket.userName,
-        timestamp: new Date().toISOString(),
-      });
-
-      if (callback) callback({ success: true });
-    } catch (error) {
-      logger.error('Error ending interview', { error: error.message });
-      if (callback) callback({ success: false, error: 'Server error' });
-    }
+  on('end-interview', async (data,callback) => {
+    const session=await lifecycle.end(data.interviewId,{id:socket.userId,role:socket.userRole});
+    relay.relayEmit(io,'room',`interview_${data.interviewId}`,'interview-ended',{endedBy:socket.userId,endedByName:socket.userName,endedAt:session.ended_at});
+    callback?.({success:true});
   });
 
   /**
    * WebRTC signalling: offer, answer, ice-candidate
    */
-  socket.on('offer', (data) => {
+  on('offer', (data) => {
     const { targetSocketId, offer } = data;
     const interviewId = data.interviewId != null ? String(data.interviewId) : null;
     const roomName = `interview_${interviewId}`;
@@ -360,7 +348,7 @@ function registerInterviewEvents(io, socket) {
     }
   });
 
-  socket.on('answer', (data) => {
+  on('answer', (data) => {
     const { targetSocketId, answer } = data;
     const interviewId = data.interviewId != null ? String(data.interviewId) : null;
     console.log(`[SERVER] Received answer from socket: ${socket.id} for targetSocketId: ${targetSocketId}`);
@@ -376,7 +364,7 @@ function registerInterviewEvents(io, socket) {
     }
   });
 
-  socket.on('ice-candidate', (data) => {
+  on('ice-candidate', (data) => {
     const { targetSocketId, candidate } = data;
     console.log(`[SERVER] Received ice-candidate from socket: ${socket.id} for targetSocketId: ${targetSocketId}`);
     if (targetSocketId) {
@@ -390,7 +378,7 @@ function registerInterviewEvents(io, socket) {
   /**
    * screen-share: Broadcast screen share start/stop to room.
    */
-  socket.on('screen-share', (data) => {
+  on('screen-share', (data) => {
     const { sharing, metadata } = data;
     const interviewId = data.interviewId != null ? String(data.interviewId) : null;
     if (interviewId) {
@@ -406,7 +394,7 @@ function registerInterviewEvents(io, socket) {
   /**
    * chat-message: Broadcast chat to room.
    */
-  socket.on('chat-message', async (data) => {
+  on('chat-message', async (data) => {
     const { message, sessionId } = data;
     const interviewId = data.interviewId != null ? String(data.interviewId) : null;
     if (!interviewId || !message) return;
@@ -433,7 +421,7 @@ function registerInterviewEvents(io, socket) {
   /**
    * participant-step-progress: Reports candidate setup step progression.
    */
-  socket.on('participant-step-progress', (data) => {
+  on('participant-step-progress', (data) => {
     const { step, progress, completed } = data || {};
     const interviewId = data?.interviewId != null ? String(data.interviewId) : String(socket.currentInterviewId || '');
     if (!interviewId) return;
@@ -451,7 +439,7 @@ function registerInterviewEvents(io, socket) {
   /**
    * participant-tab-switch: Reports candidate tab switch / focus loss.
    */
-  socket.on('participant-tab-switch', (data) => {
+  on('participant-tab-switch', (data) => {
     const interviewId = data?.interviewId != null ? String(data.interviewId) : String(socket.currentInterviewId || '');
     if (!interviewId) return;
 
@@ -465,7 +453,7 @@ function registerInterviewEvents(io, socket) {
   /**
    * device-status: Client reports device connection status change.
    */
-  socket.on('device-status', async (data) => {
+  on('device-status', async (data) => {
     const { sessionId, deviceType, connected } = data;
     const interviewId = data.interviewId != null ? String(data.interviewId) : null;
     if (!interviewId) return;
@@ -492,12 +480,20 @@ function registerInterviewEvents(io, socket) {
   /**
    * interview-alert: Client-side AI monitoring alert.
    */
-  socket.on('interview-alert', async (data) => {
+  on('interview:monitoring-status', async data => {
+    if(!socket.interviewMonitoringId || socket.deviceType==='MOBILE')return;
+    const room=rooms.get(String(socket.currentInterviewId));
+    for(const peer of room.peers.values())if(['ADMIN','TRAINER'].includes(peer.role))io.to(peer.socketId).emit('interview:monitoring-status',{
+      participantId:socket.userId,faceDetected:data.faceDetected===true,cameraActive:data.cameraActive===true,receivedAt:Date.now(),
+    });
+  });
+
+  on('interview-alert', async (data) => {
     const { sessionId, alertType, severity, sourceDevice, message, metadata } = data;
     if (!sessionId || !alertType) return;
 
     const alert = await aiMonitorService.processAlert(sessionId, {
-      alertType, severity, sourceDevice, message, metadata,
+      alertType, severity, sourceDevice, message, metadata:{...metadata,participantId:socket.userId},
     }).catch(() => null);
 
     if (alert) {
@@ -509,6 +505,7 @@ function registerInterviewEvents(io, socket) {
         for (const [peerSocketId, peerInfo] of room.peers) {
           if (peerInfo.role === 'TRAINER' || peerInfo.role === 'ADMIN') {
             relay.relayEmit(io, 'socket', peerSocketId, 'interview-alert', {
+              participantId:socket.userId,
               alertId: alert.id,
               alertType: alert.alert_type,
               severity: alert.severity,
@@ -525,63 +522,29 @@ function registerInterviewEvents(io, socket) {
   /**
    * interview:yolo_frame: Real-time YOLO frame processing for candidate camera / mobile stream
    */
-  socket.on('interview:yolo_frame', async (data, ack) => {
-    try {
-      const {
-        frame,
-        sessionId,
-        participantId = socket.userId,
-        cameraSource = 'PC_CAMERA',
-        confidenceThreshold = 0.35,
-        interviewId = socket.currentInterviewId,
-      } = data || {};
-
-      if (!frame || !sessionId) {
-        return ack?.({ ok: false, error: 'frame and sessionId required' });
-      }
-
-      const yoloService = require('../services/yoloProctoringService');
-      const res = await yoloService.analyzeFrame({
-        frame,
-        sessionId,
-        participantId,
-        moduleType: 'INTERVIEW',
-        cameraSource,
-        confidenceThreshold,
-      });
-
-      if (res?.success && res.proctoring_event) {
-        const ev = res.proctoring_event;
-        // Broadcast alert if suspicious event or state change
-        if (ev.shouldBroadcast) {
-          const alertRoomId = String(interviewId || sessionId);
-          relay.relayEmit(io, 'room', `interview_${alertRoomId}`, 'interview-alert', {
-            alertType: ev.eventType,
-            severity: ev.severity,
-            sourceDevice: cameraSource === 'MOBILE_CAMERA' ? 'MOBILE' : 'LAPTOP',
-            message: `YOLO Monitor: ${ev.eventType} (${(ev.confidence * 100).toFixed(0)}%)`,
-            metadata: {
-              detectedClasses: ev.detectedClasses,
-              confidence: ev.confidence,
-              cameraSource,
-            },
-            ts: new Date(),
-          });
-        }
-        ack?.({ ok: true, event: ev, detections: res.detections });
-      } else {
-        ack?.({ ok: false, error: res?.error });
-      }
-    } catch (err) {
-      logger.warn('[SocketIO] interview:yolo_frame error:', err.message);
-      ack?.({ ok: false, error: err.message });
+  on('interview:yolo_frame', async (data,ack) => {
+    if(socket.deviceType!=='MOBILE' || typeof data.frame!=='string' || data.frame.length>900000 || !socket.interviewMonitoringId) return ack?.({ok:false});
+    const session=await InterviewSession.findByPk(socket.interviewSessionId);
+    if(!session || !['WAITING','ACTIVE'].includes(session.status)) return ack?.({ok:false,error:'Session ended'});
+    if(Date.now()-(socket.lastInterviewFrameAt||0)<500) return ack?.({ok:true});
+    socket.lastInterviewFrameAt=Date.now();
+    const room=rooms.get(String(socket.currentInterviewId));
+    for(const peer of room.peers.values()) if(canExchange(room.peers.get(socket.id),peer)) {
+      io.to(peer.socketId).emit('interview:mobile-frame',{participantId:socket.userId,frame:data.frame,timestamp:Date.now()});
     }
+    ack?.({ok:true}); // Delivery never waits for inference.
+    const monitor=await monitoring.getSession(socket.interviewMonitoringId);
+    if(!monitor || ['COMPLETED','ABORTED'].includes(monitor.status)) return;
+    const result=await monitoring.validateInterviewMobile({session:monitor,frame:data.frame});
+    if(result.busy) return;
+    const payload={participantId:socket.userId,...result};
+    for(const peer of room.peers.values()) if(String(peer.userId)===String(socket.userId) || canExchange(room.peers.get(socket.id),peer)) io.to(peer.socketId).emit('interview:mobile-evidence',payload);
   });
 
   /**
    * code-sync: Shared code editor content broadcast.
    */
-  socket.on('code-sync', (data) => {
+  on('code-sync', (data) => {
     const { content, language, cursor } = data;
     const interviewId = data.interviewId != null ? String(data.interviewId) : null;
     if (!interviewId) return;
@@ -599,7 +562,7 @@ function registerInterviewEvents(io, socket) {
   /**
    * recording-status: Broadcast recording state changes.
    */
-  socket.on('recording-status', (data) => {
+  on('recording-status', (data) => {
     const { recording, deviceType } = data;
     const interviewId = data.interviewId != null ? String(data.interviewId) : null;
     if (!interviewId) return;
@@ -615,7 +578,7 @@ function registerInterviewEvents(io, socket) {
   /**
    * ICE restart request.
    */
-  socket.on('ice-restart', (data) => {
+  on('ice-restart', (data) => {
     const { targetSocketId } = data;
     if (targetSocketId) {
       relay.relayEmit(io, 'socket', targetSocketId, 'ice-restart', {
@@ -627,7 +590,7 @@ function registerInterviewEvents(io, socket) {
   /**
    * Disconnect: clean up room state.
    */
-  socket.on('disconnect', async () => {
+  on('disconnect', async () => {
     if (socket.currentInterviewId) {
       await handleLeaveRoom(io, socket, String(socket.currentInterviewId));
     }
@@ -642,7 +605,8 @@ async function handleLeaveRoom(io, socket, interviewId) {
   const room = rooms.get(interviewId);
   if (!room) return;
 
-  const peerInfo = room.removePeer(socket.id) || {};
+  const peerInfo = room.removePeer(socket.id);
+  if(!peerInfo) return;
   const deviceType = peerInfo.deviceType || 'LAPTOP';
   socket.leave(`interview_${interviewId}`);
 
@@ -659,12 +623,18 @@ async function handleLeaveRoom(io, socket, interviewId) {
     });
   }
 
-  // Mark device as disconnected
+  const stillConnected=[...room.peers.values()].some(p=>String(p.userId)===String(socket.userId)&&p.deviceType===deviceType);
+  // Another tab/reconnected socket of the same user must remain connected.
+  if(stillConnected) return;
   try {
     const session = await InterviewSession.findOne({
       where: { interview_id: interviewId, status: { [Op.in]: ['WAITING', 'ACTIVE'] } },
     });
     if (session) {
+      const interview=await Interview.findByPk(interviewId);
+      if(deviceType==='LAPTOP') await lifecycle.presence(interview,session,socket.userId,false);
+      const member=await lifecycle.member(interview,socket.userId);
+      if(member?.monitoring_session_id && session.status==='ACTIVE') await monitoring.reportEvent({sessionId:member.monitoring_session_id,participantId:socket.userId,source:deviceType==='MOBILE'?'MOBILE':'LAPTOP',eventType:deviceType==='MOBILE'?'MOBILE_DISCONNECTED':'CAMERA_DISCONNECTED',severity:'WARNING'});
       const where = {
         session_id: session.id,
         user_id: socket.userId,
@@ -712,4 +682,4 @@ async function handleLeaveRoom(io, socket, interviewId) {
   }
 }
 
-module.exports = { registerInterviewEvents, rooms, getRoom };
+module.exports = { registerInterviewEvents, rooms, getRoom, canExchange, validateRoomAccess };

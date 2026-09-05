@@ -6,6 +6,8 @@
 import { ArrowRight, CheckCircle2, ArrowLeft, Smartphone, AlertTriangle } from 'lucide-react'
 import InterviewShell from './InterviewShell'
 import QRPairing from '../QRPairing'
+import { useState } from 'react'
+import MobileFeedTile from './MobileFeedTile'
 
 export default function PairMobileStep({
   interviewId,
@@ -17,7 +19,9 @@ export default function PairMobileStep({
   onContinue,
   onBack,
   isBusy,
+  mobileStream, mobileFrame, mobileEvidence,
 }) {
+  const [videoLive,setVideoLive]=useState(false)
   return (
     <InterviewShell
       interviewId={interviewId}
@@ -130,8 +134,9 @@ export default function PairMobileStep({
               )}
 
               <p style={{ fontSize: 11, color: '#94a3b8', textAlign: 'center', margin: '0 0 12px' }}>
-                Position your phone securely on your desk showing your work area.
+                Position your phone so both you and your laptop are visible.
               </p>
+              {isMobileConnected&&<div style={{width:'100%'}}><MobileFeedTile stream={mobileStream} frame={mobileFrame} evidence={mobileEvidence} name="Your camera" onStatusChange={status=>setVideoLive(status==='live')}/></div>}
             </div>
           )}
 
@@ -156,7 +161,7 @@ export default function PairMobileStep({
 
             <button
               onClick={onContinue}
-              disabled={!isInterviewer && !isMobileConnected}
+              disabled={isBusy || (!isInterviewer && (!isMobileConnected || !videoLive))}
               className="reg-admin-btn reg-admin-btn--primary"
               style={{
                 padding: '10px 24px',

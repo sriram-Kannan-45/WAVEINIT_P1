@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ClipboardCheck, Star, CheckCircle, XCircle, Clock } from 'lucide-react'
+import GroupDiscussionEvaluation from '../../components/interview/GroupDiscussionEvaluation'
 import interviewService from '../../services/interviewService'
 import { Button, Card, CardBody, Textarea, Spinner, EmptyState, Badge } from '../../components/ui'
 import PageHeader from '../../components/ui/PageHeader'
@@ -42,12 +43,12 @@ export default function InterviewEvaluation({ user }) {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [interviewRes, feedbackRes] = await Promise.all([
-          interviewService.get(interviewId),
-          interviewService.getFeedback(interviewId),
-        ])
+        const interviewRes=await interviewService.get(interviewId)
         setInterview(interviewRes.interview)
-        setFeedbacks(feedbackRes.feedbacks || [])
+        if(interviewRes.interview?.mode!=='GROUP_DISCUSSION') {
+          const feedbackRes=await interviewService.getFeedback(interviewId)
+          setFeedbacks(feedbackRes.feedbacks||[])
+        }
       } catch (err) {
         console.error('Failed to fetch interview data:', err)
       } finally {
@@ -121,6 +122,8 @@ export default function InterviewEvaluation({ user }) {
       />
     )
   }
+
+  if(interview.mode==='GROUP_DISCUSSION') return <GroupDiscussionEvaluation interviewId={interviewId}/>
 
   const isInterviewer = user?.role === 'TRAINER' || user?.role === 'ADMIN'
   const canFeedback = isInterviewer && interview.status === 'COMPLETED'

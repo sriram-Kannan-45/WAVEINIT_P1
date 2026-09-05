@@ -1037,6 +1037,31 @@ class MonitoringEngineService {
     }
   }
 
+  async validateInterviewMobile({ session, frame }) {
+    this.mobileFrameJobs ||= new Set();
+    if (this.mobileFrameJobs.has(session.sessionId)) return {busy:true};
+    this.mobileFrameJobs.add(session.sessionId);
+    try {
+      const receivedAt=Date.now();
+      const {data}=await axios.post(`${AI_SERVICE_URL}/api/proctoring/yolo/analyze-frame`,{
+        frame,sessionId:session.sessionId,participantId:session.participantId,moduleType:'INTERVIEW',cameraSource:'MOBILE_CAMERA',timestampMs:receivedAt,
+      },{timeout:10000});
+      if(!data?.success || !data.mobile_evidence) return {success:false};
+      const evidence={...data.mobile_evidence,receivedAt};
+      // Reuse the canonical event/score/report engine; no per-frame DB writes.
+      const previous=this.interviewMobileStates?.get(session.sessionId);
+      this.interviewMobileStates ||= new Map();
+      this.interviewMobileStates.set(session.sessionId,evidence);
+      if(session.status==='ACTIVE' && previous?.composition_state!==evidence.composition_state) {
+        const eventType=evidence.person_detected ? (evidence.laptop_detected?'COMPOSITION_VALID':'LAPTOP_NOT_DETECTED') : 'FACE_ABSENT';
+        await this.reportEvent({sessionId:session.sessionId,participantId:session.participantId,source:'MOBILE',eventType,severity:eventType==='COMPOSITION_VALID'?'INFO':'WARNING',metadata:{mobileEvidence:evidence}});
+      }
+      if(session.status==='ACTIVE' && evidence.phone_stable) await this.reportEvent({sessionId:session.sessionId,participantId:session.participantId,source:'MOBILE',eventType:'PHONE_DETECTED',severity:'HIGH',serverMobileDetection:true,metadata:{mobileEvidence:evidence}});
+      return {success:true,mobileEvidence:evidence,detections:data.detections};
+    } catch(error) { logger.warn('Interview mobile inference unavailable',{error:error.message}); return {success:false}; }
+    finally { this.mobileFrameJobs.delete(session.sessionId); }
+  }
+
   async validateAssessmentMobile({ session, verificationSession, frame }) {
     this.mobileFrameJobs ||= new Set();
     if (this.mobileFrameJobs.has(session.sessionId)) return { success: false, busy: true };
@@ -1153,6 +1178,8 @@ class MonitoringEngineService {
     const session = await this.getSession(sessionId, { transaction, lock: { level: transaction.LOCK.UPDATE, of: MonitoringSession } });
     if (!session) throw new Error('Monitoring session not found');
 
+    if(session.contextType==='INTERVIEW' && participantId && String(participantId)!==String(session.participantId)) throw new Error('This monitoring session belongs to another candidate');
+
     // Ensure session.attemptId is resolved if not present
     let resolvedAttemptId = attemptId || session.attemptId;
     if (!resolvedAttemptId) {
@@ -1195,7 +1222,7 @@ class MonitoringEngineService {
 
     const config = await this.getConfig(session.contextType);
     const normalizedSource = String(source).toUpperCase() === 'MOBILE' ? 'MOBILE' : 'LAPTOP';
-    const mobilePhone = ['QUIZ', 'CODING'].includes(session.contextType) && normalizedSource === 'MOBILE' && ['PHONE_DETECTED', 'CELL_PHONE_DETECTED'].includes(eventType);
+    const mobilePhone = ['QUIZ', 'CODING', 'INTERVIEW'].includes(session.contextType) && normalizedSource === 'MOBILE' && ['PHONE_DETECTED', 'CELL_PHONE_DETECTED'].includes(eventType);
     if (mobilePhone && !serverMobileDetection) return { skipped: true, reason: 'SERVER_MOBILE_DETECTION_REQUIRED', session };
     const normalizedSeverity = (severity || 'INFO').toUpperCase();
 
@@ -1501,7 +1528,7 @@ class MonitoringEngineService {
     const flags = Array.isArray(session.integrityFlags) ? [...session.integrityFlags] : [];
 
     // Integrity Check 1: Was candidate calibrated?
-    if (!session.calibrationPassed) {
+    if (session.contextType !== 'INTERVIEW' && !session.calibrationPassed) {
       flags.push('SUBMITTED_WITHOUT_CALIBRATION');
     }
 

@@ -121,6 +121,10 @@ const initializeSocket = (server) => {
       require('../socket/assessmentVerificationEvents')(io, socket);
       return;
     }
+    if (socket.deviceType === 'MOBILE' && socket.pairingToken) {
+      require('../socket/interviewEvents').registerInterviewEvents(io,socket);
+      return;
+    }
     logger.info('New socket connection', {
       socketId: socket.id,
       userId: socket.userId,

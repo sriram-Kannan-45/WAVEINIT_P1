@@ -437,7 +437,7 @@ class YOLOProctorEngine:
             detections, w, h, session_key
         )
         mobile_evidence = {}
-        if camera_source == "MOBILE_CAMERA" and module_type.upper() in ("QUIZ", "CODING"):
+        if camera_source == "MOBILE_CAMERA" and module_type.upper() in ("QUIZ", "CODING", "INTERVIEW"):
             temporal = self._get_session_state(session_key).setdefault("assessment_mobile", {})
             mobile_evidence = evaluate_mobile(detections, w, h, temporal)
             composition_state = mobile_evidence["composition_state"]

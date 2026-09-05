@@ -489,7 +489,7 @@ export default function InterviewDashboard({ user }) {
             <tbody>
               {interviews.map(iv => {
                 const sc = STATUS_COLORS[iv.status] || STATUS_COLORS.SCHEDULED
-                const tb = TYPE_BADGE[iv.type] || TYPE_BADGE.TECHNICAL
+                const tb = iv.mode==='GROUP_DISCUSSION'?{cls:'reg-admin-type--technical',label:'Group Discussion'}:TYPE_BADGE[iv.type] || TYPE_BADGE.TECHNICAL
                 const mb = MEETING_BADGE[iv.meeting_type] || MEETING_BADGE.ONLINE
                 const manage = canManage(iv)
                 return (
@@ -503,7 +503,7 @@ export default function InterviewDashboard({ user }) {
                           {getInitials(iv.candidate?.name)}
                         </div>
                         <div>
-                          <div className="reg-admin-name">{iv.candidate?.name || '—'}</div>
+                          <div className="reg-admin-name">{iv.mode==='GROUP_DISCUSSION'?(iv.title||'Group Discussion'):iv.candidate?.name || '—'}</div>
                           <div className="reg-admin-email">{iv.candidate?.email || ''}</div>
                         </div>
                       </div>
@@ -523,6 +523,7 @@ export default function InterviewDashboard({ user }) {
                     </td>
                     <td><span className={`reg-admin-meeting ${mb.cls}`}>{mb.label}</span></td>
                     <td>
+                      {iv.mode==='GROUP_DISCUSSION'&&<button className="reg-admin-btn" onClick={()=>navigate(`/interview/${iv.id}`)}>Results / report</button>}
                       {isAdmin ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <button
@@ -543,7 +544,7 @@ export default function InterviewDashboard({ user }) {
                           )}
                           <button
                             style={ivActionBtn('#F0FDFA', '#99F6E4', '#0D9488')}
-                            title="Edit Interview"
+                            disabled={iv.mode==='GROUP_DISCUSSION'} title={iv.mode==='GROUP_DISCUSSION'?'Group configuration is fixed after scheduling':'Edit Interview'}
                             onClick={() => openEdit(iv)}
                           >
                             <Pencil size={15} color="#0D9488" strokeWidth={2.2} />
@@ -601,7 +602,7 @@ export default function InterviewDashboard({ user }) {
                                 <button className="reg-admin-action-menu-item" onClick={() => handleView(iv)}>
                                   <Eye size={14} color="#2563EB" /> View Details
                                 </button>
-                                {manage && (
+                                {manage && iv.mode!=='GROUP_DISCUSSION' && (
                                   <button className="reg-admin-action-menu-item" onClick={() => openEdit(iv)}>
                                     <Pencil size={14} color="#0D9488" /> Edit Interview
                                   </button>

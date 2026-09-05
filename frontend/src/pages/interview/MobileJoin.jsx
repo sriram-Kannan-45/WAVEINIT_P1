@@ -20,6 +20,7 @@ import {
   Wifi,
 } from 'lucide-react'
 import { useWebRTC } from '../../hooks/useWebRTC'
+import { mobileCameraStatus } from '../../utils/mobileCameraStatus.mjs'
 import yoloProctoringService from '../../services/yoloProctoringService'
 import { API_BASE, BACKEND_ORIGIN } from '../../api/api'
 import '../../styles/assessment-verification.css'
@@ -71,6 +72,7 @@ export default function MobileJoin() {
   const [phase, setPhase] = useState(PHASE.LOADING)
   const [info, setInfo] = useState(null)
   const [error, setError] = useState(null)
+  const [mobileEvidence,setMobileEvidence]=useState(null)
   const [localStream, setLocalStream] = useState(null)
   const [socket, setSocket] = useState(null)
   const [logs, setLogs] = useState([])
@@ -82,6 +84,7 @@ export default function MobileJoin() {
   const localStreamRef = useRef(null)
   const socketRef = useRef(null)
   const joinedRef = useRef(false)
+  const hadConnectedRef = useRef(false)
   const endedRef = useRef(false)
   const initializingRef = useRef(false)
   const hasVerifiedDimensionsRef = useRef(false)
@@ -186,10 +189,12 @@ export default function MobileJoin() {
     }, 10000)
 
     const s = io(wsUrl, {
-      auth: { token: info.socketToken },
-      transports: ['websocket', 'polling'],
+      auth: async callback=>{
+        try{const response=await fetch(`${API_BASE}/interviews/pair-validate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||'Pairing is no longer active');callback({token:data.socketToken})}catch(e){setError(e.message);callback({token:info.socketToken})}
+      },
+      transports: ['polling', 'websocket'],
       reconnection: true,
-      reconnectionAttempts: 5,
+      reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
       timeout: 10000,
     })
@@ -209,7 +214,10 @@ export default function MobileJoin() {
       addLog(`ICE candidate received from Trainer (from: ${d.fromSocketId?.substr(0,6)})`)
       handleIceCandidateRef.current?.(d.fromSocketId, d.candidate)
     })
+    const permitted=peer=>peer.deviceType!=='MOBILE'&&(String(peer.userId)===String(info.candidateId)||['ADMIN','TRAINER'].includes(peer.role))
+    s.on('interview:mobile-evidence',data=>setMobileEvidence(data.success?data.mobileEvidence:null))
     s.on('peer-joined', (d) => {
+      if(!permitted(d))return
       addLog(`[MOBILE] peer-joined event received: socketId ${d.socketId?.substr(0,6)} (role: ${d.role}, device: ${d.deviceType})`)
       if (d.socketId) {
         addLog(`[MOBILE] Initiating WebRTC offer to new peer: ${d.socketId?.substr(0,6)}`)
@@ -220,7 +228,7 @@ export default function MobileJoin() {
       addLog(`[MOBILE] room:state snapshot received (${snapshot?.peers?.length || 0} peers)`)
       if (snapshot?.peers?.length) {
         snapshot.peers.forEach((peer) => {
-          if (peer.socketId && peer.socketId !== s.id) {
+          if (permitted(peer) && peer.socketId && peer.socketId !== s.id) {
             addLog(`[MOBILE] Snapshot initiating offer to peer: ${peer.socketId?.substr(0,6)}`)
             createOfferRef.current?.(peer.socketId)
           }
@@ -239,6 +247,7 @@ export default function MobileJoin() {
         if (endedRef.current) return
         if (ack?.success) {
           joinedRef.current = true
+          hadConnectedRef.current = true
           addLog(`CONNECTED & JOINED ROOM SUCCESSFULLY. Peers in room: ${ack.peers?.length || 0}`)
           updateStatusLabel('connected')
 
@@ -249,11 +258,13 @@ export default function MobileJoin() {
 
           if (ack.peers?.length) {
             ack.peers.forEach((peer) => {
+              if (!permitted(peer)) return
               addLog(`Sending offer via signaling to target: ${peer.socketId?.substr(0,6)}`)
               createOfferRef.current?.(peer.socketId)
             })
           }
 
+          setError(null)
           setPhase(PHASE.CONNECTED)
         } else {
           addLog(`JOIN ROOM FAILED: ${ack?.error}`, 'error')
@@ -266,14 +277,24 @@ export default function MobileJoin() {
     s.on('disconnect', (reason) => {
       addLog(`signaling socket DISCONNECTED: ${reason}`, 'warn')
       if (joinedRef.current && !endedRef.current) {
-        setError('Connection to the interview was lost. Please scan the QR code again.')
-        setPhase(PHASE.ERROR)
+        joinedRef.current=false
+        setError('Connection interrupted. Reconnecting to the same interview…')
+        updateStatusLabel('connecting')
+        setPhase(PHASE.CONNECTING)
       }
     })
 
     s.on('connect_error', (err) => {
       clearTimeout(timeoutTimer)
       addLog(`signaling socket connect: FAILED (${err.message})`, 'error')
+      // Socket.IO retries transient network failures automatically.  A phone that
+      // already joined keeps its original pairing and shows a reconnecting state.
+      if (hadConnectedRef.current && !endedRef.current) {
+        setError('Connection interrupted. Reconnecting to the same interview…')
+        updateStatusLabel('connecting')
+        setPhase(PHASE.CONNECTING)
+        return
+      }
       const msg = err?.message || ''
       setError(/Pairing error/.test(msg)
         ? 'This QR code has already been used or has expired. Please scan a new one.'
@@ -485,11 +506,11 @@ export default function MobileJoin() {
         source: localStreamRef.current,
         socket,
         sessionId: String(info.sessionId || info.interviewId),
-        participantId: info.candidateId || 1,
+        participantId: info.candidateId,
         moduleType: 'INTERVIEW',
         cameraSource: 'MOBILE_CAMERA',
         interviewId: String(info.interviewId),
-        fps: 5,
+        fps: 1.6,
         onDetection: ({ event }) => {
           if (event) {
             addLog(`YOLO Event: ${event.eventType} (${(event.confidence * 100).toFixed(0)}%)`)
@@ -815,6 +836,7 @@ export default function MobileJoin() {
               </div>
             </div>
 
+            {phase===PHASE.CONNECTED&&<p role="status">{mobileCameraStatus({connected:true,evidence:mobileEvidence,now:Date.now()}).message}</p>}
             {phase === PHASE.CONNECTED && (
               <button
                 type="button"

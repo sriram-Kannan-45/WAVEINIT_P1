@@ -10,6 +10,12 @@ const logger = require('../utils/logger');
 let _io = null;
 
 class InterviewNotificationService {
+  async candidateIds(interview) {
+    if(interview.mode!=='GROUP_DISCUSSION')return [interview.candidate_id];
+    const members=await require('../models').InterviewParticipant.findAll({where:{interview_id:interview.id},attributes:['user_id']});
+    return members.map(p=>p.user_id);
+  }
+
   /**
    * Set the Socket.IO instance (called from app.js after server init).
    */
@@ -27,7 +33,7 @@ class InterviewNotificationService {
       const interviewerMsg = `Interview Assigned: You have been assigned an interview on ${scheduledDateStr} (${interview.type || 'Technical'})`;
 
       await Promise.allSettled([
-        this._createNotification(interview.candidate_id, candidateMsg, { interviewId: interview.id }),
+        ...(await this.candidateIds(interview)).map(id=>this._createNotification(id,candidateMsg,{interviewId:interview.id})),
         this._createNotification(interview.interviewer_id, interviewerMsg, { interviewId: interview.id }),
       ]);
 
@@ -45,7 +51,7 @@ class InterviewNotificationService {
       const msg = `Interview Reminder: Your interview starts in 30 minutes. Please prepare to join.`;
 
       await Promise.allSettled([
-        this._createNotification(interview.candidate_id, msg, { interviewId: interview.id }),
+        ...(await this.candidateIds(interview)).map(id=>this._createNotification(id,msg,{interviewId:interview.id})),
         this._createNotification(interview.interviewer_id, msg, { interviewId: interview.id }),
       ]);
 
@@ -65,7 +71,7 @@ class InterviewNotificationService {
       const msg = `Interview Rescheduled: Interview changed from ${oldDateStr} to ${newDate}`;
 
       await Promise.allSettled([
-        this._createNotification(interview.candidate_id, msg, { interviewId: interview.id }),
+        ...(await this.candidateIds(interview)).map(id=>this._createNotification(id,msg,{interviewId:interview.id})),
         this._createNotification(interview.interviewer_id, msg, { interviewId: interview.id }),
       ]);
 
@@ -84,7 +90,7 @@ class InterviewNotificationService {
       const msg = `Interview Cancelled: Interview scheduled on ${scheduledDateStr} has been cancelled.`;
 
       await Promise.allSettled([
-        this._createNotification(interview.candidate_id, msg, { interviewId: interview.id }),
+        ...(await this.candidateIds(interview)).map(id=>this._createNotification(id,msg,{interviewId:interview.id})),
         this._createNotification(interview.interviewer_id, msg, { interviewId: interview.id }),
       ]);
 
@@ -144,7 +150,7 @@ class InterviewNotificationService {
     if (!userId) return null;
 
     try {
-      const actionUrl = data?.interviewId ? `/interview/${data.interviewId}/room` : '/interviews';
+      const actionUrl = data?.interviewId ? `/interview/${data.interviewId}${data.decision?'':'/room'}` : '/interviews';
       const notification = await Notification.create({
         userId,
         message,

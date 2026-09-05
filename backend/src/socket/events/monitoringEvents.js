@@ -10,8 +10,26 @@ const relay = require('../crossInstance');
 const logger = require('../../utils/logger');
 
 module.exports = function registerMonitoringEvents(io, socket) {
+  const on=(event,handler)=>socket.on(event,async(data,ack)=>{
+    try {
+      const id=data?.sessionId||socket.monitoringSessionId;
+      if(String(id||'').startsWith('ms_interview_')) {
+        const session=await monitoringService.getSession(id);
+        if(!session) return ack?.({ok:false,error:'Monitoring session not found'});
+        const lifecycle=require('../../services/interviewLifecycleService');
+        const user={id:socket.userId,role:socket.userRole};
+        const interview=await lifecycle.access(session.contextId,user);
+        const owner=String(session.participantId)===String(socket.userId);
+        if(event==='monitoring:join') {
+          if(data.role==='mobile_camera'||(!owner&&!lifecycle.isManager(interview,user))) return ack?.({ok:false,error:'Access denied'});
+        } else if(!owner || !['monitoring:event','monitoring_event','monitoring:heartbeat','monitoring:leave'].includes(event))return ack?.({ok:false,error:'Use the interview session controls'});
+        data={...data,source:'LAPTOP',...(data?.event?{event:{...data.event,source:'LAPTOP'}}:{})};
+      }
+      return await handler(data,ack);
+    }catch(error){ack?.({ok:false,error:error.message})}
+  });
   // Join session monitoring room
-  socket.on('monitoring:join', async (data, ack) => {
+  on('monitoring:join', async (data, ack) => {
     const { sessionId, role = 'laptop' } = data || {};
     if (!sessionId) {
       if (ack) ack({ ok: false, error: 'sessionId is required' });
@@ -73,7 +91,7 @@ module.exports = function registerMonitoringEvents(io, socket) {
   });
 
   // WebRTC Signaling: SDP Offer
-  socket.on('monitoring:offer', (data) => {
+  on('monitoring:offer', (data) => {
     const { sessionId, offer, targetSocketId } = data || {};
     const targetSession = sessionId || socket.monitoringSessionId;
     if (!targetSession || !offer) return;
@@ -95,7 +113,7 @@ module.exports = function registerMonitoringEvents(io, socket) {
   });
 
   // WebRTC Signaling: SDP Answer
-  socket.on('monitoring:answer', (data) => {
+  on('monitoring:answer', (data) => {
     const { sessionId, answer, targetSocketId } = data || {};
     const targetSession = sessionId || socket.monitoringSessionId;
     if (!targetSession || !answer) return;
@@ -117,7 +135,7 @@ module.exports = function registerMonitoringEvents(io, socket) {
   });
 
   // WebRTC Signaling: ICE Candidate
-  socket.on('monitoring:ice-candidate', (data) => {
+  on('monitoring:ice-candidate', (data) => {
     const { sessionId, candidate, targetSocketId } = data || {};
     const targetSession = sessionId || socket.monitoringSessionId;
     if (!targetSession || !candidate) return;
@@ -139,7 +157,7 @@ module.exports = function registerMonitoringEvents(io, socket) {
   });
 
   // Live Mobile Frame Relay & Asynchronous YOLO Evaluation
-  socket.on('monitoring:mobile_frame', async (data, ack) => {
+  on('monitoring:mobile_frame', async (data, ack) => {
     const { sessionId, frame, participantId, confidenceThreshold } = data || {};
     const targetSession = sessionId || socket.monitoringSessionId;
     if (!targetSession || !frame) return;
@@ -186,7 +204,7 @@ module.exports = function registerMonitoringEvents(io, socket) {
   });
 
   // Heartbeat watchdog
-  socket.on('monitoring:heartbeat', async ({ sessionId, source = 'LAPTOP' }) => {
+  on('monitoring:heartbeat', async ({ sessionId, source = 'LAPTOP' }) => {
     const targetSession = sessionId || socket.monitoringSessionId;
     if (!targetSession) return;
     try {
@@ -195,7 +213,7 @@ module.exports = function registerMonitoringEvents(io, socket) {
   });
 
   // Real-time Event Reporting & Database Persistence
-  socket.on('monitoring:event', async (data, ack) => {
+  on('monitoring:event', async (data, ack) => {
     const { sessionId, eventType, severity, source, durationMs, confidence, metadata } = data || {};
     const targetSession = sessionId || socket.monitoringSessionId;
     if (!targetSession || !eventType) return;
@@ -230,7 +248,7 @@ module.exports = function registerMonitoringEvents(io, socket) {
     }
   });
 
-  socket.on('monitoring_event', async (data, ack) => {
+  on('monitoring_event', async (data, ack) => {
     const { sessionId, event } = data || {};
     const targetSession = sessionId || socket.monitoringSessionId;
     const ev = event || data;
@@ -262,7 +280,7 @@ module.exports = function registerMonitoringEvents(io, socket) {
   });
 
   // End Monitoring Session
-  socket.on('monitoring:end_session', (data) => {
+  on('monitoring:end_session', (data) => {
     const { sessionId } = data || {};
     const targetSession = sessionId || socket.monitoringSessionId;
     if (!targetSession) return;

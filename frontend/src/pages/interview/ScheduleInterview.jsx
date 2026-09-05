@@ -30,6 +30,8 @@ export default function ScheduleInterview({ user }) {
   const [fetching, setFetching] = useState(true)
   const [error, setError] = useState(null)
   const [form, setForm] = useState({
+    mode: 'INTERVIEW', candidateIds: [],
+    evaluationCriteria: ['Communication','Confidence','Participation','Relevant points','Listening and interaction','Team collaboration','Subject knowledge','Leadership','Overall performance'].map(name=>({name,maxScore:10,weight:1})),
     title: '',
     candidateId: '',
     interviewerId: '',
@@ -103,8 +105,8 @@ export default function ScheduleInterview({ user }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!form.candidateId) {
-      showError('Please select a candidate')
+    if (form.mode==='GROUP_DISCUSSION' ? form.candidateIds.length<2 || form.candidateIds.length>6 : !form.candidateId) {
+      showError(form.mode==='GROUP_DISCUSSION'?'Select between 2 and 6 candidates':'Please select a candidate')
       return
     }
     if (!form.interviewerId) {
@@ -128,6 +130,8 @@ export default function ScheduleInterview({ user }) {
       setLoading(true)
       const scheduledAt = new Date(`${form.date}T${form.time}`).toISOString()
       const payload = {
+        mode: form.mode, candidateIds: form.candidateIds.map(Number),
+        evaluationCriteria: form.mode==='GROUP_DISCUSSION'?form.evaluationCriteria:undefined,
         candidateId: parseInt(form.candidateId, 10),
         interviewerId: parseInt(form.interviewerId, 10),
         scheduledAt,
@@ -170,7 +174,7 @@ export default function ScheduleInterview({ user }) {
         </div>
         <div>
           <h2 className="reg-admin-title">{editingId ? 'Edit Interview' : 'Schedule Interview'}</h2>
-          <p className="reg-admin-subtitle">{editingId ? 'Update the interview details and save your changes' : 'Create a new interview session for a candidate'}</p>
+          <p className="reg-admin-subtitle">{editingId ? 'Update the interview details and save your changes' : 'Create a normal interview or a Group Discussion'}</p>
         </div>
         <div style={{ flex: 1 }} />
         <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => navigate('/interviews')}>
@@ -196,6 +200,17 @@ export default function ScheduleInterview({ user }) {
           <div style={{ padding: 24 }}>
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
+              {!editingId&&<label style={labelStyle}>Session format<select style={selectStyle} value={form.mode} onChange={e=>setForm(f=>({...f,mode:e.target.value,meetingType:'IN_PLATFORM'}))}><option value="INTERVIEW">Normal Interview</option><option value="GROUP_DISCUSSION">Group Discussion</option></select></label>}
+              {form.mode==='GROUP_DISCUSSION'&&<fieldset style={{border:'1px solid #e2e8f0',borderRadius:8,padding:16}}><legend>Evaluation criteria</legend>
+                <p>Scores are combined using these maximum scores and weights. Configure before scheduling.</p>
+                {form.evaluationCriteria.map((c,i)=><div key={i} style={{display:'flex',gap:8,marginBottom:8}}>
+                  <input aria-label={`Criterion ${i+1} name`} required maxLength={80} value={c.name} style={inputStyle} onChange={e=>handleChange('evaluationCriteria',form.evaluationCriteria.map((v,n)=>n===i?{...v,name:e.target.value}:v))}/>
+                  <input aria-label={`Criterion ${i+1} maximum`} title="Maximum score" type="number" required min={1} max={100} value={c.maxScore} style={{...inputStyle,width:90}} onChange={e=>handleChange('evaluationCriteria',form.evaluationCriteria.map((v,n)=>n===i?{...v,maxScore:Number(e.target.value)}:v))}/>
+                  <input aria-label={`Criterion ${i+1} weight`} title="Weight" type="number" required min={0.1} max={100} step="0.1" value={c.weight} style={{...inputStyle,width:90}} onChange={e=>handleChange('evaluationCriteria',form.evaluationCriteria.map((v,n)=>n===i?{...v,weight:Number(e.target.value)}:v))}/>
+                  <button type="button" className="reg-admin-btn" disabled={form.evaluationCriteria.length===1} onClick={()=>handleChange('evaluationCriteria',form.evaluationCriteria.filter((_,n)=>n!==i))}>Remove</button>
+                </div>)}
+                <button type="button" className="reg-admin-btn" disabled={form.evaluationCriteria.length>=20} onClick={()=>handleChange('evaluationCriteria',[...form.evaluationCriteria,{name:'',maxScore:10,weight:1}])}>Add criterion</button>
+              </fieldset>}
               {/* Two-column grid */}
               <div className="interview-form-grid">
                 {/* Left column */}
@@ -211,7 +226,9 @@ export default function ScheduleInterview({ user }) {
                     />
                   </div>
 
-                  <div>
+                  {form.mode==='GROUP_DISCUSSION'?<fieldset style={{border:'1px solid #e2e8f0',borderRadius:8,padding:12}}><legend>Candidates ({form.candidateIds.length}/6)</legend>
+                    <div style={{maxHeight:240,overflow:'auto'}}>{candidates.map(c=><label key={c.id} style={{display:'block',padding:6}}><input type="checkbox" checked={form.candidateIds.includes(String(c.id))} disabled={!form.candidateIds.includes(String(c.id))&&form.candidateIds.length>=6} onChange={e=>handleChange('candidateIds',e.target.checked?[...form.candidateIds,String(c.id)]:form.candidateIds.filter(id=>id!==String(c.id)))}/> {c.name} · {c.email}</label>)}</div>
+                  </fieldset>:<>                  <div>
                     <SearchableSelect
                       label="Candidate *"
                       placeholder="Select candidate"
@@ -236,7 +253,7 @@ export default function ScheduleInterview({ user }) {
                         {selectedCandidate.training?.title && <span>Training: {selectedCandidate.training.title}</span>}
                       </div>
                     )}
-                  </div>
+                  </div></>}
 
                   <div>
                     <SearchableSelect
@@ -306,7 +323,7 @@ export default function ScheduleInterview({ user }) {
                     <label style={labelStyle}>Meeting Type</label>
                     <select value={form.meetingType} onChange={e => handleChange('meetingType', e.target.value)} style={selectStyle}>
                       <option value="IN_PLATFORM">In-Platform (Interview in this app)</option>
-                      <option value="ONLINE">External Online (Google Meet, Zoom, etc.)</option>
+                      <option disabled={form.mode==='GROUP_DISCUSSION'} value="ONLINE">External Online (Google Meet, Zoom, etc.)</option>
                     </select>
                   </div>
 

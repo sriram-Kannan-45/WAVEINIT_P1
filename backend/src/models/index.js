@@ -124,6 +124,7 @@ const InterviewAlert = require('./InterviewAlert');
 const InterviewFeedback = require('./InterviewFeedback');
 const InterviewResult = require('./InterviewResult');
 const InterviewNotes = require('./InterviewNotes');
+const InterviewParticipant = require('./InterviewParticipant');
 
 // --- Core LMS Associations ---
 
@@ -479,6 +480,9 @@ AssessmentVerificationSession.belongsTo(User, { foreignKey: 'participant_id', as
 User.hasMany(AssessmentVerificationSession, { foreignKey: 'participant_id', as: 'assessmentVerificationSessions' });
 
 // --- Interview Module Associations ---
+Interview.hasMany(InterviewParticipant, { foreignKey:'interview_id', as:'participants' });
+InterviewParticipant.belongsTo(Interview, { foreignKey:'interview_id', as:'interview' });
+InterviewParticipant.belongsTo(User, { foreignKey:'user_id', as:'user' });
 Interview.belongsTo(User, { foreignKey: 'candidate_id', as: 'candidate' });
 Interview.belongsTo(User, { foreignKey: 'interviewer_id', as: 'interviewer' });
 Interview.belongsTo(User, { foreignKey: 'created_by', as: 'creator' });
@@ -642,6 +646,7 @@ module.exports = {
   InterviewFeedback,
   InterviewResult,
   InterviewNotes,
+  InterviewParticipant,
   // Core Enhancements
   AttendanceSession,
   AttendanceRecord,

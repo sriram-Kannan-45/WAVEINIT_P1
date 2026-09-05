@@ -805,6 +805,7 @@ const startServer = async () => {
       await InterviewFeedback.sync({ alter: true });
       await InterviewResult.sync({ alter: true });
       await InterviewNotes.sync({ alter: true });
+      await require('./config/bootstrapInterviewGroups')(require('./models').sequelize, require('./models').InterviewParticipant);
       logger.info('interview module tables ready');
     } catch (e) {
       logger.error('Could not sync interview module tables', { error: e.message });

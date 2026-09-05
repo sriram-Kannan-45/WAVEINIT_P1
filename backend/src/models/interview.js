@@ -48,6 +48,8 @@ const Interview = sequelize.define('Interview', {
     type: DataTypes.STRING(255),
     allowNull: true,
   },
+  mode: { type: DataTypes.STRING(32), allowNull: false, defaultValue: 'INTERVIEW' },
+  evaluation_criteria: { type: DataTypes.JSON, allowNull: true },
   description: {
     type: DataTypes.TEXT,
     allowNull: true,

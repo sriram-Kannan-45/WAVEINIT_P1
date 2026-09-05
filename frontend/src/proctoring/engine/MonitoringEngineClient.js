@@ -285,7 +285,7 @@ class MonitoringEngineClient {
   }
 
   _notifyPause(reason, pausedAt) {
-    if (!this.sessionId) return;
+    if (!this.sessionId || this.contextType==='INTERVIEW') return;
     const token = this._getToken();
     fetch(`${API_BASE}/monitoring/sessions/${this.sessionId}/pause-test`, {
       method: 'POST',
@@ -302,7 +302,7 @@ class MonitoringEngineClient {
   }
 
   _notifyResume(reason, resumedAt) {
-    if (!this.sessionId) return;
+    if (!this.sessionId || this.contextType==='INTERVIEW') return;
     const token = this._getToken();
     fetch(`${API_BASE}/monitoring/sessions/${this.sessionId}/resume-test`, {
       method: 'POST',
@@ -320,6 +320,7 @@ class MonitoringEngineClient {
   _startDurationSyncLoop() {
     if (typeof setInterval === 'undefined') return;
     if (this.durationSyncTimer) clearInterval(this.durationSyncTimer);
+    if (this.contextType==='INTERVIEW') return;
     this.durationSyncTimer = setInterval(() => {
       if (this.isMonitoringActive && this.isTestActive && this.sessionId) {
         this._persistActiveDurationState();
@@ -354,7 +355,7 @@ class MonitoringEngineClient {
   }
 
   _syncActiveTestTimer(configuredDurationSeconds) {
-    if (!this.sessionId) return;
+    if (!this.sessionId || this.contextType==='INTERVIEW') return;
     const token = this._getToken();
     const activeStartIso = this.currentSegmentStartedAt
       ? new Date(this.currentSegmentStartedAt).toISOString()

@@ -15,6 +15,8 @@ export const interviewService = {
   },
 
   get: (id) => api.get(`${INTERVIEW_BASE}/${id}`),
+  report: (id) => api.get(`${INTERVIEW_BASE}/${id}/report`),
+  evaluateParticipant: (id,userId,data) => api.post(`${INTERVIEW_BASE}/${id}/participants/${userId}/evaluation`,data),
 
   update: (id, data) => api.put(`${INTERVIEW_BASE}/${id}`, data),
 
