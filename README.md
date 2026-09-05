@@ -31,14 +31,13 @@
    - [AI Service Architecture (`/ai-service`)](#ai-service-architecture-ai-service)
    - [Database, Nginx & DevOps Modules](#database-nginx--devops-modules)
 5. [Technology Stack Matrix](#5-technology-stack-matrix)
-6. [Environment Variables & Configuration](#6-environment-variables--configuration)
-7. [Installation & Local Development Guide](#7-installation--local-development-guide)
-8. [Production Deployment & Cloud Architecture](#8-production-deployment--cloud-architecture)
-9. [Core API & WebSocket Channel Catalog](#9-core-api--websocket-channel-catalog)
-10. [Troubleshooting & Operational FAQ](#10-troubleshooting--operational-faq)
-11. [Testing & Health Checks](#11-testing--health-checks)
-12. [Security Guidance](#12-security-guidance)
-13. [Additional Documentation](#13-additional-documentation)
+6. [Production Services & Access](#6-production-services--access)
+7. [Production Deployment & Cloud Architecture](#7-production-deployment--cloud-architecture)
+8. [Core API & WebSocket Channel Catalog](#8-core-api--websocket-channel-catalog)
+9. [Troubleshooting & Operational FAQ](#9-troubleshooting--operational-faq)
+10. [Testing & Production Health Checks](#10-testing--production-health-checks)
+11. [Security Guidance](#11-security-guidance)
+12. [Additional Documentation](#12-additional-documentation)
 
 ---
 
@@ -686,196 +685,45 @@ WAVEINIT_P1/
 
 ---
 
-## 6. Environment Variables & Configuration
+## 6. Production Services & Access
 
-### 1. Backend Configuration (`backend/.env`)
+The public production deployment is available through the following services:
 
-```ini
-# Server Configuration
-PORT=3001
-NODE_ENV=development
-FRONTEND_URL=http://localhost:5174
-ALLOWED_ORIGINS=http://localhost:5174,http://localhost:5173,http://localhost:3000
+| Service | Production URL | Purpose |
+| :--- | :--- | :--- |
+| Frontend | [https://www.waveinitlms.online/](https://www.waveinitlms.online/) | Main LMS interface for participants, trainers, and administrators |
+| Backend API | [https://waveinint-ahhsevgvcqaeesh2.centralindia-01.azurewebsites.net/](https://waveinint-ahhsevgvcqaeesh2.centralindia-01.azurewebsites.net/) | REST API, authentication, assessment orchestration, and Socket.IO |
+| Backend health | [Backend `/health`](https://waveinint-ahhsevgvcqaeesh2.centralindia-01.azurewebsites.net/health) | Backend and database availability check |
+| AI service | [https://waveinit-init-a9bfbeh3fgh0f0ca.centralindia-01.azurewebsites.net/](https://waveinit-init-a9bfbeh3fgh0f0ca.centralindia-01.azurewebsites.net/) | FastAPI service for AI generation, RAG, vision, and proctoring inference |
+| AI health | [AI `/health`](https://waveinit-init-a9bfbeh3fgh0f0ca.centralindia-01.azurewebsites.net/health) | AI provider and service availability check |
+| AI API docs | [AI `/docs`](https://waveinit-init-a9bfbeh3fgh0f0ca.centralindia-01.azurewebsites.net/docs) | Interactive FastAPI OpenAPI documentation |
 
-# Database Credentials
-DB_DIALECT=mysql
-DB_HOST=localhost
-DB_PORT=3306
-DB_NAME=training_db
-DB_USER=root
-DB_PASSWORD=your_mysql_password
-# Alternatively, use DATABASE_URL for Postgres / Cloud providers:
-# DATABASE_URL=postgresql://user:password@host:5432/dbname
-
-# Security & Authentication
-JWT_SECRET=generate_with_node_-e_"console.log(require('crypto').randomBytes(64).toString('hex'))"
-JWT_REFRESH_SECRET=generate_with_node_-e_"console.log(require('crypto').randomBytes(64).toString('hex'))"
-PROCTOR_ENC_KEY=32_byte_hex_string_for_aes_256_gcm_session_encryption
-
-# AI Service Microservice Link
-AI_SERVICE_URL=http://localhost:8000
-GEMINI_API_KEY=your_gemini_api_key
-GEMINI_API_KEY2=your_fallback_gemini_api_key
-
-# Redis Configuration (Optional for single-instance, required for scale-out)
-# REDIS_URL=redis://localhost:6379
-RUN_EMBEDDED_WORKERS=true
-MONITORING_VIDEO_STORAGE=false
-
-# Media Storage (Optional Cloudinary setup)
-CLOUD_NAME=your_cloudinary_name
-API_KEY=your_cloudinary_key
-API_SECRET=your_cloudinary_secret
-
-# SMTP Email Configuration (Password resets)
-EMAIL_HOST=smtp.gmail.com
-EMAIL_PORT=465
-EMAIL_USER=your_email@gmail.com
-EMAIL_PASS=your_gmail_app_password
-```
-
-### 2. Python AI Service Configuration (`ai-service/.env`)
-
-```ini
-# Core LLM Keys
-GEMINI_API_KEY=your_gemini_api_key
-GEMINI_API_KEY2=your_backup_gemini_api_key
-GROQ_API_KEY=your_groq_api_key
-GROQ_MODEL=openai/gpt-oss-120b
-
-# Service & Models
-AI_SERVICE_PORT=8000
-GEMINI_MODEL=gemini-3.5-flash-lite
-YOLO_MODEL_PATH=models/yolov8n.pt
-
-# RAG & Embeddings
-EMBEDDING_MODEL=BAAI/bge-large-en-v1.5
-AI_RETRIEVAL_TOP_K=5
-AI_CHUNK_SIZE_TOKENS=650
-AI_CHUNK_OVERLAP_TOKENS=100
-FAISS_INDEX_DIR=vector_store
-
-# Backend Link
-BACKEND_URL=http://localhost:3001
-PROCTORING_SESSION_MAX_IDLE_SECONDS=900
-```
-
-### 3. Frontend Configuration (`frontend/.env`)
-
-```ini
-# Base API URL (Leave empty for dynamic LAN IP resolution, or set explicitly)
-VITE_API_URL=http://localhost:3001
-
-# QR Code Mobile Pairing Resolution (Sets the address candidate phones connect to)
-VITE_PUBLIC_HOST=192.168.1.100
-VITE_PUBLIC_PORT=5174
-VITE_PUBLIC_PROTOCOL=http
-
-# Storage configuration
-VITE_RECORD_MONITORING_VIDEO=false
-```
-
----
-
-## 7. Installation & Local Development Guide
-
-### Prerequisites
-
-- **Node.js**: `v18.0.0` or higher (`v22.x` recommended)
-- **Python**: `v3.10` or `v3.11` (with `pip` and virtual environment support)
-- **Database**: MySQL `8.0+` or PostgreSQL `14+`
-- **Docker**: (Optional) For running Judge0 code execution sandboxes and Redis
-
----
-
-### Option A: 1-Click Startup (Windows)
-
-The repository provides automated batch scripts for Windows development:
-
-```powershell
-# 1. Open a terminal in the project root and launch all services:
-.\start-all.bat
-```
-
-*`start-all.bat` installs missing dependencies and starts the FastAPI service, Node backend, and Vite frontend in separate consoles. The script still prints port 5173 in its status text, but the current Vite configuration listens on port 5174.*
-
-To perform a clean restart that releases hanging ports and purges Vite cache:
-
-```powershell
-.\start-clean.bat
-```
-
----
-
-### Option B: Manual Multi-Terminal Setup (Cross-Platform)
-
-#### Terminal 1: Python AI Microservice
-
-```bash
-cd ai-service
-
-# Create and activate Python virtual environment
-python -m venv .venv
-# On Windows:
-.venv\Scripts\activate
-# On Linux/macOS:
-source .venv/bin/activate
-
-# Install dependencies
-pip install --upgrade pip
-pip install -r requirements.txt
-
-# Run the FastAPI server
-python main.py
-# AI microservice starts on http://127.0.0.1:8000
-```
-
-#### Terminal 2: Node.js Backend
-
-```bash
-cd backend
-
-# Install dependencies
-npm install
-
-# Run database schema migration (if first time)
-npm run migrate:ai-mentor-audit # or import database/schema/dbscript.sql directly
-
-# Start in development mode with nodemon
-npm run dev
-# Backend API & WebSocket server starts on http://localhost:3001
-```
-
-#### Terminal 3: React Frontend Client
-
-```bash
-cd frontend
-
-# Install dependencies
-npm install
-
-# Start Vite development server
-npm run dev
-# Client interface: http://localhost:5174 by default.
-# It uses https://localhost:5174 when local certificate files are configured.
-```
-
-#### Terminal 4 (Optional): Judge0 Sandbox Engine
-
-```bash
-# Start Judge0 multi-language code execution engine
-docker-compose up -d
-# Judge0 API runs on port 2358
-```
-
----
-
-## 8. Production Deployment & Cloud Architecture
-
-WAVEINIT LMS includes deployment paths for **Microsoft Azure App Service**, **Render**, **Vercel-compatible frontend hosting**, and container-based environments. The supplied Compose files define local and production topologies; Kubernetes or Docker Swarm manifests are not included.
+### Production request flow
 
 ```text
-                           [ AZURE TRAFFIC MANAGER / FRONT DOOR ]
+https://www.waveinitlms.online/
+              |
+              v
+Azure Node.js backend and Socket.IO
+              |
+              v
+Azure Python FastAPI AI service
+```
+
+Production browser traffic must use the public HTTPS services above. The frontend
+communicates with the Azure backend, and the backend delegates AI, RAG, and
+computer-vision operations to the Azure AI service.
+
+---
+
+## 7. Production Deployment & Cloud Architecture
+
+The active production topology uses the custom HTTPS frontend domain with separate
+Azure App Services for the Node.js backend and Python AI service. GitHub Actions
+builds and deploys backend and AI-service changes from the `main` branch.
+
+```text
+                           [ https://www.waveinitlms.online/ ]
                                              │
                        ┌─────────────────────┴─────────────────────┐
                        ▼                                           ▼
@@ -916,13 +764,13 @@ The repository includes automated deployment workflows in `.github/workflows/`:
 
 When running on scaled-out clusters (e.g., Azure B2 tier with multiple instances):
 
-- **Shared Storage**: Mounts an Azure Files SMB share at `SHARED_STORAGE_PATH` (`/app/storage` or `D:\home\data`) so all instances access identical uploaded course materials and avatars.
+- **Shared Storage**: Mount an Azure Files SMB share so all instances access identical uploaded course materials and avatars.
 - **Distributed State**: Socket.IO connections synchronize events across instances using the `@socket.io/redis-adapter`.
 - **Distributed Locking**: Concurrency bottlenecks (such as code evaluation queues) utilize Redis-backed mutexes (`DistributedLock.js`) with an automatic fallback to database locks.
 
 ---
 
-## 9. Core API & WebSocket Channel Catalog
+## 8. Core API & WebSocket Channel Catalog
 
 ### REST API Endpoints Overview
 
@@ -960,41 +808,31 @@ When running on scaled-out clusters (e.g., Azure B2 tier with multiple instances
 
 ---
 
-## 10. Troubleshooting & Operational FAQ
+## 9. Troubleshooting & Operational FAQ
 
 ### Common issues
 
-#### Q1: Port 3001 or 5174 is already in use
+#### Q1: The production frontend opens but API requests fail
 
-- **Windows**: Run `.\start-clean.bat` or run:
-
-  ```powershell
-  npx kill-port 3001 5174 8000
-  ```
-
-- **Linux/macOS**:
-
-  ```bash
-  lsof -ti:3001,5174,8000 | xargs kill -9
-  ```
+- Check the [backend health endpoint](https://waveinint-ahhsevgvcqaeesh2.centralindia-01.azurewebsites.net/health).
+- Inspect the browser network response for authentication, CORS, or Azure availability errors.
+- Confirm the latest backend workflow completed successfully before retrying the request.
 
 #### Q2: Mobile phone cannot connect via the QR code
 
-- Ensure the candidate's mobile device and desktop are on the **same local Wi-Fi / LAN network**.
-- Verify that `VITE_PUBLIC_HOST` in `frontend/.env` contains your machine's actual LAN IP address (e.g. `192.168.1.X`, find via `ipconfig` or `ifconfig`), not `localhost`.
+- Open the QR link through the public HTTPS frontend and allow camera permissions.
+- Confirm the mobile device can reach the production backend and that the QR token has not expired.
+- Refresh the QR code before retrying a failed or interrupted pairing attempt.
 
 #### Q3: WebRTC video/audio fails to connect during 1:1 interviews
 
-- In symmetric NAT or restrictive corporate firewall environments, direct STUN traversal may fail. Configure a TURN server (e.g., `coturn`) in `backend/.env` using `TURN_URL`, `TURN_USERNAME`, and `TURN_CREDENTIAL`.
+- In symmetric NAT or restrictive corporate firewall environments, direct STUN traversal may fail. Confirm the production TURN service and firewall policy permit WebRTC relay traffic.
 
-#### Q4: Python AI service crashes on PyTorch / MediaPipe installation
+#### Q4: AI generation or proctoring inference is unavailable
 
-- Ensure you are running a 64-bit Python version (`python --version` should be `3.10.x` or `3.11.x`).
-- If you lack a dedicated GPU, install the CPU-only build of PyTorch:
-
-  ```bash
-  pip install torch torchvision --extra-index-url https://download.pytorch.org/whl/cpu
-  ```
+- Check the [AI health endpoint](https://waveinit-init-a9bfbeh3fgh0f0ca.centralindia-01.azurewebsites.net/health).
+- Check the [backend AI integration endpoint](https://waveinint-ahhsevgvcqaeesh2.centralindia-01.azurewebsites.net/api/ai/health).
+- Review the Azure AI-service deployment and application logs if either endpoint reports an error.
 
 #### Q5: Camera lights stay on after submitting an assessment
 
@@ -1003,8 +841,8 @@ When running on scaled-out clusters (e.g., Azure B2 tier with multiple instances
 #### Q6: Azure reports `No module named 'uvicorn'`
 
 - Confirm the deployment ZIP places `requirements.txt` and `main.py` at its root.
-- Keep `SCM_DO_BUILD_DURING_DEPLOYMENT=true` and `ENABLE_ORYX_BUILD=true` so Azure installs the Python dependencies.
-- Remove conflicting `WEBSITE_RUN_FROM_PACKAGE` and `WEBSITE_RUN_FROM_ZIP` settings before the source deployment.
+- Confirm the Azure Oryx remote build is enabled so the Python dependencies are installed.
+- Remove conflicting run-from-package settings before the source deployment.
 - Confirm the Oryx deployment log shows a successful dependency installation and build manifest.
 - Run the startup command from the directory containing `main.py`:
 
@@ -1015,7 +853,7 @@ When running on scaled-out clusters (e.g., Azure B2 tier with multiple instances
 
 ---
 
-## 11. Testing & Health Checks
+## 10. Testing & Production Health Checks
 
 ### Repository checks
 
@@ -1037,23 +875,23 @@ python -m unittest discover -s tests -p "test_*.py"
 
 Individual test modules can be run directly when iterating on a focused change.
 
-### Local health endpoints
+### Production health endpoints
 
 | Service | Endpoint | Purpose |
 | :--- | :--- | :--- |
-| Backend | `http://localhost:3001/health` | API process and database state |
-| Backend | `http://localhost:3001/api/health` | API health alias |
-| Backend | `http://localhost:3001/api/ai/health` | Backend-to-AI connectivity |
-| AI service | `http://localhost:8000/health` | FastAPI process and provider state |
-| AI service | `http://localhost:8000/ready` | AI provider and inference-engine readiness |
-| AI service | `http://localhost:8000/docs` | Interactive OpenAPI documentation |
+| Frontend | [https://www.waveinitlms.online/](https://www.waveinitlms.online/) | Public LMS availability |
+| Backend | [Backend `/health`](https://waveinint-ahhsevgvcqaeesh2.centralindia-01.azurewebsites.net/health) | API process and database state |
+| Backend | [Backend `/api/ai/health`](https://waveinint-ahhsevgvcqaeesh2.centralindia-01.azurewebsites.net/api/ai/health) | Backend-to-AI connectivity |
+| AI service | [AI `/health`](https://waveinit-init-a9bfbeh3fgh0f0ca.centralindia-01.azurewebsites.net/health) | FastAPI process and provider state |
+| AI service | [AI `/ready`](https://waveinit-init-a9bfbeh3fgh0f0ca.centralindia-01.azurewebsites.net/ready) | AI provider and inference-engine readiness |
+| AI service | [AI `/docs`](https://waveinit-init-a9bfbeh3fgh0f0ca.centralindia-01.azurewebsites.net/docs) | Interactive OpenAPI documentation |
 
 ---
 
-## 12. Security Guidance
+## 11. Security Guidance
 
-- Never commit `.env` files, API keys, database passwords, JWT secrets, SMTP credentials, or Azure credentials.
-- Use separate, high-entropy values for `JWT_SECRET` and `JWT_REFRESH_SECRET`.
+- Never commit API keys, database passwords, authentication secrets, SMTP credentials, or Azure credentials.
+- Use separate, high-entropy secrets for access-token and refresh-token signing.
 - Restrict production CORS configuration to known frontend origins.
 - Use HTTPS for authentication, camera access, QR pairing, WebRTC, assessments, and uploaded content.
 - Keep the database, Redis, Judge0, and Docker daemon endpoints off the public internet.
@@ -1063,7 +901,7 @@ Individual test modules can be run directly when iterating on a focused change.
 
 ---
 
-## 13. Additional Documentation
+## 12. Additional Documentation
 
 - [AI service recovery](docs/AI_SERVICE_RECOVERY.md)
 - [Shared AI provider configuration](docs/shared-ai-configuration.md)
