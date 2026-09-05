@@ -54,15 +54,18 @@ jobs:
         run: |
           antenv/bin/python -c "from main import app; print('FastAPI app import OK')"
 
+      - name: Package AI service source for Azure build
+        run: |
+          # Archive the service contents at the ZIP root. CI virtualenvs contain
+          # runner-specific paths; Oryx must build the runtime on Azure instead.
+          git archive --format=zip --output=ai-service-source.zip HEAD:ai-service
+
       - name: Upload deployment artifact
         uses: actions/upload-artifact@v4
         with:
           name: python-app
-          path: |
-            ai-service/
-            !ai-service/.venv/
-            !ai-service/venv/
-            !ai-service/__pycache__/
+          path: ai-service-source.zip
+          if-no-files-found: error
 
   deploy:
     runs-on: ubuntu-latest
@@ -82,17 +85,13 @@ jobs:
 
       - name: Verify deployment files
         run: |
-          echo "Deployment files:"
-          ls -la ./ai-service-deploy
-
-          echo "Checking requirements.txt:"
-          test -f ./ai-service-deploy/requirements.txt
-
-          echo "Checking virtual environment:"
-          test -d ./ai-service-deploy/antenv
-
-          echo "Checking Python entry point:"
-          test -f ./ai-service-deploy/main.py
+          python - <<'PY'
+          from zipfile import ZipFile
+          with ZipFile('./ai-service-deploy/ai-service-source.zip') as archive:
+              names = set(archive.namelist())
+              assert {'requirements.txt', 'main.py', 'services/ai_config.py'} <= names, 'AI service files must be at the ZIP root'
+              assert not any(name.split('/')[0] in {'antenv', '.venv', 'venv'} for name in names), 'Deploy source, not a CI virtualenv'
+          PY
 
       - name: Login to Azure
         uses: azure/login@v2
@@ -107,6 +106,16 @@ jobs:
           app-name: 'waveinit-init'
           app-settings-json: |
             [
+              {
+                "name": "SCM_DO_BUILD_DURING_DEPLOYMENT",
+                "value": "true",
+                "slotSetting": false
+              },
+              {
+                "name": "ENABLE_ORYX_BUILD",
+                "value": "true",
+                "slotSetting": false
+              },
               {
                 "name": "WEBSITES_PORT",
                 "value": "8000",
@@ -124,10 +133,16 @@ jobs:
               }
             ]
 
+      - name: Disable run-from-package for the Python source build
+        run: |
+          resource_group=$(az webapp list --query "[?name=='waveinit-init'].resourceGroup | [0]" --output tsv)
+          test -n "$resource_group" && test "$resource_group" != "None"
+          az webapp config appsettings delete --name waveinit-init --resource-group "$resource_group" --setting-names WEBSITE_RUN_FROM_PACKAGE WEBSITE_RUN_FROM_ZIP --output none
+
       - name: Deploy AI Service to Azure
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'waveinit-init'
           slot-name: 'Production'
-          package: ./ai-service-deploy
+          package: ./ai-service-deploy/ai-service-source.zip
           startup-command: 'gunicorn -k uvicorn.workers.UvicornWorker --bind=0.0.0.0:8000 main:app --timeout 120'
