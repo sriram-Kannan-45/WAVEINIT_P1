@@ -5,10 +5,16 @@ on:
     branches:
       - main
     paths:
-      - 'ai-service/**'
-      - '.github/workflows/main_waveinit-init.yml'
+      - "ai-service/**"
+      - ".github/workflows/main_waveinit-init.yml"
 
   workflow_dispatch:
+
+env:
+  AZURE_WEBAPP_NAME: waveinit-init
+  PYTHON_VERSION: "3.11"
+  SERVICE_PATH: ai-service
+  DEPLOY_ZIP: ai-service-source.zip
 
 jobs:
   build:
@@ -24,47 +30,92 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Upgrade pip
-        working-directory: ai-service
+      - name: Validate requirements
+        working-directory: ${{ env.SERVICE_PATH }}
         run: |
           python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
 
-      - name: Create Azure-compatible virtual environment
-        working-directory: ai-service
+      - name: Verify runtime packages
+        working-directory: ${{ env.SERVICE_PATH }}
         run: |
-          python -m venv antenv
+          python - <<'PY'
+          import fastapi
+          import uvicorn
+          import gunicorn
 
-      - name: Install Python dependencies
-        working-directory: ai-service
-        run: |
-          antenv/bin/python -m pip install --upgrade pip
-          antenv/bin/pip install -r requirements.txt
-
-      - name: Verify required packages
-        working-directory: ai-service
-        run: |
-          antenv/bin/python -c "import fastapi; print('FastAPI OK')"
-          antenv/bin/python -c "import uvicorn; print('Uvicorn OK')"
-          antenv/bin/python -c "import gunicorn; print('Gunicorn OK')"
+          print("FastAPI OK:", fastapi.__version__)
+          print("Uvicorn OK:", uvicorn.__version__)
+          print("Gunicorn OK:", gunicorn.__version__)
+          PY
 
       - name: Verify FastAPI application
-        working-directory: ai-service
+        working-directory: ${{ env.SERVICE_PATH }}
         run: |
-          antenv/bin/python -c "from main import app; print('FastAPI app import OK')"
+          python - <<'PY'
+          from main import app
 
-      - name: Package AI service source for Azure build
+          print("FastAPI app import OK")
+          print("App:", app)
+          PY
+
+      - name: Create Azure deployment package
         run: |
-          # Archive the service contents at the ZIP root. CI virtualenvs contain
-          # runner-specific paths; Oryx must build the runtime on Azure instead.
-          git archive --format=zip --output=ai-service-source.zip HEAD:ai-service
+          git archive \
+            --format=zip \
+            --output="${DEPLOY_ZIP}" \
+            HEAD:${SERVICE_PATH}
+
+      - name: Verify deployment package
+        run: |
+          python - <<'PY'
+          from zipfile import ZipFile
+
+          package = "ai-service-source.zip"
+
+          with ZipFile(package) as archive:
+              names = set(archive.namelist())
+
+          required = {
+              "requirements.txt",
+              "main.py",
+          }
+
+          missing = required - names
+
+          if missing:
+              raise RuntimeError(
+                  f"Missing deployment files: {sorted(missing)}"
+              )
+
+          forbidden_roots = {
+              "antenv",
+              ".venv",
+              "venv",
+              "__pycache__",
+          }
+
+          invalid = [
+              name for name in names
+              if name.split("/")[0] in forbidden_roots
+          ]
+
+          if invalid:
+              raise RuntimeError(
+                  f"Deployment package contains local environment files: {invalid[:10]}"
+              )
+
+          print("Deployment package is valid.")
+          print(f"Package contains {len(names)} files.")
+          PY
 
       - name: Upload deployment artifact
         uses: actions/upload-artifact@v4
         with:
           name: python-app
-          path: ai-service-source.zip
+          path: ${{ env.DEPLOY_ZIP }}
           if-no-files-found: error
 
   deploy:
@@ -81,17 +132,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: python-app
-          path: ./ai-service-deploy
-
-      - name: Verify deployment files
-        run: |
-          python - <<'PY'
-          from zipfile import ZipFile
-          with ZipFile('./ai-service-deploy/ai-service-source.zip') as archive:
-              names = set(archive.namelist())
-              assert {'requirements.txt', 'main.py', 'services/ai_config.py'} <= names, 'AI service files must be at the ZIP root'
-              assert not any(name.split('/')[0] in {'antenv', '.venv', 'venv'} for name in names), 'Deploy source, not a CI virtualenv'
-          PY
+          path: ./deploy
 
       - name: Login to Azure
         uses: azure/login@v2
@@ -103,7 +144,7 @@ jobs:
       - name: Configure Azure App Settings
         uses: azure/appservice-settings@v1
         with:
-          app-name: 'waveinit-init'
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
           app-settings-json: |
             [
               {
@@ -133,16 +174,75 @@ jobs:
               }
             ]
 
-      - name: Disable run-from-package for the Python source build
+      - name: Remove conflicting package settings
+        shell: bash
         run: |
-          resource_group=$(az webapp list --query "[?name=='waveinit-init'].resourceGroup | [0]" --output tsv)
-          test -n "$resource_group" && test "$resource_group" != "None"
-          az webapp config appsettings delete --name waveinit-init --resource-group "$resource_group" --setting-names WEBSITE_RUN_FROM_PACKAGE WEBSITE_RUN_FROM_ZIP --output none
+          RESOURCE_GROUP=$(az webapp list \
+            --query "[?name=='${AZURE_WEBAPP_NAME}'].resourceGroup | [0]" \
+            --output tsv)
 
-      - name: Deploy AI Service to Azure
+          if [ -z "$RESOURCE_GROUP" ] || [ "$RESOURCE_GROUP" = "None" ]; then
+            echo "Unable to determine resource group."
+            exit 1
+          fi
+
+          az webapp config appsettings delete \
+            --name "${AZURE_WEBAPP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --setting-names \
+              WEBSITE_RUN_FROM_PACKAGE \
+              WEBSITE_RUN_FROM_ZIP \
+            --output none || true
+
+      - name: Configure FastAPI startup command
+        shell: bash
+        run: |
+          RESOURCE_GROUP=$(az webapp list \
+            --query "[?name=='${AZURE_WEBAPP_NAME}'].resourceGroup | [0]" \
+            --output tsv)
+
+          if [ -z "$RESOURCE_GROUP" ] || [ "$RESOURCE_GROUP" = "None" ]; then
+            echo "Unable to determine resource group."
+            exit 1
+          fi
+
+          az webapp config set \
+            --name "${AZURE_WEBAPP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --startup-file "python -m gunicorn -k uvicorn.workers.UvicornWorker --bind=0.0.0.0:8000 main:app --timeout 120"
+
+      - name: Deploy AI service
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'waveinit-init'
-          slot-name: 'Production'
-          package: ./ai-service-deploy/ai-service-source.zip
-          startup-command: 'gunicorn -k uvicorn.workers.UvicornWorker --bind=0.0.0.0:8000 main:app --timeout 120'
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          slot-name: Production
+          package: ./deploy/${{ env.DEPLOY_ZIP }}
+
+      - name: Restart Azure Web App
+        shell: bash
+        run: |
+          RESOURCE_GROUP=$(az webapp list \
+            --query "[?name=='${AZURE_WEBAPP_NAME}'].resourceGroup | [0]" \
+            --output tsv)
+
+          if [ -z "$RESOURCE_GROUP" ] || [ "$RESOURCE_GROUP" = "None" ]; then
+            echo "Unable to determine resource group."
+            exit 1
+          fi
+
+          az webapp restart \
+            --name "${AZURE_WEBAPP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}"
+
+      - name: Show configured startup command
+        shell: bash
+        run: |
+          RESOURCE_GROUP=$(az webapp list \
+            --query "[?name=='${AZURE_WEBAPP_NAME}'].resourceGroup | [0]" \
+            --output tsv)
+
+          az webapp config show \
+            --name "${AZURE_WEBAPP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --query "appCommandLine" \
+            --output tsv
