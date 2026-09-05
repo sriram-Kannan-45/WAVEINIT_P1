@@ -81,6 +81,7 @@ jobs:
           required = {
               "requirements.txt",
               "main.py",
+              ".deployment",
           }
 
           missing = required - names
@@ -141,7 +142,22 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_2AAFDF1F53BE4ADB850460F3750C2437 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_42B805BB56D5497BB27CAAF402A3C099 }}
 
-      - name: Configure Azure App Settings
+      - name: Resolve Resource Group
+        id: rg
+        shell: bash
+        run: |
+          RG=$(az webapp list \
+            --query "[?name=='${AZURE_WEBAPP_NAME}'].resourceGroup | [0]" \
+            --output tsv)
+
+          if [ -z "$RG" ] || [ "$RG" = "None" ]; then
+            RG="WAVEINIT_BD"
+          fi
+
+          echo "RESOURCE_GROUP=${RG}" >> $GITHUB_ENV
+          echo "Resolved Resource Group: ${RG}"
+
+      - name: Configure Azure App Settings for Oryx Build
         uses: azure/appservice-settings@v1
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
@@ -155,6 +171,26 @@ jobs:
               {
                 "name": "ENABLE_ORYX_BUILD",
                 "value": "true",
+                "slotSetting": false
+              },
+              {
+                "name": "ORYX_BUILD_PLATFORM",
+                "value": "python",
+                "slotSetting": false
+              },
+              {
+                "name": "ORYX_BUILD_PLATFORM_VERSION",
+                "value": "3.11",
+                "slotSetting": false
+              },
+              {
+                "name": "SCM_COMMAND_IDLE_TIMEOUT",
+                "value": "600",
+                "slotSetting": false
+              },
+              {
+                "name": "PIP_EXTRA_INDEX_URL",
+                "value": "https://download.pytorch.org/whl/cpu",
                 "slotSetting": false
               },
               {
@@ -177,15 +213,6 @@ jobs:
       - name: Remove conflicting package settings
         shell: bash
         run: |
-          RESOURCE_GROUP=$(az webapp list \
-            --query "[?name=='${AZURE_WEBAPP_NAME}'].resourceGroup | [0]" \
-            --output tsv)
-
-          if [ -z "$RESOURCE_GROUP" ] || [ "$RESOURCE_GROUP" = "None" ]; then
-            echo "Unable to determine resource group."
-            exit 1
-          fi
-
           az webapp config appsettings delete \
             --name "${AZURE_WEBAPP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
@@ -197,52 +224,70 @@ jobs:
       - name: Configure FastAPI startup command
         shell: bash
         run: |
-          RESOURCE_GROUP=$(az webapp list \
-            --query "[?name=='${AZURE_WEBAPP_NAME}'].resourceGroup | [0]" \
-            --output tsv)
-
-          if [ -z "$RESOURCE_GROUP" ] || [ "$RESOURCE_GROUP" = "None" ]; then
-            echo "Unable to determine resource group."
-            exit 1
-          fi
-
           az webapp config set \
             --name "${AZURE_WEBAPP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
             --startup-file "python -m gunicorn -k uvicorn.workers.UvicornWorker --bind=0.0.0.0:8000 main:app --timeout 120"
 
-      - name: Deploy AI service
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: ${{ env.AZURE_WEBAPP_NAME }}
-          slot-name: Production
-          package: ./deploy/${{ env.DEPLOY_ZIP }}
-
-      - name: Restart Azure Web App
+      - name: Deploy source package with Oryx build
         shell: bash
         run: |
-          RESOURCE_GROUP=$(az webapp list \
-            --query "[?name=='${AZURE_WEBAPP_NAME}'].resourceGroup | [0]" \
-            --output tsv)
-
-          if [ -z "$RESOURCE_GROUP" ] || [ "$RESOURCE_GROUP" = "None" ]; then
-            echo "Unable to determine resource group."
-            exit 1
-          fi
-
-          az webapp restart \
-            --name "${AZURE_WEBAPP_NAME}" \
-            --resource-group "${RESOURCE_GROUP}"
-
-      - name: Show configured startup command
-        shell: bash
-        run: |
-          RESOURCE_GROUP=$(az webapp list \
-            --query "[?name=='${AZURE_WEBAPP_NAME}'].resourceGroup | [0]" \
-            --output tsv)
-
-          az webapp config show \
+          echo "Deploying source package and executing Oryx remote build..."
+          az webapp deploy \
             --name "${AZURE_WEBAPP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
-            --query "appCommandLine" \
-            --output tsv
+            --src-path "./deploy/${{ env.DEPLOY_ZIP }}" \
+            --type zip \
+            --clean true \
+            --restart true \
+            --timeout 1200
+
+      - name: Inspect deployment status and Oryx logs
+        shell: bash
+        if: always()
+        run: |
+          echo "Deployment log summary:"
+          az webapp log deployment show \
+            --name "${AZURE_WEBAPP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" || true
+
+      - name: Verify live service health
+        shell: bash
+        run: |
+          APP_HOSTNAME=$(az webapp show \
+            --name "${AZURE_WEBAPP_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --query "defaultHostName" \
+            --output tsv)
+
+          HEALTH_URL="https://${APP_HOSTNAME}/health"
+          echo "Verifying live service health at: ${HEALTH_URL}"
+
+          MAX_ATTEMPTS=30
+          DELAY=10
+          SUCCESS=0
+
+          for ((i=1; i<=MAX_ATTEMPTS; i++)); do
+            echo "Health probe attempt $i of $MAX_ATTEMPTS..."
+
+            HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" --max-time 15 "${HEALTH_URL}" || echo -e "curl_error\n000")
+            HTTP_STATUS=$(echo "$HTTP_RESPONSE" | tail -n 1)
+            BODY=$(echo "$HTTP_RESPONSE" | head -n -1)
+
+            echo "HTTP Status: ${HTTP_STATUS}"
+            echo "Response Body: ${BODY}"
+
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "✅ Service is HEALTHY and returned HTTP 200!"
+              SUCCESS=1
+              break
+            fi
+
+            echo "Waiting for service to stabilize (status: ${HTTP_STATUS}). Retrying in ${DELAY}s..."
+            sleep $DELAY
+          done
+
+          if [ "$SUCCESS" -ne 1 ]; then
+            echo "❌ Service health check failed after $((MAX_ATTEMPTS * DELAY)) seconds!"
+            exit 1
+          fi

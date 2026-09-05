@@ -1,6 +1,7 @@
 # ==============================================================================
 # FastAPI AI Service Requirements (Azure Linux Python 3.11 & Local Development)
 # ==============================================================================
+--extra-index-url https://download.pytorch.org/whl/cpu
 
 # Core Web & ASGI Server
 fastapi>=0.115.0
