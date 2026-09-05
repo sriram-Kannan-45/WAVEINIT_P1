@@ -175,30 +175,29 @@ async function listMyCourses(req, res) {
     if (!isAdmin(req.user)) {
       const { TrainingTrainerAssignment } = require('../models');
 
-      // 1. CourseTrainerAssignment
-      const assignments = await CourseTrainerAssignment.findAll({
-        where: { trainerId: req.user.id },
-        attributes: ['courseId']
-      });
+      // 1, 2, 3. Fetch trainer assignments in parallel
+      const [assignments, trainingAssignments, primaryTrainings] = await Promise.all([
+        CourseTrainerAssignment.findAll({
+          where: { trainerId: req.user.id },
+          attributes: ['courseId']
+        }),
+        TrainingTrainerAssignment.findAll({
+          where: { trainerId: req.user.id },
+          attributes: ['trainingId']
+        }),
+        Training.findAll({
+          where: { trainerId: req.user.id },
+          attributes: ['id']
+        })
+      ]);
+
       const assignedCourseIds = assignments.map(a => a.courseId).filter(Boolean);
-
-      // 2. TrainingTrainerAssignment
-      const trainingAssignments = await TrainingTrainerAssignment.findAll({
-        where: { trainerId: req.user.id },
-        attributes: ['trainingId']
-      });
       const assignedTrainingIds = trainingAssignments.map(a => a.trainingId).filter(Boolean);
-
-      // 3. Primary trainer on Training
-      const primaryTrainings = await Training.findAll({
-        where: { trainerId: req.user.id },
-        attributes: ['id']
-      });
       const primaryTrainingIds = primaryTrainings.map(t => t.id);
 
       const allTrainingIds = [...new Set([...assignedTrainingIds, ...primaryTrainingIds])];
 
-      // Auto-bootstrap course records for assigned trainings that don't have a course record yet
+      // Auto-bootstrap course records for assigned trainings that don't have a course record yet (in batch)
       if (allTrainingIds.length > 0) {
         const existingCourses = await Course.findAll({
           where: { trainingProgramId: { [Op.in]: allTrainingIds } },
@@ -208,16 +207,17 @@ async function listMyCourses(req, res) {
         const missingTrainingIds = allTrainingIds.filter(tId => !existingTrainingIds.has(tId));
         if (missingTrainingIds.length > 0) {
           const trainingsToBootstrap = await Training.findAll({ where: { id: { [Op.in]: missingTrainingIds } } });
-          for (const t of trainingsToBootstrap) {
-            try {
-              await Course.create({
+          if (trainingsToBootstrap.length > 0) {
+            await Course.bulkCreate(
+              trainingsToBootstrap.map(t => ({
                 title: t.title,
                 description: t.description || `${t.title} course`,
                 trainingProgramId: t.id,
                 trainerId: t.trainerId || req.user.id,
                 status: t.status || 'PUBLISHED',
-              });
-            } catch (_) {}
+              })),
+              { ignoreDuplicates: true }
+            ).catch(() => {});
           }
         }
       }
@@ -237,14 +237,13 @@ async function listMyCourses(req, res) {
     const { page, limit, offset } = parsePagination(req.query, 10, 100);
     const isPaginated = !!(req.query.page || req.query.limit || req.query.offset !== undefined);
 
-    const total = await Course.count({ where });
-
     let findOptions = {
       where,
       include: [
         { model: Training, as: 'program', attributes: ['id', 'title'] },
       ],
       order: [['id', 'DESC']],
+      distinct: true
     };
 
     if (isPaginated) {
@@ -252,7 +251,7 @@ async function listMyCourses(req, res) {
       findOptions.offset = offset;
     }
 
-    const courses = await Course.findAll(findOptions);
+    const { count: total, rows: courses } = await Course.findAndCountAll(findOptions);
     if (courses.length === 0) {
       const paginationMeta = formatPaginationMeta(total, page, limit);
       return res.json({
@@ -2417,6 +2416,8 @@ module.exports = {
   updateStructureItemStatus,
   bulkDeleteCourseQuizzes,
   deleteCourseQuizzesBulk: bulkDeleteCourseQuizzes,
+  bulkDeleteLessons,
+  deleteLessonsBulk: bulkDeleteLessons,
 };
 
 
@@ -2456,3 +2457,67 @@ async function bulkDeleteCourseQuizzes(req, res) {
     });
   }
 }
+
+// DELETE /api/trainer/courses/:courseId/lessons/bulk-delete
+// POST   /api/trainer/courses/:courseId/lessons/bulk-delete
+async function bulkDeleteLessons(req, res) {
+  try {
+    const course = await loadOwnedCourse(req, res, req.params.courseId);
+    if (!course) return;
+
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(422).json({ error: 'An array of structure item IDs is required' });
+    }
+
+    const lessonIds = ids.map(id => parseInt(id, 10)).filter(n => !isNaN(n) && n > 0);
+    if (lessonIds.length === 0) {
+      return res.status(422).json({ error: 'Valid structure item IDs are required' });
+    }
+
+    // Verify all matching lessons belong to this course
+    const existingLessons = await Lesson.findAll({
+      where: { id: lessonIds, courseId: course.id },
+      attributes: ['id', 'title']
+    });
+    const validIds = existingLessons.map(l => l.id);
+
+    if (validIds.length === 0) {
+      return res.status(404).json({ error: 'No matching structure items found for this course' });
+    }
+
+    const { ParticipantTracking } = require('../models');
+
+    await sequelize.transaction(async (t) => {
+      const cascadeTasks = [
+        LessonMaterial.destroy({   where: { lessonId: validIds }, transaction: t }),
+        LessonQuiz.destroy({       where: { lessonId: validIds }, transaction: t }),
+        LessonAssessment.destroy({ where: { lessonId: validIds }, transaction: t }),
+        LessonProgress.destroy({   where: { lessonId: validIds }, transaction: t }),
+      ];
+      if (AIQuiz) {
+        cascadeTasks.push(AIQuiz.update({ lessonId: null }, { where: { lessonId: validIds }, transaction: t }));
+      }
+      if (ParticipantTracking) {
+        cascadeTasks.push(ParticipantTracking.destroy({ where: { lessonId: validIds }, transaction: t }));
+      }
+      await Promise.all(cascadeTasks);
+
+      await Lesson.destroy({ where: { id: validIds, courseId: course.id }, transaction: t });
+    });
+
+    res.json({
+      success: true,
+      count: validIds.length,
+      deletedIds: validIds,
+      message: `${validIds.length} structure item${validIds.length === 1 ? '' : 's'} deleted successfully`
+    });
+  } catch (e) {
+    console.error('bulkDeleteLessons error:', e);
+    res.status(500).json({
+      error: 'Failed to delete selected structure items',
+      message: e.message || 'Failed to delete selected structure items'
+    });
+  }
+}
+

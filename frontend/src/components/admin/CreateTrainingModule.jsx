@@ -41,6 +41,7 @@ function TrainerPicker({
   })
   const [internalLoading, setInternalLoading] = useState(false)
   const [internalError, setInternalError] = useState(null)
+  const [searching, setSearching] = useState(false)
   const [trainersLoaded, setTrainersLoaded] = useState(() => {
     return Array.isArray(propTrainers) && propTrainers.length > 0
   })
@@ -68,7 +69,7 @@ function TrainerPicker({
 
     try {
       const res = await fetchWithTimeout(
-        `${API_BASE}/admin/trainers?limit=200`,
+        `${API_BASE}/admin/trainers?limit=500&includeAdmins=true`,
         {
           headers: {
             'Content-Type': 'application/json',
@@ -116,7 +117,46 @@ function TrainerPicker({
     }
   }, [propTrainers, trainersLoaded, internalLoading, loadTrainers])
 
-  const isLoading = propLoading || internalLoading
+  // Debounced server search to find any trainer across the entire database
+  useEffect(() => {
+    const q = query.trim()
+    if (!q) return
+
+    const timer = setTimeout(async () => {
+      const activeToken = token || localStorage.getItem('token') || sessionStorage.getItem('token')
+      if (!activeToken) return
+      setSearching(true)
+      try {
+        const res = await fetchWithTimeout(
+          `${API_BASE}/admin/trainers?search=${encodeURIComponent(q)}&includeAdmins=true&limit=50`,
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${activeToken}`,
+            },
+          },
+          6000
+        )
+        const d = await res.json().catch(() => ({}))
+        const found = d.trainers || d.data || []
+        if (Array.isArray(found) && found.length > 0) {
+          setTrainers(prev => {
+            const map = new Map(prev.map(item => [item.id, item]))
+            found.forEach(item => map.set(item.id, item))
+            return Array.from(map.values())
+          })
+        }
+      } catch (err) {
+        console.warn('[TrainerPicker] Server search warning:', err.message)
+      } finally {
+        setSearching(false)
+      }
+    }, 250)
+
+    return () => clearTimeout(timer)
+  }, [query, token])
+
+  const isLoading = propLoading || internalLoading || searching
   const errorMsg = propError || internalError
 
   const handleRetry = (e) => {
@@ -371,7 +411,9 @@ function TrainerPicker({
                     {checked && <Check size={11} />}
                   </span>
                   <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                    <span style={{ fontSize: 12.5, fontWeight: 600, overflowWrap: 'anywhere' }}>{t.name}</span>
+                    <span style={{ fontSize: 12.5, fontWeight: 600, overflowWrap: 'anywhere' }}>
+                      {t.name} {t.role === 'ADMIN' && <span style={{ fontSize: 11, color: '#2563eb', fontWeight: 500 }}>(Admin)</span>}
+                    </span>
                     <span style={{ fontSize: 11, color: '#64748b', overflowWrap: 'anywhere' }}>{t.email}</span>
                   </span>
                 </button>

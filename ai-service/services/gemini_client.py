@@ -28,12 +28,13 @@ def _parse_retry_delay(response_body: str) -> Optional[int]:
 
 
 from services.ai_provider import AIProviderError as GeminiTemporaryError
+from services.ai_config import get_gemini_credentials, get_gemini_api_key, get_gemini_model, thinking_config
 
 
 class GeminiClient:
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
-        self.model = (model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")).strip()
+        self.api_key = get_gemini_api_key() or api_key
+        self.model = get_gemini_model()
 
         key_exists = bool(self.api_key and self.api_key.strip())
         log.info(f"GEMINI_API_KEY exists: {key_exists}")
@@ -60,8 +61,7 @@ class GeminiClient:
         if "," in clean_b64:
             clean_b64 = clean_b64.split(",", 1)[1]
 
-        url = f"{self.base_url}/{self.model}:generateContent?key={self.api_key}"
-        headers = {'Content-Type': 'application/json'}
+        url = f"{self.base_url}/{self.model}:generateContent"
         payload = {
             "contents": [
                 {
@@ -78,15 +78,28 @@ class GeminiClient:
             ],
             "generationConfig": {
                 "temperature": temperature,
+                "thinkingConfig": thinking_config(self.model),
                 "responseMimeType": "application/json"
             }
         }
-        res = requests.post(url, headers=headers, json=payload, timeout=60)
-        res.raise_for_status()
-        data = res.json()
-        candidates = data.get("candidates", [])
-        if not candidates:
-            return "{}"
-        parts = candidates[0].get("content", {}).get("parts", [])
-        return parts[0].get("text", "{}") if parts else "{}"
+        credentials = get_gemini_credentials() or [('GEMINI_API_KEY', self.api_key)]
+        deadline = time.monotonic() + 60
+        for credential, key in credentials:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                headers = {'Content-Type': 'application/json', 'x-goog-api-key': key}
+                res = requests.post(url, headers=headers, json=payload, timeout=min(remaining, 60 / len(credentials)))
+                res.raise_for_status()
+                candidate = res.json().get('candidates', [])[0]
+                if candidate.get('finishReason', 'STOP') != 'STOP':
+                    raise ValueError('Incomplete vision response')
+                text = ''.join(p.get('text', '') for p in candidate.get('content', {}).get('parts', []) if not p.get('thought'))
+                json.loads(text)
+                return text
+            except (requests.RequestException, ValueError, IndexError, KeyError, TypeError):
+                log.warning('Gemini vision attempt failed credential=%s', credential)
+        # The configured Groq text model cannot inspect images.
+        raise GeminiTemporaryError(message='Gemini vision is unavailable after trying the configured keys.')
 

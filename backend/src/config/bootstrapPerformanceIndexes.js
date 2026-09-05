@@ -8,25 +8,59 @@
 
 const logger = require('../utils/logger');
 
-async function getExistingColumns(sequelize, tableName) {
+async function getBulkTableMetadata(sequelize, tableNames) {
+  const isPostgres = sequelize.getDialect() === 'postgres';
+  const tableColumns = new Map();
+  const existingIndexes = new Set();
+
   try {
-    const isPostgres = sequelize.getDialect() === 'postgres';
-    const query = isPostgres
-      ? `SELECT column_name FROM information_schema.columns WHERE table_name = '${tableName}';`
-      : `SELECT COLUMN_NAME as column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = '${tableName}';`;
-    const [results] = await sequelize.query(query);
-    return new Set((results || []).map(r => r.column_name || r.COLUMN_NAME));
-  } catch (_) {
-    return new Set();
+    const inList = tableNames.map(t => `'${t}'`).join(',');
+    
+    // 1. Fetch all columns for all target tables in one query
+    const colQuery = isPostgres
+      ? `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name IN (${inList});`
+      : `SELECT TABLE_NAME as table_name, COLUMN_NAME as column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name IN (${inList});`;
+    
+    // 2. Fetch all existing index names in one query
+    const idxQuery = isPostgres
+      ? `SELECT indexname as index_name FROM pg_indexes WHERE schemaname = 'public';`
+      : `SELECT DISTINCT index_name FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name IN (${inList});`;
+
+    const [[colResults], [idxResults]] = await Promise.all([
+      sequelize.query(colQuery).catch(() => [[]]),
+      sequelize.query(idxQuery).catch(() => [[]]),
+    ]);
+
+    for (const r of (colResults || [])) {
+      const t = (r.table_name || r.TABLE_NAME || '').toLowerCase();
+      const c = r.column_name || r.COLUMN_NAME;
+      if (!tableColumns.has(t)) tableColumns.set(t, new Set());
+      tableColumns.get(t).add(c);
+    }
+
+    for (const r of (idxResults || [])) {
+      const name = r.index_name || r.indexname;
+      if (name) existingIndexes.add(name.toLowerCase());
+    }
+  } catch (err) {
+    logger.debug(`[bootstrapPerformanceIndexes] Metadata prefetch note: ${err.message}`);
   }
+
+  return { tableColumns, existingIndexes };
 }
 
-async function createIndexSafely(sequelize, tableName, indexName, candidateColumnGroups) {
+async function createIndexSafely(sequelize, tableName, indexName, candidateColumnGroups, tableColumns, existingIndexes) {
   try {
-    const existingCols = await getExistingColumns(sequelize, tableName);
-    if (existingCols.size === 0) return;
+    // Fast skip: if index already exists in database, skip execution
+    if (existingIndexes && existingIndexes.has(indexName.toLowerCase())) {
+      return;
+    }
 
-    // Find the matching column names
+    const lowerTable = tableName.toLowerCase();
+    const existingCols = tableColumns ? tableColumns.get(lowerTable) : null;
+    if (!existingCols || existingCols.size === 0) return;
+
+    // Find matching columns
     const resolvedCols = [];
     for (const group of candidateColumnGroups) {
       const match = group.candidates.find(c => existingCols.has(c));
@@ -50,13 +84,10 @@ async function createIndexSafely(sequelize, tableName, indexName, candidateColum
         `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${tableName}" (${colsSql});`
       );
     } else {
-      const [results] = await sequelize.query(
-        `SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = '${tableName}' AND index_name = '${indexName}' LIMIT 1;`
-      );
-      if (!results || results.length === 0) {
-        await sequelize.query(`CREATE INDEX \`${indexName}\` ON \`${tableName}\` (${colsSql});`);
-      }
+      await sequelize.query(`CREATE INDEX \`${indexName}\` ON \`${tableName}\` (${colsSql});`);
     }
+
+    if (existingIndexes) existingIndexes.add(indexName.toLowerCase());
   } catch (err) {
     if (!err.message?.includes('already exists') && !err.message?.includes('duplicate key')) {
       logger.debug(`[bootstrapPerformanceIndexes] Note for ${indexName}: ${err.message}`);
@@ -224,8 +255,11 @@ async function bootstrapPerformanceIndexes(sequelize) {
     },
   ];
 
+  const uniqueTables = Array.from(new Set(indexDefinitions.map(d => d.table)));
+  const { tableColumns, existingIndexes } = await getBulkTableMetadata(sequelize, uniqueTables);
+
   for (const def of indexDefinitions) {
-    await createIndexSafely(sequelize, def.table, def.name, def.cols);
+    await createIndexSafely(sequelize, def.table, def.name, def.cols, tableColumns, existingIndexes);
   }
 
   logger.info('✓ Database performance indexes ready');

@@ -1,15 +1,95 @@
 'use strict';
 jest.mock('groq-sdk', () => jest.fn());
+jest.mock('axios', () => ({post: jest.fn()}));
+const axios = require('axios');
 const Groq = require('groq-sdk');
-const {createAIProvider, failureInfo, providerConfiguration} = require('../src/services/aiProvider');
+const {createAIProvider, failureInfo, providerConfiguration, geminiContent} = require('../src/services/aiProvider');
+const {getGeminiApiKey} = require('../src/config/aiProviders');
 const {groqContent} = require('../src/services/groqProvider');
 const packet = text => ({data: {modelVersion:'test-model',responseId:'test-id',candidates:[{finishReason:'STOP',content:{parts:[{text}]}}]}});
 const log = {info: jest.fn(), warn: jest.fn()};
 beforeEach(() => jest.clearAllMocks());
+
+test.each([
+  [{GEMINI_API_KEY2: ' new-key ', GEMINI_API_KEY: 'old-key'}, 'old-key'],
+  [{GEMINI_API_KEY2: 'new-key'}, 'new-key'],
+  [{GEMINI_API_KEY2: ' ', GEMINI_API_KEY: 'old-key'}, 'old-key'],
+  [{GEMINI_API_KEY2: 'your_new_key', GEMINI_API_KEY: 'old-key'}, 'old-key'],
+  [{}, ''],
+])('selects the configured Gemini replacement key with legacy compatibility %#', (env, expected) => {
+  expect(getGeminiApiKey(env)).toBe(expected);
+});
+
+test('Gemini request and configuration check use KEY2 when the original key is absent', async () => {
+  const previous = {GEMINI_API_KEY: process.env.GEMINI_API_KEY, GEMINI_API_KEY2: process.env.GEMINI_API_KEY2};
+  delete process.env.GEMINI_API_KEY;
+  process.env.GEMINI_API_KEY2 = ' test-replacement-secret ';
+  axios.post.mockResolvedValueOnce(packet('Replacement key response'));
+  try {
+    expect(providerConfiguration().geminiConfigured).toBe(true);
+    await geminiContent({prompt: 'Reply OK', timeout: 3000, maxOutputTokens: 10});
+    const [url, body, config] = axios.post.mock.calls[0];
+    expect(config.headers['x-goog-api-key']).toBe('test-replacement-secret');
+    expect(JSON.stringify({url, body, status: providerConfiguration()})).not.toContain('test-replacement-secret');
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+});
 test('Gemini success returns immediately without contacting Groq', async () => {
   const gemini=jest.fn().mockResolvedValue(packet('A live-style response fixture')), groq=jest.fn();
   const response=await createAIProvider({gemini,groq,log})({prompt:'Test request'});
   expect(response.provider).toBe('gemini');expect(groq).not.toHaveBeenCalled();
+});
+
+test.each(['quiz', 'coding_generation', 'mentor', 'course_structure', 'assessment_evaluation'])('%s shares the configured Gemini key and model', async feature => {
+  const names = ['GEMINI_API_KEY2', 'GEMINI_MODEL', 'QUIZ_GENERATION_MODEL', 'QUIZ_RETRIEVAL_MODEL', 'CODING_GENERATION_MODEL', 'AI_MENTOR_MODEL'];
+  const previous = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  names.forEach(name => { process.env[name] = 'obsolete-feature-model'; });
+  process.env.GEMINI_API_KEY2 = 'shared-test-key';
+  process.env.GEMINI_MODEL = 'gemini-3.5-flash-lite';
+  axios.post.mockResolvedValueOnce(packet('OK'));
+  const groq = jest.fn();
+  try {
+    await createAIProvider({groq, log})({prompt: 'Reply OK', feature, model: 'obsolete-model'});
+    const [url, , config] = axios.post.mock.calls[0];
+    expect(url).toContain('/models/gemini-3.5-flash-lite:generateContent');
+    expect(config.headers['x-goog-api-key']).toBe('shared-test-key');
+    expect(groq).not.toHaveBeenCalled();
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+  }
+});
+
+test.each([
+  [undefined, 'gemini-3.5-flash-lite', {thinkingLevel: 'minimal'}],
+  ['gemini-3.5-flash-lite', 'gemini-3.5-flash-lite', {thinkingLevel: 'minimal'}],
+  ['gemini-3.5-flash', 'gemini-3.5-flash', {thinkingLevel: 'low'}],
+  ['gemini-2.5-flash', 'gemini-2.5-flash', {thinkingBudget: 0}],
+])('Gemini model %s uses compatible settings and preserves structured output', async (model, expected, thinkingConfig) => {
+  const names = ['GEMINI_API_KEY2', 'GEMINI_MODEL', 'GEMINI_MODELS'];
+  const previous = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  process.env.GEMINI_API_KEY2 = 'test-model-key';
+  delete process.env.GEMINI_MODEL;
+  delete process.env.GEMINI_MODELS;
+  const schema = {type: 'OBJECT', properties: {topic: {type: 'STRING'}}, required: ['topic']};
+  axios.post.mockResolvedValueOnce(packet('{"topic":"Math"}'));
+  try {
+    if (model) process.env.GEMINI_MODEL = model;
+    // Old per-request/list overrides must not split generation from review.
+    process.env.GEMINI_MODELS = 'obsolete-model';
+    await geminiContent({prompt: 'Topic', model: 'obsolete-feature-model', json: true, schema, timeout: 3000, maxOutputTokens: 100});
+    const [url, body] = axios.post.mock.calls[0];
+    expect(url).toContain(`/models/${expected}:generateContent`);
+    expect(body.generationConfig).toMatchObject({thinkingConfig, responseMimeType: 'application/json', responseSchema: schema});
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+  }
 });
 test.each([400,401,403,404,408,429,500,502,503,504])('Gemini HTTP %i automatically tries Groq',async status=>{
   const gemini=jest.fn().mockRejectedValue({response:{status}}),groq=jest.fn().mockResolvedValue(packet('Backup response fixture'));

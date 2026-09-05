@@ -5,6 +5,7 @@ import os
 import time
 import uuid
 import requests
+from services.ai_config import has_key, get_gemini_credentials, get_gemini_model, thinking_config
 
 log = logging.getLogger('ai-provider')
 
@@ -15,30 +16,30 @@ class AIProviderError(RuntimeError):
         self.retries = retries
         super().__init__(message)
 
-def has_key(value):
-    return bool(value and value.strip() and not value.lower().startswith(('your-', 'your_', 'placeholder', 'replace-')))
-
 def generate_content(prompt, *, gemini_key=None, model=None, response_json=True, temperature=0.2, timeout=60):
     deadline = time.monotonic() + timeout
     request_id = str(uuid.uuid4())
     failures = []
-    for provider, key in [('gemini', gemini_key or os.getenv('GEMINI_API_KEY')), ('groq', os.getenv('GROQ_API_KEY'))]:
+    credentials = get_gemini_credentials() or [('GEMINI_API_KEY', gemini_key)]
+    attempts = [('gemini', name, key) for name, key in credentials] + [('groq', 'GROQ_API_KEY', os.getenv('GROQ_API_KEY'))]
+    for index, (provider, credential, key) in enumerate(attempts):
+        label = 'Gemini key 2' if credential == 'GEMINI_API_KEY2' else 'Gemini key 1' if provider == 'gemini' else 'Groq'
         if not has_key(key):
-            failures.append(f'{provider}: missing key')
+            failures.append(f'{label}: missing key')
             log.warning('AI failure request=%s provider=%s reason=MISSING_KEY', request_id, provider)
             continue
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            failures.append(f'{provider}: timeout')
+            failures.append(f'{label}: timeout')
             continue
-        selected = (model or os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-lite')) if provider == 'gemini' else os.getenv('GROQ_MODEL', 'openai/gpt-oss-120b')
-        log.info('AI attempt request=%s provider=%s model=%s', request_id, provider, selected)
+        selected = get_gemini_model() if provider == 'gemini' else os.getenv('GROQ_MODEL', 'openai/gpt-oss-120b')
+        log.info('AI attempt request=%s provider=%s credential=%s model=%s', request_id, provider, credential, selected)
         try:
             if provider == 'gemini':
-                payload = {'contents':[{'parts':[{'text':prompt}]}], 'generationConfig':{'temperature':temperature,'maxOutputTokens':8000,'thinkingConfig':{'thinkingBudget':0}}}
+                payload = {'contents':[{'parts':[{'text':prompt}]}], 'generationConfig':{'temperature':temperature,'maxOutputTokens':8000,'thinkingConfig':thinking_config(selected)}}
                 if response_json:
                     payload['generationConfig']['responseMimeType'] = 'application/json'
-                response = requests.post(f'https://generativelanguage.googleapis.com/v1beta/models/{selected}:generateContent',headers={'x-goog-api-key':key.strip()},json=payload,timeout=min(20,remaining*.4))
+                response = requests.post(f'https://generativelanguage.googleapis.com/v1beta/models/{selected}:generateContent',headers={'x-goog-api-key':key.strip()},json=payload,timeout=min(remaining,20,timeout*.4/len(credentials)))
             else:
                 payload = {'model':selected,'messages':[{'role':'system','content':'Answer accurately. Return only a valid JSON object.' if response_json else 'Give accurate, concise educational guidance.'},{'role':'user','content':prompt}], 'temperature':temperature,'max_completion_tokens':8000}
                 if response_json:
@@ -60,7 +61,7 @@ def generate_content(prompt, *, gemini_key=None, model=None, response_json=True,
                 raise ValueError('invalid response')
             if response_json:
                 json.loads(text)
-            log.info('AI success request=%s provider=%s fallback=%s',request_id,provider,bool(failures))
+            log.info('AI success request=%s provider=%s credential=%s fallback=%s',request_id,provider,credential,bool(failures))
             return text.strip()
         except requests.Timeout:
             reason='timeout'
@@ -71,6 +72,6 @@ def generate_content(prompt, *, gemini_key=None, model=None, response_json=True,
             reason='connection failure'
         except (ValueError,IndexError,KeyError,TypeError):
             reason='invalid response'
-        failures.append(f'{provider}: {reason}')
-        log.warning('AI failure request=%s provider=%s reason=%s next=%s',request_id,provider,reason,'groq' if provider=='gemini' else 'none')
+        failures.append(f'{label}: {reason}')
+        log.warning('AI failure request=%s provider=%s credential=%s reason=%s next=%s',request_id,provider,credential,reason,attempts[index+1][0] if index+1<len(attempts) else 'none')
     raise AIProviderError(message='Live AI unavailable. ' + '; '.join(failures) + '. No generated content was saved.')

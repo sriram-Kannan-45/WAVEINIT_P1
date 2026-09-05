@@ -28,15 +28,17 @@ router.get(  '/courses/:courseId',                trainerOrAdmin, c.getCourseDet
 router.get(  '/courses/:courseId/progress',       trainerOrAdmin, c.getCourseProgress);
 router.put(  '/courses/:courseId',                trainerOrAdmin, c.updateOwnCourse);
 
-// ── Lessons (NB: /reorder must come before the :lessonId routes so Express
-//                doesn't capture 'reorder' as the lesson id) ─────────────
-router.put(  '/courses/:courseId/lessons/reorder',           trainerOrAdmin, c.reorderLessons);
-router.post( '/courses/:courseId/lessons',                   trainerOrAdmin, c.createLesson);
-router.get(  '/courses/:courseId/lessons',                   trainerOrAdmin, c.listLessons);
-router.get(  '/courses/:courseId/lessons/:lessonId',         trainerOrAdmin, c.getLesson);
-router.put(  '/courses/:courseId/lessons/:lessonId',         trainerOrAdmin, c.updateLesson);
-router.patch('/courses/:courseId/lessons/:lessonId/status',  trainerOrAdmin, c.updateLessonStatus);
-router.delete('/courses/:courseId/lessons/:lessonId',        trainerOrAdmin, c.deleteLesson);
+// ── Lessons (NB: /reorder and /bulk-delete must come before the :lessonId routes so Express
+//                doesn't capture 'reorder' or 'bulk-delete' as the lesson id) ─────────────
+router.put(   '/courses/:courseId/lessons/reorder',           trainerOrAdmin, c.reorderLessons);
+router.delete('/courses/:courseId/lessons/bulk-delete',       trainerOrAdmin, c.bulkDeleteLessons);
+router.post(  '/courses/:courseId/lessons/bulk-delete',       trainerOrAdmin, c.bulkDeleteLessons);
+router.post(  '/courses/:courseId/lessons',                   trainerOrAdmin, c.createLesson);
+router.get(   '/courses/:courseId/lessons',                   trainerOrAdmin, c.listLessons);
+router.get(   '/courses/:courseId/lessons/:lessonId',         trainerOrAdmin, c.getLesson);
+router.put(   '/courses/:courseId/lessons/:lessonId',         trainerOrAdmin, c.updateLesson);
+router.patch( '/courses/:courseId/lessons/:lessonId/status',  trainerOrAdmin, c.updateLessonStatus);
+router.delete('/courses/:courseId/lessons/:lessonId',         trainerOrAdmin, c.deleteLesson);
 
 // ── AI Course Structure Generation & Management ─────────────────────────────
 router.get(   '/courses/:courseId/structure',                         trainerOrAdmin, c.getCourseStructure);

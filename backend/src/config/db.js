@@ -70,12 +70,13 @@ const sequelize = new Sequelize(
         rejectUnauthorized: false,
       },
       connectTimeout: 30000,
+      statement_timeout: 10000,
     } : {
       connectTimeout: 30000,
     },
     pool: {
-      max: process.env.DB_POOL_MAX ? parseInt(process.env.DB_POOL_MAX, 10) : (isProduction ? 20 : 10),
-      min: 0,
+      max: process.env.DB_POOL_MAX ? parseInt(process.env.DB_POOL_MAX, 10) : 20,
+      min: process.env.DB_POOL_MIN ? parseInt(process.env.DB_POOL_MIN, 10) : 2,
       acquire: 30000,
       idle: 10000,
       evict: 1000,

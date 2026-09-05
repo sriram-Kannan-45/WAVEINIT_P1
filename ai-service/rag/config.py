@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from services.ai_config import get_gemini_api_key, get_gemini_model
 
 
 AI_SERVICE_DIR = Path(__file__).resolve().parents[1]
@@ -19,10 +20,9 @@ class RAGConfig:
     embedding_fallback_model = os.getenv("EMBEDDING_FALLBACK_MODEL", "intfloat/e5-large-v2")
     max_generation_retries = int(os.getenv("AI_JSON_RETRY_COUNT", "3"))
     faiss_index_dir = Path(os.getenv("FAISS_INDEX_DIR", "vector_store")).resolve()
-    # Preserve configured model IDs; Flash Lite must not be coerced to Flash.
-    gemini_model = os.getenv("QUIZ_GENERATION_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")).strip()
+    gemini_model = get_gemini_model()
     gemini_context_limit_chars = int(os.getenv("GEMINI_CONTEXT_LIMIT_CHARS", "150000"))
-    gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+    gemini_api_key = get_gemini_api_key()
     env_file = ENV_FILE
 
     allowed_extensions = {".pdf", ".docx", ".pptx", ".txt"}

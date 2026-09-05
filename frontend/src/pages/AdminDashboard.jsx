@@ -215,7 +215,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
     } else if (tab === 'trainers') {
       fetchTrainers(trainerPage, trainerLimit, trainerSearch)
     } else if (tab === 'createTraining' || tab === 'createTrainer') {
-      fetchTrainers(1, 200, '')
+      fetchTrainers(1, 500, '')
     } else if (tab === 'trainings') {
       fetchTrainings(trainingPage, trainingLimit, trainingSearch, trainingStatusFilter)
     } else if (tab === 'participants') {
@@ -306,6 +306,9 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       params.append('page', page)
       params.append('limit', limit)
       if (search && search.trim()) params.append('search', search.trim())
+      if (tab === 'createTraining' || tab === 'createTrainer' || limit > 50) {
+        params.append('includeAdmins', 'true')
+      }
 
       const r = await fetchWithTimeout(`${API_BASE}/admin/trainers?${params.toString()}`, { headers: auth() }, 10000)
       const d = await r.json().catch(() => ({}))
@@ -1910,7 +1913,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
             token={user?.token}
             trainersLoading={trainersLoading}
             trainersError={trainersError}
-            onRetryTrainers={() => fetchTrainers(1, 200, '')}
+            onRetryTrainers={() => fetchTrainers(1, 500, '')}
           />
         </motion.div>
       )}
@@ -2544,7 +2547,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                               style={{ cursor: 'pointer', accentColor: '#16A34A' }}
                             />
                             <div>
-                              <span style={{ fontWeight: 600 }}>{t.name}</span>
+                              <span style={{ fontWeight: 600 }}>{t.name} {t.role === 'ADMIN' && <span style={{ fontSize: 11, color: '#2563eb' }}>(Admin)</span>}</span>
                               <div style={{ fontSize: 11, color: '#94a3b8' }}>{t.email}</div>
                             </div>
                           </label>

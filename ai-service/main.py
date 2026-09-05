@@ -30,6 +30,7 @@ import time
 from typing import List, Dict, Any, Optional, Tuple, TypedDict
 import difflib
 from services.gemini_client import GeminiClient, GeminiTemporaryError
+from services.ai_config import get_gemini_api_key, get_gemini_model
 from services.prompt_builder import PromptBuilder
 from services.json_validator import JSONValidator
 from services.duplicate_remover import DuplicateRemover
@@ -128,7 +129,7 @@ AI_INSTANCE_ID = get_instance_id()
 @app.get("/api/health")
 async def health_check():
     """Service health check endpoint for Azure App Service, backend probes, and monitoring."""
-    provider = "Gemini -> Groq" if os.getenv("GEMINI_API_KEY") else "Groq" if os.getenv("GROQ_API_KEY") else "Unconfigured"
+    provider = "Gemini -> Groq" if get_gemini_api_key() else "Groq" if os.getenv("GROQ_API_KEY") else "Unconfigured"
     return {
         "status": "healthy",
         "service": "LMS AI Quiz & Proctoring Service",
@@ -468,8 +469,8 @@ def _try_json_repair(text: str) -> Tuple[Optional[Any], Optional[str]]:
 
 # Ã¢â€â‚¬Ã¢â€â‚¬ LLM Setup (Gemini only Ã¢â‚¬â€ Groq removed) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 from services.ai_provider import has_key
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
-GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-lite').strip()
+GEMINI_API_KEY = get_gemini_api_key()
+GEMINI_MODEL = get_gemini_model()
 provider_configured = has_key(GEMINI_API_KEY) or has_key(os.getenv('GROQ_API_KEY'))
 llm_type = 'Gemini -> Groq' if provider_configured else 'Unconfigured'
 
@@ -1624,7 +1625,7 @@ def validate_startup_config():
         log.critical("Ã¢ÂÅ’ Invalid configuration: RETRY_DELAY must be non-negative.")
         sys.exit(1)
 
-    gemini_key = os.getenv("GEMINI_API_KEY", "")
+    gemini_key = get_gemini_api_key()
     
     if gemini_key == "your-gemini-api-key-here":
         log.critical("Ã¢ÂÅ’ Invalid environment: GEMINI_API_KEY is configured with a placeholder value.")

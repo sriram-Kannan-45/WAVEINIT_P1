@@ -89,6 +89,54 @@ test('numeric option text never changes a zero-based answer key', () => {
   expect(validateMcqs([question(0, {options: ['1', '2', '3', '4'], correctAnswer: '1'})])[0].correctOption).toBe(1);
 });
 
+test.each([
+  {options: ['1', '2', '3', '4'], correctAnswer: '2', index: 1},
+  {options: ['B', 'C', 'D', 'A'], correctAnswer: 'A', index: 3},
+  {options: ['30 km/h', '50 km/h', '60 km/h', '90 km/h'], correctAnswer: '  50 KM/H  ', index: 1},
+])('generated answer text is resolved before index/letter aliases: $correctAnswer', async ({options, correctAnswer, index}) => {
+  respond(intent(), {questions: [question(0, {options, correctAnswer})]}, {reviews: [review(0, {correctOption: index})]});
+  const result = await generator.generate(prompt, 1);
+  expect(result[0].correctOption).toBe(index);
+  expect(result[0].correctAnswer).toBe(String(index));
+  expect(axios.post).toHaveBeenCalledTimes(3);
+});
+
+test.each([undefined, 0, 99])('retry does not guess a missing slot from a returned slot %s', async slot => {
+  respond(intent(), {questions: [question(), second()]},
+    {reviews: [review(), review(1, {correctOption: 2, relevant: false})]},
+    {questions: [second(1, {slot})]},
+    {questions: [second(1)]}, {reviews: [review(0, {correctOption: 2})]});
+  const result = await generator.generate(prompt, 2);
+  expect(result.map(q => q.question)).toEqual([question().question, second().question]);
+  expect(axios.post.mock.calls[4][1].contents[0].parts[0].text).toContain('Missing or duplicated slot');
+  expect(axios.post).toHaveBeenCalledTimes(6);
+});
+
+test('completes ten speed/distance/time slots over two batches before marking the quiz verified', async () => {
+  // Distinct stems exercise batching and answer transport; AI facts are mocked.
+  const stems = [
+    question().question, second().question,
+    'Convert a train velocity of 72 kilometres per hour into metres per second.',
+    'Calculate the time a walker needs to finish a six kilometre trail at constant pace.',
+    'Determine the combined closing speed of two vehicles approaching each other.',
+    'Find the length of a railway bridge using a train crossing duration.',
+    'What delay results when a car reduces its usual cruising speed by half?',
+    'Estimate the downstream travel duration for a boat in a flowing river.',
+    'How much earlier must a runner depart to meet a scheduled arrival?',
+    'Which total distance follows from three successive journey segments?',
+  ];
+  const questions = stems.map((stem, slot) => question(slot, {question: stem}));
+  respond(intent(), {questions: questions.slice(0, 8)}, {reviews: questions.slice(0, 8).map((q, index) => review(index))},
+    {questions: questions.slice(8)}, {reviews: [review(), review(1)]});
+  const result = await generator.generate(prompt, 10);
+  expect(result).toHaveLength(10);
+  expect(result.map(q => q.question)).toEqual(stems);
+  expect(result.every(q => q.correctAnswer === '1')).toBe(true);
+  expect(() => generator.assertVerifiedQuestions(result)).not.toThrow();
+  expect(axios.post.mock.calls[3][1].contents[0].parts[0].text).toContain('Missing slots: [{"id":8');
+  expect(axios.post).toHaveBeenCalledTimes(5);
+});
+
 test('mixed difficulty has an explicit distribution and marks are preserved', async () => {
   const qs = [question(0, {difficulty: 'EASY'}), second(), question(2, {question: 'Convert a speed of 72 kilometres per hour to metres per second.', options: ['5 m/s', '20 m/s', '40 m/s', '60 m/s'], correctAnswer:'20 m/s', difficulty: 'HARD'})];
   respond(intent(undefined, {marksPerQuestion: 3}), {questions: qs}, {reviews: [review(), review(1, {correctOption: 2}), review(2)]});

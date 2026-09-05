@@ -462,6 +462,28 @@ async function listMyCourses(req, res) {
       order: [['id', 'DESC']],
     });
 
+    // Pre-resolve any missing courses for training-linked enrollments in a single batch query
+    const missingTrainingIds = [];
+    for (const e of enrollments) {
+      if (!e.course && e.training && (!e.training.courses || e.training.courses.length === 0)) {
+        missingTrainingIds.push(e.training.id);
+      }
+    }
+
+    const extraCoursesByTraining = new Map();
+    if (missingTrainingIds.length > 0) {
+      const extraCourses = await Course.findAll({
+        where: { trainingProgramId: { [Op.in]: missingTrainingIds } },
+        include: [{ model: User, as: 'trainer', attributes: ['id', 'name'] }],
+      }).catch(() => []);
+      for (const c of extraCourses) {
+        if (!extraCoursesByTraining.has(c.trainingProgramId)) {
+          extraCoursesByTraining.set(c.trainingProgramId, []);
+        }
+        extraCoursesByTraining.get(c.trainingProgramId).push(c);
+      }
+    }
+
     const coursesMap = new Map();
     for (const e of enrollments) {
       if (e.course) {
@@ -472,25 +494,10 @@ async function listMyCourses(req, res) {
           });
         }
       } else if (e.training) {
-        let trainingCourses = e.training.courses || [];
-        if (trainingCourses.length === 0) {
-          try {
-            trainingCourses = await Course.findAll({
-              where: { trainingProgramId: e.training.id },
-              include: [{ model: User, as: 'trainer', attributes: ['id', 'name'] }],
-            });
-            if (trainingCourses.length === 0) {
-              const newCourse = await Course.create({
-                title: e.training.title,
-                description: e.training.description || `${e.training.title} course`,
-                trainingProgramId: e.training.id,
-                trainerId: e.training.trainerId || null,
-                status: e.training.status || 'PUBLISHED',
-              });
-              trainingCourses = [newCourse];
-            }
-          } catch (_) {}
-        }
+        const trainingCourses = (e.training.courses && e.training.courses.length > 0)
+          ? e.training.courses
+          : (extraCoursesByTraining.get(e.training.id) || []);
+
         for (const c of trainingCourses) {
           if (!coursesMap.has(c.id)) {
             c.program = e.training;
@@ -638,7 +645,7 @@ async function getCourseOverview(req, res) {
       ? { [Op.or]: [{ courseId: course.id }, { trainingId: course.trainingProgramId }] }
       : { courseId: course.id };
 
-    const [lessonCount, completedLessonCount, quizzes, submissions, enrolledCount, codingCount] = await Promise.all([
+    const [lessonCount, completedLessonCount, quizzes, submissions, enrolledCount, codingCount, trainer] = await Promise.all([
       Lesson.count({ where: courseWhere }),
       LessonProgress.count({
         where: { participantId: req.user.id, status: 'COMPLETED' },
@@ -664,6 +671,7 @@ async function getCourseOverview(req, res) {
         }
       }),
       CodingAssessment.count({ where: courseWhere }),
+      course.trainerId ? User.findByPk(course.trainerId, { attributes: ['id', 'name', 'email'] }).catch(() => null) : Promise.resolve(null),
     ]);
 
     // Quiz attempts and avg score (only counts published results)
@@ -680,8 +688,6 @@ async function getCourseOverview(req, res) {
     const avgScore = results.length === 0
       ? null
       : Number((results.reduce((s, r) => s + Number(r.percentage || 0), 0) / results.length).toFixed(2));
-
-    const trainer = await User.findByPk(course.trainerId, { attributes: ['id', 'name', 'email'] });
 
     res.json({
       success: true,
@@ -722,22 +728,23 @@ async function listCourseLessons(req, res) {
     if (!ctx) return;
     const { course } = ctx;
 
-    const lessons = await Lesson.findAll({
-      where: { courseId: course.id },
-      include: [
-        { model: LessonMaterial,   as: 'materials',   attributes: ['id', 'materialType'] },
-        { model: LessonAssessment, as: 'assessments', attributes: ['id', 'title', 'isMandatory'] },
-      ],
-      order: [['orderIndex', 'ASC'], ['id', 'ASC']],
-    });
+    const { Training } = require('../models');
+    const [lessons, training] = await Promise.all([
+      Lesson.findAll({
+        where: { courseId: course.id },
+        include: [
+          { model: LessonMaterial,   as: 'materials',   attributes: ['id', 'materialType'] },
+          { model: LessonAssessment, as: 'assessments', attributes: ['id', 'title', 'isMandatory'] },
+        ],
+        order: [['orderIndex', 'ASC'], ['id', 'ASC']],
+      }),
+      course.trainingProgramId ? Training.findByPk(course.trainingProgramId).catch(() => null) : Promise.resolve(null),
+    ]);
     const lessonIds = lessons.map(l => l.id);
     const progress = lessonIds.length === 0 ? [] : await LessonProgress.findAll({
       where: { lessonId: lessonIds, participantId: req.user.id },
     });
     const progMap = Object.fromEntries(progress.map(p => [String(p.lessonId), p]));
-
-    const { Training } = require('../models');
-    const training = await Training.findByPk(course.trainingProgramId);
     const isSequential = training?.sequentialLearning || false;
 
     let previousCompleted = true;

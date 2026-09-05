@@ -97,8 +97,8 @@ const getDashboardSummary = async (req, res) => {
       }).catch(() => []) : Promise.resolve([]),
       Feedback.findAll({
         attributes: [
-          [sequelize.fn('AVG', sequelize.col('trainerRating')), 'avgTrainerRating'],
-          [sequelize.fn('AVG', sequelize.col('subjectRating')), 'avgSubjectRating'],
+          [sequelize.fn('AVG', sequelize.col('trainer_rating')), 'avgTrainerRating'],
+          [sequelize.fn('AVG', sequelize.col('subject_rating')), 'avgSubjectRating'],
           [sequelize.fn('COUNT', sequelize.col('id')), 'totalFeedbacks']
         ],
         raw: true

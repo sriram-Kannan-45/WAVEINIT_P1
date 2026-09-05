@@ -2907,7 +2907,8 @@ def inspect_b64_with_gemini(b64_data: str) -> Dict[str, Any]:
     """
     try:
         from services.gemini_client import GeminiClient
-        api_key = os.getenv("GEMINI_API_KEY", "")
+        from services.ai_config import get_gemini_api_key
+        api_key = get_gemini_api_key()
         if not api_key or api_key == "your-gemini-api-key-here":
             return {
                 "success": True,

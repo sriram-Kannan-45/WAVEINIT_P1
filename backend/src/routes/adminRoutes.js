@@ -37,19 +37,27 @@ router.get(
   async (req, res) => {
     try {
       const { Op } = require('sequelize');
-      const { search = '', status = '' } = req.query;
-      const { page, limit, offset } = parsePagination(req.query, 10, 100);
+      const { sequelize } = require('../config/db');
+      const isPostgres = sequelize.getDialect() === 'postgres';
+      const likeOp = isPostgres ? Op.iLike : Op.like;
 
-      const where = { role: 'TRAINER', isDeleted: false };
+      const { search = '', status = '', includeAdmins = 'false', forAssignment = 'false' } = req.query;
+      const { page, limit, offset } = parsePagination(req.query, 10, 1000);
+
+      const allowAdmins = includeAdmins === 'true' || forAssignment === 'true';
+      const where = {
+        role: allowAdmins ? { [Op.in]: ['TRAINER', 'ADMIN'] } : 'TRAINER',
+        isDeleted: false
+      };
 
       if (search && search.trim()) {
         const q = search.trim();
         where[Op.or] = [
-          { name: { [Op.like]: `%${q}%` } },
-          { email: { [Op.like]: `%${q}%` } },
-          { phone: { [Op.like]: `%${q}%` } },
-          { username: { [Op.like]: `%${q}%` } },
-          { employeeId: { [Op.like]: `%${q}%` } }
+          { name: { [likeOp]: `%${q}%` } },
+          { email: { [likeOp]: `%${q}%` } },
+          { phone: { [likeOp]: `%${q}%` } },
+          { username: { [likeOp]: `%${q}%` } },
+          { employeeId: { [likeOp]: `%${q}%` } }
         ];
       }
 
@@ -335,17 +343,21 @@ router.get('/activity-logs', authenticateToken, roleMiddleware('ADMIN'), async (
 router.get('/search-participants', authenticateToken, roleMiddleware('ADMIN'), async (req, res) => {
   try {
     const { Op } = require('sequelize');
+    const { sequelize } = require('../config/db');
+    const isPostgres = sequelize.getDialect() === 'postgres';
+    const likeOp = isPostgres ? Op.iLike : Op.like;
+
     const { q = '', status = '' } = req.query;
-    const { page, limit, offset } = parsePagination(req.query, 20, 100);
+    const { page, limit, offset } = parsePagination(req.query, 20, 1000);
     
     const where = { role: 'PARTICIPANT', isDeleted: false };
     
     // Search query
     if (q) {
       where[Op.or] = [
-        { name: { [Op.like]: `%${q}%` } },
-        { email: { [Op.like]: `%${q}%` } },
-        { phone: { [Op.like]: `%${q}%` } }
+        { name: { [likeOp]: `%${q}%` } },
+        { email: { [likeOp]: `%${q}%` } },
+        { phone: { [likeOp]: `%${q}%` } }
       ];
     }
     

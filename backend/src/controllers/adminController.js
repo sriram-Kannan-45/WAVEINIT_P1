@@ -94,6 +94,7 @@ const { validateEmail, validatePassword } = require('../utils/validators');
 const { invalidateSummaryCache } = require('./adminSummaryController');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 const cacheService = require('../services/cacheService');
+const { sequelize } = require('../config/db');
 
 const updateTraining = async (req, res) => {
   try {
@@ -111,7 +112,7 @@ const updateTraining = async (req, res) => {
     }
 
     if (finalTrainerIds.length > 0) {
-      const trainers = await User.findAll({ where: { id: finalTrainerIds, role: 'TRAINER', isDeleted: false, status: 'APPROVED' } });
+      const trainers = await User.findAll({ where: { id: finalTrainerIds, role: { [Op.in]: ['TRAINER', 'ADMIN'] }, isDeleted: false, status: 'APPROVED' } });
       if (trainers.length !== finalTrainerIds.length) {
         return res.status(400).json({ error: 'One or more trainer IDs are invalid, inactive, or not trainers' });
       }
@@ -673,8 +674,8 @@ const getStats = async (req, res) => {
       Training.count({ where: { endDate: { [require('sequelize').Op.lt]: now } } }),
       Feedback.findAll({
         attributes: [
-          [sequelize.fn('AVG', sequelize.col('trainerRating')), 'avgTrainerRating'],
-          [sequelize.fn('AVG', sequelize.col('subjectRating')), 'avgSubjectRating']
+          [sequelize.fn('AVG', sequelize.col('trainer_rating')), 'avgTrainerRating'],
+          [sequelize.fn('AVG', sequelize.col('subject_rating')), 'avgSubjectRating']
         ],
         raw: true
       }).catch(() => ([{}]))
@@ -748,7 +749,9 @@ const getParticipants = async (req, res) => {
   try {
     const { Op } = require('sequelize');
     const { search = '', status = '' } = req.query;
-    const { page, limit, offset } = parsePagination(req.query, 10, 100);
+    const { page, limit, offset } = parsePagination(req.query, 10, 1000);
+    const isPostgres = sequelize.getDialect() === 'postgres';
+    const likeOp = isPostgres ? Op.iLike : Op.like;
 
     const where = { role: 'PARTICIPANT', isDeleted: false };
     
@@ -756,10 +759,10 @@ const getParticipants = async (req, res) => {
     if (search && search.trim()) {
       const q = search.trim();
       where[Op.or] = [
-        { name: { [Op.like]: `%${q}%` } },
-        { email: { [Op.like]: `%${q}%` } },
-        { phone: { [Op.like]: `%${q}%` } },
-        { username: { [Op.like]: `%${q}%` } }
+        { name: { [likeOp]: `%${q}%` } },
+        { email: { [likeOp]: `%${q}%` } },
+        { phone: { [likeOp]: `%${q}%` } },
+        { username: { [likeOp]: `%${q}%` } }
       ];
     }
     
@@ -786,11 +789,26 @@ const getParticipants = async (req, res) => {
     if (participantIds.length > 0) {
       try {
         const { QuizResult, LessonProgress, Lesson } = require('../models');
-        if (QuizResult) {
-          const quizResults = await QuizResult.findAll({
-            where: { participantId: { [Op.in]: participantIds } },
-            attributes: ['participantId', 'percentage', 'totalScore']
-          });
+        const [quizResults, progressRows, totalLessonsCount] = await Promise.all([
+          QuizResult
+            ? QuizResult.findAll({
+                where: { participantId: { [Op.in]: participantIds } },
+                attributes: ['participantId', 'percentage', 'totalScore'],
+                raw: true
+              }).catch(() => [])
+            : Promise.resolve([]),
+          LessonProgress
+            ? LessonProgress.findAll({
+                where: { participantId: { [Op.in]: participantIds }, status: 'COMPLETED' },
+                attributes: ['participantId', [LessonProgress.sequelize.fn('COUNT', '*'), 'completedCount']],
+                group: ['participantId'],
+                raw: true
+              }).catch(() => [])
+            : Promise.resolve([]),
+          Lesson ? Lesson.count().catch(() => 1) : Promise.resolve(1)
+        ]);
+
+        if (quizResults && quizResults.length > 0) {
           const userScores = {};
           quizResults.forEach(qr => {
             if (!userScores[qr.participantId]) userScores[qr.participantId] = [];
@@ -809,17 +827,11 @@ const getParticipants = async (req, res) => {
           });
         }
 
-        if (LessonProgress) {
-          const progressRows = await LessonProgress.findAll({
-            where: { participantId: { [Op.in]: participantIds }, status: 'COMPLETED' },
-            attributes: ['participantId', [LessonProgress.sequelize.fn('COUNT', '*'), 'completedCount']],
-            group: ['participantId'],
-            raw: true
-          });
-          const totalLessonsCount = (await Lesson?.count().catch(() => 0)) || 1;
+        if (progressRows && progressRows.length > 0) {
+          const lessonsCount = totalLessonsCount || 1;
           progressRows.forEach(pr => {
             const completed = Number(pr.completedCount) || 0;
-            progressMap[String(pr.participantId)] = Math.min(100, Math.round((completed / Math.max(1, totalLessonsCount)) * 100));
+            progressMap[String(pr.participantId)] = Math.min(100, Math.round((completed / Math.max(1, lessonsCount)) * 100));
           });
         }
       } catch (err) {

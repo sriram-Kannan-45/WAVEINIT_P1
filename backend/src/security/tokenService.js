@@ -65,8 +65,8 @@ setInterval(() => {
 // ── Token Fingerprint (binds token to device) ──────────────────────────────
 function generateTokenFingerprint(req) {
   const components = [
-    req.headers['user-agent'] || '',
-    req.ip || req.connection?.remoteAddress || '',
+    req?.headers?.['user-agent'] || '',
+    req?.ip || req?.connection?.remoteAddress || '',
   ];
   return crypto.createHash('sha256').update(components.join('|')).digest('hex').slice(0, 16);
 }

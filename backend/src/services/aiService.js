@@ -222,7 +222,7 @@ const aiService = {
 
     let feedback='';
     for (let attempt=0;attempt<3;attempt++) {
-      try {return await this._callGeminiDirectCodingGeneration(cleanPrompt, count, diffUpper, langs, null, process.env.CODING_GENERATION_MODEL, requestId,feedback);}
+      try {return await this._callGeminiDirectCodingGeneration(cleanPrompt, count, diffUpper, langs, null, require('../config/aiProviders').getGeminiModel(), requestId,feedback);}
       catch(error) {
         if(error.code!=='CODING_VALIDATION_FAILED') throw error;
         feedback=error.message;

@@ -170,6 +170,7 @@ export const API = {
     LESSON:        (courseId, lessonId)=> `${API_BASE}/trainer/courses/${courseId}/lessons/${lessonId}`,
     UPDATE_LESSON_STATUS: (courseId, lessonId) => `${API_BASE}/trainer/courses/${courseId}/lessons/${lessonId}/status`,
     REORDER_LESSONS:(courseId)         => `${API_BASE}/trainer/courses/${courseId}/lessons/reorder`,
+    BULK_DELETE_LESSONS:(courseId)     => `${API_BASE}/trainer/courses/${courseId}/lessons/bulk-delete`,
 
     STRUCTURE:     (courseId)          => `${API_BASE}/trainer/courses/${courseId}/structure`,
     SAVE_STRUCTURE:(courseId)          => `${API_BASE}/trainer/courses/${courseId}/structure`,

@@ -91,4 +91,4 @@ function validateQuestions(raw, { difficulty = 'MIXED', existing = [], count } =
     return value;
   });
 }
-module.exports = { extractQuizIntent, validateMcqs, validateQuestions, invalid, fingerprint };
+module.exports = { extractQuizIntent, validateMcqs, validateQuestions, invalid, fingerprint, optionKey };

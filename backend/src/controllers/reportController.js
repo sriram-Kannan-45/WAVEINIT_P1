@@ -5,12 +5,18 @@ const {
 } = require('../models');
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/db');
+const cacheService = require('../services/cacheService');
 
 // GET /api/reports/admin
 const getAdminReport = async (req, res) => {
   try {
     if (req.user.role !== 'ADMIN') {
       return res.status(403).json({ error: 'Access denied: Admin role required' });
+    }
+
+    if (req.query.fresh !== 'true') {
+      const cached = cacheService.get('report:admin');
+      if (cached) return res.json(cached);
     }
 
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
@@ -39,9 +45,9 @@ const getAdminReport = async (req, res) => {
         attributes: [
           [sequelize.col('training->trainer.id'), 'trainerId'],
           [sequelize.col('training->trainer.name'), 'trainerName'],
-          [sequelize.fn('AVG', sequelize.col('trainerRating')), 'avgTrainerRating'],
-          [sequelize.fn('AVG', sequelize.col('subjectRating')), 'avgSubjectRating'],
-          [sequelize.fn('COUNT', sequelize.col('Feedbacks.id')), 'feedbackCount']
+          [sequelize.fn('AVG', sequelize.col('trainer_rating')), 'avgTrainerRating'],
+          [sequelize.fn('AVG', sequelize.col('subject_rating')), 'avgSubjectRating'],
+          [sequelize.fn('COUNT', sequelize.col('Feedback.id')), 'feedbackCount']
         ],
         include: [{
           model: Training,
@@ -55,7 +61,7 @@ const getAdminReport = async (req, res) => {
         }],
         group: ['training->trainer.id', 'training->trainer.name'],
         raw: true
-      }),
+      }).catch(() => []),
       ParticipantTracking.count({
         distinct: true,
         col: 'user_id',
@@ -73,7 +79,7 @@ const getAdminReport = async (req, res) => {
 
     const enrollmentRate = participantCount > 0 ? (enrolledParticipantsCount / participantCount) * 100 : 0;
 
-    res.json({
+    const payload = {
       success: true,
       data: {
         totalUsers,
@@ -91,7 +97,10 @@ const getAdminReport = async (req, res) => {
         })),
         activeUsers: activeUsersCount
       }
-    });
+    };
+
+    cacheService.set('report:admin', payload, 30);
+    res.json(payload);
   } catch (error) {
     console.error('Admin report error:', error.message);
     res.status(500).json({ error: 'Server error generating admin report' });
@@ -106,6 +115,11 @@ const getTrainerReport = async (req, res) => {
     }
 
     const trainerId = req.user.id;
+    const cacheKey = `report:trainer:${trainerId}`;
+    if (req.query.fresh !== 'true') {
+      const cached = cacheService.get(cacheKey);
+      if (cached) return res.json(cached);
+    }
 
     // Resolve course IDs from CourseTrainerAssignment + primary trainerId
     const courseAssignments = await CourseTrainerAssignment.findAll({
@@ -351,7 +365,7 @@ const getTrainerReport = async (req, res) => {
       ? enrollments.reduce((sum, e) => sum + Number(e.progressPercent || 0), 0) / enrollments.length
       : 0;
 
-    res.json({
+    const payload = {
       success: true,
       data: {
         participantProgress,
@@ -378,7 +392,10 @@ const getTrainerReport = async (req, res) => {
         })),
         averageCompletion: Number(Number(avgCompletion).toFixed(1))
       }
-    });
+    };
+
+    cacheService.set(cacheKey, payload, 30);
+    res.json(payload);
   } catch (error) {
     console.error('Trainer report error:', error.message);
     res.status(500).json({ error: 'Server error generating trainer report' });
@@ -389,6 +406,12 @@ const getTrainerReport = async (req, res) => {
 const getParticipantReport = async (req, res) => {
   try {
     const participantId = req.user.id;
+    const cacheKey = `report:participant:${participantId}`;
+    if (req.query.fresh !== 'true') {
+      const cached = cacheService.get(cacheKey);
+      if (cached) return res.json(cached);
+    }
+
     const { LessonQuiz } = require('../models');
 
     // 1, 2, 3, 4. Fetch all top-level sets in parallel
@@ -519,7 +542,7 @@ const getParticipantReport = async (req, res) => {
       };
     });
 
-    res.json({
+    const payload = {
       success: true,
       data: {
         progress,
@@ -538,7 +561,10 @@ const getParticipantReport = async (req, res) => {
           date: ah.updated_at
         }))
       }
-    });
+    };
+
+    cacheService.set(cacheKey, payload, 30);
+    res.json(payload);
   } catch (error) {
     console.error('Participant report error:', error.message);
     res.status(500).json({ error: 'Server error generating participant report' });

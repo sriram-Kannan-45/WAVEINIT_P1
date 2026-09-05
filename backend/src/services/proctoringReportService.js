@@ -300,7 +300,7 @@ async function recordMonitoringEvent({
           }
         }
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
   if (!resolvedSessionId && resolvedAttemptId) {
@@ -320,18 +320,22 @@ async function recordMonitoringEvent({
           }
         }
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
-  if (!resolvedSessionId || !eventType) {
-    throw new Error('monitoringSessionId and eventType are required');
+  if (!resolvedSessionId && !resolvedAttemptId) {
+    throw new Error('monitoringSessionId or attemptId is required');
+  }
+  if (!eventType) {
+    throw new Error('eventType is required');
   }
 
   const normalizedSeverity = (severity || 'INFO').toUpperCase();
   const validSeverities = ['INFO', 'WARNING', 'HIGH', 'CRITICAL'];
   const finalSeverity = validSeverities.includes(normalizedSeverity) ? normalizedSeverity : 'INFO';
+  const durSec = Math.max(0, Number(duration) || 0);
 
-  const finalKey = idempotencyKey || `${resolvedSessionId}_${eventType}_${new Date(timestamp).getTime()}_${Math.random().toString(36).slice(2, 7)}`;
+  const finalKey = idempotencyKey || `${resolvedSessionId || resolvedAttemptId}_${eventType}_${new Date(timestamp).getTime()}_${Math.random().toString(36).slice(2, 7)}`;
 
   try {
     const [event, created] = await ProctoringEvent.findOrCreate({
@@ -344,7 +348,7 @@ async function recordMonitoringEvent({
         eventType,
         severity: finalSeverity,
         confidence: Math.max(0.0, Math.min(1.0, Number(confidence) || 1.0)),
-        duration: Math.max(0.0, Number(duration) || 0.0),
+        duration: durSec,
         timestamp: new Date(timestamp),
         metadata: metadata || {},
         idempotencyKey: finalKey,
@@ -355,11 +359,51 @@ async function recordMonitoringEvent({
       // Update session aggregate counters
       const session = await ProctoringSession.findOne({ where: { sessionId: resolvedSessionId } });
       if (session) {
-        const updateFields = { totalEvents: session.totalEvents + 1 };
-        if (finalSeverity === 'WARNING') updateFields.warningEvents = session.warningEvents + 1;
-        else if (finalSeverity === 'HIGH') updateFields.highEvents = session.highEvents + 1;
-        else if (finalSeverity === 'CRITICAL') updateFields.criticalEvents = session.criticalEvents + 1;
+        const updateFields = { totalEvents: (session.totalEvents || 0) + 1 };
+        if (finalSeverity === 'WARNING' || finalSeverity === 'MEDIUM') updateFields.warningEvents = (session.warningEvents || 0) + 1;
+        else if (finalSeverity === 'HIGH') updateFields.highEvents = (session.highEvents || 0) + 1;
+        else if (finalSeverity === 'CRITICAL') updateFields.criticalEvents = (session.criticalEvents || 0) + 1;
         await session.update(updateFields);
+      }
+
+      // Also ensure MonitoringEvent is created in monitoring_events table if session exists
+      try {
+        const { MonitoringEvent, MonitoringSession } = require('../models');
+        if (MonitoringEvent) {
+          let targetSession = null;
+          if (resolvedSessionId) {
+            targetSession = await MonitoringSession.findOne({ where: { sessionId: resolvedSessionId } });
+          }
+          if (!targetSession && resolvedAttemptId) {
+            targetSession = await MonitoringSession.findOne({ where: { attemptId: resolvedAttemptId } });
+          }
+
+          await MonitoringEvent.create({
+            monitoringSessionId: targetSession?.sessionId || resolvedSessionId || `session_${resolvedAttemptId}`,
+            attemptId: resolvedAttemptId ? Number(resolvedAttemptId) : (targetSession?.attemptId || null),
+            participantId: participantId ? Number(participantId) : (targetSession?.participantId || null),
+            contextType: 'QUIZ',
+            source: 'LAPTOP',
+            eventType,
+            severity: finalSeverity,
+            scoreDelta: finalSeverity === 'CRITICAL' ? 25 : finalSeverity === 'HIGH' ? 12 : (finalSeverity === 'WARNING' || finalSeverity === 'MEDIUM') ? 5 : 0,
+            durationMs: Math.round(durSec * 1000),
+            occurredAt: timestamp || new Date(),
+            confidence: Number(confidence) || 1.0,
+            metadata,
+            idempotencyKey: finalKey,
+          });
+
+          if (targetSession) {
+            targetSession.totalEvents = (targetSession.totalEvents || 0) + 1;
+            if (finalSeverity === 'WARNING' || finalSeverity === 'MEDIUM') targetSession.warningEvents = (targetSession.warningEvents || 0) + 1;
+            if (finalSeverity === 'HIGH') targetSession.highEvents = (targetSession.highEvents || 0) + 1;
+            if (finalSeverity === 'CRITICAL') targetSession.criticalEvents = (targetSession.criticalEvents || 0) + 1;
+            await targetSession.save();
+          }
+        }
+      } catch (mErr) {
+        logger.warn(`[ProctoringReportService] Dual event recording note: ${mErr.message}`);
       }
     }
 
@@ -613,83 +657,7 @@ function formatDuration(start, end) {
   return `${s}s`;
 }
 
-/**
- * Ingest and record an objective monitoring event into database.
- * Creates ProctoringEvent and also routes into MonitoringEvent / MonitoringSession.
- */
-async function recordMonitoringEvent({
-  monitoringSessionId,
-  attemptId,
-  participantId,
-  quizId,
-  eventType,
-  severity = 'INFO',
-  confidence = 1.0,
-  duration = 0.0,
-  timestamp = new Date(),
-  metadata = {},
-  idempotencyKey,
-}) {
-  const normSeverity = (severity || 'INFO').toUpperCase();
-  const durSec = Math.max(0, Number(duration) || 0);
 
-  // 1. Create ProctoringEvent
-  const event = await ProctoringEvent.create({
-    monitoringSessionId,
-    attemptId,
-    participantId,
-    quizId,
-    eventType,
-    severity: normSeverity,
-    confidence: Number(confidence) || 1.0,
-    duration: durSec,
-    timestamp: timestamp || new Date(),
-    metadata,
-    idempotencyKey,
-  });
-
-  // 2. Also ensure MonitoringEvent is created in monitoring_events table if session exists
-  try {
-    const { MonitoringEvent, MonitoringSession } = require('../models');
-    if (MonitoringEvent) {
-      let targetSession = null;
-      if (monitoringSessionId) {
-        targetSession = await MonitoringSession.findOne({ where: { sessionId: monitoringSessionId } });
-      }
-      if (!targetSession && attemptId) {
-        targetSession = await MonitoringSession.findOne({ where: { attemptId } });
-      }
-
-      await MonitoringEvent.create({
-        monitoringSessionId: targetSession?.sessionId || monitoringSessionId || `session_${attemptId}`,
-        attemptId: attemptId ? Number(attemptId) : (targetSession?.attemptId || null),
-        participantId: participantId ? Number(participantId) : (targetSession?.participantId || null),
-        contextType: 'QUIZ',
-        source: 'LAPTOP',
-        eventType,
-        severity: normSeverity,
-        scoreDelta: normSeverity === 'CRITICAL' ? 25 : normSeverity === 'HIGH' ? 12 : (normSeverity === 'WARNING' || normSeverity === 'MEDIUM') ? 5 : 0,
-        durationMs: Math.round(durSec * 1000),
-        occurredAt: timestamp || new Date(),
-        confidence: Number(confidence) || 1.0,
-        metadata,
-        idempotencyKey,
-      });
-
-      if (targetSession) {
-        targetSession.totalEvents = (targetSession.totalEvents || 0) + 1;
-        if (normSeverity === 'WARNING' || normSeverity === 'MEDIUM') targetSession.warningEvents = (targetSession.warningEvents || 0) + 1;
-        if (normSeverity === 'HIGH') targetSession.highEvents = (targetSession.highEvents || 0) + 1;
-        if (normSeverity === 'CRITICAL') targetSession.criticalEvents = (targetSession.criticalEvents || 0) + 1;
-        await targetSession.save();
-      }
-    }
-  } catch (mErr) {
-    logger.warn(`[ProctoringReportService] Dual event recording note: ${mErr.message}`);
-  }
-
-  return event;
-}
 
 /**
  * Generate and save final Proctoring Report for a completed QuizAttempt or CodingAttempt.
@@ -758,7 +726,7 @@ async function generateFinalProctoringReport(attemptId) {
         },
         order: [['id', 'DESC']]
       });
-    } catch (_) {}
+    } catch (_) { }
 
     let verifSession = null;
     try {
@@ -771,7 +739,7 @@ async function generateFinalProctoringReport(attemptId) {
         },
         order: [['id', 'DESC']]
       });
-    } catch (_) {}
+    } catch (_) { }
 
     const sessionIds = Array.from(new Set([
       session?.sessionId,
@@ -819,7 +787,7 @@ async function generateFinalProctoringReport(attemptId) {
           where: queryWhere,
           order: [['occurredAt', 'ASC']]
         });
-      } catch (_) {}
+      } catch (_) { }
     }
 
     // Merge and deduplicate
@@ -987,7 +955,7 @@ async function generateFinalProctoringReport(attemptId) {
     return report;
   } catch (error) {
     logger.error(`[ProctoringReportService] Failed to generate proctoring report for attempt #${attemptId}: ${error.message}`);
-    
+
     // Best-effort record failure status so trainer can retry
     try {
       await ProctoringReport.upsert({
@@ -1000,7 +968,7 @@ async function generateFinalProctoringReport(attemptId) {
         timeline: [],
         generatedAt: new Date(),
       });
-    } catch {}
+    } catch { }
 
     return null;
   }

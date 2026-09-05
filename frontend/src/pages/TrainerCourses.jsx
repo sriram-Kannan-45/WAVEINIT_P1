@@ -17,6 +17,7 @@ import emptyCourseImg from '../assets/illustrations/empty-course.png'
 import { useToast } from '../components/Toast'
 import { useConfirm } from '../components/ui/AlertModal'
 import MaterialManager from '../components/trainer/MaterialManager'
+import BulkDeleteConfirmModal from '../components/admin/BulkDeleteConfirmModal'
 import CourseQuizzesTab from '../components/trainer/CourseQuizzesTab'
 import CourseCodingTab from '../components/trainer/CourseCodingTab'
 import CourseParticipantsTab from '../components/trainer/CourseParticipantsTab'
@@ -979,6 +980,14 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
   const [form, setForm] = useState({ title: '', description: '', content: '', status: 'PENDING' })
   const [materialsFor, setMaterialsFor] = useState(null)
   const [expandedRows, setExpandedRows] = useState({})
+  const [selectedLessons, setSelectedLessons] = useState(new Set())
+  const [bulkDeleteModal, setBulkDeleteModal] = useState({
+    open: false,
+    count: 0,
+    ids: [],
+    loading: false,
+    failedItems: null,
+  })
   const auth = useCallback(() => ({ Authorization: `Bearer ${user.token}` }), [user.token])
 
   const fetchLessons = useCallback(async () => {
@@ -987,16 +996,109 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
       const r = await fetch(API.TRAINER_COURSES.LESSONS(courseId), { headers: auth() })
       const d = await r.json()
       if (d.success) {
-        setLessons(d.lessons || [])
-        if (d.lessons && d.lessons.length > 0) {
-          setExpandedRows({ [d.lessons[0].id]: true });
+        const list = d.lessons || []
+        setLessons(list)
+        // Keep only selected IDs that still exist in lessons
+        const validExisting = new Set(list.map(l => l.id))
+        setSelectedLessons(prev => new Set([...prev].filter(id => validExisting.has(id))))
+        if (list.length > 0 && Object.keys(expandedRows).length === 0) {
+          setExpandedRows({ [list[0].id]: true });
         }
       }
       else showError(d.error || 'Failed to load lessons')
     } catch (e) { showError(e.message) }
     finally { setLoading(false) }
-  }, [courseId, auth, showError])
+  }, [courseId, auth, showError, expandedRows])
   useEffect(() => { fetchLessons() }, [fetchLessons])
+
+  const toggleSelectLesson = (id) => {
+    setSelectedLessons(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedLessons.size === lessons.length) {
+      setSelectedLessons(new Set())
+    } else {
+      setSelectedLessons(new Set(lessons.map(l => l.id)))
+    }
+  }
+
+  const openBulkDelete = () => {
+    if (selectedLessons.size === 0) return
+    setBulkDeleteModal({
+      open: true,
+      count: selectedLessons.size,
+      ids: Array.from(selectedLessons),
+      loading: false,
+      failedItems: null,
+    })
+  }
+
+  const handleExecuteBulkDelete = async () => {
+    const { ids } = bulkDeleteModal
+    if (!ids || ids.length === 0) return
+    setBulkDeleteModal(prev => ({ ...prev, loading: true }))
+
+    try {
+      let r = await fetch(API.TRAINER_COURSES.BULK_DELETE_LESSONS(courseId), {
+        method: 'DELETE',
+        headers: { ...auth(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      })
+
+      if (r.status === 404 || r.status === 405) {
+        r = await fetch(API.TRAINER_COURSES.BULK_DELETE_LESSONS(courseId), {
+          method: 'POST',
+          headers: { ...auth(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids }),
+        })
+      }
+
+      let d = {}
+      try {
+        d = await r.json()
+      } catch (_) {
+        d = {}
+      }
+
+      if (!r.ok || d.success === false) {
+        // Fallback: delete individually in parallel
+        let failedCount = 0
+        await Promise.all(
+          ids.map(async (id) => {
+            try {
+              const res = await fetch(API.TRAINER_COURSES.LESSON(courseId, id), {
+                method: 'DELETE',
+                headers: auth(),
+              })
+              const json = await res.json().catch(() => ({}))
+              if (!res.ok || json.success === false) failedCount++
+            } catch (_) {
+              failedCount++
+            }
+          })
+        )
+
+        if (failedCount === ids.length) {
+          throw new Error(d.message || d.error || 'Failed to delete selected structure items')
+        }
+      }
+
+      success(`${ids.length} structure item${ids.length > 1 ? 's' : ''} deleted successfully`)
+      setSelectedLessons(new Set())
+      setBulkDeleteModal({ open: false, count: 0, ids: [], loading: false, failedItems: null })
+      await fetchLessons()
+      onCountChange?.()
+    } catch (err) {
+      showError(err.message || 'Failed to delete selected structure items')
+      setBulkDeleteModal(prev => ({ ...prev, loading: false }))
+    }
+  }
 
   const toggleRow = (id) => {
     setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
@@ -1144,100 +1246,228 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
           </button>
         </div>
       ) : (
-        <div className="wl-module-list">
-          {lessons.map((l) => {
-            const tax = getTaxonomyInfo(l.title);
-            const isExpanded = !!expandedRows[l.id];
-            const matCount = Object.values(l.materialCounts || {}).reduce((a, b) => a + b, 0);
-            const status = l.status || 'PENDING';
-            const statusConfig = {
-              COMPLETED: { label: 'Completed', bg: '#dcfce7', text: '#15803d', border: '#bbf7d0' },
-              IN_PROGRESS: { label: 'In Progress', bg: '#fef3c7', text: '#b45309', border: '#fde68a' },
-              PENDING: { label: 'Pending', bg: '#f1f5f9', text: '#64748b', border: '#e2e8f0' },
-            }[status] || { label: 'Pending', bg: '#f1f5f9', text: '#64748b', border: '#e2e8f0' };
+        <>
+          {/* Selection / Bulk Actions Toolbar */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '10px 16px',
+              marginBottom: 12,
+              background: selectedLessons.size > 0 ? '#fef2f2' : '#f8fafc',
+              border: selectedLessons.size > 0 ? '1px solid #fecaca' : '1px solid #e2e8f0',
+              borderRadius: 12,
+              transition: 'all 150ms ease',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <label
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: '#334155',
+                  userSelect: 'none',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={lessons.length > 0 && selectedLessons.size === lessons.length}
+                  ref={(el) => {
+                    if (el) {
+                      el.indeterminate = selectedLessons.size > 0 && selectedLessons.size < lessons.length
+                    }
+                  }}
+                  onChange={toggleSelectAll}
+                  style={{
+                    width: 16,
+                    height: 16,
+                    cursor: 'pointer',
+                    accentColor: '#dc2626',
+                  }}
+                />
+                <span>
+                  {selectedLessons.size === lessons.length ? 'Deselect All' : 'Select All'}
+                  <span style={{ color: '#64748b', fontWeight: 500, marginLeft: 4 }}>
+                    ({lessons.length})
+                  </span>
+                </span>
+              </label>
 
-            return (
-              <div key={l.id} className="wl-module-row">
-                {/* Row Header */}
-                <div className="wl-module-row-header" onClick={() => toggleRow(l.id)}>
-                  <span className="wl-module-drag">
-                    <GripVertical size={16} />
-                  </span>
-                  <span className={`wl-module-chevron${isExpanded ? ' wl-module-chevron--open' : ''}`}>
-                    <ChevronRight size={16} />
-                  </span>
-                  <span className="wl-module-taxonomy" style={{ background: tax.bg, color: tax.fg }}>
-                    {tax.label}
-                  </span>
-                  <span className="wl-module-title">{l.title}</span>
+              {selectedLessons.size > 0 && (
+                <span
+                  style={{
+                    background: '#fee2e2',
+                    color: '#991b1b',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: 9999,
+                  }}
+                >
+                  {selectedLessons.size} selected
+                </span>
+              )}
+            </div>
 
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {selectedLessons.size > 0 && (
+                <>
                   <button
                     type="button"
-                    onClick={(e) => handleToggleLessonStatus(l, e)}
+                    onClick={() => setSelectedLessons(new Set())}
+                    className="wl-btn-secondary"
+                    style={{ height: 32, padding: '0 12px', fontSize: 12 }}
+                  >
+                    Clear Selection
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openBulkDelete}
                     style={{
-                      marginLeft: 'auto',
-                      marginRight: 10,
-                      background: statusConfig.bg,
-                      color: statusConfig.text,
-                      border: `1px solid ${statusConfig.border}`,
-                      borderRadius: 9999,
-                      padding: '2px 9px',
-                      fontSize: 11,
-                      fontWeight: 600,
-                      cursor: 'pointer',
                       display: 'inline-flex',
                       alignItems: 'center',
-                      gap: 4,
+                      gap: 6,
+                      height: 32,
+                      padding: '0 14px',
+                      borderRadius: 8,
+                      background: '#dc2626',
+                      color: '#ffffff',
+                      border: 'none',
+                      fontWeight: 600,
+                      fontSize: 12.5,
+                      cursor: 'pointer',
+                      boxShadow: '0 1px 2px rgba(220, 38, 38, 0.2)',
                     }}
-                    title="Click to toggle status (Pending → In Progress → Completed)"
                   >
-                    {status === 'COMPLETED' ? <CheckCircle2 size={11} /> : null}
-                    {statusConfig.label}
+                    <Trash2 size={13} /> Delete Selected ({selectedLessons.size})
                   </button>
+                </>
+              )}
+            </div>
+          </div>
 
-                  <div className="wl-module-actions" onClick={(e) => e.stopPropagation()}>
-                    <button title="Edit" onClick={() => openEdit(l)} className="wl-module-action-btn wl-module-action-btn--edit">
-                      <Pencil size={14} />
-                    </button>
-                    <button title="Delete" onClick={() => remove(l)} className="wl-module-action-btn wl-module-action-btn--delete">
-                      <Trash2 size={14} />
-                    </button>
-                    <button title="More" className="wl-module-action-btn wl-module-action-btn--more">
-                      <MoreVertical size={14} />
-                    </button>
-                  </div>
-                </div>
+          <div className="wl-module-list">
+            {lessons.map((l) => {
+              const tax = getTaxonomyInfo(l.title);
+              const isExpanded = !!expandedRows[l.id];
+              const matCount = Object.values(l.materialCounts || {}).reduce((a, b) => a + b, 0);
+              const status = l.status || 'PENDING';
+              const statusConfig = {
+                COMPLETED: { label: 'Completed', bg: '#dcfce7', text: '#15803d', border: '#bbf7d0' },
+                IN_PROGRESS: { label: 'In Progress', bg: '#fef3c7', text: '#b45309', border: '#fde68a' },
+                PENDING: { label: 'Pending', bg: '#f1f5f9', text: '#64748b', border: '#e2e8f0' },
+              }[status] || { label: 'Pending', bg: '#f1f5f9', text: '#64748b', border: '#e2e8f0' };
 
-                {/* Expanded Content */}
-                {isExpanded && (
-                  <div className="wl-module-expanded">
-                    {l.description && (
-                      <p className="wl-module-description">{l.description}</p>
-                    )}
+              return (
+                <div
+                  key={l.id}
+                  className="wl-module-row"
+                  style={selectedLessons.has(l.id) ? { borderColor: '#fca5a5', background: '#fffbfa' } : {}}
+                >
+                  {/* Row Header */}
+                  <div className="wl-module-row-header" onClick={() => toggleRow(l.id)}>
+                    <span
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ display: 'flex', alignItems: 'center', marginRight: 2 }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedLessons.has(l.id)}
+                        onChange={() => toggleSelectLesson(l.id)}
+                        aria-label={`Select ${l.title}`}
+                        style={{
+                          width: 16,
+                          height: 16,
+                          cursor: 'pointer',
+                          accentColor: '#dc2626',
+                          borderRadius: 4,
+                        }}
+                      />
+                    </span>
+                    <span className="wl-module-drag">
+                      <GripVertical size={16} />
+                    </span>
+                    <span className={`wl-module-chevron${isExpanded ? ' wl-module-chevron--open' : ''}`}>
+                      <ChevronRight size={16} />
+                    </span>
+                    <span className="wl-module-taxonomy" style={{ background: tax.bg, color: tax.fg }}>
+                      {tax.label}
+                    </span>
+                    <span className="wl-module-title">{l.title}</span>
 
-                    {/* Materials Section */}
-                    <div className="wl-module-section">
-                      <div className="wl-module-section-left">
-                        <Folder size={16} style={{ color: '#0D9488' }} />
-                        <span className="wl-module-section-label">Learning Materials</span>
-                        {matCount > 0 ? (
-                          <span className="wl-module-section-count">({matCount})</span>
-                        ) : (
-                          <span className="wl-module-section-empty">No materials added yet</span>
-                        )}
-                      </div>
-                      <div className="wl-module-section-btns">
-                        <button onClick={() => setMaterialsFor({ id: l.id, title: l.title })} className="wl-btn-primary" style={{ height: 40, padding: '0 18px', fontSize: 13 }}>
-                          <Plus size={14} /> Add/Manage Materials
-                        </button>
-                      </div>
+                    <button
+                      type="button"
+                      onClick={(e) => handleToggleLessonStatus(l, e)}
+                      style={{
+                        marginLeft: 'auto',
+                        marginRight: 10,
+                        background: statusConfig.bg,
+                        color: statusConfig.text,
+                        border: `1px solid ${statusConfig.border}`,
+                        borderRadius: 9999,
+                        padding: '2px 9px',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                      }}
+                      title="Click to toggle status (Pending → In Progress → Completed)"
+                    >
+                      {status === 'COMPLETED' ? <CheckCircle2 size={11} /> : null}
+                      {statusConfig.label}
+                    </button>
+
+                    <div className="wl-module-actions" onClick={(e) => e.stopPropagation()}>
+                      <button title="Edit" onClick={() => openEdit(l)} className="wl-module-action-btn wl-module-action-btn--edit">
+                        <Pencil size={14} />
+                      </button>
+                      <button title="Delete" onClick={() => remove(l)} className="wl-module-action-btn wl-module-action-btn--delete">
+                        <Trash2 size={14} />
+                      </button>
+                      <button title="More" className="wl-module-action-btn wl-module-action-btn--more">
+                        <MoreVertical size={14} />
+                      </button>
                     </div>
                   </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+
+                  {/* Expanded Content */}
+                  {isExpanded && (
+                    <div className="wl-module-expanded">
+                      {l.description && (
+                        <p className="wl-module-description">{l.description}</p>
+                      )}
+
+                      {/* Materials Section */}
+                      <div className="wl-module-section">
+                        <div className="wl-module-section-left">
+                          <Folder size={16} style={{ color: '#0D9488' }} />
+                          <span className="wl-module-section-label">Learning Materials</span>
+                          {matCount > 0 ? (
+                            <span className="wl-module-section-count">({matCount})</span>
+                          ) : (
+                            <span className="wl-module-section-empty">No materials added yet</span>
+                          )}
+                        </div>
+                        <div className="wl-module-section-btns">
+                          <button onClick={() => setMaterialsFor({ id: l.id, title: l.title })} className="wl-btn-primary" style={{ height: 40, padding: '0 18px', fontSize: 13 }}>
+                            <Plus size={14} /> Add/Manage Materials
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
       )}
 
       {/* Create/Edit Modal */}
@@ -1304,6 +1534,17 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
         open={!!materialsFor}
         onClose={() => setMaterialsFor(null)}
         onSaved={() => fetchLessons()}
+      />
+
+      <BulkDeleteConfirmModal
+        open={bulkDeleteModal.open}
+        itemType="structure item"
+        count={bulkDeleteModal.count}
+        loading={bulkDeleteModal.loading}
+        failedItems={bulkDeleteModal.failedItems}
+        onClose={() => setBulkDeleteModal({ open: false, count: 0, ids: [], loading: false, failedItems: null })}
+        onConfirm={handleExecuteBulkDelete}
+        onClearFailed={() => setBulkDeleteModal(prev => ({ ...prev, failedItems: null }))}
       />
     </div>
   )
