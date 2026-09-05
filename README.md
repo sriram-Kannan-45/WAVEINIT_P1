@@ -36,6 +36,9 @@
 8. [Production Deployment & Cloud Architecture](#8-production-deployment--cloud-architecture)
 9. [Core API & WebSocket Channel Catalog](#9-core-api--websocket-channel-catalog)
 10. [Troubleshooting & Operational FAQ](#10-troubleshooting--operational-faq)
+11. [Testing & Health Checks](#11-testing--health-checks)
+12. [Security Guidance](#12-security-guidance)
+13. [Additional Documentation](#13-additional-documentation)
 
 ---
 
@@ -43,7 +46,7 @@
 
 **WAVEINIT LMS** is an enterprise-grade platform engineered to unify the modern corporate and academic training lifecycle into a cohesive, high-performance ecosystem. It bridges the critical gaps between pedagogical delivery, automated content generation, sandbox execution, and uncompromised evaluation integrity.
 
-```
+```text
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │                                 WAVEINIT LMS ECOSYSTEM                                 │
 │                                                                                        │
@@ -56,7 +59,8 @@
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Core Architectural Innovations:
+### Core Architectural Innovations
+
 - **Dual-Camera 360° AI Proctoring**: Combines primary laptop front-camera telemetry (MediaPipe 468-point face mesh, gaze vectors, iris tracking, head pose) with zero-install QR-paired secondary smartphone camera surveillance (YOLO11s inference for smartphones, secondary screens, books, and unauthorized personnel).
 - **Prompt-First Coding Assessment Engine**: Driven by a 9-node LangGraph orchestration workflow in Python, translating natural language requirements directly into self-validated code challenges with multi-language starter templates, hidden test cases, and Docker sandbox execution.
 - **RAG-Powered AI Quiz Synthesizer**: Ingests PDF, DOCX, PPTX, and course documents into FAISS vector spaces, generating taxonomically calibrated MCQs, code-output, and scenario-based assessments with zero question duplication.
@@ -70,7 +74,7 @@
 
 The WAVEINIT system is architected as a distributed microservice topology decoupled into three primary execution tiers:
 
-```
+```text
                                   CLIENT BROWSERS & MOBILE DEVICES
                        [ Candidate Laptop ]             [ Mobile QR Camera ]
                                 │                                │
@@ -126,7 +130,7 @@ The WAVEINIT system is architected as a distributed microservice topology decoup
 
 ### Flow 1: Authentication, RBAC & Device Security
 
-```
+```text
 [Candidate / Trainer / Admin]
        │  1. POST /api/auth/login (email, password, fingerprint)
        ▼
@@ -154,7 +158,7 @@ The WAVEINIT system is architected as a distributed microservice topology decoup
 
 ### Flow 2: Course Curriculum & Learning Lifecycle
 
-```
+```text
 [Trainer / Admin] ──▶ Create Course ──▶ Add Modules ──▶ Upload Materials (PDF/Video)
                                                                  │
                                                     Vector Extraction (AI Service)
@@ -170,7 +174,7 @@ The WAVEINIT system is architected as a distributed microservice topology decoup
 
 ### Flow 3: AI Quiz Generation & Assessment Pipeline
 
-```
+```text
 [Trainer UI]
     │ 1. Define Topic / Upload Document + Select Difficulty (Bloom's Level 1-6)
     ▼
@@ -203,7 +207,7 @@ The WAVEINIT system is architected as a distributed microservice topology decoup
 
 ### Flow 4: Prompt-First Coding Assessment & Judge0 Sandbox
 
-```
+```text
                     TRAINER PROMPT
        "Create 3 medium dynamic programming challenges"
                            │
@@ -258,7 +262,7 @@ The WAVEINIT system is architected as a distributed microservice topology decoup
 
 ### Flow 5: 1-on-1 Real-Time Technical Video Interview
 
-```
+```text
 [Interviewer / Trainer]                          [Candidate]
         │                                             │
         │ 1. Join Room (/interview/room/:id)          │ 1. Join Room
@@ -295,7 +299,7 @@ The WAVEINIT system is architected as a distributed microservice topology decoup
 
 ### Flow 6: Dual-Camera AI Proctoring & Anti-Cheat System
 
-```
+```text
                       ASSESSMENT INTEGRITY PIPELINE
                       
       PRIMARY CAMERA (Webcam)                  SECONDARY CAMERA (Mobile Phone)
@@ -348,7 +352,8 @@ The WAVEINIT system is architected as a distributed microservice topology decoup
                 └───────────────────────────────────────┘
 ```
 
-#### Step-by-Step Proctoring Workflow:
+#### Step-by-Step Proctoring Workflow
+
 1. **Phase 1: Pre-Exam Readiness Gate**:
    - Hardware check confirms working webcam, microphone, and speakers.
    - Candidate gives explicit proctoring consent.
@@ -369,7 +374,7 @@ The WAVEINIT system is architected as a distributed microservice topology decoup
 
 ### Flow 7: Post-Assessment Analytics, Forensic Audits & Verification
 
-```
+```text
                       POST-ASSESSMENT AUDIT
                                 │
        ┌────────────────────────┼────────────────────────┐
@@ -392,7 +397,7 @@ The WAVEINIT system is architected as a distributed microservice topology decoup
 ### Root Directory Overview
 
 ```text
-feedWeb/
+WAVEINIT_P1/
 ├── .github/                      # GitHub Actions CI/CD automation pipelines
 │   └── workflows/
 │       ├── main_waveinint.yml    # Node.js backend build & Azure App Service deploy
@@ -498,7 +503,7 @@ frontend/
 
 ### Backend Architecture (`/backend`)
 
-The backend is constructed with **Node.js 22**, **Express**, **Socket.IO**, and **Sequelize ORM**:
+The backend is constructed with **Node.js**, **Express**, **Socket.IO**, and **Sequelize ORM**. The Azure workflow uses Node.js 22, while the backend container currently uses Node.js 20:
 
 ```text
 backend/
@@ -637,7 +642,7 @@ ai-service/
 ### Database, Nginx & DevOps Modules
 
 ```text
-feedWeb/
+WAVEINIT_P1/
 ├── database/
 │   └── schema/dbscript.sql       # Relational SQL schema DDL (DDL for tables, indexes, constraints)
 │
@@ -662,7 +667,7 @@ feedWeb/
 | **Code Editor** | Monaco Editor (`@monaco-editor/react`) | In-browser IDE for coding tests & live technical interviews |
 | **Rich Text Editor** | TipTap (`@tiptap/react`) | Rich-text course lesson authoring and documentation |
 | **Realtime Client** | Socket.IO Client 4.7, native WebRTC | WebSocket telemetry, WebRTC peer-to-peer audio/video mesh |
-| **Backend Runtime** | Node.js 22 LTS | High-throughput asynchronous server environment |
+| **Backend Runtime** | Node.js 20/22 | Node 20 container base and Node 22 Azure CI |
 | **API Framework** | Express 4.18 | RESTful route orchestration, security & authentication middleware |
 | **Realtime Server** | Socket.IO 4.7 (`@socket.io/redis-adapter`) | Multi-instance signaling, violation streams, live chat |
 | **Database ORM** | Sequelize 6.35 | Relational mapping, migration management, model validation |
@@ -775,6 +780,7 @@ VITE_RECORD_MONITORING_VIDEO=false
 ## 7. Installation & Local Development Guide
 
 ### Prerequisites
+
 - **Node.js**: `v18.0.0` or higher (`v22.x` recommended)
 - **Python**: `v3.10` or `v3.11` (with `pip` and virtual environment support)
 - **Database**: MySQL `8.0+` or PostgreSQL `14+`
@@ -790,9 +796,11 @@ The repository provides automated batch scripts for Windows development:
 # 1. Open a terminal in the project root and launch all services:
 .\start-all.bat
 ```
-*`start-all.bat` automatically verifies dependencies, starts the FastAPI AI service on port 8000, starts the Node backend on port 3001, and starts the Vite frontend on port 5174 in separate consoles.*
+
+*`start-all.bat` installs missing dependencies and starts the FastAPI service, Node backend, and Vite frontend in separate consoles. The script still prints port 5173 in its status text, but the current Vite configuration listens on port 5174.*
 
 To perform a clean restart that releases hanging ports and purges Vite cache:
+
 ```powershell
 .\start-clean.bat
 ```
@@ -802,6 +810,7 @@ To perform a clean restart that releases hanging ports and purges Vite cache:
 ### Option B: Manual Multi-Terminal Setup (Cross-Platform)
 
 #### Terminal 1: Python AI Microservice
+
 ```bash
 cd ai-service
 
@@ -822,6 +831,7 @@ python main.py
 ```
 
 #### Terminal 2: Node.js Backend
+
 ```bash
 cd backend
 
@@ -837,6 +847,7 @@ npm run dev
 ```
 
 #### Terminal 3: React Frontend Client
+
 ```bash
 cd frontend
 
@@ -845,10 +856,12 @@ npm install
 
 # Start Vite development server
 npm run dev
-# Client interface accessible at https://localhost:5174 or http://localhost:5173
+# Client interface: http://localhost:5174 by default.
+# It uses https://localhost:5174 when local certificate files are configured.
 ```
 
 #### Terminal 4 (Optional): Judge0 Sandbox Engine
+
 ```bash
 # Start Judge0 multi-language code execution engine
 docker-compose up -d
@@ -859,16 +872,16 @@ docker-compose up -d
 
 ## 8. Production Deployment & Cloud Architecture
 
-WAVEINIT LMS is engineered for production deployment on **Microsoft Azure App Service** or **Docker Swarm / Kubernetes clusters**.
+WAVEINIT LMS includes deployment paths for **Microsoft Azure App Service**, **Render**, **Vercel-compatible frontend hosting**, and container-based environments. The supplied Compose files define local and production topologies; Kubernetes or Docker Swarm manifests are not included.
 
-```
+```text
                            [ AZURE TRAFFIC MANAGER / FRONT DOOR ]
                                              │
                        ┌─────────────────────┴─────────────────────┐
                        ▼                                           ▼
              [ Azure App Service: Node ]                 [ Azure App Service: Python ]
              Name: `waveinint`                           Name: `waveinit-init`
-             Runtime: Node.js 22 LTS                     Runtime: Python 3.11
+CI: Node.js 22 / Container: Node.js 20       Runtime: Python 3.11
              Handles: REST APIs, WebSockets              Handles: YOLOv8, MediaPipe, RAG
                        │                                           │
                        └─────────────────────┬─────────────────────┘
@@ -879,19 +892,30 @@ WAVEINIT LMS is engineered for production deployment on **Microsoft Azure App Se
              High-Availability Flexible Server           Distributed Socket.IO Mesh
 ```
 
-### GitHub Actions CI/CD Automation:
+### GitHub Actions CI/CD Automation
+
 The repository includes automated deployment workflows in `.github/workflows/`:
+
 1. **`.github/workflows/main_waveinint.yml`**:
-   - Triggers on push to `backend/**`.
+   - Triggers on changes to `backend/**` or the backend workflow.
    - Runs linting and test suites (`npm run test --if-present`).
    - Packages Node artifact and deploys directly to the **Azure Web App (`waveinint`)** using OIDC authentication.
 2. **`.github/workflows/main_waveinit-init.yml`**:
-   - Triggers on push to `ai-service/**`.
+   - Triggers on changes to `ai-service/**` or the AI workflow.
    - Validates Python 3.11 requirements, verifies FastAPI import integrity.
-   - Cleans temporary files, builds a zero-leak deployment ZIP, and deploys to **Azure Web App (`waveinit-init`)**.
+   - Builds a source-only ZIP, enables the Azure Oryx remote build, deploys it with Azure CLI, configures Gunicorn/Uvicorn startup, and probes the live `/health` endpoint.
 
-### Multi-Instance Scale-Out Considerations:
+### Other deployment files
+
+- `render.yaml` defines Render services for the backend and frontend.
+- `frontend/vercel.json` provides the SPA fallback rewrite required by Vercel-compatible static hosting.
+- `backend/Dockerfile` packages the Express API, and `ai-service/Dockerfile` packages the FastAPI service.
+- `docker-compose.production.yml` runs Nginx, two backend instances, Redis, code and AI workers, and the AI service.
+
+### Multi-Instance Scale-Out Considerations
+
 When running on scaled-out clusters (e.g., Azure B2 tier with multiple instances):
+
 - **Shared Storage**: Mounts an Azure Files SMB share at `SHARED_STORAGE_PATH` (`/app/storage` or `D:\home\data`) so all instances access identical uploaded course materials and avatars.
 - **Distributed State**: Socket.IO connections synchronize events across instances using the `@socket.io/redis-adapter`.
 - **Distributed Locking**: Concurrency bottlenecks (such as code evaluation queues) utilize Redis-backed mutexes (`DistributedLock.js`) with an automatic fallback to database locks.
@@ -905,19 +929,19 @@ When running on scaled-out clusters (e.g., Azure B2 tier with multiple instances
 | Method | Endpoint | Access | Purpose |
 | :--- | :--- | :--- | :--- |
 | `POST` | `/api/auth/login` | Public | User authentication; returns JWT access & refresh tokens |
-| `POST` | `/api/auth/refresh-token` | Public | Obtains a new access token via valid refresh token |
-| `GET` | `/api/admin/users` | Admin | Fetches paginated user directory with role filters |
+| `POST` | `/api/auth/refresh` | Public | Obtains a new access token via valid refresh token |
+| `GET` | `/api/admin/trainers` | Admin | Fetches the paginated trainer directory with filters |
 | `POST` | `/api/trainer/courses` | Trainer/Admin | Creates a new curriculum container with metadata |
-| `POST` | `/api/ai-quiz/generate` | Trainer/Admin | Triggers RAG-based AI quiz generation from topic/doc |
+| `POST` | `/api/ai-quiz/generate-from-prompt` | Trainer/Admin | Generates a quiz from a topic or prompt |
 | `POST` | `/api/coding/assessments` | Trainer/Admin | Creates a coding challenge assessment with test cases |
-| `POST` | `/api/coding/run` | Participant | Executes candidate code against public test cases |
-| `POST` | `/api/coding/submit` | Participant | Submits code for final grading against hidden test cases |
+| `POST` | `/api/coding/participant/run` | Participant | Executes candidate code against public test cases |
+| `POST` | `/api/coding/participant/submit/:attemptId` | Participant | Submits an assessment attempt for final grading |
 | `GET` | `/api/interviews` | Authenticated | Lists user's scheduled technical interview sessions |
-| `POST` | `/api/interviews/schedule`| Trainer/Admin | Schedules a new 1:1 technical interview with room tokens |
-| `POST` | `/api/monitoring/session/start`| Participant | Initializes a secure proctored exam session |
-| `POST` | `/api/monitoring/event` | Participant | Ingests client/AI proctoring violation logs |
-| `POST` | `/api/assessment-verification/pair` | Participant | Pairs mobile QR companion camera with exam session |
-| `GET` | `/api/proctoring/report/:id` | Trainer/Admin | Retrieves comprehensive forensic integrity audit report |
+| `POST` | `/api/interviews/create`| Trainer/Admin | Schedules a new 1:1 technical interview with room tokens |
+| `POST` | `/api/monitoring/sessions/start`| Participant | Initializes a secure monitoring session |
+| `POST` | `/api/monitoring/sessions/:id/events` | Participant | Ingests client and AI monitoring events |
+| `POST` | `/api/assessment-verification/initiate` | Participant | Creates the mobile-camera verification session and QR data |
+| `GET` | `/api/proctoring/reports/:attemptId` | Trainer/Admin | Retrieves the attempt proctoring report |
 | `GET` | `/api/certificates/verify/:code`| Public | Cryptographic verification of completion certificate |
 
 ---
@@ -926,44 +950,132 @@ When running on scaled-out clusters (e.g., Azure B2 tier with multiple instances
 
 | Channel / Event | Direction | Payload Description |
 | :--- | :--- | :--- |
-| `monitoring:join_room` | Client ➔ Server | Joins candidate or trainer to session-specific monitoring room |
-| `monitoring:violation` | Server ➔ Trainer | Real-time broadcast of logged candidate integrity violation |
-| `monitoring:session_ended` | Server ➔ All | Global signal commanding immediate webcam & audio hardware shutdown |
-| `assessment_verif:stream_frame`| Mobile ➔ Server | Relays mobile camera frames to backend AI inference |
-| `interview:signal` | Peer ⇄ Peer | Relays WebRTC SDP offers, answers, and ICE candidates |
-| `interview:code_change`| Peer ⇄ Peer | Real-time synchronized code delta broadcast in Monaco editor |
-| `interview:chat_message` | Peer ⇄ Peer | Real-time text messaging between interviewer and candidate |
+| `monitoring:join` | Client ➔ Server | Joins the laptop or mobile client to a monitoring room |
+| `monitoring:event` | Client ➔ Server | Persists and broadcasts a monitoring event |
+| `monitoring:end_session` | Client ➔ Server | Ends the monitoring session and notifies connected clients |
+| `assessment_verif:frame` | Mobile ➔ Server | Relays a mobile verification camera frame |
+| `offer`, `answer`, `ice-candidate` | Peer ⇄ Peer | Relays WebRTC negotiation for interview rooms |
+| `code-sync` | Peer ⇄ Peer | Synchronizes Monaco editor content |
+| `chat-message` | Peer ⇄ Peer | Exchanges interview-room chat messages |
 
 ---
 
 ## 10. Troubleshooting & Operational FAQ
 
-#### Q1: Port 3001 or 5174 is already in use.
+### Common issues
+
+#### Q1: Port 3001 or 5174 is already in use
+
 - **Windows**: Run `.\start-clean.bat` or run:
+
   ```powershell
   npx kill-port 3001 5174 8000
   ```
+
 - **Linux/macOS**:
+
   ```bash
   lsof -ti:3001,5174,8000 | xargs kill -9
   ```
 
-#### Q2: Mobile phone cannot connect via the QR code.
+#### Q2: Mobile phone cannot connect via the QR code
+
 - Ensure the candidate's mobile device and desktop are on the **same local Wi-Fi / LAN network**.
 - Verify that `VITE_PUBLIC_HOST` in `frontend/.env` contains your machine's actual LAN IP address (e.g. `192.168.1.X`, find via `ipconfig` or `ifconfig`), not `localhost`.
 
-#### Q3: WebRTC video/audio fails to connect during 1:1 interviews.
+#### Q3: WebRTC video/audio fails to connect during 1:1 interviews
+
 - In symmetric NAT or restrictive corporate firewall environments, direct STUN traversal may fail. Configure a TURN server (e.g., `coturn`) in `backend/.env` using `TURN_URL`, `TURN_USERNAME`, and `TURN_CREDENTIAL`.
 
-#### Q4: Python AI service crashes on PyTorch / MediaPipe installation.
+#### Q4: Python AI service crashes on PyTorch / MediaPipe installation
+
 - Ensure you are running a 64-bit Python version (`python --version` should be `3.10.x` or `3.11.x`).
 - If you lack a dedicated GPU, install the CPU-only build of PyTorch:
+
   ```bash
   pip install torch torchvision --extra-index-url https://download.pytorch.org/whl/cpu
   ```
 
-#### Q5: Camera lights stay on after submitting an assessment.
+#### Q5: Camera lights stay on after submitting an assessment
+
 - Verify that the browser is allowing WebSocket disconnect events. The platform's `MonitoringEngineClient.js` and `AssessmentMobileJoin.jsx` automatically execute `.stop()` on every active `MediaStreamTrack` upon receiving the `monitoring:session_ended` event or component unmount.
+
+#### Q6: Azure reports `No module named 'uvicorn'`
+
+- Confirm the deployment ZIP places `requirements.txt` and `main.py` at its root.
+- Keep `SCM_DO_BUILD_DURING_DEPLOYMENT=true` and `ENABLE_ORYX_BUILD=true` so Azure installs the Python dependencies.
+- Remove conflicting `WEBSITE_RUN_FROM_PACKAGE` and `WEBSITE_RUN_FROM_ZIP` settings before the source deployment.
+- Confirm the Oryx deployment log shows a successful dependency installation and build manifest.
+- Run the startup command from the directory containing `main.py`:
+
+  ```bash
+  python -m gunicorn -k uvicorn.workers.UvicornWorker \
+    --bind=0.0.0.0:8000 main:app --timeout 120
+  ```
+
+---
+
+## 11. Testing & Health Checks
+
+### Repository checks
+
+```bash
+# Backend Jest suites
+cd backend
+npm test
+npm run test:routes
+
+# Frontend lint and production build
+cd ../frontend
+npm run lint
+npm run build
+
+# AI-service unittest suite
+cd ../ai-service
+python -m unittest discover -s tests -p "test_*.py"
+```
+
+Individual test modules can be run directly when iterating on a focused change.
+
+### Local health endpoints
+
+| Service | Endpoint | Purpose |
+| :--- | :--- | :--- |
+| Backend | `http://localhost:3001/health` | API process and database state |
+| Backend | `http://localhost:3001/api/health` | API health alias |
+| Backend | `http://localhost:3001/api/ai/health` | Backend-to-AI connectivity |
+| AI service | `http://localhost:8000/health` | FastAPI process and provider state |
+| AI service | `http://localhost:8000/ready` | AI provider and inference-engine readiness |
+| AI service | `http://localhost:8000/docs` | Interactive OpenAPI documentation |
+
+---
+
+## 12. Security Guidance
+
+- Never commit `.env` files, API keys, database passwords, JWT secrets, SMTP credentials, or Azure credentials.
+- Use separate, high-entropy values for `JWT_SECRET` and `JWT_REFRESH_SECRET`.
+- Restrict production CORS configuration to known frontend origins.
+- Use HTTPS for authentication, camera access, QR pairing, WebRTC, assessments, and uploaded content.
+- Keep the database, Redis, Judge0, and Docker daemon endpoints off the public internet.
+- Mount the Docker socket only on trusted code-execution workers with additional sandbox controls.
+- Store production secrets in Azure App Settings, GitHub Actions secrets, or the hosting provider's secret manager.
+- Define retention and access policies for recordings, screenshots, proctoring reports, audit logs, and uploaded participant documents.
+
+---
+
+## 13. Additional Documentation
+
+- [AI service recovery](docs/AI_SERVICE_RECOVERY.md)
+- [Shared AI provider configuration](docs/shared-ai-configuration.md)
+- [Interview module](docs/INTERVIEW_MODULE.md)
+- [Mobile camera verification report](docs/MOBILE_CAMERA_VERIFICATION_REPORT.md)
+- [AI generation and mentor audit](docs/AI_GENERATION_AND_MENTOR_AUDIT.md)
+- [Assessment monitoring parity](docs/ASSESSMENT_MONITORING_PARITY.md)
+- [Design tokens](docs/design-tokens.md)
+- [Client presentation deck](docs/WAVE_INIT_LMS_Client_Presentation_Deck.md)
+
+The source code and current environment templates remain authoritative when
+runtime behavior, ports, variables, or deployment workflows change.
 
 ---
 
