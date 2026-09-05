@@ -1379,7 +1379,7 @@ async function submitQuiz(req, res) {
       if (attempt?.id) {
         try {
           const verificationService = require('../services/assessmentVerificationService');
-          verificationService.endSession({ attemptId: attempt.id, participantId: req.user.id }).catch(() => {});
+          verificationService.endSession({ assessmentType: 'QUIZ', attemptId: attempt.id, participantId: req.user.id }).catch(() => {});
         } catch (_) {}
       }
     });

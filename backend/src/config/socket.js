@@ -83,6 +83,10 @@ const initializeSocket = (server) => {
 
       // Assessment verification mobile camera socket (Quiz / Coding)
       if (decoded.role === 'mobile_camera' && decoded.sessionId) {
+        await require('../services/assessmentVerificationService').authorizeSocket({
+          sessionId: decoded.sessionId, participantId: decoded.participantId, token: decoded.token, mobile: true,
+        });
+        socket.assessmentMobileClaims = decoded;
         socket.userId = decoded.participantId || 0;
         socket.userRole = 'PARTICIPANT';
         socket.userName = 'Assessment Mobile Camera';
@@ -112,6 +116,11 @@ const initializeSocket = (server) => {
 
   // Connection handler
   io.on('connection', (socket) => {
+    if (socket.assessmentMobileClaims) {
+      // A QR camera credential grants only its assessment camera transport.
+      require('../socket/assessmentVerificationEvents')(io, socket);
+      return;
+    }
     logger.info('New socket connection', {
       socketId: socket.id,
       userId: socket.userId,

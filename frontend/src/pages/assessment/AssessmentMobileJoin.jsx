@@ -23,6 +23,7 @@ import {
   Code2,
 } from 'lucide-react';
 import { API_BASE, BACKEND_ORIGIN } from '../../api/api';
+import { mobileCameraStatus } from '../../utils/mobileCameraStatus.mjs';
 import '../../styles/assessment-verification.css';
 
 const PHASE = {
@@ -130,6 +131,12 @@ function AssessmentMobileJoinContent() {
   const [cameraActive, setCameraActive] = useState(false);
   const [socketConnected, setSocketConnected] = useState(false);
   const [peerConnected, setPeerConnected] = useState(false);
+  const [desktopReceiving, setDesktopReceiving] = useState(false);
+  const [transportError, setTransportError] = useState(null);
+  const [compositionWarning, setCompositionWarning] = useState(null);
+  const lastDesktopReceiptRef = useRef(0);
+  const retryJoinRef = useRef(null);
+  const cameraLinked = socketConnected && (peerConnected || desktopReceiving);
   const [facingMode, setFacingMode] = useState('environment'); // 'environment' (back) | 'user' (front)
   const [isSwitchingCamera, setIsSwitchingCamera] = useState(false);
   const [isAssessmentStarted, setIsAssessmentStarted] = useState(false);
@@ -143,6 +150,9 @@ function AssessmentMobileJoinContent() {
   const pcRef = useRef(null);
   const laptopSocketIdRef = useRef(null);
   const offerInProgressRef = useRef(false);
+  const joinedRef = useRef(false);
+  const offerTargetRef = useRef(null);
+  const framePendingRef = useRef(false);
   const mobileCandidateQueueRef = useRef([]);
   const frameIntervalRef = useRef(null);
 
@@ -196,6 +206,7 @@ function AssessmentMobileJoinContent() {
 
         addLog(`Validation success: session=${data.sessionId}`);
         setInfo(data);
+        setIsAssessmentStarted(!!data.isAssessmentStarted);
         setPhase(PHASE.CAMERA_REQUEST);
       } catch (err) {
         if (!cancelled) {
@@ -216,7 +227,7 @@ function AssessmentMobileJoinContent() {
   // WebRTC Helper: Ultra-low latency P2P WebRTC negotiation
   const startWebRTCOffer = useCallback(async (targetSocketId = null) => {
     const target = targetSocketId || laptopSocketIdRef.current;
-    if (!socketRef.current?.connected || !streamRef.current || !info?.sessionId) {
+    if (!joinedRef.current || !socketRef.current?.connected || !streamRef.current || !info?.sessionId) {
       console.log('[MOBILE-P2P] Socket, stream, or session not ready yet');
       return;
     }
@@ -226,6 +237,11 @@ function AssessmentMobileJoinContent() {
       return;
     }
 
+    if (offerInProgressRef.current) return;
+    if (offerTargetRef.current === target && pcRef.current && !['failed', 'closed', 'disconnected'].includes(pcRef.current.connectionState)) return;
+    offerInProgressRef.current = true;
+    offerTargetRef.current = target;
+    mobileCandidateQueueRef.current = [];
     try {
       if (pcRef.current) {
         try {
@@ -259,7 +275,7 @@ function AssessmentMobileJoinContent() {
         if (socketRef.current?.connected) {
           socketRef.current.emit('assessment_verif:ice-candidate', {
             sessionId: info.sessionId,
-            targetSocketId: laptopSocketIdRef.current || target,
+            targetSocketId: target,
             candidate,
           });
         }
@@ -284,11 +300,17 @@ function AssessmentMobileJoinContent() {
       console.log('[MOBILE-P2P] Offer sent to laptop peer:', laptopSocketIdRef.current || target);
       socketRef.current.emit('assessment_verif:offer', {
         sessionId: info.sessionId,
-        targetSocketId: laptopSocketIdRef.current || target,
+        targetSocketId: target,
         offer: pc.localDescription,
       });
     } catch (err) {
       console.error('[MOBILE-P2P] WebRTC Offer error:', err);
+      offerTargetRef.current = null;
+    } finally {
+      offerInProgressRef.current = false;
+      if (joinedRef.current && laptopSocketIdRef.current && laptopSocketIdRef.current !== target) {
+        queueMicrotask(() => startWebRTCOffer(laptopSocketIdRef.current));
+      }
     }
   }, [info?.sessionId]);
 
@@ -371,20 +393,26 @@ function AssessmentMobileJoinContent() {
     }
 
     const canvas = document.createElement('canvas');
-    canvas.width = 320;
-    canvas.height = 240;
+    canvas.width = 640;
+    canvas.height = 480;
     const ctx = canvas.getContext('2d');
 
     frameIntervalRef.current = setInterval(() => {
       const video = videoRef.current;
-      if (video && video.videoWidth > 0 && video.videoHeight > 0 && socketRef.current?.connected) {
+      if (!framePendingRef.current && joinedRef.current && video && video.videoWidth > 0 && video.videoHeight > 0 && socketRef.current?.connected) {
         try {
-          ctx.drawImage(video, 0, 0, 320, 240);
-          const frame = canvas.toDataURL('image/jpeg', 0.5);
-          socketRef.current.emit('assessment_verif:frame', {
+          canvas.width = Math.min(640, video.videoWidth);
+          canvas.height = Math.round(video.videoHeight * canvas.width / video.videoWidth);
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const frame = canvas.toDataURL('image/jpeg', 0.7);
+          framePendingRef.current = true;
+          socketRef.current.timeout(12000).emit('assessment_verif:frame', {
             sessionId: info.sessionId,
             frame,
             participantId: info.participantId,
+          }, (err, ack) => {
+            framePendingRef.current = false;
+            if (err || !ack?.ok) setTransportError(ack?.error || 'Camera upload interrupted. Reconnecting to the laptop…');
           });
         } catch (e) {}
       }
@@ -408,18 +436,31 @@ function AssessmentMobileJoinContent() {
     const wsUrl = BACKEND_ORIGIN || window.location.origin;
     const socket = io(wsUrl, {
       auth: { token: socketToken },
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
       reconnectionAttempts: 20,
     });
     socketRef.current = socket;
 
-    socket.on('connect', () => {
+    let joinRetryTimer;
+    const joinRoom = () => {
+      clearTimeout(joinRetryTimer);
+      if (!socket.connected) { socket.connect(); return; }
       console.log('[MOBILE-P2P] Socket connected:', socket.id, 'session:', sessionId);
-      setSocketConnected(true);
-      socket.emit('assessment_verif:join', {
+      joinedRef.current = false;
+      offerTargetRef.current = null;
+      socket.timeout(8000).emit('assessment_verif:join', {
         sessionId,
         role: 'mobile_camera',
-      });
+      }, (err, ack) => {
+        if (err || !ack?.ok) {
+          setSocketConnected(false);
+          setTransportError(ack?.error || 'Could not join the camera session. Retrying…');
+          if (socket.connected) joinRetryTimer = setTimeout(joinRoom, 3000);
+          return;
+        }
+        setTransportError(null);
+        joinedRef.current = true;
+        setSocketConnected(true);
 
       // If camera stream is already live, immediately start WebRTC offer and notify laptop
       if (streamRef.current) {
@@ -433,12 +474,35 @@ function AssessmentMobileJoinContent() {
           streaming: true,
         });
       }
+      });
+    };
+    retryJoinRef.current = joinRoom;
+    socket.on('connect', joinRoom);
+    socket.on('connect_error', () => {
+      setSocketConnected(false);
+      setTransportError('Camera is open, but the server connection failed. Check your connection and retry.');
     });
+    socket.on('assessment_verif:desktop_receiving', () => {
+      lastDesktopReceiptRef.current = Date.now();
+      setDesktopReceiving(true);
+      setTransportError(null);
+    });
+    socket.on('assessment_verif:yolo_detection', data => {
+      const status = mobileCameraStatus({ connected: true, evidence: data?.success ? data.mobileEvidence : null });
+      setCompositionWarning(status.kind === 'reposition' ? `${status.title}. ${status.message}` : null);
+    });
+    const receiptTimer = setInterval(() => {
+      if (Date.now() - lastDesktopReceiptRef.current > 5000) setDesktopReceiving(false);
+    }, 1000);
 
     socket.on('disconnect', () => {
       console.log('[MOBILE-P2P] Socket disconnected');
+      joinedRef.current = false;
+      framePendingRef.current = false;
       setSocketConnected(false);
       setPeerConnected(false);
+      setDesktopReceiving(false);
+      setTransportError('Connection interrupted. Reconnecting…');
     });
 
     // Laptop joined room → store socket ID & start negotiation if camera is active
@@ -519,6 +583,9 @@ function AssessmentMobileJoinContent() {
     });
 
     return () => {
+      clearTimeout(joinRetryTimer);
+      clearInterval(receiptTimer);
+      retryJoinRef.current = null;
       socket.disconnect();
       if (pcRef.current) {
         try {
@@ -551,6 +618,7 @@ function AssessmentMobileJoinContent() {
           audio: false,
         });
       } catch (prefErr) {
+        if (['NotAllowedError', 'PermissionDeniedError', 'SecurityError', 'NotReadableError'].includes(prefErr.name)) throw prefErr;
         console.warn(`[MOBILE-P2P] Preferred facingMode ${requestedFacingMode} failed, trying fallback:`, prefErr);
         const fallbackMode = requestedFacingMode === 'environment' ? 'user' : 'environment';
         try {
@@ -604,7 +672,7 @@ function AssessmentMobileJoinContent() {
       }
 
       // Notify backend via HTTP that mobile camera permission was granted
-      await fetch(`${API_BASE}/assessment-verification/mobile-connected`, {
+      const permissionResponse = await fetch(`${API_BASE}/assessment-verification/mobile-connected`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -614,7 +682,8 @@ function AssessmentMobileJoinContent() {
             timestamp: new Date().toISOString(),
           },
         }),
-      }).catch((err) => console.error('[MOBILE-P2P] mobile-connected error:', err));
+      });
+      if (!permissionResponse.ok) throw new Error('Camera opened, but pairing was not accepted. Refresh the laptop verification page and scan its current QR code.');
     } catch (err) {
       console.error('[MOBILE-P2P] Camera permission error:', err);
       setError(
@@ -895,13 +964,18 @@ function AssessmentMobileJoinContent() {
                     display: 'inline-block',
                   }} className="animate-pulse" />
                   <span>
-                    {isAssessmentStarted
+                    {!cameraLinked ? 'Camera open — connecting to your laptop' : isAssessmentStarted
                       ? 'Assessment in progress — keep this camera connected'
                       : 'Camera Connected — Waiting for assessment to begin'}
                   </span>
                 </span>
               </div>
 
+              {(transportError || error) && <div role="alert" style={{ padding: 12, color: '#9A3412' }}>
+                {transportError || error}
+                <button type="button" onClick={() => retryJoinRef.current?.()} style={{ marginLeft: 8 }}>Retry connection</button>
+              </div>}
+              {cameraLinked && compositionWarning && <div role="status" style={{ padding: 12, background: '#FFFBEB', color: '#92400E', borderRadius: 10 }}>{compositionWarning}</div>}
               {/* Video Preview Container */}
               <div className="wi-mobile-video-wrap">
                 <video
@@ -936,7 +1010,7 @@ function AssessmentMobileJoinContent() {
                 {/* Top-Left Live Indicator */}
                 <div className="wi-mobile-badge-live">
                   <div className="wi-mobile-dot-pulse" />
-                  <span>LIVE PROCTORING</span>
+                  <span>{cameraLinked ? 'LIVE PROCTORING' : 'LOCAL CAMERA PREVIEW'}</span>
                 </div>
 
                 {/* Top-Right Flip/Switch Camera Button */}
@@ -954,7 +1028,7 @@ function AssessmentMobileJoinContent() {
                 {/* Bottom-Left Live Connection Status */}
                 <div className="wi-mobile-badge-status">
                   <Wifi size={11} />
-                  <span>Live Streaming</span>
+                  <span>{cameraLinked ? 'Laptop receiving video' : 'Waiting for laptop connection'}</span>
                 </div>
               </div>
 
@@ -969,10 +1043,12 @@ function AssessmentMobileJoinContent() {
                 </div>
                 <div className="wi-mobile-instruction-content">
                   <h3 className="wi-mobile-instruction-title">
-                    {isAssessmentStarted ? 'Assessment In Progress' : 'Camera Connected & Waiting'}
+                    {!cameraLinked ? 'Connecting to Your Laptop' : isAssessmentStarted ? 'Assessment In Progress' : 'Camera Connected & Waiting'}
                   </h3>
                   <p className="wi-mobile-instruction-text">
-                    {isAssessmentStarted ? (
+                    {!cameraLinked ? (
+                      <>Your camera is open. Keep both pages open while the laptop connects. If it stays here, refresh the verification page on your laptop and scan its current QR code.</>
+                    ) : isAssessmentStarted ? (
                       <>
                         <strong>Your assessment is currently in progress on your laptop.</strong> Position your phone so your face, upper body, and laptop screen are clearly visible. Keep this page open.
                       </>

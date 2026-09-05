@@ -1,3 +1,4 @@
+import MobileAdmissionGate from '../components/assessment/MobileAdmissionGate'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import AssessmentConsentGate from '../components/ai-quizzes/AssessmentConsentGate'
@@ -2122,5 +2123,5 @@ function ParticipantCodingAttemptInner({ user }) {
 }
 
 export default function ParticipantCodingAttemptPage({ user }) {
-  return <ParticipantCodingAttemptInner user={user} />
+  return <MobileAdmissionGate user={user} assessmentType="CODING"><ParticipantCodingAttemptInner user={user} /></MobileAdmissionGate>
 }

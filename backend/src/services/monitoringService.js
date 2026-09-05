@@ -501,6 +501,10 @@ class MonitoringEngineService {
     if (!session) throw new Error('Monitoring session not found');
     if (['COMPLETED', 'ABORTED'].includes(session.status)) return session;
 
+    if (session.mobileEnabled && ['QUIZ', 'CODING'].includes(session.contextType) && !session.metadata?.mobileAdmission) {
+      throw new Error('Complete mobile person and laptop verification before starting the test.');
+    }
+
     const startTime = testStartedAt ? new Date(testStartedAt) : new Date();
     const validStartedAt = Number.isNaN(startTime.getTime()) ? new Date() : startTime;
 
@@ -856,8 +860,18 @@ class MonitoringEngineService {
     return { success: true, session };
   }
 
-  async validateMobile({ sessionId, participantId, frame, confidenceThreshold = 0.35 }) {
+  async validateMobile({ sessionId, participantId, frame, confidenceThreshold = 0.35, verificationSession = null }) {
     if (!frame) throw new Error('frame data is required');
+    const ownedSession = await this.getSession(sessionId);
+    if (!ownedSession || Number(ownedSession.participantId) !== Number(participantId)) throw new Error('Monitoring session not found');
+    if (['QUIZ', 'CODING'].includes(ownedSession.contextType)) {
+      if (!verificationSession || Number(verificationSession.attempt_id) !== Number(ownedSession.attemptId) ||
+          verificationSession.assessment_type !== ownedSession.contextType ||
+          Number(verificationSession.participant_id) !== Number(participantId)) {
+        throw new Error('A paired mobile camera is required');
+      }
+      return this.validateAssessmentMobile({ session: ownedSession, verificationSession, frame });
+    }
 
     try {
       const response = await axios.post(
@@ -1023,6 +1037,53 @@ class MonitoringEngineService {
     }
   }
 
+  async validateAssessmentMobile({ session, verificationSession, frame }) {
+    this.mobileFrameJobs ||= new Set();
+    if (this.mobileFrameJobs.has(session.sessionId)) return { success: false, busy: true };
+    this.mobileFrameJobs.add(session.sessionId);
+    try {
+      if (['COMPLETED', 'ABORTED'].includes(session.status)) return { success: false, ended: true };
+      const receivedAt = Date.now();
+      const { data } = await axios.post(`${AI_SERVICE_URL}/api/proctoring/yolo/analyze-frame`, {
+        frame, sessionId: verificationSession.session_id + ':' + crypto.createHash('sha256').update(verificationSession.token).digest('hex').slice(0, 16) + (session.status === 'ACTIVE' && verificationSession.status === 'USED' ? ':active' : ':verification'), participantId: session.participantId,
+        moduleType: session.contextType, cameraSource: 'MOBILE_CAMERA', confidenceThreshold: 0.35,
+        timestampMs: receivedAt,
+      }, { timeout: 10000 }); // CPU cold inference can exceed four seconds; never queue a second frame.
+      if (!data?.success || !data.mobile_evidence) return { success: false, composition_state: 'DISCONNECTED' };
+      const evidence = { ...data.mobile_evidence, receivedAt, verificationSessionId: verificationSession.session_id, pairingVersion: crypto.createHash('sha256').update(verificationSession.token).digest('hex') };
+      // Save a bounded freshness lease, not a frame history. Transitions save
+      // immediately; unchanged evidence saves at most once every two seconds.
+      await sequelize.transaction(async transaction => {
+        const current = await MonitoringSession.findOne({ where: { sessionId: session.sessionId }, transaction, lock: transaction.LOCK.UPDATE });
+        if (!current || ['COMPLETED', 'ABORTED'].includes(current.status)) return;
+        const prior = current.metadata?.mobileEvidence || {};
+        if (prior.eligible !== evidence.eligible || prior.verificationSessionId !== evidence.verificationSessionId || prior.pairingVersion !== evidence.pairingVersion || receivedAt - (prior.receivedAt || 0) >= 2000) {
+          await current.update({ mobileStatus: data.composition_state, lastMobileHeartbeatAt: new Date(receivedAt),
+            metadata: { ...current.metadata, mobileEvidence: evidence } }, { transaction });
+        }
+      });
+      // Pre-entry observations never award marks. The database unique key is
+      // scoped to the attempt and survives process restarts and repeat sessions.
+      if (session.status === 'ACTIVE' && evidence.phone_stable && verificationSession.status === 'USED' && !session.metadata?.mobile_phone_score_awarded) {
+        await this.reportEvent({ sessionId: session.sessionId, participantId: session.participantId,
+          source: 'MOBILE', eventType: 'PHONE_DETECTED', severity: 'HIGH',
+          confidence: evidence.phone_confidence, serverMobileDetection: true,
+          metadata: { mobileEvidence: evidence, detector: 'YOLO', cameraSource: 'MOBILE_CAMERA' } });
+      }
+      if (session.status === 'ACTIVE' && verificationSession.status === 'USED') {
+        await this.trackMobileViolation({ session, attemptId: session.attemptId, participantId: session.participantId,
+          violation: evidence.other_violation ? { eventType: evidence.other_violation, severity: 'HIGH', confidence: evidence.other_confidence } : null,
+          metadata: { composition_state: data.composition_state, detections: data.detections } });
+      }
+      return { ...data, mobile_evidence: evidence };
+    } catch (err) {
+      logger.warn(`[MonitoringEngine] Mobile inference unavailable: ${err.message}`);
+      return { success: false, composition_state: 'DISCONNECTED', user_message: 'Mobile detection unavailable. Keep the camera open and retry.' };
+    } finally {
+      this.mobileFrameJobs.delete(session.sessionId);
+    }
+  }
+
   async trackMobileViolation({ session, attemptId, participantId, violation, metadata = {}, now = Date.now() }) {
     const key = session.sessionId;
     const active = this.activeMobileViolations.get(key);
@@ -1083,6 +1144,7 @@ class MonitoringEngineService {
     evidenceRef = null,
     metadata = {},
     idempotencyKey = null,
+    serverMobileDetection = false,
   }) {
     if (!sessionId || !eventType) {
       throw new Error('sessionId and eventType are required');
@@ -1133,6 +1195,8 @@ class MonitoringEngineService {
 
     const config = await this.getConfig(session.contextType);
     const normalizedSource = String(source).toUpperCase() === 'MOBILE' ? 'MOBILE' : 'LAPTOP';
+    const mobilePhone = ['QUIZ', 'CODING'].includes(session.contextType) && normalizedSource === 'MOBILE' && ['PHONE_DETECTED', 'CELL_PHONE_DETECTED'].includes(eventType);
+    if (mobilePhone && !serverMobileDetection) return { skipped: true, reason: 'SERVER_MOBILE_DETECTION_REQUIRED', session };
     const normalizedSeverity = (severity || 'INFO').toUpperCase();
 
     const now = Date.now();
@@ -1170,7 +1234,7 @@ class MonitoringEngineService {
     }
 
     // 2. Idempotency Key Generation / Verification
-    const finalIdempotencyKey = discreteBrowserIncident ? ('browser_' + crypto.createHash('sha256').update(sessionId + ':' + metadata.browserIncidentId).digest('hex')) : idempotencyKey || `${sessionId}_${normalizedSource}_${eventType}_${validReportedAt.getTime()}_${Number(durationMs) || 0}`;
+    const finalIdempotencyKey = mobilePhone ? `mobile_phone_${session.contextType}_${session.participantId}_${session.attemptId || session.sessionId}` : discreteBrowserIncident ? ('browser_' + crypto.createHash('sha256').update(sessionId + ':' + metadata.browserIncidentId).digest('hex')) : idempotencyKey || `${sessionId}_${normalizedSource}_${eventType}_${validReportedAt.getTime()}_${Number(durationMs) || 0}`;
     // 3. Authoritative Score Delta Computation
     const weights = config.score_weights || {};
     let baseWeight = weights[eventType];
@@ -1196,9 +1260,9 @@ class MonitoringEngineService {
       where: { monitoringSessionId: session.sessionId, eventType: { [Op.in]: [...BROWSER_EVENT_TYPES] } },
     }) : [];
     const browserSwitchCount = aggregateMonitoringEvents(priorBrowserEvents.map(row => row.toJSON ? row.toJSON() : row)).length + 1;
-    const isGraceWarning = browserEvent ? browserSwitchCount <= BROWSER_SWITCH_LIMIT : existingEventsCount < 3;
+    const isGraceWarning = mobilePhone ? false : browserEvent ? browserSwitchCount <= BROWSER_SWITCH_LIMIT : existingEventsCount < 3;
     const warningNumber = browserEvent ? browserSwitchCount : existingEventsCount + 1;
-    const effectiveScoreDelta = browserEvent
+    const effectiveScoreDelta = mobilePhone ? 10 : browserEvent
       ? (browserSwitchCount === BROWSER_SWITCH_LIMIT + 1 ? BROWSER_SWITCH_PENALTY : 0)
       : (isGraceWarning ? 0 : scoreDelta);
 
@@ -1282,6 +1346,7 @@ class MonitoringEngineService {
         score: newScore,
         riskLevel: newRiskLevel,
         totalEvents: session.totalEvents + 1,
+        ...(mobilePhone ? { metadata: { ...session.metadata, mobile_phone_detected: true, mobile_phone_score_awarded: true } } : {}),
         ...(browserEvent ? { metadata: { ...session.metadata, browserSwitchCount,
           tabSwitchScore: browserSwitchCount > BROWSER_SWITCH_LIMIT ? BROWSER_SWITCH_PENALTY : 0 } } : {}),
       };
@@ -1588,6 +1653,12 @@ class MonitoringEngineService {
       where: { monitoringSessionId: session.sessionId },
       order: [['occurredAt', 'ASC']],
     });
+    if (['QUIZ', 'CODING'].includes(session.contextType) && session.attemptId) {
+      const award = await MonitoringEvent.findOne({ ...(transaction ? { transaction } : {}), where: {
+        idempotencyKey: `mobile_phone_${session.contextType}_${session.participantId}_${session.attemptId}`,
+      } });
+      if (award && !monitoringEvents.some(e => e.id === award.id)) monitoringEvents.push(award);
+    }
 
     let proctoringEvents = [];
     if (ProctoringEvent && session.attemptId) {
@@ -1827,7 +1898,8 @@ class MonitoringEngineService {
       .reduce((acc, c) => acc + (c.durationMs ? c.durationMs / 1000 : Number(c.duration) || 10), 0);
 
     const phoneViolations = scoredEvents.filter((e) =>
-      e.eventType === 'PHONE_DETECTED' || e.eventType === 'CELL_PHONE_DETECTED'
+      (e.eventType === 'PHONE_DETECTED' || e.eventType === 'CELL_PHONE_DETECTED') &&
+      (session.contextType === 'INTERVIEW' || (e.source === 'MOBILE' && e.metadata?.mobileEvidence?.phone_stable))
     );
 
     // ── Exact Eye + Head Violation Duration & Interval Merging ──────────────
@@ -2077,6 +2149,8 @@ class MonitoringEngineService {
       tabSwitchScoreDisplay: `${tabSwitchScore.toFixed(2)} / 10`,
       tabSwitchCount: tabSwitchCount,
       mobileScore: mobileScore,
+      mobilePhoneDetected: mobileScore > 0,
+      mobilePhoneScore: mobileScore,
       mobileScoreDisplay: `${mobileScore.toFixed(2)} / 10`,
       scoringBreakdown: {
         eyeHead: { score: eyeHeadScore, max: 60, violationSeconds: uniqueEyeHeadSec },
@@ -2095,7 +2169,7 @@ class MonitoringEngineService {
       graceWarningsCount: graceWarnings.length,
       maxGraceWarnings: 3,
       graceWarnings: friendlyGraceWarnings,
-      hasPhoneViolation: phoneViolations.length > 0 || flags.includes('UNAUTHORIZED_PHONE_DETECTED'),
+      hasPhoneViolation: phoneViolations.length > 0 || (session.contextType === 'INTERVIEW' && flags.includes('UNAUTHORIZED_PHONE_DETECTED')),
       phoneViolationCount: phoneViolations.length,
       integrityFlags: flags,
       videoUrl: finalVideoUrl,

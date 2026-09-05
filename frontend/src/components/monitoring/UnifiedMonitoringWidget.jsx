@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
+import { QRCodeSVG } from 'qrcode.react';
+import { buildAssessmentMobileUrl } from '../../utils/assessmentPairingUrl';
+import { mobileCameraStatus } from '../../utils/mobileCameraStatus.mjs';
 import {
   Camera,
   Smartphone,
@@ -102,7 +105,30 @@ export default function UnifiedMonitoringWidget({
   const [remoteMobileStream, setRemoteMobileStream] = useState(null);
   const [remoteVideoPlaying, setRemoteVideoPlaying] = useState(false);
   const [lastReceivedFrame, setLastReceivedFrame] = useState(null);
-  const [mobileConnected, setMobileConnected] = useState(prePaired || false);
+  const [mobileConnected, setMobileConnected] = useState(false);
+  const [mobileEvidence, setMobileEvidence] = useState(null);
+  const [statusClock, setStatusClock] = useState(Date.now());
+  const [reconnectUrl, setReconnectUrl] = useState(null);
+  const [reconnectLoading, setReconnectLoading] = useState(false);
+  const [reconnectError, setReconnectError] = useState(null);
+  const [socketError, setSocketError] = useState(null);
+  const mobileStatus = mobileCameraStatus({ connected: mobileConnected, evidence: mobileEvidence, now: statusClock });
+  const keepCameraVisible = mobileEnabled && isQuizOrCoding && isTestActive;
+
+  const showReconnectQr = async () => {
+    setReconnectLoading(true);
+    setReconnectError(null);
+    try {
+      const response = await fetch(`${API_BASE}/assessment-verification/reconnect`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${activeToken}` },
+        body: JSON.stringify({ sessionId: activeSessionId }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || 'Could not load the reconnect QR code.');
+      setReconnectUrl(buildAssessmentMobileUrl(result.qrPayload.shortUrl));
+    } catch (error) { setReconnectError(error.message); }
+    finally { setReconnectLoading(false); }
+  };
 
   const [laptopMetrics, setLaptopMetrics] = useState({
     faceDetected: true,
@@ -113,8 +139,8 @@ export default function UnifiedMonitoringWidget({
   });
 
   const [mobileMetrics, setMobileMetrics] = useState({
-    compositionState: mobileEnabled ? 'VALID' : 'DISABLED',
-    userMessage: 'Monitoring active',
+    compositionState: mobileEnabled ? 'CONNECTING' : 'DISABLED',
+    userMessage: 'Waiting for mobile camera detection',
     detections: [],
   });
 
@@ -219,7 +245,7 @@ export default function UnifiedMonitoringWidget({
 
   // 2. Poll Mobile Verification Status
   useEffect(() => {
-    if (!activeSessionId || !mobileEnabled || mobileConnected) return;
+    if (isQuizOrCoding || !activeSessionId || !mobileEnabled || mobileConnected) return;
 
     let cancelled = false;
 
@@ -232,13 +258,13 @@ export default function UnifiedMonitoringWidget({
         if (cancelled) return;
 
         if (data?.success) {
-          if (data.mobileVerified || data.status === 'VERIFIED' || data.status === 'PAIRED') {
+          if (data.mobileStreamActive) {
             setMobileConnected(true);
             lastMobileActivityRef.current = Date.now();
             setMobileMetrics((prev) => ({
               ...prev,
-              compositionState: 'VALID',
-              userMessage: 'Side camera connected and active',
+              compositionState: data.mobileEvidence?.composition_state || 'CONNECTING',
+              userMessage: data.mobileEvidence?.user_message || 'Waiting for mobile detection',
             }));
           }
         }
@@ -255,7 +281,7 @@ export default function UnifiedMonitoringWidget({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [activeSessionId, activeToken, mobileEnabled, mobileConnected]);
+  }, [activeSessionId, activeToken, mobileEnabled, mobileConnected, isQuizOrCoding]);
 
   // Ensure webcam stream is bound to video element
   useEffect(() => {
@@ -296,8 +322,6 @@ export default function UnifiedMonitoringWidget({
         stream = new MediaStream([event.track]);
       }
       setRemoteMobileStream(stream);
-      setMobileConnected(true);
-      lastMobileActivityRef.current = Date.now();
       if (mobileVideoRef.current) {
         mobileVideoRef.current.srcObject = stream;
         mobileVideoRef.current.play().then(() => setRemoteVideoPlaying(true)).catch(() => {});
@@ -320,10 +344,7 @@ export default function UnifiedMonitoringWidget({
 
     pc.onconnectionstatechange = () => {
       console.log('[UnifiedMonitoringWidget] pc connectionState:', pc.connectionState);
-      if (pc.connectionState === 'connected') {
-        setMobileConnected(true);
-        lastMobileActivityRef.current = Date.now();
-      } else if (['disconnected', 'failed', 'closed'].includes(pc.connectionState)) {
+      if (['disconnected', 'failed', 'closed'].includes(pc.connectionState)) {
         if (Date.now() - lastMobileActivityRef.current > 8000) {
           setMobileConnected(false);
           setRemoteVideoPlaying(false);
@@ -341,27 +362,36 @@ export default function UnifiedMonitoringWidget({
     const wsUrl = BACKEND_ORIGIN || window.location.origin;
     const socket = io(wsUrl, {
       auth: { token: activeToken },
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
       reconnectionAttempts: 20,
     });
     socketRef.current = socket;
 
-    socket.on('connect', () => {
+    let joinRetryTimer;
+    const joinRoom = () => {
+      clearTimeout(joinRetryTimer);
+      if (!socket.connected) return;
       console.log('[UnifiedMonitoringWidget] Socket connected:', socket.id, 'Joining rooms for session:', activeSessionId);
-      socket.emit('assessment_verif:join', {
+      socket.timeout(8000).emit('assessment_verif:join', {
         sessionId: activeSessionId,
         role: 'laptop',
+      }, (err, ack) => {
+        if (err || !ack?.ok) {
+          setSocketError(ack?.error || 'Camera connection interrupted. Retrying…');
+          if (socket.connected) joinRetryTimer = setTimeout(joinRoom, 3000);
+        } else setSocketError(null);
       });
       socket.emit('monitoring:join', {
         sessionId: activeSessionId,
         role: 'laptop',
       });
-    });
+    };
+    socket.on('connect', joinRoom);
+    socket.on('connect_error', () => setSocketError('Cannot reach the camera server. Reconnecting…'));
+    socket.on('disconnect', () => setSocketError('Camera server disconnected. Reconnecting…'));
 
     const handleMobileJoined = () => {
       console.log('[UnifiedMonitoringWidget] Mobile joined event received');
-      setMobileConnected(true);
-      lastMobileActivityRef.current = Date.now();
       getOrCreatePeerConnection();
       socket.emit('assessment_verif:laptop_joined', { sessionId: activeSessionId, socketId: socket.id });
       socket.emit('monitoring:laptop_joined', { sessionId: activeSessionId, socketId: socket.id });
@@ -370,8 +400,10 @@ export default function UnifiedMonitoringWidget({
     const handleWebRTCOffer = async ({ offer, fromSocketId }) => {
       try {
         console.log('[UnifiedMonitoringWidget] WebRTC offer received from:', fromSocketId);
-        setMobileConnected(true);
-        lastMobileActivityRef.current = Date.now();
+        // A phone refresh creates a new offer; replace a failed/closed peer.
+        if (pcRef.current && ['failed', 'closed', 'disconnected'].includes(pcRef.current.connectionState)) {
+          pcRef.current.close(); pcRef.current = null; candidateQueueRef.current = [];
+        }
         const pc = getOrCreatePeerConnection();
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
 
@@ -416,6 +448,7 @@ export default function UnifiedMonitoringWidget({
     };
 
     const handleMobileFrame = ({ frame }) => {
+      if (frame) socket.emit('assessment_verif:frame_received', { sessionId: activeSessionId });
       if (frame) {
         setLastReceivedFrame(frame);
         setMobileConnected(true);
@@ -424,6 +457,7 @@ export default function UnifiedMonitoringWidget({
     };
 
     const handleStreamStatus = (data) => {
+      if (isQuizOrCoding) return; // Signaling cannot prove video delivery.
       if (data?.streaming) {
         setMobileConnected(true);
         lastMobileActivityRef.current = Date.now();
@@ -431,6 +465,7 @@ export default function UnifiedMonitoringWidget({
     };
 
     const handleMobileStatus = (data) => {
+      if (isQuizOrCoding) return;
       if (data?.connected || data?.mobileReady || data?.mobileVerified) {
         setMobileConnected(true);
         lastMobileActivityRef.current = Date.now();
@@ -465,8 +500,8 @@ export default function UnifiedMonitoringWidget({
 
     const handleMobileComposition = (data) => {
       if (data) {
-        setMobileConnected(true);
-        lastMobileActivityRef.current = Date.now();
+        if (isQuizOrCoding) setMobileEvidence(data.success ? data.mobileEvidence || null : null);
+        else { setMobileConnected(true); lastMobileActivityRef.current = Date.now(); }
         if (data.compositionState) {
           setMobileMetrics((prev) => ({
             ...prev,
@@ -530,10 +565,21 @@ export default function UnifiedMonitoringWidget({
     socket.on('assessment_verif:grace_warning', handleGraceWarning);
 
     // Watchdog check for genuine mobile drop (Grace period active after 8s of no frames/heartbeat)
+    let lastVideoFrames = 0;
     const watchdog = setInterval(() => {
+      setStatusClock(Date.now());
+      const video = mobileVideoRef.current;
+      const decodedFrames = video?.getVideoPlaybackQuality?.().totalVideoFrames || 0;
+      if (video && !video.paused && decodedFrames > lastVideoFrames) {
+        lastVideoFrames = decodedFrames;
+        lastMobileActivityRef.current = Date.now();
+        setMobileConnected(true);
+        setRemoteVideoPlaying(true);
+      }
       if (Date.now() - lastMobileActivityRef.current > 8000) {
         setMobileConnected(false);
         setRemoteVideoPlaying(false);
+        setLastReceivedFrame(null);
       }
     }, 2000);
 
@@ -563,15 +609,21 @@ export default function UnifiedMonitoringWidget({
     };
 
     return () => {
+      clearTimeout(joinRetryTimer);
       clearInterval(watchdog);
       socket.disconnect();
       if (pcRef.current) {
         try {
           pcRef.current.close();
         } catch (e) {}
+        pcRef.current = null;
       }
     };
   }, [activeSessionId, activeToken, contextType, resolvedParticipantId, isTestActive, testStartedAt, configuredDurationSeconds, getOrCreatePeerConnection]);
+
+  useEffect(() => {
+    if (mobileConnected) { setReconnectUrl(null); setReconnectError(null); }
+  }, [mobileConnected]);
 
   // Sync isTestActive and isPaused changes
   useEffect(() => {
@@ -606,7 +658,7 @@ export default function UnifiedMonitoringWidget({
   }, [webcamStream, activeSessionId, calibrationPassed, testStartedAt]);
 
   useEffect(() => {
-    if (!remoteMobileStream || !activeSessionId || !mobileEnabled) return;
+    if (isQuizOrCoding || !remoteMobileStream || !activeSessionId || !mobileEnabled) return;
 
     monitoringClient.startMobileMonitoring(remoteMobileStream, mobileVideoRef.current, (metrics) => {
       setMobileMetrics(metrics);
@@ -615,7 +667,7 @@ export default function UnifiedMonitoringWidget({
     return () => {
       monitoringClient.stopMobileMonitoring();
     };
-  }, [remoteMobileStream, activeSessionId, mobileEnabled]);
+  }, [remoteMobileStream, activeSessionId, mobileEnabled, isQuizOrCoding]);
 
   const getCompositionBadgeClass = (state) => {
     switch (state) {
@@ -634,7 +686,7 @@ export default function UnifiedMonitoringWidget({
 
   return (
     <div className={`dual-proctor-container${placement === 'inline' ? ' dual-proctor-inline' : ''}`}>
-      {isMinimized && (
+      {isMinimized && !keepCameraVisible && (
         <div
           onClick={() => setIsMinimized(false)}
           className="dual-proctor-minimized-pill"
@@ -648,7 +700,7 @@ export default function UnifiedMonitoringWidget({
 
       <div
         className="dual-proctor-card"
-        style={{ display: isMinimized ? 'none' : 'flex' }}
+        style={{ display: isMinimized && !keepCameraVisible ? 'none' : 'flex' }}
       >
         {/* Header */}
         <div className="dual-proctor-header">
@@ -658,14 +710,14 @@ export default function UnifiedMonitoringWidget({
           </div>
 
           <div className="dual-proctor-actions">
-            <button
+            {!keepCameraVisible && <button
               type="button"
               onClick={() => setIsMinimized(true)}
               className="dual-proctor-btn"
               title="Minimize Widget"
             >
               <ChevronDown size={14} />
-            </button>
+            </button>}
           </div>
         </div>
 
@@ -706,34 +758,27 @@ export default function UnifiedMonitoringWidget({
               <Smartphone size={12} color="#475569" />
               <span>Mobile Camera</span>
             </div>
-            <div className="dual-proctor-tile-box">
-              {mobileConnected || remoteVideoPlaying || lastReceivedFrame ? (
-                <>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#15803D', fontWeight: 700, fontSize: 11 }}>
-                    <Check size={13} color="#15803D" strokeWidth={3} />
-                    <span>Connected</span>
-                  </div>
-                  <span style={{ fontSize: 9.5, color: '#64748B', marginTop: 4 }}>
-                    Grace period active
-                  </span>
-                </>
-              ) : (
-                <>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#D97706', fontWeight: 600, fontSize: 10.5 }}>
-                    <RefreshCw size={11} className="animate-spin text-amber-500" />
-                    <span>Connecting...</span>
-                  </div>
-                  <span style={{ fontSize: 9, color: '#94A3B8', marginTop: 4 }}>
-                    Waiting for mobile
-                  </span>
-                </>
-              )}
+            <div className="dual-proctor-feed">
+              <video ref={(el) => {
+                mobileVideoRef.current = el;
+                if (el && remoteMobileStream && el.srcObject !== remoteMobileStream) {
+                  el.srcObject = remoteMobileStream;
+                  el.play().catch(() => {});
+                }
+              }} autoPlay playsInline muted aria-label="Live mobile camera"
+                onPlaying={() => { setRemoteVideoPlaying(true); lastMobileActivityRef.current = Date.now(); setMobileConnected(true); }}
+                className="dual-proctor-video" style={{ display: remoteVideoPlaying ? 'block' : 'none', objectFit: 'contain' }} />
+              {!remoteVideoPlaying && lastReceivedFrame && <img src={lastReceivedFrame} alt="Live mobile camera" className="dual-proctor-video" style={{ objectFit: 'contain' }} />}
+              {!remoteVideoPlaying && !lastReceivedFrame && <span style={{ color: '#FBBF24', fontSize: 11, padding: 8, textAlign: 'center' }}>
+                {mobileEnabled ? 'Waiting for mobile video' : 'Mobile camera disabled'}
+              </span>}
             </div>
+            <span style={{ fontSize: 10, color: mobileConnected ? '#15803D' : '#B45309' }}>{mobileConnected ? 'Live video' : 'Not receiving video'}</span>
           </div>
         </div>
 
         {/* Security Status Banner */}
-        <div className="dual-proctor-security-footer">
+        <div className="dual-proctor-security-footer" role="status" style={mobileEnabled && mobileStatus.kind !== 'ready' ? { background: '#FFFBEB', borderColor: '#FDE68A' } : {}}>
           <div style={{
             width: 26, height: 26, borderRadius: '50%', background: '#DCFCE7',
             display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
@@ -742,13 +787,23 @@ export default function UnifiedMonitoringWidget({
           </div>
           <div>
             <div style={{ fontSize: 11.5, fontWeight: 700, color: '#15803D', lineHeight: 1.2 }}>
-              All Systems Normal
+              {mobileEnabled ? mobileStatus.title : 'Monitoring active'}
             </div>
             <div style={{ fontSize: 10, color: '#475569', marginTop: 1 }}>
-              No violations detected
+              {mobileEnabled ? mobileStatus.message : 'Webcam monitoring is active.'}
             </div>
           </div>
         </div>
+        {keepCameraVisible && !mobileConnected && <div className="dual-proctor-reconnect">
+          {socketError && <p role="alert">{socketError}</p>}
+          {reconnectUrl ? <>
+            <QRCodeSVG value={reconnectUrl} size={152} level="M" marginSize={2} />
+            <p>Scan to reconnect your mobile camera to this test. Your answers and timer stay unchanged.</p>
+          </> : <button type="button" onClick={showReconnectQr} disabled={reconnectLoading}>
+              {reconnectLoading ? 'Loading QR…' : 'Reconnect mobile camera'}
+            </button>}
+          {reconnectError && <p role="alert">{reconnectError}</p>}
+        </div>}
       </div>
 
       {/* Live Proctor Grace Warning Banner (First 3 Alerts As On-Screen Warnings) */}

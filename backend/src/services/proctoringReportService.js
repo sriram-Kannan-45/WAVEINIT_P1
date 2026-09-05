@@ -868,6 +868,10 @@ async function generateFinalProctoringReport(attemptId) {
     };
     summary.eyeHeadScore = fullReport?.eyeHeadScore || 0;
     summary.mobileScore = fullReport?.mobileScore || 0;
+    summary.mobilePhoneDetected = !!fullReport?.mobilePhoneDetected;
+    summary.mobilePhoneScore = fullReport?.mobilePhoneScore || 0;
+    summary.mobilePhoneViolation = { detected: summary.mobilePhoneDetected, count: summary.mobilePhoneDetected ? 1 : 0 };
+
     summary.multiFaceScore = fullReport?.multiFaceScore || 0;
     summary.noPersonScore = fullReport?.noPersonScore || 0;
     summary.tabSwitchScore = fullReport?.tabSwitchScore || 0;

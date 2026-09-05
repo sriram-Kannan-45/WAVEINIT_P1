@@ -150,7 +150,7 @@ class MonitoringExcelService {
     const vSec = Number(metrics.violationSeconds ?? metrics.violation_seconds ?? 0);
     const vPct = Number(metrics.violationPercentage ?? metrics.violation_percentage ?? 0);
     const mScore = Number(metrics.monitoringScore ?? metrics.monitoring_score ?? metrics.eyeHeadScore ?? 0);
-    const mobCnt = Number(metrics.mobileCount || metrics.mobile_count || 0);
+    const mobCnt = Number(metrics.mobileCount ?? metrics.mobile_count ?? metrics.scoringBreakdown?.mobile?.count ?? 0);
     const mobScore = Number(metrics.mobileScore ?? metrics.mobile_score ?? metrics.scoringBreakdown?.mobile?.score ?? 0);
     const mfCnt = Number(metrics.multipleFaceCount || metrics.multiple_face_count || 0);
     const mfScore = Number(metrics.multipleFaceScore ?? metrics.multiFaceScore ?? metrics.multiple_face_score ?? metrics.scoringBreakdown?.multiPerson?.score ?? 0);
@@ -173,6 +173,8 @@ class MonitoringExcelService {
       ['  Grace Warnings', Number(metrics.graceWarningsCount ?? graceWarnings.length)],
       ['', ''],
       ['SCORING SUMMARY (5-PART MARKS)', ''],
+      ['  Mobile Phone Detected', mobScore > 0 ? 'Yes' : 'No'],
+      ['  Mobile Phone Score', mobScore],
       ['  Component', 'Violation / Count | Percentage | Score | Maximum'],
       ['  1. Eye + Head Tracking', `${vSec.toFixed(2)} sec | ${vPct.toFixed(2)}% | ${mScore.toFixed(2)} | 60`],
       ['  2. Mobile Phone Violation', `${mobCnt} Detected | ${(mobScore / 10 * 100).toFixed(1)}% | ${mobScore.toFixed(2)} | 10`],

@@ -5,12 +5,13 @@ const roleMiddleware = require('../middleware/roles');
 const ctrl = require('../controllers/codingAssessmentController');
 const validateAssessmentSession = require('../middleware/validateAssessmentSession');
 
-const optionalAssessmentSession = (req, res, next) => {
+const requireMobileAdmission = require('../middleware/requireMobileAdmission')('CODING');
+const optionalAssessmentSession = (req, res, next) => requireMobileAdmission(req, res, () => {
   if (req.headers['x-assessment-session'] || req.headers['X-Assessment-Session']) {
     return validateAssessmentSession(req, res, next);
   }
   return next();
-};
+});
 
 router.use(authenticateToken);
 

@@ -717,12 +717,13 @@ router.post('/participant/start/:quizId',
 // validate it via validateAssessmentSession. Legacy callers (proctoring,
 // older clients) that don't send the header are unaffected.
 const validateAssessmentSession = require('../middleware/validateAssessmentSession');
-const optionalAssessmentSession = (req, res, next) => {
+const requireMobileAdmission = require('../middleware/requireMobileAdmission')('QUIZ');
+const optionalAssessmentSession = (req, res, next) => requireMobileAdmission(req, res, () => {
   if (req.headers['x-assessment-session'] || req.headers['X-Assessment-Session']) {
     return validateAssessmentSession(req, res, next);
   }
   return next();
-};
+});
 
 router.post('/participant/submit/:attemptId',
   authenticateToken,

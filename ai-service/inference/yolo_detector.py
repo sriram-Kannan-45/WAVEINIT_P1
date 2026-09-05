@@ -28,6 +28,7 @@ import base64
 import logging
 from typing import Dict, Any, List, Optional, Tuple
 from collections import deque
+from .mobile_composition import evaluate_mobile
 
 import cv2
 import numpy as np
@@ -155,9 +156,12 @@ class YOLOProctorEngine:
 
     def get_status(self) -> Dict[str, Any]:
         """Returns health and introspection status of the YOLO model."""
+        from importlib.metadata import version
         return {
             "status": "UP" if self.initialized_ok else "ERROR",
             "model_path": self.model_path,
+            "ultralytics_version": version("ultralytics"),
+            "device": str(self.model.device) if self.model is not None else None,
             "classes_count": len(self.class_names),
             "classes": self.class_names,
             "error": self.init_error,
@@ -432,6 +436,16 @@ class YOLOProctorEngine:
         composition_state, event_type, user_msg, comp_conf = self.validate_mobile_composition(
             detections, w, h, session_key
         )
+        mobile_evidence = {}
+        if camera_source == "MOBILE_CAMERA" and module_type.upper() in ("QUIZ", "CODING"):
+            temporal = self._get_session_state(session_key).setdefault("assessment_mobile", {})
+            mobile_evidence = evaluate_mobile(detections, w, h, temporal)
+            composition_state = mobile_evidence["composition_state"]
+            user_msg = mobile_evidence["user_message"]
+            event_type = "COMPOSITION_VALID" if mobile_evidence["eligible"] else "COMPOSITION_STABILIZING"
+            if mobile_evidence["phone_stable"]:
+                event_type = "PHONE_DETECTED"
+                comp_conf = mobile_evidence["phone_confidence"]
 
         severity_map = {
             "VALID": "INFO",
@@ -443,6 +457,8 @@ class YOLOProctorEngine:
             "DISCONNECTED": "HIGH",
         }
         severity = severity_map.get(composition_state, "INFO")
+        if mobile_evidence.get("phone_stable"):
+            severity = "HIGH"
 
         inference_time_ms = round((time.time() - start_time) * 1000, 2)
         current_time_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -493,6 +509,7 @@ class YOLOProctorEngine:
             "laptop_count": len(laptops),
             "book_count": len(books),
             "inference_time_ms": inference_time_ms,
+            "mobile_evidence": mobile_evidence,
         }
 
 

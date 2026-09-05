@@ -512,7 +512,7 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose, context
                     </span>
                   </div>
                   <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
-                    {(mobileScore > 0) ? 'Phone detected in view' : 'No mobile device detected'}
+                    Mobile Phone Detected: {mobileScore > 0 ? 'Yes' : 'No'} · Mobile Phone Score: {mobileScore}
                   </div>
                 </div>
               </div>

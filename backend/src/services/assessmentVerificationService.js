@@ -13,6 +13,8 @@ const {
   CodingAssessment,
   QuizAttempt,
   CodingAttempt,
+  MonitoringSession,
+  sequelize,
 } = require('../models');
 const qrGenerator = require('../utils/assessmentQrGenerator');
 const logger = require('../utils/logger');
@@ -21,6 +23,73 @@ const SESSION_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const JWT_SECRET = process.env.JWT_SECRET || 'waveinit-assessment-verif-secret-key-2026';
 
 class AssessmentVerificationService {
+  async monitoringFor(session, options = {}) {
+    return MonitoringSession.findOne({ ...options, where: {
+      participantId: session.participant_id, contextType: session.assessment_type,
+      contextId: session.assessment_id, attemptId: session.attempt_id,
+    }, order: [['id', 'DESC']] });
+  }
+
+  async authorizeSocket({ sessionId, participantId, token = null, mobile = false }) {
+    let session = await AssessmentVerificationSession.findOne({ where: {
+      session_id: sessionId, participant_id: participantId, ...(mobile ? { token } : {}),
+    } });
+    // The attempt widget uses the canonical monitoring ID; resolve its exact
+    // verification room rather than sending its offers to a different room.
+    if (!session && !mobile) {
+      const monitor = await MonitoringSession.findOne({ where: { sessionId, participantId } });
+      if (monitor) session = await AssessmentVerificationSession.findOne({ where: {
+        ...(monitor.metadata?.mobileAdmission?.verificationSessionId ? { session_id: monitor.metadata.mobileAdmission.verificationSessionId } : {}),
+        participant_id: participantId, attempt_id: monitor.attemptId,
+        assessment_id: monitor.contextId, assessment_type: monitor.contextType,
+        status: { [Op.in]: ['PAIRED', 'VERIFIED', 'USED'] },
+      }, order: [['created_at', 'DESC']] });
+    }
+    if (!session || session.status === 'EXPIRED' || (session.status !== 'USED' && new Date(session.expires_at) <= new Date())) throw new Error('Invalid or expired mobile pairing');
+    const monitor = await this.monitoringFor(session);
+    if (!monitor || ['COMPLETED', 'ABORTED'].includes(monitor.status)) throw new Error('Assessment is not active');
+    return { session, monitor };
+  }
+
+  freshEvidence(session, monitor) {
+    const evidence = monitor?.metadata?.mobileEvidence;
+    return evidence?.verificationSessionId === session.session_id && evidence.pairingVersion === crypto.createHash("sha256").update(session.token).digest("hex") &&
+      Date.now() - Number(evidence.receivedAt) <= 5000 ? evidence : null;
+  }
+
+  async assertAttemptAdmitted({ participantId, assessmentType, attemptId }) {
+    const monitor = await MonitoringSession.findOne({ where: {
+      participantId, contextType: assessmentType, attemptId,
+    }, order: [['id', 'DESC']] });
+    if (!monitor || (monitor.mobileEnabled && !monitor.metadata?.mobileAdmission)) {
+      throw new Error('Complete mobile person and laptop verification before entering the assessment.');
+    }
+    return monitor;
+  }
+
+  async assertReconnectAllowed(session, monitor = null) {
+    monitor = monitor || await this.monitoringFor(session);
+    if (session.status !== 'USED' || !monitor || !['ACTIVE', 'PAUSED', 'READY', 'CALIBRATING'].includes(monitor.status) ||
+        monitor.metadata?.mobileAdmission?.verificationSessionId !== session.session_id) {
+      throw new Error('This assessment is not available for camera reconnection.');
+    }
+    const Attempt = session.assessment_type === 'CODING' ? CodingAttempt : QuizAttempt;
+    const attempt = await Attempt.findOne({ where: { id: session.attempt_id, participantId: session.participant_id,
+      [session.assessment_type === 'CODING' ? 'assessmentId' : 'quizId']: session.assessment_id, status: 'IN_PROGRESS' } });
+    if (!attempt) throw new Error('This assessment attempt has ended.');
+    return monitor;
+  }
+
+  async getReconnectQr({ sessionId, participantId }) {
+    const { session, monitor } = await this.authorizeSocket({ sessionId, participantId });
+    await this.assertReconnectAllowed(session, monitor);
+    // Reuse the admitted room and credential. Never rotate admission, restart
+    // the attempt, reset its timer, or clear accumulated monitoring scores.
+    return { sessionId: session.session_id, status: session.status,
+      qrPayload: qrGenerator.generatePairingPayload({ assessmentType: session.assessment_type,
+        assessmentId: session.assessment_id, attemptId: session.attempt_id,
+        participantId: session.participant_id, sessionId: session.session_id, token: session.token }) };
+  }
   /**
    * Helper to generate a secure random hex token.
    */
@@ -58,25 +127,34 @@ class AssessmentVerificationService {
    * Create or restore a verification session for a participant's attempt.
    * If a valid, non-expired, non-used session exists for this (participant, type, attempt), restores it.
    */
-  async createOrGetSession({ participantId, assessmentId, assessmentType, attemptId }) {
+  async createOrGetSession({ participantId, assessmentId, assessmentType, attemptId, transaction = null }) {
+    if (!transaction) return sequelize.transaction(transaction => this.createOrGetSession({
+      participantId, assessmentId, assessmentType, attemptId, transaction,
+    }));
     const normType = assessmentType.toUpperCase();
     if (!['QUIZ', 'CODING'].includes(normType)) {
       throw new Error('Invalid assessment type. Must be QUIZ or CODING');
     }
+    const Attempt = normType === 'CODING' ? CodingAttempt : QuizAttempt;
+    const attempt = await Attempt.findOne({ transaction, lock: transaction.LOCK.UPDATE, where: { id: attemptId, participantId,
+      [normType === 'CODING' ? 'assessmentId' : 'quizId']: assessmentId, status: 'IN_PROGRESS' } });
+    if (!attempt) throw new Error('Active assessment attempt not found');
 
     const now = new Date();
 
     // Check for existing active session that hasn't expired or been used
     const existing = await AssessmentVerificationSession.findOne({
+      transaction,
       where: {
         participant_id: participantId,
         assessment_id: assessmentId,
         assessment_type: normType,
         attempt_id: attemptId,
-        status: { [Op.in]: ['PENDING', 'PAIRED', 'VERIFIED'] },
+        status: { [Op.in]: ['PENDING', 'PAIRED', 'VERIFIED', 'USED'] },
         expires_at: { [Op.gt]: now },
       },
-      order: [['created_at', 'DESC']],
+      // Prefer the already paired phone if an older server created duplicates.
+      order: [[sequelize.literal("CASE WHEN status = 'USED' THEN 0 WHEN status IN ('PAIRED', 'VERIFIED') THEN 1 ELSE 2 END"), 'ASC'], ['created_at', 'DESC']],
     });
 
     if (existing) {
@@ -114,10 +192,10 @@ class AssessmentVerificationService {
       laptop_verified: false,
       mobile_verified: false,
       expires_at: expiresAt,
-    });
+    }, { transaction });
 
     const socketToken = this._issueSocketToken(session);
-    await session.update({ socket_token: socketToken });
+    await session.update({ socket_token: socketToken }, { transaction });
 
     const qrPayload = qrGenerator.generatePairingPayload({
       assessmentType: session.assessment_type,
@@ -207,10 +285,9 @@ class AssessmentVerificationService {
     }
 
     if (session.status === 'USED') {
-      return { success: false, error: 'This QR code has already been used.' };
-    }
-
-    if (new Date() > new Date(session.expires_at)) {
+      try { await this.assertReconnectAllowed(session); }
+      catch (error) { return { success: false, error: error.message }; }
+    } else if (session.status === 'EXPIRED' || new Date() > new Date(session.expires_at)) {
       await session.update({ status: 'EXPIRED' });
       return { success: false, error: 'This QR code has expired. Please generate a new QR code.' };
     }
@@ -230,7 +307,8 @@ class AssessmentVerificationService {
       await session.update({ status: 'PAIRED' });
     }
 
-    const socketToken = session.socket_token || this._issueSocketToken(session);
+    // A reconnect may happen after the original socket JWT's one-hour expiry.
+    const socketToken = this._issueSocketToken(session);
 
     return {
       success: true,
@@ -245,6 +323,7 @@ class AssessmentVerificationService {
       socketToken,
       expiresAt: session.expires_at,
       status: session.status,
+      isAssessmentStarted: session.status === 'USED',
     };
   }
 
@@ -253,23 +332,20 @@ class AssessmentVerificationService {
    */
   async recordMobileCameraReady({ token, deviceInfo }) {
     const session = await AssessmentVerificationSession.findOne({ where: { token } });
-    if (!session) {
+    if (!session || session.status === 'EXPIRED' || (session.status !== 'USED' && new Date(session.expires_at) <= new Date())) {
       throw new Error('Invalid verification token');
     }
 
     await session.update({
-      mobile_verified: true,
-      laptop_verified: true,
-      status: 'VERIFIED',
+      status: session.status === 'USED' ? 'USED' : 'PAIRED',
       mobile_device_info: deviceInfo ? JSON.stringify(deviceInfo) : session.mobile_device_info,
     });
 
     return {
       sessionId: session.session_id,
-      status: 'VERIFIED',
-      mobileVerified: true,
-      laptopVerified: true,
-      isFullyVerified: true,
+      status: session.status,
+      mobileCameraReady: true,
+      isFullyVerified: false,
     };
   }
 
@@ -311,18 +387,22 @@ class AssessmentVerificationService {
       throw new Error('Verification session not found');
     }
 
-    const isExpired = new Date() > new Date(session.expires_at);
+    const isExpired = session.status !== 'USED' && new Date() > new Date(session.expires_at);
     if (isExpired && session.status !== 'USED') {
       await session.update({ status: 'EXPIRED' });
     }
 
-    const isFullyVerified = session.status === 'VERIFIED' || session.mobile_verified;
+    const evidence = this.freshEvidence(session, await this.monitoringFor(session));
+    const isFullyVerified = !!evidence?.eligible && session.status !== 'EXPIRED';
 
     return {
       sessionId: session.session_id,
       token: session.token,
       status: session.status,
-      mobileVerified: session.mobile_verified,
+      mobileVerified: isFullyVerified,
+      mobileCameraReady: !!session.mobile_device_info || !!evidence,
+      mobileStreamActive: !!evidence,
+      mobileEvidence: evidence,
       laptopVerified: session.laptop_verified,
       isFullyVerified,
       expiresAt: session.expires_at,
@@ -335,6 +415,7 @@ class AssessmentVerificationService {
    * The attempt can ONLY start if verification status === 'VERIFIED' and both cameras verified.
    */
   async verifySessionForStart({ participantId, assessmentType, assessmentId, attemptId, sessionId, token }) {
+    if (!participantId || !assessmentType || !assessmentId || !attemptId || (!sessionId && !token)) return { valid: false, error: 'Exact assessment and verification session are required.' };
     const normType = assessmentType.toUpperCase();
     const where = {
       participant_id: participantId,
@@ -348,11 +429,6 @@ class AssessmentVerificationService {
 
     let session = await AssessmentVerificationSession.findOne({ where });
 
-    if (!session && (sessionId || token)) {
-      session = await AssessmentVerificationSession.findOne({
-        where: sessionId ? { session_id: sessionId } : { token },
-      });
-    }
 
     if (!session) {
       return {
@@ -361,7 +437,7 @@ class AssessmentVerificationService {
       };
     }
 
-    if (new Date() > new Date(session.expires_at)) {
+    if (session.status !== 'USED' && new Date() > new Date(session.expires_at)) {
       await session.update({ status: 'EXPIRED' });
       return {
         valid: false,
@@ -369,12 +445,16 @@ class AssessmentVerificationService {
       };
     }
 
-    // Mark as USED and verified so this QR session cannot be reused by another device
-    await session.update({
-      mobile_verified: true,
-      laptop_verified: true,
-      status: 'USED',
+    const admitted = await sequelize.transaction(async transaction => {
+      const monitor = await this.monitoringFor(session, { transaction, lock: transaction.LOCK.UPDATE });
+      if (!monitor || ['COMPLETED', 'ABORTED'].includes(monitor.status) || !this.freshEvidence(session, monitor)?.eligible) return false;
+      await monitor.update({ metadata: { ...monitor.metadata, mobileAdmission: {
+        verificationSessionId: session.session_id, admittedAt: new Date().toISOString(),
+      } } }, { transaction });
+      await session.update({ mobile_verified: true, status: 'USED' }, { transaction });
+      return true;
     });
+    if (!admitted) return { valid: false, error: 'Keep the mobile stream active with both person and laptop visible until verification completes.' };
 
     return {
       valid: true,
@@ -389,96 +469,26 @@ class AssessmentVerificationService {
   /**
    * End / close verification session when assessment is submitted or closed.
    */
-  async endSession({ sessionId, token, participantId, attemptId } = {}) {
-    const { AssessmentVerificationSession, MonitoringSession, Sequelize } = require('../models');
-    const { Op } = Sequelize || require('sequelize');
-    const { getIO } = require('../config/socket');
-
-    const orClauses = [];
-    if (sessionId) orClauses.push({ session_id: sessionId });
-    if (token) orClauses.push({ token });
-    if (attemptId) orClauses.push({ attempt_id: attemptId });
-    if (participantId && (attemptId || sessionId || token)) {
-      orClauses.push({ participant_id: participantId });
+  async endSession({ sessionId, token, participantId, attemptId, assessmentType } = {}) {
+    if (!participantId || (!sessionId && !token && !(attemptId && assessmentType))) return { success: false };
+    const where = { participant_id: participantId,
+      ...(sessionId ? { session_id: sessionId } : token ? { token } : { attempt_id: attemptId, assessment_type: assessmentType }) };
+    const sessions = await AssessmentVerificationSession.findAll({ where });
+    const io = require('../config/socket').getIO();
+    const closed = [];
+    for (const session of sessions) {
+      const Attempt = session.assessment_type === 'CODING' ? CodingAttempt : QuizAttempt;
+      const attempt = await Attempt.findOne({ where: { id: session.attempt_id, participantId } });
+      if (!attempt || attempt.status === 'IN_PROGRESS') continue;
+      await session.update({ status: 'EXPIRED' });
+      closed.push(session.session_id);
+      io?.to(`assessment_verif_${session.session_id}`).emit('assessment_verif:session_ended', {
+        sessionId: session.session_id, status: 'COMPLETED', reason: 'ASSESSMENT_COMPLETED',
+      });
     }
-
-    const where = orClauses.length > 0 ? { [Op.or]: orClauses } : null;
-
-    let sessions = [];
-    if (where) {
-      sessions = await AssessmentVerificationSession.findAll({ where }).catch(() => []);
-      await AssessmentVerificationSession.update(
-        { status: 'COMPLETED' },
-        { where }
-      ).catch(() => {});
-    }
-
-    // Also close any linked MonitoringSession
-    const monOrClauses = [];
-    if (sessionId) monOrClauses.push({ sessionId });
-    if (token) monOrClauses.push({ mobilePairingToken: token });
-    if (attemptId) monOrClauses.push({ attemptId });
-    if (participantId && (attemptId || sessionId || token)) {
-      monOrClauses.push({ participantId });
-    }
-
-    if (monOrClauses.length > 0) {
-      // Snapshot affected sessions BEFORE marking them complete so we can
-      // refresh each one's segment-pipeline status afterwards.
-      const monSessions = await MonitoringSession.findAll({
-        where: { [Op.or]: monOrClauses },
-        attributes: ['sessionId'],
-      }).catch(() => []);
-
-      await MonitoringSession.update(
-        { status: 'COMPLETED', ended_at: new Date() },
-        { where: { [Op.or]: monOrClauses } }
-      ).catch(() => {});
-
-      // Surface WAITING_FOR_PROCESSING / COMPLETED / PARTIAL immediately after
-      // submit instead of waiting for the next segment to finish processing.
-      for (const ms of monSessions) {
-        try {
-          const videoService = require('./monitoringVideoService');
-          await videoService.aggregateSession(ms.sessionId);
-        } catch (err) {
-          const logger = require('../utils/logger');
-          logger.warn(`[VerificationService] aggregateSession refresh failed for ${ms.sessionId}: ${err.message}`);
-        }
-      }
-    }
-
-    // Broadcast session_ended to all session rooms
-    const io = getIO ? getIO() : null;
-    const closedSessionIds = new Set();
-    if (sessionId) closedSessionIds.add(sessionId);
-    for (const s of sessions) {
-      if (s.session_id) closedSessionIds.add(s.session_id);
-    }
-
-    if (io) {
-      for (const sId of closedSessionIds) {
-        io.to(`assessment_verif_${sId}`).emit('assessment_verif:session_ended', {
-          sessionId: sId,
-          status: 'COMPLETED',
-          reason: 'ASSESSMENT_COMPLETED',
-          timestamp: Date.now(),
-        });
-        io.to(`monitoring_room_${sId}`).emit('monitoring:session_ended', {
-          sessionId: sId,
-          status: 'COMPLETED',
-          reason: 'ASSESSMENT_COMPLETED',
-          timestamp: Date.now(),
-        });
-      }
-    }
-
-    return {
-      success: true,
-      sessionId: sessionId || sessions[0]?.session_id || null,
-      status: 'COMPLETED',
-    };
+    return { success: true, sessionId: closed[0] || null, status: closed.length ? 'COMPLETED' : 'IN_PROGRESS' };
   }
+
 }
 
 module.exports = new AssessmentVerificationService();

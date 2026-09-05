@@ -25,6 +25,11 @@
 .coding-monitoring-panel {
   width: 100%;
   min-width: 0;
+  position: sticky;
+  bottom: 0;
+  flex-shrink: 0;
+  background: #fff;
+  z-index: 2;
 }
 
 .coding-mentor-reopen {

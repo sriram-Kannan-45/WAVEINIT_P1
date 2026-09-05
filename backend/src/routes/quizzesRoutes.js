@@ -1559,7 +1559,7 @@ router.get('/attempts/:attemptId', async (req, res) => {
  * POST /api/quizzes/:quizId/attempts/:attemptId/submit
  * Submits and grades the quiz attempt, updating enrollment status inside a transaction.
  */
-router.post('/:quizId/attempts/:attemptId/submit', async (req, res) => {
+router.post('/:quizId/attempts/:attemptId/submit', require('../middleware/requireMobileAdmission')('QUIZ'), async (req, res) => {
   try {
     const { answers } = req.body;
     const { attemptId, quizId } = req.params;
@@ -1771,7 +1771,7 @@ router.post('/:quizId/attempts/:attemptId/submit', async (req, res) => {
     try {
       const verificationService = require('../services/assessmentVerificationService');
       setImmediate(() => {
-        verificationService.endSession({ attemptId: attempt.id, participantId }).catch(() => {});
+        verificationService.endSession({ assessmentType: 'QUIZ', attemptId: attempt.id, participantId }).catch(() => {});
       });
     } catch (_) {}
 

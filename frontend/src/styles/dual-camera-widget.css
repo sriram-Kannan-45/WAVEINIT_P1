@@ -1,4 +1,8 @@
 /* Dual Camera Proctoring Widget Styles - Clean White & Green Theme */
+.dual-proctor-reconnect { padding: 0 12px 12px; text-align: center; font-size: 12px; color: #475569; }
+.dual-proctor-reconnect svg { margin: 8px auto; display: block; max-width: 100%; }
+.dual-proctor-reconnect button { border: 1px solid #15803d; border-radius: 6px; background: #fff; color: #15803d; padding: 7px 10px; cursor: pointer; }
+.dual-proctor-reconnect p { margin: 6px 0; }
 .dual-proctor-container {
   position: fixed;
   bottom: 18px;

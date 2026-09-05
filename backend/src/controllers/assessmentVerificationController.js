@@ -151,15 +151,8 @@ class AssessmentVerificationController {
       if (io && result.sessionId) {
         io.to(`assessment_verif_${result.sessionId}`).emit('assessment_verif:mobile_status', {
           sessionId: result.sessionId,
-          connected: true,
-          mobileReady: true,
           mobileCameraReady: true,
-          cameraStreaming: true,
-          status: 'VERIFIED',
-          timestamp: Date.now(),
-        });
-        io.to(`assessment_verif_${result.sessionId}`).emit('assessment_verif:unlocked', {
-          sessionId: result.sessionId,
+          status: 'PAIRED',
           timestamp: Date.now(),
         });
       }
@@ -323,13 +316,13 @@ class AssessmentVerificationController {
       // Check linked attempt if available - ONLY actual attempt submission ends the assessment!
       const attemptId = session?.attempt_id || monitoringSession?.attemptId;
       if (attemptId) {
-        const qa = await QuizAttempt.findByPk(attemptId).catch(() => null);
-        const ca = !qa ? await CodingAttempt.findByPk(attemptId).catch(() => null) : null;
-        const att = qa || ca;
+        const type = session?.assessment_type || monitoringSession?.contextType;
+        const Attempt = type === 'CODING' ? CodingAttempt : QuizAttempt;
+        const att = await Attempt.findByPk(attemptId);
         if (att && ['SUBMITTED', 'COMPLETED', 'EVALUATED', 'AUTO_SUBMITTED', 'TERMINATED', 'disqualified_copy_violation', 'disqualified_policy_violation'].includes(att.status)) {
           isEnded = true;
           sessionStatus = 'COMPLETED';
-          if (session && session.status !== 'COMPLETED') await session.update({ status: 'COMPLETED' }).catch(() => {});
+          if (session && session.status !== 'COMPLETED') await session.update({ status: 'EXPIRED' }).catch(() => {});
           if (monitoringSession && monitoringSession.status !== 'COMPLETED') await monitoringSession.update({ status: 'COMPLETED' }).catch(() => {});
         }
       }

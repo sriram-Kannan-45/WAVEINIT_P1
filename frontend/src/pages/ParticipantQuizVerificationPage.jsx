@@ -80,6 +80,10 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
   const [webRtcConnected, setWebRtcConnected] = useState(false)
   const [remoteVideoReady, setRemoteVideoReady] = useState(false)
   const [isFullyVerified, setIsFullyVerified] = useState(false)
+  const [compositionMessage, setCompositionMessage] = useState("Show both yourself and your laptop in the mobile camera.")
+  const lastEvidenceRef = useRef(0)
+  const lastMobileFrameAtRef = useRef(0)
+  const [transportError, setTransportError] = useState(null)
   const [isDisconnected, setIsDisconnected] = useState(false)
 
   // Media & WebRTC Refs
@@ -152,6 +156,35 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
           }
         }
 
+        // Initiate Verification Session for this exact attempt
+        if (curAttemptId) {
+          const verifRes = await fetch(`${API_BASE}/assessment-verification/initiate`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(activeToken ? { Authorization: `Bearer ${activeToken}` } : {}),
+            },
+            body: JSON.stringify({
+              assessmentType: currentAssessmentType,
+              assessmentId: parseInt(effectiveId, 10),
+              attemptId: parseInt(curAttemptId, 10),
+            }),
+          })
+          const verifData = await verifRes.json()
+          if (!aborted) {
+            if (!verifRes.ok || !verifData.success) {
+              throw new Error(verifData.error || 'Failed to initialize verification session')
+            }
+            sessionIdRef.current = verifData.sessionId
+            setSessionData(verifData)
+            if (verifData.status === 'PAIRED' || verifData.status === 'VERIFIED' || verifData.mobileVerified) {
+              setQrScanned(true)
+              setParticipantValidated(true)
+            }
+          }
+        }
+
+        if (!aborted) setLoading(false)
         // Fetch Quiz / Coding Assessment metadata
         const qEndpoint = isCoding
           ? `${API_BASE}/coding/assessments/${effectiveId}`
@@ -186,35 +219,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
           }
         }
 
-        // Initiate Verification Session for this exact attempt
-        if (curAttemptId) {
-          const verifRes = await fetch(`${API_BASE}/assessment-verification/initiate`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(activeToken ? { Authorization: `Bearer ${activeToken}` } : {}),
-            },
-            body: JSON.stringify({
-              assessmentType: currentAssessmentType,
-              assessmentId: parseInt(effectiveId, 10),
-              attemptId: parseInt(curAttemptId, 10),
-            }),
-          })
-          const verifData = await verifRes.json()
-          if (!aborted) {
-            if (!verifRes.ok || !verifData.success) {
-              throw new Error(verifData.error || 'Failed to initialize verification session')
-            }
-            sessionIdRef.current = verifData.sessionId
-            setSessionData(verifData)
-            if (verifData.status === 'PAIRED' || verifData.status === 'VERIFIED' || verifData.mobileVerified) {
-              setQrScanned(true)
-              setParticipantValidated(true)
-            }
-          }
-        }
 
-        if (!aborted) setLoading(false)
       } catch (err) {
         if (!aborted) {
           console.error('[ParticipantQuizVerificationPage] init error:', err)
@@ -228,7 +233,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
     return () => {
       aborted = true
     }
-  }, [effectiveId, isCoding, activeAttemptId, activeSessionToken, activeToken, trainingId, user?.id, currentAssessmentType])
+  }, [effectiveId, isCoding, attemptId, sessionToken, activeToken, trainingId, user?.id, currentAssessmentType])
 
   // 2. Real-time Countdown Timer
   useEffect(() => {
@@ -272,10 +277,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
       }
       if (stream) {
         setRemoteStream(stream)
-        setRemoteVideoReady(true)
-        setMobileStreamConnected(true)
         setMobileCameraReady(true)
-        setIsFullyVerified(true)
         setIsDisconnected(false)
 
         if (videoRef.current) {
@@ -302,9 +304,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
       const state = pc.connectionState
       if (state === 'connected') {
         setWebRtcConnected(true)
-        setMobileStreamConnected(true)
         setMobileCameraReady(true)
-        setIsFullyVerified(true)
         setIsDisconnected(false)
       } else if (state === 'disconnected' || state === 'failed') {
         setWebRtcConnected(false)
@@ -325,19 +325,35 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
     const socket = io(BACKEND_ORIGIN || window.location.origin, {
       auth: { token: activeToken },
       path: '/socket.io/',
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
       reconnectionAttempts: 20,
       reconnectionDelay: 1000,
     })
     socketRef.current = socket
 
-    socket.on('connect', () => {
+    let joinRetryTimer
+    const joinRoom = () => {
+      clearTimeout(joinRetryTimer)
+      if (!socket.connected) return
       console.log('[LAPTOP-VERIF] Connected to verification socket with ID:', socket.id)
-      socket.emit('assessment_verif:join', {
+      socket.timeout(8000).emit('assessment_verif:join', {
         sessionId: currentSessionId,
         role: 'laptop',
         clientType: 'browser_desktop',
+      }, (err, ack) => {
+        if (err || !ack?.ok) {
+          setTransportError(ack?.error || 'Camera session connection failed. Retrying…')
+          if (socket.connected) joinRetryTimer = setTimeout(joinRoom, 3000)
+        } else setTransportError(null)
       })
+    }
+    socket.on('connect', joinRoom)
+    socket.on('connect_error', () => {
+      setTransportError('Cannot connect to the camera server. Check your connection and refresh this page.')
+    })
+    socket.on('disconnect', () => {
+      setIsFullyVerified(false)
+      setTransportError('Camera server disconnected. Reconnecting…')
     })
 
     // 1. Mobile Joined / Scanned
@@ -355,29 +371,26 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
       }
     })
 
-    // 2. Mobile Status Updates
     socket.on('assessment_verif:mobile_status', (payload) => {
-      console.log('[LAPTOP-VERIF] Mobile status update:', payload)
-      setQrScanned(true)
-      setParticipantValidated(true)
-      if (payload?.cameraStreaming || payload?.status === 'STREAMING' || payload?.mobileReady || payload?.mobileCameraReady || payload?.connected) {
+      if (payload?.connected === false) {
+        setIsDisconnected(true)
+        setIsFullyVerified(false)
+        setMobileStreamConnected(false)
+        setRemoteVideoReady(false)
+        setLastFrame(null)
+        lastEvidenceRef.current = 0
+      } else if (payload?.mobileCameraReady) {
         setMobileCameraReady(true)
-        setMobileStreamConnected(true)
-      }
-      if (payload?.status === 'VERIFIED' || payload?.mobileCameraReady || payload?.connected) {
-        setIsFullyVerified(true)
-      }
-      if (payload?.socketId) {
-        mobileSocketIdRef.current = payload.socketId
       }
     })
-
     socket.on('assessment_verif:stream_status', (payload) => {
-      console.log('[LAPTOP-VERIF] Stream status update:', payload)
-      if (payload?.cameraStreaming || payload?.status === 'STREAMING' || payload?.mobileReady || payload?.streaming) {
-        setMobileCameraReady(true)
-        setMobileStreamConnected(true)
-      }
+      if (payload?.streaming) setMobileCameraReady(true)
+    })
+    socket.on('assessment_verif:yolo_detection', (payload) => {
+      const evidence = payload?.success && Date.now() - Number(payload.mobileEvidence?.receivedAt) <= 5000 && payload.mobileEvidence
+      lastEvidenceRef.current = evidence?.receivedAt || 0
+      setIsFullyVerified(!!evidence?.eligible)
+      setCompositionMessage(payload?.userMessage || 'Waiting for mobile camera detection.')
     })
 
     // 3. WebRTC Offer from Mobile
@@ -429,24 +442,15 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
     socket.on('assessment_verif:frame', (payload) => {
       const frame = payload?.frame || payload?.frameData
       if (frame) {
+        lastMobileFrameAtRef.current = Date.now()
+        socket.emit('assessment_verif:frame_received', { sessionId: currentSessionId })
         setLastFrame(frame)
         setMobileStreamConnected(true)
         setMobileCameraReady(true)
         setQrScanned(true)
         setParticipantValidated(true)
-        setIsFullyVerified(true)
         setIsDisconnected(false)
       }
-    })
-
-    // 6. Verification Unlocked
-    socket.on('assessment_verif:unlocked', () => {
-      console.log('[LAPTOP-VERIF] Assessment unlocked by mobile stream')
-      setQrScanned(true)
-      setParticipantValidated(true)
-      setMobileCameraReady(true)
-      setMobileStreamConnected(true)
-      setIsFullyVerified(true)
     })
 
     socket.on('assessment_verif:mobile-disconnected', () => {
@@ -457,6 +461,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
     })
 
     return () => {
+      clearTimeout(joinRetryTimer)
       socket.disconnect()
       if (pcRef.current) {
         pcRef.current.close()
@@ -472,7 +477,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
 
     pollIntervalRef.current = setInterval(async () => {
       try {
-        const res = await fetch(`${API_BASE}/assessment-verification/status/${currentSessionId}`)
+        const res = await fetch(`${API_BASE}/assessment-verification/status/${currentSessionId}`, { headers: activeToken ? { Authorization: `Bearer ${activeToken}` } : {} })
         const data = await res.json()
         if (data.success) {
           const s = data.session || data
@@ -480,17 +485,14 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
             setQrScanned(true)
             setParticipantValidated(true)
           }
-          if (s.mobileCameraReady || s.mobileVerified || s.status === 'VERIFIED') {
-            setMobileCameraReady(true)
-            setMobileStreamConnected(true)
+          setMobileCameraReady(!!s.mobileCameraReady)
+          const evidence = s.mobileEvidence
+          // Do not resurrect stale stream readiness from a saved permission flag.
+          if (evidence && evidence.receivedAt >= lastEvidenceRef.current) {
+            lastEvidenceRef.current = evidence.receivedAt
+            setIsFullyVerified(!!s.isFullyVerified)
           }
-          if (s.status === 'VERIFIED' || s.isFullyVerified || s.mobileVerified) {
-            setIsFullyVerified(true)
-          }
-          if (s.lastFramePreview || s.frame) {
-            setLastFrame(s.lastFramePreview || s.frame)
-            setMobileStreamConnected(true)
-          }
+
         }
       } catch (_) {}
     }, 2000)
@@ -498,22 +500,43 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
     }
-  }, [sessionData?.sessionId])
+  }, [sessionData?.sessionId, activeToken])
+
+  useEffect(() => {
+    let lastVideoTime = -1
+    const timer = setInterval(() => {
+      const video = videoRef.current
+      if (video && video.readyState >= 2 && !video.paused && video.currentTime !== lastVideoTime) {
+        lastVideoTime = video.currentTime
+        lastMobileFrameAtRef.current = Date.now()
+        setMobileStreamConnected(true)
+        setRemoteVideoReady(true)
+      }
+      if (Date.now() - lastEvidenceRef.current > 5000) {
+        setIsFullyVerified(false)
+      }
+      if (Date.now() - lastMobileFrameAtRef.current > 5000) {
+        setMobileStreamConnected(false)
+        setWebRtcConnected(false)
+        setRemoteVideoReady(false)
+        setLastFrame(null)
+      }
+    }, 500)
+    return () => clearInterval(timer)
+  }, [])
 
   // 6. Manual Refresh Session
   const handleRefreshQR = async () => {
     try {
       setRefreshing(true)
-      const res = await fetch(`${API_BASE}/assessment-verification/initiate`, {
+      const res = await fetch(`${API_BASE}/assessment-verification/refresh`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(activeToken ? { Authorization: `Bearer ${activeToken}` } : {}),
         },
         body: JSON.stringify({
-          assessmentType: currentAssessmentType,
-          assessmentId: parseInt(effectiveId, 10),
-          attemptId: parseInt(activeAttemptId, 10),
+          sessionId: sessionData?.sessionId,
         }),
       })
       const data = await res.json()
@@ -554,13 +577,16 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
     try {
       setVerifyingStart(true)
 
-      // Persist verification in session storage
-      try {
-        sessionStorage.setItem(
-          `assessment_verif_${currentAssessmentType}_${effectiveId}_${activeAttemptId}`,
-          JSON.stringify({ sessionId: sessionData?.sessionId || `bypassed_${Date.now()}`, token: sessionData?.token || 'bypassed' })
-        )
-      } catch (e) {}
+      if (!isFullyVerified || !mobileStreamConnected || isExpired || isDisconnected) throw new Error('Wait for stable person and laptop verification.')
+      const response = await fetch(`${API_BASE}/assessment-verification/verify-start`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${activeToken}` },
+        body: JSON.stringify({ assessmentType: currentAssessmentType, assessmentId: Number(effectiveId),
+          attemptId: Number(activeAttemptId), sessionId: sessionData.sessionId, token: sessionData.token }),
+      })
+      const result = await response.json()
+      if (!response.ok || !result.success) throw new Error(result.error || 'Mobile verification is not ready.')
+      sessionStorage.setItem(`assessment_verif_${currentAssessmentType}_${effectiveId}_${activeAttemptId}`,
+        JSON.stringify({ sessionId: sessionData.sessionId, token: sessionData.token }))
 
       // Navigate to the actual attempt screen
       const coursePath = trainingId ? `/trainings/${trainingId}` : ''
@@ -806,6 +832,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
                     }
                   }}
                   autoPlay
+                  onPlaying={() => { setRemoteVideoReady(true); setMobileStreamConnected(true) }}
                   playsInline
                   muted
                   className={`wi-verif-video-el ${remoteVideoReady ? 'block' : 'hidden'}`}
@@ -826,8 +853,8 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
                     ) : qrScanned ? (
                       <div className="wi-verif-stream-connecting">
                         <RefreshCw size={32} className="animate-spin text-emerald-400" />
-                        <span className="wi-verif-stream-title-connecting">Connecting WebRTC Stream...</span>
-                        <span className="wi-verif-stream-sub-connecting">Camera access granted on mobile</span>
+                        <span className="wi-verif-stream-title-connecting">Connecting mobile video…</span>
+                        <span className="wi-verif-stream-sub-connecting">{transportError || (mobileCameraReady ? 'Camera access granted. Waiting for video from your phone.' : 'Waiting for camera permission on your phone.')}</span>
                       </div>
                     ) : (
                       <div className="wi-verif-stream-idle">
@@ -915,9 +942,10 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
 
               {/* Start Assessment CTA Button */}
               <div className="wi-verif-start-btn-wrap">
+                <p role="status">{transportError || (isFullyVerified ? "Person and laptop verified — ready for monitoring." : compositionMessage)}</p>
                 <button
                   onClick={handleStartQuiz}
-                  disabled={verifyingStart || loading}
+                  disabled={verifyingStart || loading || !isFullyVerified || !mobileStreamConnected || isExpired || isDisconnected}
                   className="wi-verif-start-btn"
                 >
                   {verifyingStart ? (

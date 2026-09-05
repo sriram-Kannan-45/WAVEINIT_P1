@@ -2491,7 +2491,7 @@ exports.submitAssessment = async (req, res) => {
     setImmediate(() => {
       try {
         const verificationService = require('../services/assessmentVerificationService');
-        verificationService.endSession({ attemptId: result.attemptId, participantId: req.user.id }).catch(() => {});
+        verificationService.endSession({ assessmentType: 'CODING', attemptId: result.attemptId, participantId: req.user.id }).catch(() => {});
       } catch (_) {}
 
       try {

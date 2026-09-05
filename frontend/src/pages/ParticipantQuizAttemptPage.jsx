@@ -1,3 +1,4 @@
+import MobileAdmissionGate from '../components/assessment/MobileAdmissionGate'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import QuizTaking from '../components/QuizTaking'
@@ -290,5 +291,5 @@ function ParticipantQuizAttemptPageInner({ user }) {
 }
 
 export default function ParticipantQuizAttemptPage({ user }) {
-  return <ParticipantQuizAttemptPageInner user={user} />
+  return <MobileAdmissionGate user={user} assessmentType="QUIZ"><ParticipantQuizAttemptPageInner user={user} /></MobileAdmissionGate>
 }
