@@ -276,7 +276,15 @@ jobs:
           # pushed immediately, Oryx builds it in the background, and the
           # "Verify live service health" step below polls until the freshly
           # built app responds.
+          #
+          # az webapp deploy --async --timeout 1200 returns a NONZERO tracking
+          # timeout once that window elapses EVEN IF the Oryx build is still
+          # running server-side (the deployment keeps going; the CLI just stops
+          # watching). That is not a deployment failure, so do not fail the step
+          # on it: the health gate below is the real success/failure decision
+          # and requires both engines to report "available".
           echo "Deploying source package asynchronously and executing Oryx remote build..."
+          set +e
           az webapp deploy \
             --name "${AZURE_WEBAPP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
@@ -285,7 +293,35 @@ jobs:
             --clean true \
             --restart true \
             --async true \
-            --timeout 1200
+            --timeout 3600
+          AZ_RC=$?
+          set -e
+
+          # Kills the step only if the deploy call itself actually errored
+          # (e.g. auth or network), not if the tracker window elapsed while the
+          # build is legitimately still progressing.
+          if [ "${AZ_RC}" -gt 0 ]; then
+            echo "⚠️  az webapp deploy returned exit ${AZ_RC}."
+
+            # Distinguish "tracker window elapsed, build still running" from a
+            # genuine failure. InProgress/failed-instance counts come through the
+            # deployment status JSON via az webapp log deployment show, which the
+            # next step prints.
+            az webapp log deployment show \
+              --name "${AZURE_WEBAPP_NAME}" \
+              --resource-group "${RESOURCE_GROUP}" || true
+
+            # A nonzero code is expected when the tracker window elapses during a
+            # long Oryx build. Only a hard az CLI failure (missing rg/app,
+            # auth) should abort here — anything else is handed to the health gate.
+            if ! az webapp show --name "${AZURE_WEBAPP_NAME}" \
+                --resource-group "${RESOURCE_GROUP}" > /dev/null 2>&1; then
+              echo "❌ Web App not found or unreachable — aborting."
+              exit 1
+            fi
+
+            echo "Deployment is still in progress server-side; waiting on the health gate..."
+          fi
 
       - name: Inspect deployment status and Oryx logs
         shell: bash
@@ -308,14 +344,15 @@ jobs:
           HEALTH_URL="https://${APP_HOSTNAME}/health"
           echo "Verifying live service health at: ${HEALTH_URL}"
 
-          # Async + Oryx remote build can take 10-20 minutes for these ML deps;
-          # poll up to 25 minutes. The gate is STRICT: /health must report BOTH
-          # engines actually ready ("yolo_engine":"available" and
-          # "proctoring_engine":"available"), not merely contain the keys —
-          # matching the truthfulness requirement (no "ready" claims while the
-          # engines are down). startup.sh installs libGL etc., so with a clean
-          # build both engines must come up.
-          MAX_ATTEMPTS=100
+          # Async + Oryx remote build of these ML deps can run 20-40 minutes on
+          # a cold build; poll up to 60 minutes. The tracker window (above) may
+          # have already surfaced, so this gate is the definitive success check:
+          # /health must report BOTH engines actually ready
+          # ("yolo_engine":"available" and "proctoring_engine":"available"),
+          # not merely contain the keys — matching the truthfulness requirement
+          # (no "ready" claims while the engines are down). startup.sh installs
+          # libGL etc., so with a clean build both engines must come up.
+          MAX_ATTEMPTS=240
           DELAY=15
           SUCCESS=0
 
@@ -343,5 +380,11 @@ jobs:
 
           if [ "$SUCCESS" -ne 1 ]; then
             echo "❌ Service health check failed (engines not ready) after $((MAX_ATTEMPTS * DELAY)) seconds!"
+            echo "--- Deployment status (BUILDING vs SUCCESS vs FAILED) ---"
+            az webapp log deployment show \
+              --name "${AZURE_WEBAPP_NAME}" \
+              --resource-group "${RESOURCE_GROUP}" || true
+            echo "--- Help: tail the app/runtime logs ---"
+            echo "az webapp log tail --name ${AZURE_WEBAPP_NAME} --resource-group ${RESOURCE_GROUP}"
             exit 1
           fi
