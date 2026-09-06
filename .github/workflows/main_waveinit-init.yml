@@ -253,10 +253,17 @@ jobs:
             --resource-group "${RESOURCE_GROUP}" \
             --startup-file "python -m gunicorn -k uvicorn.workers.UvicornWorker --bind=0.0.0.0:8000 main:app --timeout 120"
 
-      - name: Deploy source package with Oryx build
+      - name: Deploy source package with Oryx build (async)
         shell: bash
         run: |
-          echo "Deploying source package and executing Oryx remote build..."
+          # Oryx remote build for the heavy ML requirements (torch, mediapipe,
+          # transformers, faiss, sentence-transformers, ...) takes minutes and
+          # blows past the SCM front-end's ~230s synchronous request window
+          # (HTTP 504.0 GatewayTimeout). Deploy asynchronously: the zip is
+          # pushed immediately, Oryx builds it in the background, and the
+          # "Verify live service health" step below polls until the freshly
+          # built app responds.
+          echo "Deploying source package asynchronously and executing Oryx remote build..."
           az webapp deploy \
             --name "${AZURE_WEBAPP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
@@ -264,6 +271,7 @@ jobs:
             --type zip \
             --clean true \
             --restart true \
+            --async true \
             --timeout 1200
 
       - name: Inspect deployment status and Oryx logs
@@ -287,27 +295,33 @@ jobs:
           HEALTH_URL="https://${APP_HOSTNAME}/health"
           echo "Verifying live service health at: ${HEALTH_URL}"
 
-          MAX_ATTEMPTS=30
-          DELAY=10
+          # Async + Oryx remote build can take 10-20 minutes for these ML deps;
+          # poll up to 25 minutes. Once the new app is live, /health must report
+          # the real engine-readiness fields (status / yolo_engine / proctoring)
+          # so an old deployment is never mistaken for a successful build.
+          MAX_ATTEMPTS=100
+          DELAY=15
           SUCCESS=0
 
           for ((i=1; i<=MAX_ATTEMPTS; i++)); do
             echo "Health probe attempt $i of $MAX_ATTEMPTS..."
 
-            HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" --max-time 15 "${HEALTH_URL}" || echo -e "curl_error\n000")
+            HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" --max-time 20 "${HEALTH_URL}" || echo -e "curl_error\n000")
             HTTP_STATUS=$(echo "$HTTP_RESPONSE" | tail -n 1)
             BODY=$(echo "$HTTP_RESPONSE" | head -n -1)
 
             echo "HTTP Status: ${HTTP_STATUS}"
             echo "Response Body: ${BODY}"
 
-            if [ "$HTTP_STATUS" = "200" ]; then
-              echo "✅ Service is HEALTHY and returned HTTP 200!"
+            if [ "$HTTP_STATUS" = "200" ] && \
+               echo "$BODY" | grep -q "yolo_engine" && \
+               echo "$BODY" | grep -q "proctoring"; then
+              echo "✅ Service is HEALTHY and reports engine state (new build live)!"
               SUCCESS=1
               break
             fi
 
-            echo "Waiting for service to stabilize (status: ${HTTP_STATUS}). Retrying in ${DELAY}s..."
+            echo "Build still in progress or payload invalid (status: ${HTTP_STATUS}). Retrying in ${DELAY}s..."
             sleep $DELAY
           done
 
