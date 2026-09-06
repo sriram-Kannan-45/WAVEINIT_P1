@@ -35,7 +35,10 @@ jobs:
         run: |
           npm install
           npm run build --if-present
-          npm run test --if-present -- --passWithNoTests
+          # tests/trainerSearch.test.js is a data-dependent integration suite
+          # (requires a live populated DB + JWT_SECRET) — excluded from the CI
+          # gate; run it locally/manually. Remaining suites are unit tests.
+          npm run test --if-present -- --testPathIgnorePatterns=tests/trainerSearch.test.js
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
