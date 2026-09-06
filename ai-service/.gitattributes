@@ -1,0 +1,5 @@
+# Excluded from the Azure deployment ZIP (built via `git archive`), which
+# honors export-ignore. Ultralytics/settings.json stores local dev machine
+# paths (D:\...) and a personal UUID — junk that must not ship to production.
+Ultralytics/** export-ignore
+test_output/** export-ignore

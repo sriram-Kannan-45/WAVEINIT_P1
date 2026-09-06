@@ -82,6 +82,11 @@ jobs:
               "requirements.txt",
               "main.py",
               ".deployment",
+              # startup.sh installs the system GL/graphics libs (libgl1,
+              # libglib2.0-0) required by OpenCV/MediaPipe and activates the
+              # Oryx-built antenv. If it is missing the zip ships with no way to
+              # bring CV engines up (health would report libGL.so.1 missing).
+              "startup.sh",
               # CV engine models are REQUIRED at runtime. yolov8n.pt is the
               # git-tracked COCO weights (see .gitignore negation); the mediapipe
               # .task files are tracked too. If any of these go missing the
@@ -248,10 +253,18 @@ jobs:
       - name: Configure FastAPI startup command
         shell: bash
         run: |
+          # Run startup.sh (shipped in the deployment package), NOT a raw
+          # gunicorn command. startup.sh installs the system graphics/GL libs
+          # (libgl1, libglib2.0-0, libxcb1, libxext6) that OpenCV/MediaPipe
+          # require at runtime — the Oryx-built image does not ship libGL.so.1,
+          # and without it both CV engines fail to initialize and /health
+          # reports proctoring/yolo engine "unavailable" with
+          # "libGL.so.1: cannot open shared object file". It also activates the
+          # Oryx-built antenv virtualenv and applies headless env vars.
           az webapp config set \
             --name "${AZURE_WEBAPP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
-            --startup-file "python -m gunicorn -k uvicorn.workers.UvicornWorker --bind=0.0.0.0:8000 main:app --timeout 120"
+            --startup-file "startup.sh"
 
       - name: Deploy source package with Oryx build (async)
         shell: bash
@@ -296,9 +309,12 @@ jobs:
           echo "Verifying live service health at: ${HEALTH_URL}"
 
           # Async + Oryx remote build can take 10-20 minutes for these ML deps;
-          # poll up to 25 minutes. Once the new app is live, /health must report
-          # the real engine-readiness fields (status / yolo_engine / proctoring)
-          # so an old deployment is never mistaken for a successful build.
+          # poll up to 25 minutes. The gate is STRICT: /health must report BOTH
+          # engines actually ready ("yolo_engine":"available" and
+          # "proctoring_engine":"available"), not merely contain the keys —
+          # matching the truthfulness requirement (no "ready" claims while the
+          # engines are down). startup.sh installs libGL etc., so with a clean
+          # build both engines must come up.
           MAX_ATTEMPTS=100
           DELAY=15
           SUCCESS=0
@@ -314,18 +330,18 @@ jobs:
             echo "Response Body: ${BODY}"
 
             if [ "$HTTP_STATUS" = "200" ] && \
-               echo "$BODY" | grep -q "yolo_engine" && \
-               echo "$BODY" | grep -q "proctoring"; then
-              echo "✅ Service is HEALTHY and reports engine state (new build live)!"
+               echo "$BODY" | grep -q '"yolo_engine":"available"' && \
+               echo "$BODY" | grep -q '"proctoring_engine":"available"'; then
+              echo "✅ Service is HEALTHY with YOLO and proctoring engines ready!"
               SUCCESS=1
               break
             fi
 
-            echo "Build still in progress or payload invalid (status: ${HTTP_STATUS}). Retrying in ${DELAY}s..."
+            echo "Build still in progress or engines not ready (status: ${HTTP_STATUS}). Retrying in ${DELAY}s..."
             sleep $DELAY
           done
 
           if [ "$SUCCESS" -ne 1 ]; then
-            echo "❌ Service health check failed after $((MAX_ATTEMPTS * DELAY)) seconds!"
+            echo "❌ Service health check failed (engines not ready) after $((MAX_ATTEMPTS * DELAY)) seconds!"
             exit 1
           fi

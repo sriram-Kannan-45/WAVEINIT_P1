@@ -70,6 +70,19 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_556981C8B5F247E988832183DE303034 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_863B4D16255C43EFB9EC76A74D5FD146 }}
 
+      - name: Set AI service URL app setting
+        uses: azure/appservice-settings@v1
+        with:
+          app-name: 'waveinint'
+          app-settings-json: |
+            [
+              {
+                "name": "AI_SERVICE_URL",
+                "value": "https://waveinit-init.azurewebsites.net",
+                "slotSetting": false
+              }
+            ]
+
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
