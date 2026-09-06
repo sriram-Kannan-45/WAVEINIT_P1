@@ -32,7 +32,12 @@ const DistributedLock = sequelize.define('DistributedLock', {
     comment: 'Logical lock name, e.g. "leader:cron:monitor-auto-submit"',
   },
   token: {
-    type: DataTypes.STRING(64),
+    // Sized to host `getInstanceId()` (Azure WEBSITE_INSTANCE_ID is a 64-char
+    // hex hash) plus a pid/nonce suffix: `{instanceId}-{suffix}`. A 64-char
+    // column overflowed (PG 22001 value too long for character varying(64))
+    // and broke every leader-guarded cron. 255 gives ample headroom while
+    // keeping the uniqueness/ownership guarantees (release still matches token).
+    type: DataTypes.STRING(255),
     allowNull: false,
     comment: 'Claimer instance token (INSTANCE_ID + pid + nonce). Release must match.',
   },

@@ -82,6 +82,14 @@ jobs:
               "requirements.txt",
               "main.py",
               ".deployment",
+              # CV engine models are REQUIRED at runtime. yolov8n.pt is the
+              # git-tracked COCO weights (see .gitignore negation); the mediapipe
+              # .task files are tracked too. If any of these go missing the
+              # archive would silently ship a service whose health reports
+              # yolo_engine/proctoring_engine unavailable.
+              "models/yolov8n.pt",
+              "models/face_landmarker.task",
+              "models/pose_landmarker_lite.task",
           }
 
           missing = required - names
@@ -89,6 +97,22 @@ jobs:
           if missing:
               raise RuntimeError(
                   f"Missing deployment files: {sorted(missing)}"
+              )
+
+          # Guard against 0-byte placeholders being committed in place of real
+          # model weights. (yolov8n.pt ≈ 19 MB, the landmarker models ≈ 4-6 MB.)
+          minimum_weights = {
+              "models/yolov8n.pt": 5_000_000,
+              "models/face_landmarker.task": 1_000_000,
+              "models/pose_landmarker_lite.task": 1_000_000,
+          }
+          undersized = [
+              name for name, minimum in minimum_weights.items()
+              if archive.getinfo(name).file_size < minimum
+          ]
+          if undersized:
+              raise RuntimeError(
+                  f"Model files are unexpectedly small: {undersized}"
               )
 
           forbidden_roots = {

@@ -130,8 +130,13 @@ AI_INSTANCE_ID = get_instance_id()
 async def health_check():
     """Service health check endpoint for Azure App Service, backend probes, and monitoring."""
     provider = "Gemini -> Groq" if get_gemini_api_key() else "Groq" if os.getenv("GROQ_API_KEY") else "Unconfigured"
+    # Overall readiness must reflect REAL engine/provider state, not a stale
+    # hardcoded "ready". The service is degraded if either CV engine failed to
+    # initialize (missing/blocked model) — Surface that instead of lying.
+    engine_up = YOLO_ENGINE_AVAILABLE and PROCTORING_ENGINE_AVAILABLE
+    status = "healthy" if engine_up else ("degraded" if (YOLO_ENGINE_AVAILABLE or PROCTORING_ENGINE_AVAILABLE) else "unhealthy")
     return {
-        "status": "healthy",
+        "status": status,
         "service": "LMS AI Quiz & Proctoring Service",
         "ai_service": "ready",
         "backend": "ready",
@@ -140,7 +145,9 @@ async def health_check():
         "timestamp": datetime.now().isoformat(),
         "provider": provider,
         "yolo_engine": "available" if YOLO_ENGINE_AVAILABLE else "unavailable",
-        "proctoring_engine": "available" if PROCTORING_ENGINE_AVAILABLE else "unavailable"
+        "proctoring_engine": "available" if PROCTORING_ENGINE_AVAILABLE else "unavailable",
+        "yolo_status": YOLO_ENGINE_STATUS,
+        "proctoring_detail": PROCTORING_ENGINE_STATUS,
     }
 
 @app.get("/ready")
@@ -1643,19 +1650,34 @@ def validate_startup_config():
     log.info("Ã¢Å“â€¦ Configuration and environment are valid.")
 
 # Ã¢â€â‚¬Ã¢â€â‚¬ YOLOv8 Proctoring Engine & MediaPipe Endpoints Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+YOLO_ENGINE_AVAILABLE = False
+YOLO_ENGINE_STATUS = None
 try:
     from inference.yolo_detector import yolo_engine
-    YOLO_ENGINE_AVAILABLE = True
+    YOLO_ENGINE_AVAILABLE = bool(yolo_engine and yolo_engine.initialized_ok)
+    YOLO_ENGINE_STATUS = yolo_engine.get_status() if YOLO_ENGINE_AVAILABLE else None
+    if not YOLO_ENGINE_AVAILABLE:
+        log.warning("YOLO engine imported but not ready (model failed to load): %s", getattr(yolo_engine, "init_error", None))
 except Exception as e:
     log.warning(f"YOLO Proctoring engine init warning: {e}")
     YOLO_ENGINE_AVAILABLE = False
 
+PROCTORING_ENGINE_AVAILABLE = False
+PROCTORING_ENGINE_STATUS = None
 try:
     from inference.proctoring_detector import proctor_engine, FACE_MODEL_PATH, POSE_MODEL_PATH
-    PROCTORING_ENGINE_AVAILABLE = True
+    PROCTORING_ENGINE_AVAILABLE = bool(proctor_engine and proctor_engine.initialized_ok)
+    PROCTORING_ENGINE_STATUS = {
+        "available": PROCTORING_ENGINE_AVAILABLE,
+        "face_model_path": FACE_MODEL_PATH,
+        "error": getattr(proctor_engine, "init_error", None) if proctor_engine is not None else "proctor_engine is None",
+    }
+    if not PROCTORING_ENGINE_AVAILABLE:
+        log.warning("Proctoring engine imported but not ready: %s", PROCTORING_ENGINE_STATUS.get("error"))
 except Exception as e:
     log.warning(f"MediaPipe Proctoring engine init warning: {e}")
     PROCTORING_ENGINE_AVAILABLE = False
+    PROCTORING_ENGINE_STATUS = {"available": False, "error": str(e)}
 
 
 # Ã¢â€â‚¬Ã¢â€â‚¬ Person-presence fallback for the MediaPipe laptop pipeline Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬

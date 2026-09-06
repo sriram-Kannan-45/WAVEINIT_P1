@@ -75,32 +75,42 @@ class YOLOProctorEngine:
 
     def _find_model_file(self) -> Optional[str]:
         """
-        Locates the specified YOLO model weights file across candidate paths,
-        strictly prioritizing yolo11s.pt.
+        Locates the YOLO model weights file across deterministic project paths.
+
+        Resolution order:
+          1. YOLO_MODEL_PATH env var (explicit override, e.g. an Azure setting).
+          2. The deployed, git-tracked `models/yolov8n.pt` (COCO: person=0,
+             laptop/tv=62-63, cell phone=67) — the artifact that actually ships
+             with the service.
+          3. `models/` inside the service root for other local/SSD weights.
+          4. A sibling weights directory under the service root.
+
+        NOTE: previous candidates pointed at stale absolute Windows paths and a
+        non-shipped `yolo11s.pt`, which forced a network auto-download at import
+        time (blocked/slow on Azure → engine silently unavailable). We no longer
+        depend on that network fallback for normal operation.
         """
         script_dir = os.path.dirname(os.path.abspath(__file__))
         service_root = os.path.dirname(script_dir)
-        workspace_root = os.path.dirname(service_root)
 
         candidates = [
-            # Specified yolo11s locations
-            os.path.join(service_root, "New folder (8)", "yolo11s.pt"),
-            os.path.join(workspace_root, "ai-service", "New folder (8)", "yolo11s.pt"),
-            os.path.join(service_root, "models", "yolo11s.pt"),
-            r"d:\New folder (8)\AI-Based-online-exam-proctoring-System\futurproctor\proctoring\ml_models\yolo11s.pt",
-            # Fallback candidates
+            os.getenv("YOLO_MODEL_PATH"),
             os.path.join(service_root, "models", "yolov8n.pt"),
-            os.path.join(service_root, "New folder (8)", "yolov8n.pt"),
-            os.path.join(workspace_root, "newfolder", "8", "yolov8n.pt"),
+            os.path.join(service_root, "models", "yolo11s.pt"),
+            os.path.join(service_root, "models", "yolov8n-seg.pt"),
+            os.path.join(script_dir, "models", "yolov8n.pt"),
         ]
 
-        env_model = os.getenv("YOLO_MODEL_PATH")
-        if env_model:
-            candidates.insert(0, env_model)
-
+        seen = []
         for path in candidates:
-            if os.path.exists(path) and os.path.isfile(path) and os.path.getsize(path) > 1000:
-                return os.path.abspath(path)
+            if not path:
+                continue
+            abs_path = os.path.abspath(path)
+            if abs_path in seen:
+                continue
+            seen.append(abs_path)
+            if os.path.exists(abs_path) and os.path.isfile(abs_path) and os.path.getsize(abs_path) > 1000:
+                return abs_path
         return None
 
     def _load_model(self):
@@ -114,8 +124,12 @@ class YOLOProctorEngine:
 
         model_file = self._find_model_file()
         if not model_file:
-            logger.info("Local model file not found in candidates, defaulting to 'yolo11s.pt' for automatic download")
-            model_file = "yolo11s.pt"
+            logger.warning(
+                "Local YOLO model not found in candidates. Add models/yolov8n.pt or set "
+                "YOLO_MODEL_PATH. Falling back to downloading 'yolov8n.pt' so the engine "
+                "can still start offline-capable."
+            )
+            model_file = "yolov8n.pt"
 
         self.model_path = model_file
         try:

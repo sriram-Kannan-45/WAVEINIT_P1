@@ -1031,6 +1031,11 @@ class MediaPipeProctorEngine:
 
         self.sessions: Dict[str, SessionState] = {}
 
+        # Health/readiness mirrors yolo_detector.YOLOProctorEngine so the
+        # service health endpoint can report real (not import-time) readiness.
+        self.initialized_ok = False
+        self.init_error = None
+
         # Optional fallback that proves a person/occupant is present when the
         # FaceLandmarker returns 0 faces. Signature: detector(frame_bgr) ->
         # (person_present: bool, person_count: int) or None.
@@ -1062,8 +1067,12 @@ class MediaPipeProctorEngine:
             self.detector = self.FaceLandmarker.create_from_options(
                 self.options
             )
+            self.initialized_ok = True
+            self.init_error = None
             logger.info("MediaPipe FaceLandmarker loaded: %s", self.model_path)
-        except Exception:
+        except Exception as exc:
+            self.initialized_ok = False
+            self.init_error = f"FaceLandmarker creation failed: {exc}"
             logger.exception("Could not create FaceLandmarker")
             raise
 
@@ -2397,7 +2406,6 @@ def resolve_model_path(custom_path: Optional[str] = None) -> str:
             os.path.join(cwd, "face_landmarker.task"),
             os.path.join(cwd, "models", "face_landmarker.task"),
             os.path.join(cwd, "ai-service", "models", "face_landmarker.task"),
-            r"E:\agent\posture\face_landmarker.task",
         ]
     )
 

@@ -35,10 +35,39 @@ async function extractTextFromLocalFile(filePath, mimeType = '') {
 async function checkHealth() {
   const providers = require('./aiProvider').providerConfiguration();
   let extractionService = null;
-  try { extractionService = (await axios.get(`${AI_SERVICE_URL}/health`, {timeout: 5000})).data; } catch {}
-  return {available: providers.geminiConfigured || providers.groqConfigured,
-    details: {providers, providerOrder: ['gemini', 'groq'], extractionServiceAvailable: !!extractionService,
-      extractionService, connectivityVerified: false}};
+  let connectivityVerified = false;
+  let reachable = false;
+  try {
+    // Real connectivity probe to the Python AI service, not just local key
+    // presence. A separate App Service instance means AI_SERVICE_URL must be set
+    // (e.g. https://<ai-service>.azurewebsites.net); localhost only works when
+    // both run on the same host (docker-compose).
+    extractionService = (await axios.get(`${AI_SERVICE_URL}/health`, { timeout: 5000 })).data;
+    connectivityVerified = true;
+    // Reachable = the service answered and is not reporting an unhealthy state.
+    // "degraded" (e.g. one CV engine down) still serves AI text generation.
+    const st = String(extractionService?.status || '').trim();
+    reachable = !!extractionService && (st === '' || /^(healthy|ready|degraded)$/i.test(st));
+  } catch (_) {
+    reachable = false;
+    connectivityVerified = false;
+  }
+  // available reflects REAL AI-service connectivity. Previously it only checked
+  // whether the backend process had provider keys configured, so it reported
+  // "ready" while the AI service itself was unreachable (or, when keys were
+  // absent in prod, "unavailable" even though the AI service was fine).
+  const available = reachable;
+  return {
+    available,
+    details: {
+      providers,
+      providerOrder: ['gemini', 'groq'],
+      extractionServiceAvailable: reachable,
+      extractionService,
+      connectivityVerified,
+      aiServiceUrl: AI_SERVICE_URL,
+    },
+  };
 }
 
 function buildAIError(error) {

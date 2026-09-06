@@ -63,6 +63,10 @@ backend/uploads/materials/
 
 # Model weights
 *.pt
+# The COCO YOLO engine weights are required at runtime and ship with the
+# deployment (the AI-service build uses `git archive HEAD:ai-service`, which
+# only includes tracked files). Keep this file tracked.
+!ai-service/models/yolov8n.pt
 
 # Recordings & screenshots (binary, generated at runtime)
 backend/storage/recordings/

@@ -483,6 +483,9 @@ const startServer = async () => {
       await DistributedLock.sync({ alter: true });
       await TokenBlacklist.sync({ alter: true });
       await SocketRelayEvent.sync({ alter: true });
+      // Explicit migration: widen distributed_locks.token to VARCHAR(255) so
+      // tokens like `{64-char instanceId}-{suffix}` no longer overflow (PG 22001).
+      await require('../database/migrations/20260906-distributed-lock-token-length').up(sequelize.getQueryInterface());
       logger.info('scale-out tables ready (distributed_locks, token_blacklist, socket_relay_events)');
     } catch (e) {
       logger.error('Could not sync scale-out tables', { error: e.message });
