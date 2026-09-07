@@ -1652,31 +1652,41 @@ def validate_startup_config():
 # Ã¢â€â‚¬Ã¢â€â‚¬ YOLOv8 Proctoring Engine & MediaPipe Endpoints Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 YOLO_ENGINE_AVAILABLE = False
 YOLO_ENGINE_STATUS = None
+YOLO_INIT_ERROR = None
 try:
-    from inference.yolo_detector import yolo_engine
-    YOLO_ENGINE_AVAILABLE = bool(yolo_engine and yolo_engine.initialized_ok)
-    YOLO_ENGINE_STATUS = yolo_engine.get_status() if YOLO_ENGINE_AVAILABLE else None
+    from inference.yolo_detector import yolo_engine, YOLO_ENGINE_INIT_ERROR
+    YOLO_ENGINE_AVAILABLE = bool(yolo_engine and getattr(yolo_engine, "initialized_ok", False))
+    YOLO_INIT_ERROR = getattr(yolo_engine, "init_error", None) or YOLO_ENGINE_INIT_ERROR
+    YOLO_ENGINE_STATUS = yolo_engine.get_status() if YOLO_ENGINE_AVAILABLE else {
+        "status": "UNAVAILABLE",
+        "init_error": YOLO_INIT_ERROR or "YOLO engine not initialized"
+    }
     if not YOLO_ENGINE_AVAILABLE:
-        log.warning("YOLO engine imported but not ready (model failed to load): %s", getattr(yolo_engine, "init_error", None))
+        log.warning("YOLO engine imported but not ready: %s", YOLO_INIT_ERROR)
 except Exception as e:
     log.warning(f"YOLO Proctoring engine init warning: {e}")
     YOLO_ENGINE_AVAILABLE = False
+    YOLO_INIT_ERROR = str(e)
+    YOLO_ENGINE_STATUS = {"status": "ERROR", "init_error": str(e)}
 
 PROCTORING_ENGINE_AVAILABLE = False
 PROCTORING_ENGINE_STATUS = None
+PROCTORING_INIT_ERROR = None
 try:
-    from inference.proctoring_detector import proctor_engine, FACE_MODEL_PATH, POSE_MODEL_PATH
-    PROCTORING_ENGINE_AVAILABLE = bool(proctor_engine and proctor_engine.initialized_ok)
+    from inference.proctoring_detector import proctor_engine, FACE_MODEL_PATH, POSE_MODEL_PATH, PROCTOR_ENGINE_INIT_ERROR
+    PROCTORING_ENGINE_AVAILABLE = bool(proctor_engine and getattr(proctor_engine, "initialized_ok", False))
+    PROCTORING_INIT_ERROR = getattr(proctor_engine, "init_error", None) or PROCTOR_ENGINE_INIT_ERROR
     PROCTORING_ENGINE_STATUS = {
         "available": PROCTORING_ENGINE_AVAILABLE,
         "face_model_path": FACE_MODEL_PATH,
-        "error": getattr(proctor_engine, "init_error", None) if proctor_engine is not None else "proctor_engine is None",
+        "error": PROCTORING_INIT_ERROR if not PROCTORING_ENGINE_AVAILABLE else None,
     }
     if not PROCTORING_ENGINE_AVAILABLE:
-        log.warning("Proctoring engine imported but not ready: %s", PROCTORING_ENGINE_STATUS.get("error"))
+        log.warning("Proctoring engine imported but not ready: %s", PROCTORING_INIT_ERROR)
 except Exception as e:
     log.warning(f"MediaPipe Proctoring engine init warning: {e}")
     PROCTORING_ENGINE_AVAILABLE = False
+    PROCTORING_INIT_ERROR = str(e)
     PROCTORING_ENGINE_STATUS = {"available": False, "error": str(e)}
 
 

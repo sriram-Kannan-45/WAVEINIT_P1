@@ -236,6 +236,21 @@ jobs:
                 "name": "PYTHONUNBUFFERED",
                 "value": "1",
                 "slotSetting": false
+              },
+              {
+                "name": "POST_BUILD_COMMAND",
+                "value": "python -m pip uninstall -y opencv-python opencv-contrib-python && python -m pip install --no-cache-dir opencv-python-headless",
+                "slotSetting": false
+              },
+              {
+                "name": "PIP_CACHE_DIR",
+                "value": "/home/site/pip-cache",
+                "slotSetting": false
+              },
+              {
+                "name": "LD_LIBRARY_PATH",
+                "value": "/home/site/wwwroot/lib:/usr/lib/x86_64-linux-gnu",
+                "slotSetting": false
               }
             ]
 
@@ -248,23 +263,24 @@ jobs:
             --setting-names \
               WEBSITE_RUN_FROM_PACKAGE \
               WEBSITE_RUN_FROM_ZIP \
+              POST_BUILD_SCRIPT_PATH \
             --output none || true
 
       - name: Configure FastAPI startup command
         shell: bash
         run: |
-          # Run startup.sh (shipped in the deployment package), NOT a raw
-          # gunicorn command. startup.sh installs the system graphics/GL libs
-          # (libgl1, libglib2.0-0, libxcb1, libxext6) that OpenCV/MediaPipe
-          # require at runtime — the Oryx-built image does not ship libGL.so.1,
-          # and without it both CV engines fail to initialize and /health
-          # reports proctoring/yolo engine "unavailable" with
-          # "libGL.so.1: cannot open shared object file". It also activates the
-          # Oryx-built antenv virtualenv and applies headless env vars.
+          # Run startup.sh via bash, which activates the antenv virtualenv,
+          # sets headless environment variables, and launches Gunicorn with Uvicorn workers.
           az webapp config set \
             --name "${AZURE_WEBAPP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
             --startup-file "bash startup.sh"
+
+      - name: Wait for SCM stability
+        shell: bash
+        run: |
+          echo "Waiting 20 seconds for SCM container to settle after management configuration..."
+          sleep 20
 
       - name: Deploy source package with Oryx build (async)
         shell: bash

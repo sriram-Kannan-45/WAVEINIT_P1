@@ -99,6 +99,11 @@ class YOLOProctorEngine:
             os.path.join(service_root, "models", "yolo11s.pt"),
             os.path.join(service_root, "models", "yolov8n-seg.pt"),
             os.path.join(script_dir, "models", "yolov8n.pt"),
+            os.path.join(os.getcwd(), "models", "yolov8n.pt"),
+            os.path.join(os.getcwd(), "ai-service", "models", "yolov8n.pt"),
+            "/home/site/wwwroot/models/yolov8n.pt",
+            "/home/site/wwwroot/models/yolo11s.pt",
+            "/home/site/wwwroot/ai-service/models/yolov8n.pt",
         ]
 
         seen = []
@@ -528,4 +533,11 @@ class YOLOProctorEngine:
 
 
 # Global singleton instance
-yolo_engine = YOLOProctorEngine()
+YOLO_ENGINE_INIT_ERROR = None
+try:
+    yolo_engine = YOLOProctorEngine()
+    if not getattr(yolo_engine, "initialized_ok", False):
+        YOLO_ENGINE_INIT_ERROR = getattr(yolo_engine, "init_error", None) or "YOLO model failed to initialize"
+except Exception as _e:
+    YOLO_ENGINE_INIT_ERROR = f"{type(_e).__name__}: {_e}"
+    yolo_engine = None

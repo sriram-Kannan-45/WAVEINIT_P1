@@ -12,17 +12,10 @@ export OPENCV_VIDEOIO_PRIORITY_MSMF="0"
 export YOLO_VERBOSE="False"
 export PYTHONUNBUFFERED="1"
 export GLOG_minloglevel="2"
+export TF_CPP_MIN_LOG_LEVEL="2"
 
-# 0. Install system graphics & GL libraries across Debian/Ubuntu or Azure Linux / Mariner
-if command -v apt-get >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq && apt-get install -y -qq --no-install-recommends libgl1 libgl1-mesa-glx libglib2.0-0 libxcb1 libxext6 libsm6 libxrender1 || true
-elif command -v tdnf >/dev/null 2>&1; then
-    tdnf install -y mesa-libGL glib2 libxcb libXext || true
-elif command -v yum >/dev/null 2>&1; then
-    yum install -y mesa-libGL glib2 libxcb libXext || true
-fi
-
+# Configure library and python search paths for Azure App Service
+export LD_LIBRARY_PATH="/home/site/wwwroot/lib:$(pwd)/lib:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
 export PYTHONPATH="/home/site/wwwroot:$(pwd):$PYTHONPATH"
 
 # 1. Activate Python virtual environment safely if present (do not fail if absent)

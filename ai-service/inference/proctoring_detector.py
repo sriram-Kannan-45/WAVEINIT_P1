@@ -1071,10 +1071,29 @@ class MediaPipeProctorEngine:
             self.init_error = None
             logger.info("MediaPipe FaceLandmarker loaded: %s", self.model_path)
         except Exception as exc:
-            self.initialized_ok = False
-            self.init_error = f"FaceLandmarker creation failed: {exc}"
-            logger.exception("Could not create FaceLandmarker")
-            raise
+            try:
+                logger.info("Retrying FaceLandmarker creation with model_asset_buffer...")
+                with open(self.model_path, "rb") as f:
+                    model_buf = f.read()
+                buf_options = self.FaceLandmarkerOptions(
+                    base_options=self.BaseOptions(model_asset_buffer=model_buf),
+                    running_mode=self.RunningMode.IMAGE,
+                    num_faces=1,
+                    min_face_detection_confidence=0.5,
+                    min_face_presence_confidence=0.5,
+                    min_tracking_confidence=0.5,
+                    output_face_blendshapes=False,
+                    output_facial_transformation_matrixes=False,
+                )
+                self.detector = self.FaceLandmarker.create_from_options(buf_options)
+                self.initialized_ok = True
+                self.init_error = None
+                logger.info("MediaPipe FaceLandmarker loaded via model_asset_buffer: %s", self.model_path)
+            except Exception as buf_exc:
+                self.initialized_ok = False
+                self.init_error = f"FaceLandmarker creation failed: {exc} (buffer retry: {buf_exc})"
+                logger.exception("Could not create FaceLandmarker: %s", self.init_error)
+                raise RuntimeError(self.init_error) from exc
 
     PERSON_CHECK_INTERVAL_SECONDS = 1.0
 
@@ -2406,6 +2425,8 @@ def resolve_model_path(custom_path: Optional[str] = None) -> str:
             os.path.join(cwd, "face_landmarker.task"),
             os.path.join(cwd, "models", "face_landmarker.task"),
             os.path.join(cwd, "ai-service", "models", "face_landmarker.task"),
+            "/home/site/wwwroot/models/face_landmarker.task",
+            "/home/site/wwwroot/ai-service/models/face_landmarker.task",
         ]
     )
 
@@ -2901,9 +2922,11 @@ def run_monitoring_session(config=None):
 FACE_MODEL_PATH = resolve_model_path()
 POSE_MODEL_PATH = None  # Pose model is not used by the rewritten engine
 
+PROCTOR_ENGINE_INIT_ERROR = None
 try:
     proctor_engine = MediaPipeProctorEngine(FACE_MODEL_PATH)
 except Exception as _init_err:
+    PROCTOR_ENGINE_INIT_ERROR = f"{type(_init_err).__name__}: {_init_err}"
     logger.warning("Could not create module-level proctor_engine: %s", _init_err)
     proctor_engine = None
 
