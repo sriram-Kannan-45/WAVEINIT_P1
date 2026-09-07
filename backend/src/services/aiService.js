@@ -6,7 +6,7 @@ const mammoth = require('mammoth');
 const { normalizeQuizDifficulty, normalizeGeneratedQuestionDifficulty } = require('../utils/quizDifficulty');
 require('dotenv').config();
 
-const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+const AI_SERVICE_URL = (process.env.AI_SERVICE_URL || 'http://localhost:8000').replace(/\/+$/, '');
 const AI_TIMEOUT = 300000;
 
 async function extractTextFromLocalFile(filePath, mimeType = '') {
@@ -44,10 +44,9 @@ async function checkHealth() {
     // both run on the same host (docker-compose).
     extractionService = (await axios.get(`${AI_SERVICE_URL}/health`, { timeout: 5000 })).data;
     connectivityVerified = true;
-    // Reachable = the service answered and is not reporting an unhealthy state.
-    // "degraded" (e.g. one CV engine down) still serves AI text generation.
     const st = String(extractionService?.status || '').trim();
-    reachable = !!extractionService && (st === '' || /^(healthy|ready|degraded)$/i.test(st));
+    const aiSt = String(extractionService?.ai_service || '').trim();
+    reachable = !!extractionService && (aiSt === 'ready' || st === '' || /^(healthy|ready|degraded)$/i.test(st));
   } catch (_) {
     reachable = false;
     connectivityVerified = false;
@@ -249,15 +248,60 @@ const aiService = {
 
     console.log(`[GENERATION_REQUEST] id=${requestId} count=${count} difficulty=${diffUpper} languages=[${langs.join(', ')}]`);
 
-    let feedback='';
-    for (let attempt=0;attempt<3;attempt++) {
-      try {return await this._callGeminiDirectCodingGeneration(cleanPrompt, count, diffUpper, langs, null, require('../config/aiProviders').getGeminiModel(), requestId,feedback);}
-      catch(error) {
-        if(error.code!=='CODING_VALIDATION_FAILED') throw error;
-        feedback=error.message;
+    // 1. Prefer hosted AI Service if reachable (where Gemini/Groq are configured)
+    try {
+      console.log(`[aiService] Delegating coding problem generation to AI service at ${AI_SERVICE_URL}`);
+      const response = await axios.post(`${AI_SERVICE_URL}/generate-coding-problems`, {
+        prompt: cleanPrompt,
+        numProblems: count,
+        difficulty: diffUpper,
+        languages: langs.join(','),
+      }, {
+        timeout: AI_TIMEOUT,
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (response.data && Array.isArray(response.data.problems) && response.data.problems.length > 0) {
+        const rawProblems = response.data.problems.map((p) => {
+          const langSols = { ...(p.languageSolutions || {}) };
+          if (Array.isArray(p.languages)) {
+            for (const item of p.languages) {
+              if (item && item.language) langSols[item.language] = item;
+            }
+          }
+          return {
+            ...p,
+            languageSolutions: langSols,
+          };
+        });
+        const normalized = await this._normalizeAIProblems(rawProblems.slice(0, count), langs, cleanPrompt, diffUpper, requestId);
+        if (normalized.problems && normalized.problems.length >= count) {
+          console.log(`[aiService] AI service returned ${normalized.problems.length} validated coding problems`);
+          return normalized;
+        }
+      }
+    } catch (aiServiceErr) {
+      console.warn(`[aiService] AI microservice call failed (${aiServiceErr.message}), checking local fallback...`);
+      const hasLocalKeys = require('../config/aiProviders').getGeminiApiKey() || process.env.GROQ_API_KEY;
+      if (!hasLocalKeys) {
+        throw buildAIError(aiServiceErr);
       }
     }
-    throw Object.assign(new Error('The AI could not generate coding problems with passing reference solutions. Please retry.'),{status:502,code:'CODING_VALIDATION_EXHAUSTED'});
+
+    // 2. Fallback: Direct generation via local aiProvider if keys are configured
+    let feedback = '';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await this._callGeminiDirectCodingGeneration(
+          cleanPrompt, count, diffUpper, langs, null,
+          require('../config/aiProviders').getGeminiModel(), requestId, feedback
+        );
+      } catch (error) {
+        if (error.code !== 'CODING_VALIDATION_FAILED') throw error;
+        feedback = error.message;
+      }
+    }
+    throw Object.assign(new Error('The AI could not generate coding problems with passing reference solutions. Please retry.'), { status: 502, code: 'CODING_VALIDATION_EXHAUSTED' });
   },
 
   async _callGeminiDirectCodingGeneration(cleanPrompt, count, difficulty, langs, apiKey, modelName, requestId, feedback = '') {

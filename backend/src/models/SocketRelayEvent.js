@@ -71,21 +71,10 @@ const SocketRelayEvent = sequelize.define('SocketRelayEvent', {
     field: 'claimed_at',
     comment: 'When the row was claimed; used to requeue rows stuck after a crash',
   },
-  createdAt: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    field: 'created_at',
-  },
-  updatedAt: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    field: 'updated_at',
-  },
 }, {
   tableName: 'socket_relay_events',
   timestamps: true,
-  createdAt: 'created_at',
-  updatedAt: 'updated_at',
+  underscored: true,
   indexes: [
     { fields: ['status', 'created_at'] },
     { fields: ['target'] },

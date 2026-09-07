@@ -18,7 +18,7 @@ const { validateEmail } = require('../utils/validators');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 
 const BCRYPT_COST = 12;
-const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+const AI_SERVICE_URL = (process.env.AI_SERVICE_URL || 'http://localhost:8000').replace(/\/+$/, '');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 

@@ -26,7 +26,7 @@ const BROWSER_EVENT_TYPES = new Set(['TAB_SWITCH', 'FULLSCREEN_EXIT', 'WINDOW_BL
 const BROWSER_SWITCH_LIMIT = 3;
 const BROWSER_SWITCH_PENALTY = 10;
 
-const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
+const AI_SERVICE_URL = (process.env.AI_SERVICE_URL || 'http://localhost:8000').replace(/\/+$/, '');
 
 // ── Exact Eye + Head Duration Scoring Helpers ──────────────────────────────
 

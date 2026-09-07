@@ -264,7 +264,7 @@ jobs:
           az webapp config set \
             --name "${AZURE_WEBAPP_NAME}" \
             --resource-group "${RESOURCE_GROUP}" \
-            --startup-file "startup.sh"
+            --startup-file "bash startup.sh"
 
       - name: Deploy source package with Oryx build (async)
         shell: bash

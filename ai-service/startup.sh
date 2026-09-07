@@ -13,10 +13,14 @@ export YOLO_VERBOSE="False"
 export PYTHONUNBUFFERED="1"
 export GLOG_minloglevel="2"
 
-# 0. Install system graphics & GL libraries if running on a Debian/Ubuntu container
+# 0. Install system graphics & GL libraries across Debian/Ubuntu or Azure Linux / Mariner
 if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq && apt-get install -y -qq --no-install-recommends libgl1 libglib2.0-0 libxcb1 libxext6 || true
+    apt-get update -qq && apt-get install -y -qq --no-install-recommends libgl1 libgl1-mesa-glx libglib2.0-0 libxcb1 libxext6 libsm6 libxrender1 || true
+elif command -v tdnf >/dev/null 2>&1; then
+    tdnf install -y mesa-libGL glib2 libxcb libXext || true
+elif command -v yum >/dev/null 2>&1; then
+    yum install -y mesa-libGL glib2 libxcb libXext || true
 fi
 
 export PYTHONPATH="/home/site/wwwroot:$(pwd):$PYTHONPATH"
@@ -42,6 +46,13 @@ elif [ -f "venv/bin/activate" ]; then
     . venv/bin/activate
 else
     echo "No local virtual environment script found; using container default Python: $(which python3 || which python)"
+fi
+
+# 1.5 Verify OpenCV headless works without missing native GL libraries
+if ! python -c "import cv2" >/dev/null 2>&1; then
+    echo "⚠️  OpenCV import failed; ensuring opencv-python-headless is installed..."
+    python -m pip uninstall -y opencv-python opencv-contrib-python 2>/dev/null || true
+    python -m pip install --no-cache-dir opencv-python-headless 2>/dev/null || true
 fi
 
 # 2. Determine target port (Azure sets PORT or WEBSITES_PORT, default to 8000)

@@ -475,6 +475,9 @@ const startServer = async () => {
 
     // Scale-out infrastructure tables — additive sync (distributed locks,
     // shared token blacklist, socket relay outbox). Created EARLY (right after
+
+    // Scale-out infrastructure tables — additive sync (distributed locks,
+    // shared token blacklist, socket relay outbox). Created EARLY (right after
     // the main schema sync) and BEFORE the (slow) per-table sync chain + cron /
     // relay startup, so leader-guarded jobs and the relay poller never hit a
     // missing table. Needed on every instance of a scale-out pool.
@@ -482,7 +485,7 @@ const startServer = async () => {
       const { DistributedLock, TokenBlacklist, SocketRelayEvent } = require('./models');
       await DistributedLock.sync({ alter: true });
       await TokenBlacklist.sync({ alter: true });
-      await SocketRelayEvent.sync({ alter: true });
+      await SocketRelayEvent.sync();
       // Explicit migration: widen distributed_locks.token to VARCHAR(255) so
       // tokens like `{64-char instanceId}-{suffix}` no longer overflow (PG 22001).
       await require('../database/migrations/20260906-distributed-lock-token-length').up(sequelize.getQueryInterface());
@@ -773,7 +776,7 @@ const startServer = async () => {
       const { CodingAssessment, CodingProblem, CodingProblemLanguage, CodingTestCase, CodingAttempt, CodingSubmission, CodingResult, CodingAiHelp } = require('./models');
       await CodingAssessment.sync({ alter: true });
       await CodingProblem.sync({ alter: true });
-      await CodingProblemLanguage.sync({ alter: true });
+      await CodingProblemLanguage.sync();
       await CodingTestCase.sync({ alter: true });
       await CodingAttempt.sync({ alter: true });
       await CodingSubmission.sync({ alter: true });

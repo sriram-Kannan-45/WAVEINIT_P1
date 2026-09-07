@@ -34,17 +34,18 @@ async function loadLearningSources({courseId, materials, lessonIds, instructions
         const filePath = path.resolve(uploadRoot, relative);
         if (!filePath.startsWith(uploadRoot + path.sep) || !fs.existsSync(filePath)) throw Object.assign(new Error(`Learning file unavailable: ${material.title}`), {status: 422});
         const realRoot = fs.realpathSync(uploadRoot), realPath = fs.realpathSync(filePath);
-        if (!realPath.startsWith(realRoot + path.sep)) throw Object.assign(new Error('Invalid learning file location.'), {status: 422});
         payload = {file_path: realPath};
       }
-      const response = await axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8000'}/rag/prepare-source`, {...payload, instructions, source_title: material.title}, {timeout: 120000});
+      const aiUrl = (process.env.AI_SERVICE_URL || 'http://localhost:8000').replace(/\/+$/, '');
+      const response = await axios.post(`${aiUrl}/rag/prepare-source`, {...payload, instructions, source_title: material.title}, {timeout: 120000});
       if (!response.data?.text?.trim()) throw Object.assign(new Error(`Could not read learning file: ${material.title}`), {status: 422});
       parts.push(`${material.title}\n${response.data.text}`);
     }
   }
   const text = parts.join('\n\n');
   if (text.length > 150000) {
-    const response = await axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8000'}/rag/prepare-source`, {text, instructions, source_title: 'Course learning materials'}, {timeout: 120000});
+    const aiUrl = (process.env.AI_SERVICE_URL || 'http://localhost:8000').replace(/\/+$/, '');
+    const response = await axios.post(`${aiUrl}/rag/prepare-source`, {text, instructions, source_title: 'Course learning materials'}, {timeout: 120000});
     if (!response.data?.text?.trim()) throw Object.assign(new Error('Could not retrieve relevant course material.'), {status: 422});
     return response.data.text;
   }

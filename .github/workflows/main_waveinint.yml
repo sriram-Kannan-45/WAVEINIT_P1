@@ -78,7 +78,7 @@ jobs:
             [
               {
                 "name": "AI_SERVICE_URL",
-                "value": "https://waveinit-init.azurewebsites.net",
+                "value": "https://waveinit-init-a9bfbeh3fgh0f0ca.centralindia-01.azurewebsites.net",
                 "slotSetting": false
               }
             ]

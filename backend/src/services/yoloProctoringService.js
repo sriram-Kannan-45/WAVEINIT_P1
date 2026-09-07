@@ -11,7 +11,7 @@ const relay = require('../socket/crossInstance');
 const logger = require('../utils/logger');
 const { ProctoringEvent, InterviewAlert, InterviewLog, ExamSession } = require('../models');
 
-const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
+const AI_SERVICE_URL = (process.env.AI_SERVICE_URL || 'http://localhost:8000').replace(/\/+$/, '');
 
 // In-memory throttling cache: key -> { lastEventType, lastSavedAt, count }
 const throttledEvents = new Map();
