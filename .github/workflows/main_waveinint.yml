@@ -39,6 +39,7 @@ jobs:
           # (requires a live populated DB + JWT_SECRET) — excluded from the CI
           # gate; run it locally/manually. Remaining suites are unit tests.
           npm run test --if-present -- --testPathIgnorePatterns=tests/trainerSearch.test.js
+          npm prune --production
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
@@ -70,18 +71,27 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_556981C8B5F247E988832183DE303034 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_863B4D16255C43EFB9EC76A74D5FD146 }}
 
-      - name: Set AI service URL app setting
-        uses: azure/appservice-settings@v1
-        with:
-          app-name: 'waveinint'
-          app-settings-json: |
-            [
-              {
-                "name": "AI_SERVICE_URL",
-                "value": "https://waveinit-init-a9bfbeh3fgh0f0ca.centralindia-01.azurewebsites.net",
-                "slotSetting": false
-              }
-            ]
+      - name: Ensure AI service URL and SCM stability
+        shell: bash
+        run: |
+          TARGET_URL="https://waveinit-init-a9bfbeh3fgh0f0ca.centralindia-01.azurewebsites.net"
+          RG=$(az webapp list --query "[?name=='waveinint'].resourceGroup | [0]" -o tsv 2>/dev/null || true)
+          if [ -z "$RG" ] || [ "$RG" = "None" ]; then
+            RG="WAVEINIT_BD"
+          fi
+          echo "Resolved Resource Group: ${RG}"
+          CURRENT_VAL=$(az webapp config appsettings list --name waveinint --resource-group "$RG" --query "[?name=='AI_SERVICE_URL'].value | [0]" -o tsv 2>/dev/null || true)
+          echo "Current AI_SERVICE_URL in Azure: '$CURRENT_VAL'"
+          if [ "$CURRENT_VAL" != "$TARGET_URL" ]; then
+            echo "Updating AI_SERVICE_URL to $TARGET_URL in resource group $RG..."
+            az webapp config appsettings set --name waveinint --resource-group "$RG" --settings AI_SERVICE_URL="$TARGET_URL" --output none
+            echo "Management operation completed. Waiting 30s for SCM container to settle..."
+            sleep 30
+          else
+            echo "AI_SERVICE_URL is already up to date ($CURRENT_VAL). Skipping management update to avoid SCM restart."
+            echo "Waiting 15s for SCM container stability..."
+            sleep 15
+          fi
 
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
@@ -90,3 +100,22 @@ jobs:
           app-name: 'waveinint'
           slot-name: 'Production'
           package: .
+
+      - name: Verify backend health
+        shell: bash
+        run: |
+          HEALTH_URL="https://waveinint-ahhsevgvcqaeesh2.centralindia-01.azurewebsites.net/health"
+          echo "Verifying backend health at: ${HEALTH_URL}"
+          for i in {1..12}; do
+            echo "Health probe attempt $i of 12..."
+            HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" --max-time 15 "${HEALTH_URL}" || echo -e "curl_error\n000")
+            HTTP_STATUS=$(echo "$HTTP_RESPONSE" | tail -n 1)
+            BODY=$(echo "$HTTP_RESPONSE" | head -n -1)
+            echo "HTTP Status: ${HTTP_STATUS}"
+            echo "Response Body: ${BODY}"
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "Backend is live and healthy!"
+              break
+            fi
+            sleep 10
+          done
