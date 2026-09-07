@@ -281,11 +281,7 @@ const aiService = {
         }
       }
     } catch (aiServiceErr) {
-      console.warn(`[aiService] AI microservice call failed (${aiServiceErr.message}), checking local fallback...`);
-      const hasLocalKeys = require('../config/aiProviders').getGeminiApiKey() || process.env.GROQ_API_KEY;
-      if (!hasLocalKeys) {
-        throw buildAIError(aiServiceErr);
-      }
+      console.warn(`[aiService] AI microservice call failed (${aiServiceErr.message}), falling back to direct provider generation...`);
     }
 
     // 2. Fallback: Direct generation via local aiProvider if keys are configured
