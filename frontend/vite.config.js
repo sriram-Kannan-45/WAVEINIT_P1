@@ -27,6 +27,9 @@ export default defineConfig({
     react(),
     tailwindcss()
   ],
+  esbuild: {
+    legalComments: 'none',
+  },
   resolve: {
     dedupe: ['react', 'react-dom']
   },

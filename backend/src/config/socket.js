@@ -30,9 +30,39 @@ const logger = require('../utils/logger');
 let ioInstance = null;
 
 const initializeSocket = (server) => {
+  const socketAllowedOrigins = new Set([
+    'https://www.waveinitlms.online',
+    'https://waveinitlms.online',
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'http://localhost:5175',
+    'http://localhost:3000',
+    'http://127.0.0.1:5173',
+    'http://127.0.0.1:5174',
+    'http://127.0.0.1:5175',
+    'https://localhost:5174',
+    ...[process.env.FRONTEND_URL, process.env.ALLOWED_ORIGINS, process.env.SECURITY_CORS_ORIGINS]
+      .filter(Boolean)
+      .flatMap(val => val.split(',').map(s => s.trim().replace(/\/+$/, ''))),
+  ]);
+
   const io = socketIO(server, {
     cors: {
-      origin: true,
+      origin: (origin, callback) => {
+        if (!origin || process.env.NODE_ENV !== 'production') return callback(null, true);
+        if (socketAllowedOrigins.has(origin)) return callback(null, true);
+        const isMatched = Array.from(socketAllowedOrigins).some(allowed => {
+          try {
+            const allowedHost = new URL(allowed).hostname;
+            const originHost = new URL(origin).hostname;
+            return originHost === allowedHost || originHost.endsWith(`.${allowedHost}`);
+          } catch (_) {
+            return false;
+          }
+        });
+        if (isMatched) return callback(null, true);
+        return callback(new Error('CORS not allowed'), false);
+      },
       credentials: true,
       methods: ['GET', 'POST'],
     },

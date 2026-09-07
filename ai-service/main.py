@@ -93,12 +93,31 @@ app = FastAPI(
     description="Enterprise-grade AI quiz generation service with advanced prompt engineering and caching"
 )
 
-# CORS Configuration
+# CORS Configuration - Strict whitelist of legitimate LMS origins
+ai_allowed_origins = [
+    "https://www.waveinitlms.online",
+    "https://waveinitlms.online",
+    "https://waveinint-ahhsevgvcqaeesh2.centralindia-01.azurewebsites.net",
+    "https://waveinint.azurewebsites.net",
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+    "http://127.0.0.1:3001",
+]
+custom_origins = os.getenv("ALLOWED_ORIGINS", "")
+if custom_origins:
+    for o in custom_origins.split(","):
+        o_clean = o.strip().rstrip("/")
+        if o_clean and o_clean not in ai_allowed_origins:
+            ai_allowed_origins.append(o_clean)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ai_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 

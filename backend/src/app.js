@@ -87,6 +87,8 @@ const rawFrontendUrls = [
 ].filter(Boolean).flatMap(val => val.split(',').map(s => s.trim().replace(/\/+$/, '')));
 
 const allowedOrigins = new Set([
+  'https://www.waveinitlms.online',
+  'https://waveinitlms.online',
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:5175',
@@ -126,7 +128,8 @@ app.use(cors({
       return callback(null, true);
     }
 
-    return callback(null, true); // Fallback: allow to prevent production breakage while still logging
+    // Reject unapproved origins in production to prevent cross-domain credential leakage
+    return callback(null, false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -134,6 +137,14 @@ app.use(cors({
   exposedHeaders: ['X-Request-Id'],
   maxAge: 86400,
 }));
+
+// Ensure sensitive authenticated API responses are not cached by intermediate proxies
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
 
 // Response Compression — Gzip/Deflate compression for payloads > 1KB
 app.use(compression({
