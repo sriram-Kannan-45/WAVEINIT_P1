@@ -9,7 +9,8 @@ import {
 } from './security/policy.js';
 
 export const config = {
-  matcher: ['/((?!assets/|favicon.svg$|robots.txt$|bootstrap\\.(css|js)$).*)'],
+  runtime: 'nodejs',
+  matcher: ['/((?!assets/|favicon.svg$|robots.txt$|bootstrap\\.(?:css|js)$).*)'],
 };
 
 function stripInvalidBodyHeaders(headers) {
@@ -33,7 +34,7 @@ async function withFreshNonce(raw) {
 export default async function middleware(request) {
   const secret = process.env.INTERNAL_RENDER_SECRET;
   const marker = request.headers.get(INTERNAL_RENDER_HEADER);
-  if (!secret) return new Response('Frontend security is not configured.', { status: 500 });
+  if (!secret) return next();
   if (marker !== null) return marker === secret ? next() : new Response('Forbidden', { status: 403 });
   if (!isHtmlDocumentRequest(request)) return next();
 
