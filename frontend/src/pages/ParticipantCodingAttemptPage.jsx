@@ -27,22 +27,14 @@ const AUTO_SAVE_INTERVAL = 10000
 const SERVER_SAVE_INTERVAL = 30000
 const WS_URL = BACKEND_ORIGIN
 
-// ── Structured Debug Logger ──
-const DEBUG_PREFIX = '[CodingAssessment Debug]'
-let apiCallCounter = 0
-let debugEnabled = false
-const setDebugLogEnabled = (v) => { debugEnabled = v }
+// ── Production-safe Debug Logger (no-ops in all builds) ──
 const debugLog = {
-  info: (...args) => { if (debugEnabled) console.log(`%c${DEBUG_PREFIX}`, 'color: #10B981; font-weight: bold;', ...args) },
-  warn: (...args) => { if (debugEnabled) console.warn(`%c${DEBUG_PREFIX}`, 'color: #F59E0B; font-weight: bold;', ...args) },
-  error: (...args) => { if (debugEnabled) console.error(`%c${DEBUG_PREFIX}`, 'color: #EF4444; font-weight: bold;', ...args) },
-  api: (action, details) => {
-    if (!debugEnabled) return
-    apiCallCounter++
-    console.log(`%c${DEBUG_PREFIX} [API Call #${apiCallCounter}]`, 'color: #3B82F6; font-weight: bold;', action, details || '')
-  },
-  nav: (from, to, reason) => { if (debugEnabled) console.log(`%c${DEBUG_PREFIX} [NAVIGATION]`, 'color: #8B5CF6; font-weight: bold;', `Question ${from} ➔ Question ${to}`, reason ? `(${reason})` : '') },
-  perf: (label, durationMs) => { if (debugEnabled) console.log(`%c${DEBUG_PREFIX} [PERFORMANCE]`, 'color: #EC4899; font-weight: bold;', `${label}: ${(durationMs / 1000).toFixed(2)}s (${durationMs.toFixed(0)}ms)`) },
+  info() {},
+  warn() {},
+  error() {},
+  api() {},
+  nav() {},
+  perf() {},
 }
 
 const authHeaders = (token) => ({
@@ -383,7 +375,6 @@ function ParticipantCodingAttemptInner({ user }) {
 
   useEffect(() => { questionStateRef.current = questionState }, [questionState])
   useEffect(() => { submittedRef.current = submitted }, [submitted])
-  useEffect(() => { setDebugLogEnabled(Boolean(debugMode)) }, [debugMode])
 
   const currentProblem = problems[currentProblemIndex] || null
   const currentQState = currentProblem ? questionState[currentProblem.id] || {} : {}

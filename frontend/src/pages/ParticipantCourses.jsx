@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
+import DOMPurify from 'dompurify'
 import {
   ArrowLeft, BookOpen, FileText, Sparkles, ClipboardList, Folder,
   PlayCircle, CheckCircle2, Clock, ExternalLink, Send, X, Eye,
@@ -2168,7 +2169,7 @@ function MaterialCard({ material }) {
 
       {m.materialType === 'NOTE' && m.content && (
         <div
-          dangerouslySetInnerHTML={{ __html: m.content }}
+          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(m.content, { ALLOWED_TAGS: ['p','br','strong','em','u','ol','ul','li','h1','h2','h3','h4','h5','h6','a','code','pre','blockquote','span','div','table','thead','tbody','tr','th','td','img'] }) }}
           style={{
             fontSize: 13.5,
             color: '#475569',

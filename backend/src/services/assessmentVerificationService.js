@@ -20,7 +20,8 @@ const qrGenerator = require('../utils/assessmentQrGenerator');
 const logger = require('../utils/logger');
 
 const SESSION_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const JWT_SECRET = process.env.JWT_SECRET || 'waveinit-assessment-verif-secret-key-2026';
+if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET environment variable is required');
+const JWT_SECRET = process.env.JWT_SECRET;
 
 class AssessmentVerificationService {
   async monitoringFor(session, options = {}) {

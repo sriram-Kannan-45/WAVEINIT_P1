@@ -66,6 +66,14 @@ export default defineConfig({
     // injecting global modulepreload tags for its bundled workers/languages.
     modulePreload: false,
     chunkSizeWarningLimit: 800,
+    // Strip console.* and debugger statements from production bundles
+    ...(process.env.NODE_ENV === 'production' ? {
+      minify: 'terser',
+      terserOptions: {
+        compress: { drop_console: true, drop_debugger: true },
+        format: { comments: false },
+      },
+    } : {}),
     rollupOptions: {
       output: {
         manualChunks(id) {
