@@ -1,3 +1,4 @@
+// Backend Service Entry Point
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -69,6 +70,7 @@ const analyticsRoutes = require('./routes/analyticsRoutes');
 
 const { ipNormalizerMiddleware } = require('./utils/ipHelper');
 
+// Backend Entry Point
 const app = express();
 // Trust only the configured number of direct reverse-proxy hops. Trusting every
 // hop lets a caller spoof X-Forwarded-For and bypass IP-based controls.
