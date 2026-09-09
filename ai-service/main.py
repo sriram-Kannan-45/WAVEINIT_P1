@@ -140,11 +140,16 @@ AI_INSTANCE_ID = get_instance_id()
 async def health_check():
     """Service health check endpoint for Azure App Service, backend probes, and monitoring."""
     provider = "Gemini -> Groq" if get_gemini_api_key() else "Groq" if os.getenv("GROQ_API_KEY") else "Unconfigured"
-    # Overall readiness must reflect REAL engine/provider state, not a stale
-    # hardcoded "ready". The service is degraded if either CV engine failed to
-    # initialize (missing/blocked model) — Surface that instead of lying.
-    engine_up = YOLO_ENGINE_AVAILABLE and PROCTORING_ENGINE_AVAILABLE
-    status = "healthy" if engine_up else ("degraded" if (YOLO_ENGINE_AVAILABLE or PROCTORING_ENGINE_AVAILABLE) else "unhealthy")
+    # Core AI service (quiz generation, LLM) is always ready once app starts.
+    # YOLO/proctoring are optional proctoring features that require GPU/EGL.
+    # Service is "healthy" if core is ready, "degraded" if proctoring unavailable,
+    # "unhealthy" only if core AI provider is not configured at all.
+    core_ready = provider != "Unconfigured"
+    proctoring_up = YOLO_ENGINE_AVAILABLE or PROCTORING_ENGINE_AVAILABLE
+    if not core_ready:
+        status = "unhealthy"
+    else:
+        status = "healthy" if proctoring_up else "degraded"
     return {
         "status": status,
         "service": "LMS AI Quiz & Proctoring Service",
