@@ -9,6 +9,8 @@ jest.mock('../src/services/aiQuizService', () => ({}));
 jest.mock('axios', () => ({ post: jest.fn() }));
 jest.mock('../src/config/socket', () => ({ getIO: () => null }));
 
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-for-ci';
+
 const { Op } = require('sequelize');
 const models = require('../src/models');
 models.sequelize = { literal: require('sequelize').literal, transaction: jest.fn(callback => callback({ LOCK: { UPDATE: 'UPDATE' } })) };
