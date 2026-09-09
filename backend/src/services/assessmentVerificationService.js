@@ -20,8 +20,7 @@ const qrGenerator = require('../utils/assessmentQrGenerator');
 const logger = require('../utils/logger');
 
 const SESSION_TTL_MS = 10 * 60 * 1000; // 10 minutes
-if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET environment variable is required');
-const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-placeholder';
 
 class AssessmentVerificationService {
   async monitoringFor(session, options = {}) {
@@ -110,6 +109,9 @@ class AssessmentVerificationService {
    * Issue a short-lived token for mobile socket pairing.
    */
   _issueSocketToken(session) {
+    if (!process.env.JWT_SECRET) {
+      throw new Error('JWT_SECRET environment variable is required');
+    }
     return jwt.sign(
       {
         sessionId: session.session_id,
