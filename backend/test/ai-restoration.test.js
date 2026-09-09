@@ -1,9 +1,16 @@
 jest.mock('../src/services/aiProvider',()=>({generateContent:jest.fn()}));
+jest.mock('axios',()=>({post:jest.fn(),get:jest.fn()}));
 const {generateContent}=require('../src/services/aiProvider');
+const axios=require('axios');
 const ai=require('../src/services/aiService');
 const packet=value=>({provider:'groq',data:{candidates:[{content:{parts:[{text:JSON.stringify(value)}]}}]}});
 const structure={courseTitle:'Photosynthesis',estimatedDuration:'2 hours',modules:[{title:'Plant energy',duration:'2 hours',description:'Energy in plants',subModules:[{title:'Light reactions',duration:'2 hours',topics:[{title:'Chlorophyll',duration:'2 hours',description:'Light absorption'}]}]}]};
-beforeEach(()=>jest.resetAllMocks());
+beforeEach(()=>{
+ jest.resetAllMocks();
+ // These tests cover the local provider fallback. Do not let a developer's
+ // running AI microservice change the path being exercised.
+ axios.post.mockRejectedValue(Object.assign(new Error('AI service disabled in unit test'),{code:'ECONNREFUSED'}));
+});
 test('course request and source reach live generation and independent review',async()=>{
  generateContent.mockResolvedValueOnce(packet(structure)).mockResolvedValueOnce(packet({valid:true,reason:''}));
  const result=await ai.generateCourseStructure({prompt:'Teach photosynthesis for two hours',text:'Today we studied chlorophyll and light absorption in plant cells.'});

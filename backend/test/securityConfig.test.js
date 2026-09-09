@@ -1,4 +1,6 @@
-const test = require('node:test');
+// CI runs Jest over test/, while the focused local command uses node --test.
+// Use Jest's global when present and Node's test runner otherwise.
+const test = global.test || require('node:test').test;
 const assert = require('node:assert/strict');
 const { createCorsOptions, getTrustProxyHops, isOriginAllowed, normaliseOrigin } = require('../src/config/security');
 

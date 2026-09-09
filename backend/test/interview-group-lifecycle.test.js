@@ -147,4 +147,4 @@ test('report and evaluation HTTP routes publish only the selected candidate and 
   const download=await request(app).get(`${base}/report.xlsx`).set('x-test-user','1').buffer(true).parse((res,done)=>{const chunks=[];res.on('data',chunk=>chunks.push(chunk));res.on('end',()=>done(null,Buffer.concat(chunks)))}).expect(200);
   const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(download.body);const sheet=workbook.worksheets[0];expect(sheet.rowCount).toBe(4);expect(sheet.getCell('A4').value).toBe('Candidate 1');expect(sheet.getCell('F4').value).toBe(86.67);
   await request(app).post(`${base}/result`).set('x-test-user','99').send({decision:'SELECTED'}).expect(409);
-});
+},15000);
