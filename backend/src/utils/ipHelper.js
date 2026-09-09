@@ -66,9 +66,9 @@ function normalizeIp(rawIp) {
  */
 function getClientIp(req) {
   if (!req) return '127.0.0.1';
-  const raw =
-    (req.headers && (req.headers['x-forwarded-for'] || req.headers['x-client-ip'] || req.headers['x-real-ip'])) ||
-    req.ip ||
+  // Express evaluates X-Forwarded-For only after applying its configured
+  // trust-proxy policy. Reading the header directly would accept a spoofed IP.
+  const raw = req.ip ||
     req.socket?.remoteAddress ||
     req.connection?.remoteAddress;
   return normalizeIp(raw);

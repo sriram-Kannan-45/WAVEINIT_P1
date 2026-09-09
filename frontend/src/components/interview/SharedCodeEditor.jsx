@@ -4,8 +4,8 @@
  * Dark theme integrated with interview UI.
  */
 import { useState, useCallback, useRef, useEffect } from 'react'
-import Editor from '@monaco-editor/react'
 import { Code2 } from 'lucide-react'
+import Editor from '../../security/SecureMonacoEditor'
 
 const LANGUAGES = [
   { value: 'javascript', label: 'JavaScript' },

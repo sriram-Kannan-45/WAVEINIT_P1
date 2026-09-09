@@ -12,7 +12,8 @@
     "worker:code": "node src/workers/codeWorkerService.js",
     "worker:ai": "node src/workers/aiWorkerService.js",
     "test": "jest --no-coverage --passWithNoTests",
-    "test:routes": "jest src/routes --no-coverage --passWithNoTests"
+    "test:routes": "jest src/routes --no-coverage --passWithNoTests",
+    "test:security": "node --test test/securityConfig.test.js"
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.1.2",

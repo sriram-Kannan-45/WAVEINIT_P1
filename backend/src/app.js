@@ -33,6 +33,7 @@ const {
 const { initRedis, closeRedis } = require('./config/redis');
 const paths = require('./config/paths');
 const { getInstanceId, getInstanceInfo } = require('./config/instance');
+const { createCorsOptions, getTrustProxyHops, isOriginAllowed } = require('./config/security');
 
 // Security middleware
 const { detectSqlInjection, detectXss, detectPathTraversal, detectAnomalies } = require('./security/threatDetector');
@@ -69,71 +70,22 @@ const analyticsRoutes = require('./routes/analyticsRoutes');
 const { ipNormalizerMiddleware } = require('./utils/ipHelper');
 
 const app = express();
-// Enable trust proxy so Express parses the real client IP behind reverse proxies/load balancers (Azure App Service, Cloudflare, AWS, Nginx)
-app.set('trust proxy', true);
+// Trust only the configured number of direct reverse-proxy hops. Trusting every
+// hop lets a caller spoof X-Forwarded-For and bypass IP-based controls.
+app.set('trust proxy', getTrustProxyHops());
 app.use(ipNormalizerMiddleware);
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3001;
 
-// CORS — allow common Vite dev ports plus any origin in FRONTEND_URL / ALLOWED_ORIGINS.
-const isDev = process.env.NODE_ENV !== 'production';
-const isLanOrigin = (origin) => /^https?:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$/.test(origin);
-
-// Parse configured frontend URLs and allowed origins (supports comma-separated values)
-const rawFrontendUrls = [
-  process.env.FRONTEND_URL,
-  process.env.ALLOWED_ORIGINS,
-  process.env.SECURITY_CORS_ORIGINS,
-].filter(Boolean).flatMap(val => val.split(',').map(s => s.trim().replace(/\/+$/, '')));
-
-const allowedOrigins = new Set([
-  'http://localhost:5173',
-  'http://localhost:5174',
-  'http://localhost:5175',
-  'http://localhost:3000',
-  'http://127.0.0.1:5173',
-  'http://127.0.0.1:5174',
-  'http://127.0.0.1:5175',
-  'https://localhost:5174',
-  ...rawFrontendUrls,
-]);
-
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow non-browser requests (e.g. mobile apps, curl, server-to-server, Postman, health probes)
-    if (!origin) return callback(null, true);
-
-    if (isDev) {
-      return callback(null, true);
-    }
-
-    if (allowedOrigins.has(origin) || isLanOrigin(origin)) {
-      return callback(null, true);
-    }
-
-    // Check wildcard / subdomain matches
-    const isMatched = Array.from(allowedOrigins).some(allowed => {
-      try {
-        const allowedHost = new URL(allowed).hostname;
-        const originHost = new URL(origin).hostname;
-        return originHost === allowedHost || originHost.endsWith(`.${allowedHost}`);
-      } catch (_) {
-        return false;
-      }
-    });
-
-    if (isMatched) {
-      return callback(null, true);
-    }
-
-    return callback(null, true); // Fallback: allow to prevent production breakage while still logging
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  exposedHeaders: ['X-Request-Id'],
-  maxAge: 86400,
-}));
+// Production uses an exact allow-list. Configure additional approved browser
+// origins with FRONTEND_URL or ALLOWED_ORIGINS, never wildcard subdomains.
+app.use((req, res, next) => {
+  if (process.env.NODE_ENV === 'production' && req.headers.origin && !isOriginAllowed(req.headers.origin)) {
+    return res.status(403).json({ error: 'Origin is not allowed' });
+  }
+  return next();
+});
+app.use(cors(createCorsOptions()));
 
 // Response Compression — Gzip/Deflate compression for payloads > 1KB
 app.use(compression({
@@ -146,20 +98,10 @@ app.use(compression({
 
 // Helmet — sets security HTTP headers (CSP, HSTS, X-Frame-Options, etc.)
 app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", 'data:', 'blob:'],
-      connectSrc: ["'self'"],
-      fontSrc: ["'self'"],
-      objectSrc: ["'none'"],
-      frameAncestors: ["'none'"],
-      baseUri: ["'self'"],
-      formAction: ["'self'"],
-    },
-  },
+  // This service only returns APIs/files. The frontend owns the document CSP;
+  // emitting an HTML CSP here only creates conflicting policy and scanner noise.
+  contentSecurityPolicy: false,
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: false },
   crossOriginEmbedderPolicy: false,
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));

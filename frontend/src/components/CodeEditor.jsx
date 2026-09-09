@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Editor from '@monaco-editor/react';
 import { Code2, Loader2, Search, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import Editor from '../security/SecureMonacoEditor';
 
 const LANGUAGES = [
   { id: 'javascript', label: 'JavaScript' },

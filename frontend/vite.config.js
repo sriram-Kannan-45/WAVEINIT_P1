@@ -62,6 +62,9 @@ export default defineConfig({
   build: {
     target: 'esnext',
     cssCodeSplit: true,
+    // Monaco is intentionally loaded only after a coding editor opens. Avoid
+    // injecting global modulepreload tags for its bundled workers/languages.
+    modulePreload: false,
     chunkSizeWarningLimit: 800,
     rollupOptions: {
       output: {

@@ -68,15 +68,6 @@ const LOADING_TIMEOUT_MS = 25_000;
 // ── One-time font + keyframes injection ────────────────────────────────
 function ensureAssets() {
   if (typeof document === 'undefined') return;
-  // Fonts
-  if (!document.getElementById('preexam-fonts')) {
-    const link = document.createElement('link');
-    link.id = 'preexam-fonts';
-    link.rel = 'stylesheet';
-    link.href =
-      'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap';
-    document.head.appendChild(link);
-  }
   // Keyframes (scoped to .preexam container so we never leak into the rest of the app)
   if (!document.getElementById('preexam-styles')) {
     const style = document.createElement('style');

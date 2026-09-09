@@ -21,6 +21,7 @@ const { User } = require('../models');
 const tokenService = require('../services/interviewTokenService');
 const crossInstance = require('../socket/crossInstance');
 const logger = require('../utils/logger');
+const { createCorsOptions, isOriginAllowed } = require('./security');
 
 /**
  * Initialize Socket.IO server
@@ -32,9 +33,11 @@ let ioInstance = null;
 const initializeSocket = (server) => {
   const io = socketIO(server, {
     cors: {
-      origin: true,
-      credentials: true,
+      ...createCorsOptions(),
       methods: ['GET', 'POST'],
+    },
+    allowRequest: (request, callback) => {
+      callback(null, isOriginAllowed(request.headers.origin));
     },
     transports: ['websocket', 'polling'],
     reconnection: true,
