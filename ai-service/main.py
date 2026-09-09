@@ -93,13 +93,23 @@ app = FastAPI(
     description="Enterprise-grade AI quiz generation service with advanced prompt engineering and caching"
 )
 
-# CORS Configuration
+# CORS Configuration — strict allowlist, never wildcard.
+# The AI service is called server-side from the backend; browser access is
+# limited to the production frontend for direct upload flows.
+ALLOWED_ORIGINS = [
+    "https://www.waveinitlms.online",
+    "https://waveinit-init.azurewebsites.net",
+    "https://waveinit-init-a9bfbeh3fgh0f0ca.centralindia-01.azurewebsites.net",
+    "https://waveinint.azurewebsites.net",
+    "https://waveinint-ahhsevgvcqaeesh2.centralindia-01.azurewebsites.net",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=None,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # Ã¢â€â‚¬Ã¢â€â‚¬ Instance identity (for scale-out / readiness signaling) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
