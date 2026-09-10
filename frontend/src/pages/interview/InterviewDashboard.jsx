@@ -3,6 +3,7 @@
  * Enterprise admin table view — matches RegistrationApplications design exactly.
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -86,6 +87,7 @@ export default function InterviewDashboard({ user }) {
   const [newStatus, setNewStatus] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
   const [menuOpen, setMenuOpen] = useState(null)
+  const [activeMenuIv, setActiveMenuIv] = useState(null)
   const [menuPos, setMenuPos] = useState(null)
   const menuRef = useRef(null)
   const [editInterview, setEditInterview] = useState(null)
@@ -130,9 +132,15 @@ export default function InterviewDashboard({ user }) {
 
   useEffect(() => {
     const handler = (e) => {
-      if (!e.target.closest('.reg-admin-actions')) setMenuOpen(null)
+      if (!e.target.closest('.reg-admin-action-menu') && !e.target.closest('[data-menu-btn]')) {
+        setMenuOpen(null)
+        setActiveMenuIv(null)
+      }
     }
-    const closeOnScrollOrResize = () => setMenuOpen(null)
+    const closeOnScrollOrResize = () => {
+      setMenuOpen(null)
+      setActiveMenuIv(null)
+    }
     document.addEventListener('mousedown', handler)
     window.addEventListener('scroll', closeOnScrollOrResize, true)
     window.addEventListener('resize', closeOnScrollOrResize)
@@ -150,6 +158,7 @@ export default function InterviewDashboard({ user }) {
 
   const handleView = async (interview) => {
     setMenuOpen(null)
+    setActiveMenuIv(null)
     setDetailLoading(true)
     setDetailInterview(interview)
     try {
@@ -162,35 +171,37 @@ export default function InterviewDashboard({ user }) {
     }
   }
 
-  // Open the ⋮ actions dropdown anchored to the clicked button. Uses fixed
-  // positioning so the menu is never clipped by the table wrapper or hidden
-  // behind the sidebar/header, and flips upward when near the viewport bottom.
-  const openMenu = (e, id, isManager = false) => {
+  // Open the ⋮ actions dropdown anchored to the clicked button.
+  // Portaled to document.body so it is never clipped by table rows or overflow-hidden containers.
+  const openMenu = (e, iv, isManager = false) => {
     e.stopPropagation()
-    if (menuOpen === id) {
+    if (menuOpen === iv.id) {
       setMenuOpen(null)
+      setActiveMenuIv(null)
       return
     }
     const rect = e.currentTarget.getBoundingClientRect()
-    const menuWidth = 190
+    const menuWidth = 195
     let right = window.innerWidth - rect.right
-    if (right < 8) right = 8
-    if (window.innerWidth - right - menuWidth < 8) {
-      right = Math.max(8, window.innerWidth - rect.left - menuWidth)
+    if (right < 12) right = 12
+    if (window.innerWidth - right - menuWidth < 12) {
+      right = Math.max(12, window.innerWidth - rect.left - menuWidth)
     }
 
     const spaceBelow = window.innerHeight - rect.bottom
     const spaceAbove = rect.top
-    const estHeight = isManager ? 220 : 140
+    const estHeight = isManager ? 230 : 130
 
-    const shouldFlip = spaceBelow < estHeight && spaceAbove > spaceBelow
+    // Comfortably flip upward if space below is limited and there is more room or enough room above
+    const shouldFlip = (spaceBelow < estHeight + 16) && (spaceAbove > spaceBelow || spaceAbove >= estHeight)
 
     if (shouldFlip) {
       setMenuPos({
-        bottom: window.innerHeight - rect.top + 6,
+        bottom: Math.max(8, window.innerHeight - rect.top + 6),
         top: 'auto',
         right,
         isFlipped: true,
+        maxHeight: Math.min(320, spaceAbove - 16),
       })
     } else {
       setMenuPos({
@@ -198,13 +209,16 @@ export default function InterviewDashboard({ user }) {
         bottom: 'auto',
         right,
         isFlipped: false,
+        maxHeight: Math.min(320, spaceBelow - 16),
       })
     }
-    setMenuOpen(id)
+    setActiveMenuIv(iv)
+    setMenuOpen(iv.id)
   }
 
   const openEdit = async (interview) => {
     setMenuOpen(null)
+    setActiveMenuIv(null)
     setEditInterview(interview)
     setEditFetching(true)
     try {
@@ -286,6 +300,7 @@ export default function InterviewDashboard({ user }) {
 
   const handleStart = (interview) => {
     setMenuOpen(null)
+    setActiveMenuIv(null)
     navigate(`/interview/${interview.id}/room`)
   }
 
@@ -648,56 +663,10 @@ export default function InterviewDashboard({ user }) {
                               style={{ background: '#F8FAFC', color: '#334155', border: '1px solid #CBD5E1' }}
                               title="More options"
                               data-menu-btn={iv.id}
-                              onClick={(e) => openMenu(e, iv.id, manage)}
+                              onClick={(e) => openMenu(e, iv, manage)}
                             >
                               <MoreVertical size={16} color="#334155" strokeWidth={2.2} />
                             </button>
-                            <AnimatePresence>
-                              {menuOpen === iv.id && (
-                                <motion.div
-                                  ref={menuRef}
-                                  className="reg-admin-action-menu"
-                                  style={{
-                                    top: menuPos?.top ?? 'auto',
-                                    bottom: menuPos?.bottom ?? 'auto',
-                                    right: menuPos?.right ?? 'auto',
-                                  }}
-                                  initial={{ opacity: 0, y: menuPos?.isFlipped ? 4 : -4 }}
-                                  animate={{ opacity: 1, y: 0 }}
-                                  exit={{ opacity: 0, y: menuPos?.isFlipped ? 4 : -4 }}
-                                  transition={{ duration: 0.15 }}
-                                >
-                                  <button className="reg-admin-action-menu-item" onClick={() => handleView(iv)}>
-                                    <Eye size={14} color="#2563EB" /> View Details
-                                  </button>
-                                  {(iv.status === 'SCHEDULED' || iv.status === 'IN_PROGRESS') && (
-                                    <button className="reg-admin-action-menu-item" onClick={() => handleStart(iv)}>
-                                      <Play size={14} color="#16A34A" /> {manage ? 'Start Interview' : 'Join Interview'}
-                                    </button>
-                                  )}
-                                  {(iv.status === 'COMPLETED' || iv.status === 'IN_PROGRESS') && (
-                                    <button className="reg-admin-action-menu-item" onClick={() => { setMenuOpen(null); navigate(`/interview/${iv.id}`); }}>
-                                      <FileText size={14} color="#0D9488" /> View Results / Report
-                                    </button>
-                                  )}
-                                  {manage && iv.mode!=='GROUP_DISCUSSION' && (
-                                    <button className="reg-admin-action-menu-item" onClick={() => openEdit(iv)}>
-                                      <Pencil size={14} color="#0D9488" /> Edit Interview
-                                    </button>
-                                  )}
-                                  {manage && (
-                                    <button className="reg-admin-action-menu-item" onClick={() => { setChangeStatusTarget(iv); setNewStatus(''); setMenuOpen(null) }}>
-                                      <Filter size={14} color="#7C3AED" /> Change Status
-                                    </button>
-                                  )}
-                                  {iv.status === 'SCHEDULED' && manage && (
-                                    <button className="reg-admin-action-menu-item reg-admin-action-menu-item--danger" onClick={() => { setConfirmTarget({ interview: iv, action: 'cancel' }); setMenuOpen(null) }}>
-                                      <CalendarClock size={14} color="#DC2626" /> Cancel Interview
-                                    </button>
-                                  )}
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
                           </div>
                         </div>
                       )}
@@ -731,6 +700,61 @@ export default function InterviewDashboard({ user }) {
             <ChevronRightIcon size={14} />
           </button>
         </div>
+      )}
+
+      {/* ── PORTAL ACTION DROPDOWN MENU ── */}
+      {typeof document !== 'undefined' && createPortal(
+        <AnimatePresence>
+          {menuOpen && activeMenuIv && (
+            <motion.div
+              ref={menuRef}
+              className="reg-admin-action-menu"
+              style={{
+                position: 'fixed',
+                top: menuPos?.top ?? 'auto',
+                bottom: menuPos?.bottom ?? 'auto',
+                right: menuPos?.right ?? 'auto',
+                maxHeight: menuPos?.maxHeight ?? 300,
+                zIndex: 999999,
+                boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+              }}
+              initial={{ opacity: 0, y: menuPos?.isFlipped ? 4 : -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: menuPos?.isFlipped ? 4 : -4 }}
+              transition={{ duration: 0.15 }}
+            >
+              <button className="reg-admin-action-menu-item" onClick={() => handleView(activeMenuIv)}>
+                <Eye size={14} color="#2563EB" /> View Details
+              </button>
+              {(activeMenuIv.status === 'SCHEDULED' || activeMenuIv.status === 'IN_PROGRESS') && (
+                <button className="reg-admin-action-menu-item" onClick={() => handleStart(activeMenuIv)}>
+                  <Play size={14} color="#16A34A" /> {canManage(activeMenuIv) ? 'Start Interview' : 'Join Interview'}
+                </button>
+              )}
+              {(activeMenuIv.status === 'COMPLETED' || activeMenuIv.status === 'IN_PROGRESS') && (
+                <button className="reg-admin-action-menu-item" onClick={() => { setMenuOpen(null); setActiveMenuIv(null); navigate(`/interview/${activeMenuIv.id}`); }}>
+                  <FileText size={14} color="#0D9488" /> View Results / Report
+                </button>
+              )}
+              {canManage(activeMenuIv) && activeMenuIv.mode !== 'GROUP_DISCUSSION' && (
+                <button className="reg-admin-action-menu-item" onClick={() => openEdit(activeMenuIv)}>
+                  <Pencil size={14} color="#0D9488" /> Edit Interview
+                </button>
+              )}
+              {canManage(activeMenuIv) && (
+                <button className="reg-admin-action-menu-item" onClick={() => { setChangeStatusTarget(activeMenuIv); setNewStatus(''); setMenuOpen(null); setActiveMenuIv(null); }}>
+                  <Filter size={14} color="#7C3AED" /> Change Status
+                </button>
+              )}
+              {activeMenuIv.status === 'SCHEDULED' && canManage(activeMenuIv) && (
+                <button className="reg-admin-action-menu-item reg-admin-action-menu-item--danger" onClick={() => { setConfirmTarget({ interview: activeMenuIv, action: 'cancel' }); setMenuOpen(null); setActiveMenuIv(null); }}>
+                  <CalendarClock size={14} color="#DC2626" /> Cancel Interview
+                </button>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body
       )}
 
       {/* ── DETAIL MODAL ── */}
