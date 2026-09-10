@@ -19,48 +19,45 @@
         { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
         { "key": "Cross-Origin-Resource-Policy", "value": "same-origin" },
         { "key": "Cache-Control", "value": "no-store, private, must-revalidate" },
-        { "key": "Pragma", "value": "no-cache" }
+        { "key": "Pragma", "value": "no-cache" },
+        { "key": "Access-Control-Allow-Origin", "value": "https://www.waveinitlms.online" }
       ]
     },
     {
       "source": "/assets/(.*)",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" },
+        { "key": "Access-Control-Allow-Origin", "value": "https://www.waveinitlms.online" }
       ]
     },
     {
       "source": "/bootstrap.css",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" },
-        { "key": "Access-Control-Allow-Origin", "value": "https://www.waveinitlms.online" }
+        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" }
       ]
     },
     {
       "source": "/bootstrap.js",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" },
-        { "key": "Access-Control-Allow-Origin", "value": "https://www.waveinitlms.online" }
+        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" }
       ]
     },
     {
       "source": "/favicon.svg",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=86400, must-revalidate" },
-        { "key": "Access-Control-Allow-Origin", "value": "https://www.waveinitlms.online" }
+        { "key": "Cache-Control", "value": "public, max-age=86400, must-revalidate" }
       ]
     },
     {
       "source": "/robots.txt",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" },
-        { "key": "Access-Control-Allow-Origin", "value": "https://www.waveinitlms.online" }
+        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" }
       ]
     },
     {
       "source": "/sitemap.xml",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" },
-        { "key": "Access-Control-Allow-Origin", "value": "https://www.waveinitlms.online" }
+        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" }
       ]
     }
   ]
