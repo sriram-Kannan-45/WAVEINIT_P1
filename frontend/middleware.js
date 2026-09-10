@@ -10,7 +10,7 @@ import {
 
 export const config = {
   runtime: 'nodejs',
-  matcher: ['/((?!assets/|favicon.svg$|robots.txt$|bootstrap\\.(?:css|js)$).*)'],
+  matcher: ['/((?!_next/|_vercel/).*)'],
 };
 
 function stripInvalidBodyHeaders(headers) {

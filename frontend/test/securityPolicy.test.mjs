@@ -34,13 +34,16 @@ test('only browser HTML document requests enter the nonce transformer', () => {
   })), false);
 });
 
-test('Vercel frontend policy omits CORS and keeps public assets cacheable', async () => {
+test('Vercel frontend policy restricts CORS to specific origin and keeps public assets cacheable', async () => {
   const config = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
   const allHeaders = config.headers.flatMap((rule) => rule.headers);
-  assert.equal(
-    allHeaders.some((header) => header.key.toLowerCase() === 'access-control-allow-origin'),
-    false,
-  );
+  const corsHeaders = allHeaders.filter((header) => header.key.toLowerCase() === 'access-control-allow-origin');
+  
+  // Ensure CORS headers are set to specific origin, not wildcard
+  assert.ok(corsHeaders.length > 0, 'CORS headers should be present');
+  corsHeaders.forEach(header => {
+    assert.equal(header.value, 'https://www.waveinitlms.online', 'CORS should be restricted to specific origin');
+  });
 
   const catchAllIndex = config.headers.findIndex((rule) => rule.source === '/(.*)');
   const assetsIndex = config.headers.findIndex((rule) => rule.source === '/assets/(.*)');
