@@ -771,7 +771,6 @@ exports.recordMonitoringEvent = async (req, res, next) => {
     const {
       monitoringSessionId,
       attemptId,
-      participantId: bodyParticipantId,
       quizId,
       eventType,
       severity = 'INFO',
@@ -782,18 +781,8 @@ exports.recordMonitoringEvent = async (req, res, next) => {
       idempotencyKey,
     } = req.body;
 
-    // Decode token if present
-    let user = req.user;
-    if (!user && req.headers && req.headers['authorization'] && req.headers['authorization'].startsWith('Bearer ')) {
-      try {
-        const { verifyAndCheckToken } = require('../security/tokenService');
-        const token = req.headers['authorization'].split(' ')[1];
-        user = await verifyAndCheckToken(token);
-      } catch (_) {}
-    }
-
-    // Use JWT user identity if participant or fallback to body if server-to-server with attempt check
-    const participantId = user?.role === 'PARTICIPANT' ? user.id : (bodyParticipantId || user?.id);
+    const user = req.user;
+    const participantId = user.id;
 
     if (!attemptId || !eventType) {
       return fail(res, 400, 'attemptId and eventType are required');
@@ -805,26 +794,34 @@ exports.recordMonitoringEvent = async (req, res, next) => {
     let resolvedSessionId = monitoringSessionId;
 
     let attempt = await QuizAttempt.findByPk(attemptId);
-    let isCoding = false;
     let codingAttempt = null;
 
     if (attempt) {
+      if (Number(attempt.participantId) !== Number(participantId)) {
+        return fail(res, 403, 'Attempt does not belong to the authenticated participant');
+      }
       resolvedQuizId = resolvedQuizId || attempt.quizId;
-      resolvedParticipantId = resolvedParticipantId || attempt.participantId;
+      resolvedParticipantId = participantId;
       resolvedSessionId = resolvedSessionId || attempt.monitoringSessionId || `session_${attempt.id}`;
     } else {
       codingAttempt = await CodingAttempt.findByPk(attemptId);
       if (codingAttempt) {
-        isCoding = true;
+        if (Number(codingAttempt.participantId) !== Number(participantId)) {
+          return fail(res, 403, 'Attempt does not belong to the authenticated participant');
+        }
         resolvedQuizId = resolvedQuizId || codingAttempt.assessmentId;
-        resolvedParticipantId = resolvedParticipantId || codingAttempt.participantId;
+        resolvedParticipantId = participantId;
         resolvedSessionId = resolvedSessionId || codingAttempt.monitoringSessionId || `session_${codingAttempt.id}`;
       }
     }
 
+    if (!attempt && !codingAttempt) {
+      return fail(res, 404, 'Attempt not found');
+    }
+
     let finalParticipantId = Number(resolvedParticipantId);
     if (!Number.isInteger(finalParticipantId) || finalParticipantId <= 0) {
-      finalParticipantId = attempt?.participantId || codingAttempt?.participantId || (user?.id ? Number(user.id) : 1);
+      finalParticipantId = Number(user.id);
     }
 
     const event = await proctoringReportService.recordMonitoringEvent({

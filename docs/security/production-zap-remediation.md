@@ -32,8 +32,11 @@ variables in production.
 ## What the deployment changes
 
 - Each HTML response gets a fresh CSP nonce and is not shared from CDN cache.
-- Static assets remain immutable-cacheable, carry a fixed same-origin CORS
-  header, and cannot be used cross-origin.
+- Frontend documents and static resources omit CORS response headers because
+  they are consumed same-origin. The API retains its exact origin allowlist.
+- Fingerprinted assets remain immutable-cacheable; stable public files use a
+  shorter revalidation window, while HTML and API responses remain private and
+  non-cacheable.
 - All document and asset responses receive HSTS and browser security headers.
 - `robots.txt` is a real text file, so it is no longer rewritten to HTML.
 - The API accepts CORS requests only from exact configured origins and trusts a

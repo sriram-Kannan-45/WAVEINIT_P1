@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
   addNonceToDocument,
   buildContentSecurityPolicy,
@@ -31,4 +32,21 @@ test('only browser HTML document requests enter the nonce transformer', () => {
   assert.equal(isHtmlDocumentRequest(new Request('https://example.test/assets/app.js', {
     headers: { accept: '*/*', 'sec-fetch-dest': 'script' },
   })), false);
+});
+
+test('Vercel frontend policy omits CORS and keeps public assets cacheable', async () => {
+  const config = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
+  const allHeaders = config.headers.flatMap((rule) => rule.headers);
+  assert.equal(
+    allHeaders.some((header) => header.key.toLowerCase() === 'access-control-allow-origin'),
+    false,
+  );
+
+  const catchAllIndex = config.headers.findIndex((rule) => rule.source === '/(.*)');
+  const assetsIndex = config.headers.findIndex((rule) => rule.source === '/assets/(.*)');
+  assert.ok(catchAllIndex >= 0 && assetsIndex > catchAllIndex);
+  assert.equal(
+    config.headers[assetsIndex].headers.find((header) => header.key === 'Cache-Control')?.value,
+    'public, max-age=31536000, immutable',
+  );
 });

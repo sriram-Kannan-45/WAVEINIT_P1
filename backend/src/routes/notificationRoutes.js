@@ -1,6 +1,7 @@
 const express = require('express');
 const notificationController = require('../controllers/notificationController');
 const authenticateToken = require('../middleware/auth');
+const roleMiddleware = require('../middleware/roles');
 
 const router = express.Router();
 
@@ -24,7 +25,7 @@ router.post('/read-all', authenticateToken, notificationController.markAllAsRead
 router.delete('/:id', authenticateToken, notificationController.deleteNotification);
 
 // Admin Broadcast Announcements
-router.post('/broadcast-announcement', authenticateToken, notificationController.broadcastAnnouncement);
-router.post('/announcement', authenticateToken, notificationController.broadcastAnnouncement);
+router.post('/broadcast-announcement', authenticateToken, roleMiddleware('ADMIN', 'TRAINER'), notificationController.broadcastAnnouncement);
+router.post('/announcement', authenticateToken, roleMiddleware('ADMIN', 'TRAINER'), notificationController.broadcastAnnouncement);
 
 module.exports = router;

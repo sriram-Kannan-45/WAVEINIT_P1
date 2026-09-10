@@ -542,10 +542,13 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
                       </div>
                       <button
                         onClick={() => {
-                          const printContent = `
+                          const win = window.open('', '_blank');
+                          if (!win) return;
+                          win.document.open();
+                          win.document.write(`<!DOCTYPE html>
                             <html>
                               <head>
-                                <title>Certificate - ${cert.title}</title>
+                                <meta charset="UTF-8" />
                                 <style>
                                   body { font-family: 'Poppins', sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #fff; color: #000; }
                                   .cert-container { border: 15px double #16A34A; padding: 50px; width: 650px; text-align: center; border-radius: 4px; box-shadow: 0 0 20px rgba(0,0,0,0.05); }
@@ -563,21 +566,23 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
                                   <div class="subtitle">Wave Init LMS Certificate</div>
                                   <div class="title">Certificate of Completion</div>
                                   <div class="presented">This is proudly presented to</div>
-                                  <div class="name">${user.name}</div>
+                                  <div class="name" id="cert-name"></div>
                                   <div class="reason">for successfully completing all academic requirements, lessons, quizzes, and assessments for the course:</div>
-                                  <div class="reason"><span class="course-title">${cert.title}</span></div>
+                                  <div class="reason"><span class="course-title" id="cert-course"></span></div>
                                   <div class="footer">
-                                    <div><strong>Date Issued:</strong> ${new Date(cert.issuedAt).toLocaleDateString()}</div>
-                                    <div><strong>Verification Code:</strong> ${cert.certificateCode}</div>
+                                    <div><strong>Date Issued:</strong> <span id="cert-date"></span></div>
+                                    <div><strong>Verification Code:</strong> <span id="cert-code"></span></div>
                                   </div>
                                 </div>
-                                <script>window.onload = function() { window.print(); }</script>
                               </body>
-                            </html>
-                          `;
-                          const win = window.open('', '_blank');
-                          win.document.write(printContent);
+                            </html>`);
                           win.document.close();
+                          const doc = win.document;
+                          doc.getElementById('cert-name').textContent = user.name || '';
+                          doc.getElementById('cert-course').textContent = cert.title || '';
+                          doc.getElementById('cert-date').textContent = new Date(cert.issuedAt).toLocaleDateString();
+                          doc.getElementById('cert-code').textContent = cert.certificateCode || '';
+                          setTimeout(() => { try { win.focus(); win.print(); } catch (e) { /* popup may be blocked */ } }, 300);
                         }}
                         className="reg-admin-btn reg-admin-btn--primary"
                         style={{ width: '100%', marginTop: '16px', cursor: 'pointer', justifyContent: 'center' }}

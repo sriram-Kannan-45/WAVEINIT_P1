@@ -13,11 +13,11 @@
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",
-    "@tiptap/extension-image": "^2.27.2",
-    "@tiptap/extension-link": "^2.27.2",
-    "@tiptap/extension-placeholder": "^2.27.2",
-    "@tiptap/react": "^2.27.2",
-    "@tiptap/starter-kit": "^2.27.2",
+    "@tiptap/extension-image": "^3.31.3",
+    "@tiptap/extension-link": "^3.31.3",
+    "@tiptap/extension-placeholder": "^3.31.3",
+    "@tiptap/react": "^3.31.3",
+    "@tiptap/starter-kit": "^3.31.3",
     "@vercel/functions": "3.9.6",
     "axios": "^1.20.0",
     "chart.js": "^4.5.1",
@@ -48,5 +48,8 @@
     "tailwindcss": "^4.2.4",
     "terser": "^5.51.2",
     "vite": "^5.0.8"
+  },
+  "overrides": {
+    "dompurify": "^3.4.15"
   }
 }

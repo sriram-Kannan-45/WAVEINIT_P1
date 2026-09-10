@@ -3,6 +3,7 @@ const trainingController = require('../controllers/trainingController');
 const trainingLeaderboardController = require('../controllers/trainingLeaderboardController');
 const authenticateToken = require('../middleware/auth');
 const optionalAuth = require('../middleware/optionalAuth');
+const roleMiddleware = require('../middleware/roles');
 
 const router = express.Router();
 
@@ -19,13 +20,13 @@ router.get('/:id', (req, res) => trainingController.getTrainingById(req, res));
 router.get('/:id/progress', optionalAuth, (req, res) => trainingController.getTrainingProgress(req, res));
 
 // POST /api/trainings - Admin only (create training)
-router.post('/', authenticateToken, (req, res) => trainingController.createTraining(req, res));
+router.post('/', authenticateToken, roleMiddleware('ADMIN'), (req, res) => trainingController.createTraining(req, res));
 
 // PUT /api/trainings/:id - Admin only
-router.put('/:id', authenticateToken, (req, res) => trainingController.updateTraining(req, res));
+router.put('/:id', authenticateToken, roleMiddleware('ADMIN'), (req, res) => trainingController.updateTraining(req, res));
 
 // DELETE /api/trainings/:id - Admin only
-router.delete('/:id', authenticateToken, (req, res) => trainingController.deleteTraining(req, res));
+router.delete('/:id', authenticateToken, roleMiddleware('ADMIN'), (req, res) => trainingController.deleteTraining(req, res));
 
 // GET /api/trainings/:id/quizzes (also handles /api/training/:id/quizzes)
 router.get('/:id/quizzes', authenticateToken, async (req, res) => {

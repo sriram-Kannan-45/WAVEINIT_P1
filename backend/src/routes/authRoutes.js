@@ -2,6 +2,7 @@ const express = require('express');
 const authController = require('../controllers/authController');
 const { sendOtp, verifyOtp, resetPassword, getEmailStatus, testMail, getSmtpStatus, rebuildSmtp } = require('../controllers/forgotPasswordController');
 const authenticateToken = require('../middleware/auth');
+const roleMiddleware = require('../middleware/roles');
 const { ipLimiter, accountLock, trackOutcome } = require('../middleware/loginRateLimiter');
 const { detectSqlInjection, detectXss } = require('../security/threatDetector');
 
@@ -41,10 +42,10 @@ router.post('/forgot-password/verify-otp', detectSqlInjection, verifyOtp);
 router.post('/forgot-password/reset', detectSqlInjection, resetPassword);
 router.get('/forgot-password/email-status', getEmailStatus);
 // Diagnostic — sends a real test email. Dev-only unless EMAIL_TEST_ENABLED=true
-router.get('/forgot-password/test-mail', testMail);
+router.get('/forgot-password/test-mail', authenticateToken, roleMiddleware('ADMIN'), testMail);
 
-// SMTP health — check config status + rebuild transporter without restart
-router.get('/smtp-status', getSmtpStatus);
-router.post('/smtp-rebuild', rebuildSmtp);
+// SMTP health — check config status + rebuild transporter without restart (ADMIN only)
+router.get('/smtp-status', authenticateToken, roleMiddleware('ADMIN'), getSmtpStatus);
+router.post('/smtp-rebuild', authenticateToken, roleMiddleware('ADMIN'), rebuildSmtp);
 
 module.exports = router;

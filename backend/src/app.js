@@ -265,7 +265,8 @@ app.put('/api/update-profile', authenticateToken, upload.single('profilePic'), p
 
 // Top-level /api/test-mail alias (matches the spec's debugging step #5)
 const { testMail } = require('./controllers/forgotPasswordController');
-app.get('/api/test-mail', testMail);
+const roleMiddlewareApp = require('./middleware/roles');
+app.get('/api/test-mail', authenticateToken, roleMiddlewareApp('ADMIN'), testMail);
 
 // Health check (supports root, /health, and /api/health for Load Balancers & cluster probes).
 // Enriched with instance identity, shared-lock provider and AI-service status so

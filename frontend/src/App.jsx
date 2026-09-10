@@ -324,7 +324,7 @@ function App() {
       const savedUser = JSON.parse(localStorage.getItem('user') || '{}');
       const token = savedUser?.token || savedUser?.accessToken;
       if (token) {
-        originalFetch(`${API_BASE}/auth/logout`, {
+        window.fetch(`${API_BASE}/auth/logout`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
