@@ -198,13 +198,13 @@ class InterviewController {
     try {
       const { status, type, search, interviewerId, candidateId, page = 1, limit = 20 } = req.query;
       const where = {};
-      const userRole = req.user.role;
+      const userRole = (req.user.role || '').toUpperCase();
 
       const roleScope = [];
-      if (userRole === 'PARTICIPANT') {
+      if (['PARTICIPANT', 'STUDENT', 'LEARNER', 'CANDIDATE'].includes(userRole)) {
         const memberships=await InterviewParticipant.findAll({where:{user_id:req.user.id},attributes:['interview_id']});
         where[Op.and]=[{[Op.or]:[{candidate_id:req.user.id},{id:{[Op.in]:memberships.map(row=>row.interview_id)}}]}];
-      } else if (userRole === 'TRAINER') {
+      } else if (['TRAINER', 'INTERVIEWER'].includes(userRole)) {
         roleScope.push({ interviewer_id: req.user.id }, { created_by:req.user.id }, { candidate_id: req.user.id });
       }
 
@@ -1292,15 +1292,32 @@ class InterviewController {
       }
 
       if(nextStatus==='IN_PROGRESS') {
-        const session=await lifecycle.start(interviewId,req.user);
-        require('../config/socket').getIO()?.to(`interview_${interviewId}`).emit('interview-started',{startedAt:session.started_at});
-      } else {
-        const session=await InterviewSession.findOne({where:{interview_id:interviewId,status:{[Op.in]:['WAITING','ACTIVE']}}});
-        if(session && ['COMPLETED','CANCELLED','NO_SHOW','RESCHEDULED'].includes(nextStatus)) {
-          await lifecycle.end(interviewId,req.user);
-          require('../config/socket').getIO()?.to(`interview_${interviewId}`).emit('interview-ended',{endedByName:req.user.name||'the interviewer'});
+        let session = await InterviewSession.findOne({
+          where: { interview_id: interviewId, status: { [Op.in]: ['WAITING', 'ACTIVE'] } },
+        });
+        if (!session) {
+          session = await InterviewSession.create({ interview_id: interviewId, status: 'ACTIVE', started_at: new Date() });
+        } else if (session.status === 'WAITING') {
+          await session.update({ status: 'ACTIVE', started_at: session.started_at || new Date() });
         }
-        await interview.update({status:nextStatus});
+        await interview.update({ status: 'IN_PROGRESS' });
+        try {
+          await InterviewLog.create({ session_id: session.id, actor_id: req.user.id, event_type: 'INTERVIEW_STARTED' });
+        } catch (logErr) {
+          logger.warn('Failed to record interview started log', { error: logErr.message });
+        }
+        require('../config/socket').getIO()?.to(`interview_${interviewId}`).emit('interview-started', { startedAt: session.started_at });
+      } else {
+        const session = await InterviewSession.findOne({ where: { interview_id: interviewId, status: { [Op.in]: ['WAITING', 'ACTIVE'] } } });
+        if (session && ['COMPLETED', 'CANCELLED', 'NO_SHOW', 'RESCHEDULED'].includes(nextStatus)) {
+          await session.update({ status: 'ENDED', ended_at: new Date() });
+          try {
+            await InterviewParticipant.update({ status: 'DISCONNECTED', left_at: new Date() }, { where: { interview_id: interviewId, status: 'CONNECTED' } });
+            await InterviewLog.create({ session_id: session.id, actor_id: req.user.id, event_type: 'INTERVIEW_ENDED' });
+          } catch (e) {}
+          require('../config/socket').getIO()?.to(`interview_${interviewId}`).emit('interview-ended', { endedByName: req.user.name || 'the interviewer' });
+        }
+        await interview.update({ status: nextStatus });
       }
 
       if (nextStatus === 'CANCELLED') {

@@ -33,7 +33,11 @@ function evaluate(criteriaList, input, decidedBy) {
 }
 
 class InterviewLifecycleService {
-  isManager(interview,user) { return user.role==='ADMIN' || (['TRAINER','ADMIN'].includes(user.role) && (same(interview.interviewer_id,user.id)||same(interview.created_by,user.id))); }
+  isManager(interview,user) {
+    if(!user) return false;
+    const role = (user.role || '').toUpperCase();
+    return role==='ADMIN' || role==='SUPERADMIN' || (['TRAINER','ADMIN','INTERVIEWER'].includes(role) && (same(interview.interviewer_id,user.id)||same(interview.created_by,user.id)));
+  }
   async member(interview,userId, options={}) {
     if(interview.mode!=='GROUP_DISCUSSION' && !same(interview.candidate_id,userId))return null;
     const existing=await InterviewParticipant.findOne({...options,where:{interview_id:interview.id,user_id:userId}});
@@ -51,15 +55,21 @@ class InterviewLifecycleService {
     if(managerOnly || !(await this.member(interview,user.id))) fail('Access denied',403);
     return interview;
   }
-  assertOpen(interview) {
+  assertOpen(interview, user = null) {
     if(!['SCHEDULED','IN_PROGRESS'].includes(interview.status)) fail('This session has ended or was cancelled.',409);
-    if(Date.now()<new Date(interview.scheduled_at).getTime()-(interview.grace_period_minutes||10)*60000) fail('This session is not yet open for joining.');
+    const isManager = user && this.isManager(interview, user);
+    if(!isManager) {
+      const windowMs = Math.max((interview.grace_period_minutes || 10) * 60000, 30 * 60000);
+      if(interview.status !== 'IN_PROGRESS' && Date.now() < new Date(interview.scheduled_at).getTime() - windowMs) {
+        fail('This session is not yet open for joining.', 409);
+      }
+    }
   }
-  async session(interviewId) {
+  async session(interviewId, user = null) {
     return sequelize.transaction(async transaction=>{
       const interview=await Interview.findByPk(interviewId,{transaction,lock:transaction.LOCK.UPDATE});
       if(!interview) fail('Interview not found',404);
-      this.assertOpen(interview);
+      this.assertOpen(interview, user);
       let session=await InterviewSession.findOne({transaction,where:{interview_id:interview.id,status:{[Op.in]:['WAITING','ACTIVE']}}});
       if(!session) session=await InterviewSession.create({interview_id:interview.id,status:'WAITING'},{transaction});
       return session;
@@ -81,7 +91,7 @@ class InterviewLifecycleService {
   }
   async join(interviewId,user) {
     const interview=await this.access(interviewId,user);
-    const session=await this.session(interview.id);
+    const session=await this.session(interview.id, user);
     const participant=await this.member(interview,user.id);
     let device=await InterviewDevice.findOne({where:{session_id:session.id,user_id:user.id,device_type:'LAPTOP'}});
     if(!device) device=await InterviewDevice.create({session_id:session.id,user_id:user.id,device_type:'LAPTOP',status:'PAIRED'});
@@ -110,7 +120,7 @@ class InterviewLifecycleService {
   async start(interviewId,user) {
     await this.access(interviewId,user,true);
     const session=await sequelize.transaction(async transaction=>{
-      const interview=await Interview.findByPk(interviewId,{transaction,lock:transaction.LOCK.UPDATE}); this.assertOpen(interview);
+      const interview=await Interview.findByPk(interviewId,{transaction,lock:transaction.LOCK.UPDATE}); this.assertOpen(interview, user);
       const current=await InterviewSession.findOne({transaction,where:{interview_id:interview.id,status:{[Op.in]:['WAITING','ACTIVE']}}});
       if(!current) fail('No waiting session found',404); if(current.status==='ACTIVE') return current;
       const members=await InterviewParticipant.findAll({transaction,where:{interview_id:interview.id}});

@@ -125,7 +125,8 @@ export default function InterviewEvaluation({ user }) {
 
   if(interview.mode==='GROUP_DISCUSSION') return <GroupDiscussionEvaluation interviewId={interviewId}/>
 
-  const isInterviewer = user?.role === 'TRAINER' || user?.role === 'ADMIN'
+  const userRole = (user?.role || '').toUpperCase()
+  const isInterviewer = userRole === 'TRAINER' || userRole === 'ADMIN' || userRole === 'SUPERADMIN'
   const canFeedback = isInterviewer && interview.status === 'COMPLETED'
   const canDecide = canFeedback && !interview.result
 

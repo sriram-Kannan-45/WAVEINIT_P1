@@ -165,14 +165,14 @@ export default function InterviewDashboard({ user }) {
   // Open the ⋮ actions dropdown anchored to the clicked button. Uses fixed
   // positioning so the menu is never clipped by the table wrapper or hidden
   // behind the sidebar/header, and flips upward when near the viewport bottom.
-  const openMenu = (e, id) => {
+  const openMenu = (e, id, isManager = false) => {
     e.stopPropagation()
     if (menuOpen === id) {
       setMenuOpen(null)
       return
     }
     const rect = e.currentTarget.getBoundingClientRect()
-    const menuWidth = 180
+    const menuWidth = 190
     let right = window.innerWidth - rect.right
     if (right < 8) right = 8
     if (window.innerWidth - right - menuWidth < 8) {
@@ -181,7 +181,7 @@ export default function InterviewDashboard({ user }) {
 
     const spaceBelow = window.innerHeight - rect.bottom
     const spaceAbove = rect.top
-    const estHeight = manage ? 190 : 56
+    const estHeight = isManager ? 220 : 140
 
     const shouldFlip = spaceBelow < estHeight && spaceAbove > spaceBelow
 
@@ -343,15 +343,18 @@ export default function InterviewDashboard({ user }) {
     }
   }
 
+  const userRole = (user?.role || '').toUpperCase()
+  const isAdmin = userRole === 'ADMIN' || userRole === 'SUPERADMIN'
+  const isTrainer = userRole === 'TRAINER' || userRole === 'INTERVIEWER'
+  const canSchedule = isAdmin || isTrainer
+
   const canManage = (iv) => {
-    if (user?.role === 'ADMIN') return true
-    if (user?.role === 'TRAINER') return iv.interviewer_id === user.id
+    if (isAdmin) return true
+    if (isTrainer) return String(iv.interviewer_id) === String(user?.id) || String(iv.created_by) === String(user?.id)
     return false
   }
 
-  
   const getInitials = (name) => getTwoLetterInitials(name)
-  const isAdmin = user?.role === 'ADMIN'
 
   const statCards = [
     { label: 'Total', value: stats.total, icon: Video, color: '#6366f1' },
@@ -381,11 +384,11 @@ export default function InterviewDashboard({ user }) {
         <div>
           <h2 className="reg-admin-title">Interviews</h2>
           <p className="reg-admin-subtitle">
-            {isAdmin ? 'Schedule and manage candidate interview sessions' : 'Your assigned interviews'}
+            {canSchedule ? 'Schedule and manage candidate interview sessions' : 'Your assigned interviews'}
           </p>
         </div>
         <div style={{ flex: 1 }} />
-        {isAdmin && (
+        {canSchedule && (
           <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => navigate('/interview/schedule')}>
             <Plus size={16} /> Schedule Interview
           </button>
@@ -462,7 +465,7 @@ export default function InterviewDashboard({ user }) {
           <Video size={40} />
           <h3>No Interviews Found</h3>
           <p>No interviews match your current filter.</p>
-          {isAdmin && (
+          {canSchedule && (
             <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => navigate('/interview/schedule')}>
               <Plus size={15} /> Schedule Interview
             </button>
@@ -523,7 +526,6 @@ export default function InterviewDashboard({ user }) {
                     </td>
                     <td><span className={`reg-admin-meeting ${mb.cls}`}>{mb.label}</span></td>
                     <td>
-                      {iv.mode==='GROUP_DISCUSSION'&&<button className="reg-admin-btn" onClick={()=>navigate(`/interview/${iv.id}`)}>Results / report</button>}
                       {isAdmin ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <button
@@ -540,6 +542,15 @@ export default function InterviewDashboard({ user }) {
                               onClick={() => handleStart(iv)}
                             >
                               <Play size={15} color="#16A34A" strokeWidth={2.2} />
+                            </button>
+                          )}
+                          {(iv.status === 'COMPLETED' || iv.status === 'IN_PROGRESS') && (
+                            <button
+                              style={ivActionBtn('#F0FDFA', '#99F6E4', '#0D9488')}
+                              title="View Evaluation & Results"
+                              onClick={() => navigate(`/interview/${iv.id}`)}
+                            >
+                              <FileText size={15} color="#0D9488" strokeWidth={2.2} />
                             </button>
                           )}
                           <button
@@ -574,57 +585,120 @@ export default function InterviewDashboard({ user }) {
                           </button>
                         </div>
                       ) : (
-                        <div className="reg-admin-actions">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {(iv.status === 'SCHEDULED' || iv.status === 'IN_PROGRESS') && (
+                            <button
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 5,
+                                padding: '4px 10px',
+                                fontSize: 12,
+                                fontWeight: 600,
+                                borderRadius: 6,
+                                border: '1px solid #86EFAC',
+                                background: '#F0FDF4',
+                                color: '#16A34A',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s ease',
+                              }}
+                              title={manage ? "Start / Join Interview" : "Join Interview Room"}
+                              onClick={() => handleStart(iv)}
+                            >
+                              <Play size={13} color="#16A34A" strokeWidth={2.5} />
+                              <span>{manage ? 'Start' : 'Join'}</span>
+                            </button>
+                          )}
+
+                          {iv.status === 'COMPLETED' && (
+                            <button
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 5,
+                                padding: '4px 10px',
+                                fontSize: 12,
+                                fontWeight: 600,
+                                borderRadius: 6,
+                                border: '1px solid #99F6E4',
+                                background: '#F0FDFA',
+                                color: '#0D9488',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s ease',
+                              }}
+                              title="View Interview Evaluation & Results"
+                              onClick={() => navigate(`/interview/${iv.id}`)}
+                            >
+                              <FileText size={13} color="#0D9488" strokeWidth={2.2} />
+                              <span>Results</span>
+                            </button>
+                          )}
+
                           <button
-                            className="reg-admin-action"
-                            style={{ background: '#F8FAFC', color: '#334155', border: '1px solid #CBD5E1' }}
-                            title="Actions"
-                            data-menu-btn={iv.id}
-                            onClick={(e) => openMenu(e, iv.id)}
+                            style={ivActionBtn('#EFF6FF', '#BFDBFE', '#2563EB')}
+                            title="View Details"
+                            onClick={() => handleView(iv)}
                           >
-                            <MoreVertical size={16} color="#334155" strokeWidth={2.2} />
+                            <Eye size={15} color="#2563EB" strokeWidth={2.2} />
                           </button>
-                          <AnimatePresence>
-                            {menuOpen === iv.id && (
-                              <motion.div
-                                ref={menuRef}
-                                className="reg-admin-action-menu"
-                                style={{
-                                  top: menuPos?.top ?? 'auto',
-                                  bottom: menuPos?.bottom ?? 'auto',
-                                  right: menuPos?.right ?? 'auto',
-                                }}
-                                initial={{ opacity: 0, y: menuPos?.isFlipped ? 4 : -4 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: menuPos?.isFlipped ? 4 : -4 }}
-                                transition={{ duration: 0.15 }}
-                              >
-                                <button className="reg-admin-action-menu-item" onClick={() => handleView(iv)}>
-                                  <Eye size={14} color="#2563EB" /> View Details
-                                </button>
-                                {manage && iv.mode!=='GROUP_DISCUSSION' && (
-                                  <button className="reg-admin-action-menu-item" onClick={() => openEdit(iv)}>
-                                    <Pencil size={14} color="#0D9488" /> Edit Interview
+
+                          <div className="reg-admin-actions">
+                            <button
+                              className="reg-admin-action"
+                              style={{ background: '#F8FAFC', color: '#334155', border: '1px solid #CBD5E1' }}
+                              title="More options"
+                              data-menu-btn={iv.id}
+                              onClick={(e) => openMenu(e, iv.id, manage)}
+                            >
+                              <MoreVertical size={16} color="#334155" strokeWidth={2.2} />
+                            </button>
+                            <AnimatePresence>
+                              {menuOpen === iv.id && (
+                                <motion.div
+                                  ref={menuRef}
+                                  className="reg-admin-action-menu"
+                                  style={{
+                                    top: menuPos?.top ?? 'auto',
+                                    bottom: menuPos?.bottom ?? 'auto',
+                                    right: menuPos?.right ?? 'auto',
+                                  }}
+                                  initial={{ opacity: 0, y: menuPos?.isFlipped ? 4 : -4 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  exit={{ opacity: 0, y: menuPos?.isFlipped ? 4 : -4 }}
+                                  transition={{ duration: 0.15 }}
+                                >
+                                  <button className="reg-admin-action-menu-item" onClick={() => handleView(iv)}>
+                                    <Eye size={14} color="#2563EB" /> View Details
                                   </button>
-                                )}
-                                {manage && (
-                                  <button className="reg-admin-action-menu-item" onClick={() => { setChangeStatusTarget(iv); setNewStatus(''); setMenuOpen(null) }}>
-                                    <Filter size={14} color="#7C3AED" /> Change Status
-                                  </button>
-                                )}
-                                {(iv.status === 'SCHEDULED' || iv.status === 'IN_PROGRESS') && (
-                                  <button className="reg-admin-action-menu-item" onClick={() => handleStart(iv)}>
-                                    <Play size={14} color="#16A34A" /> Start Interview
-                                  </button>
-                                )}
-                                {iv.status === 'SCHEDULED' && manage && (
-                                  <button className="reg-admin-action-menu-item" onClick={() => { setConfirmTarget({ interview: iv, action: 'cancel' }); setMenuOpen(null) }}>
-                                    <CalendarClock size={14} color="#D97706" /> Cancel Interview
-                                  </button>
-                                )}
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
+                                  {(iv.status === 'SCHEDULED' || iv.status === 'IN_PROGRESS') && (
+                                    <button className="reg-admin-action-menu-item" onClick={() => handleStart(iv)}>
+                                      <Play size={14} color="#16A34A" /> {manage ? 'Start Interview' : 'Join Interview'}
+                                    </button>
+                                  )}
+                                  {(iv.status === 'COMPLETED' || iv.status === 'IN_PROGRESS') && (
+                                    <button className="reg-admin-action-menu-item" onClick={() => { setMenuOpen(null); navigate(`/interview/${iv.id}`); }}>
+                                      <FileText size={14} color="#0D9488" /> View Results / Report
+                                    </button>
+                                  )}
+                                  {manage && iv.mode!=='GROUP_DISCUSSION' && (
+                                    <button className="reg-admin-action-menu-item" onClick={() => openEdit(iv)}>
+                                      <Pencil size={14} color="#0D9488" /> Edit Interview
+                                    </button>
+                                  )}
+                                  {manage && (
+                                    <button className="reg-admin-action-menu-item" onClick={() => { setChangeStatusTarget(iv); setNewStatus(''); setMenuOpen(null) }}>
+                                      <Filter size={14} color="#7C3AED" /> Change Status
+                                    </button>
+                                  )}
+                                  {iv.status === 'SCHEDULED' && manage && (
+                                    <button className="reg-admin-action-menu-item reg-admin-action-menu-item--danger" onClick={() => { setConfirmTarget({ interview: iv, action: 'cancel' }); setMenuOpen(null) }}>
+                                      <CalendarClock size={14} color="#DC2626" /> Cancel Interview
+                                    </button>
+                                  )}
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </div>
                         </div>
                       )}
                     </td>
@@ -738,6 +812,31 @@ export default function InterviewDashboard({ user }) {
                 )}
               </div>
               <div className="reg-modal-footer">
+                {(detailInterview.status === 'SCHEDULED' || detailInterview.status === 'IN_PROGRESS') && (
+                  <button
+                    className="reg-admin-btn reg-admin-btn--primary"
+                    onClick={() => {
+                      const id = detailInterview.id
+                      setDetailInterview(null)
+                      navigate(`/interview/${id}/room`)
+                    }}
+                  >
+                    <Play size={15} /> Join Interview
+                  </button>
+                )}
+                {detailInterview.status === 'COMPLETED' && (
+                  <button
+                    className="reg-admin-btn reg-admin-btn--primary"
+                    style={{ background: '#0D9488', borderColor: '#0D9488' }}
+                    onClick={() => {
+                      const id = detailInterview.id
+                      setDetailInterview(null)
+                      navigate(`/interview/${id}`)
+                    }}
+                  >
+                    <FileText size={15} /> View Evaluation & Results
+                  </button>
+                )}
                 <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => setDetailInterview(null)}>Close</button>
               </div>
             </motion.div>
