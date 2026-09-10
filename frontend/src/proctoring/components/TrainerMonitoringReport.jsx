@@ -218,7 +218,7 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose, context
                   const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
                   const token = storedUser?.token || localStorage.getItem('token') || sessionStorage.getItem('token');
                   try {
-                    const res = await fetch(`${API_BASE}/monitoring/sessions/${sId}/excel?token=${encodeURIComponent(token || '')}`, {
+                    const res = await fetch(`${API_BASE}/monitoring/sessions/${sId}/excel`, {
                       headers: token ? { Authorization: `Bearer ${token}` } : {}
                     });
                     if (!res.ok) throw new Error('Download failed');
@@ -232,7 +232,8 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose, context
                     document.body.removeChild(a);
                     window.URL.revokeObjectURL(url);
                   } catch (e) {
-                    window.open(`${API_BASE}/monitoring/sessions/${sId}/excel?token=${encodeURIComponent(token || '')}`, '_blank');
+                    console.error('Report download error:', e.message);
+                    alert('Failed to download report: ' + (e.message || 'Server error'));
                   }
                 }}
                 style={{
@@ -928,7 +929,7 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose, context
                 const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
                 const token = storedUser?.token || localStorage.getItem('token') || sessionStorage.getItem('token');
                 try {
-                  const res = await fetch(`${API_BASE}/monitoring/sessions/${sId}/excel?token=${encodeURIComponent(token || '')}`, {
+                  const res = await fetch(`${API_BASE}/monitoring/sessions/${sId}/excel`, {
                     headers: token ? { Authorization: `Bearer ${token}` } : {}
                   });
                   if (!res.ok) throw new Error('Download failed');
@@ -942,7 +943,8 @@ export function SingleAttemptProctoringModal({ attemptId, auth, onClose, context
                   document.body.removeChild(a);
                   window.URL.revokeObjectURL(url);
                 } catch (e) {
-                  window.open(`${API_BASE}/monitoring/sessions/${sId}/excel?token=${encodeURIComponent(token || '')}`, '_blank');
+                  console.error('Report download error:', e.message);
+                  alert('Failed to download report: ' + (e.message || 'Server error'));
                 }
               }}
               style={{

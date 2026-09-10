@@ -23,7 +23,7 @@ router.param('id',async(req,res,next,id)=>{
     if(!owner && (!lifecycle.isManager(interview,req.user)||req.method!=='GET'))return res.status(403).json({error:'This monitoring session belongs to another candidate'});
     if(req.method!=='GET' && /\/(start-test|pause-test|resume-test|sync-duration|end|mobile\/pair)$/.test(req.path))return res.status(409).json({error:'The interviewer controls this session lifecycle'});
     next();
-  }catch(error){res.status(error.status||500).json({error:error.message})}
+  }catch(error){res.status(error.status||500).json({error: error.status ? error.message : 'Server error accessing monitoring session'})}
 });
 
 // ── Public Mobile Pairing Validation (scanned by phone camera) ──

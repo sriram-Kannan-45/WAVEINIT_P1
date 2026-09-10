@@ -136,20 +136,24 @@ app.use((req, res, next) => {
   res.removeHeader('X-Powered-By');
   // API responses must not be stored in shared/CDN caches
   if (req.path.startsWith('/api')) {
-    res.setHeader('Cache-Control', 'no-store, private, must-revalidate');
+    res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
   }
   next();
 });
 
-// Serve uploaded files statically with cache headers.
-// All uploads live under the SHARED storage root (see config/paths.js) so the
-// same files are visible from every App Service instance.
-app.use('/uploads', express.static(paths.getUploadsRoot(), {
+// Secure uploads: genuine public assets (avatars, banners, profiles) are served statically;
+// sensitive private user files (resumes, certificates, recordings, screenshots) require authentication & authorization.
+const secureUploadsMiddleware = require('./middleware/secureUploads');
+app.use('/uploads', secureUploadsMiddleware, express.static(paths.getUploadsRoot(), {
   maxAge: '7d',
   etag: true,
   lastModified: true,
 }));
+
+const fileRoutes = require('./routes/fileRoutes');
+app.use('/api/files', fileRoutes);
 
 // Global request logger
 app.use((req, res, next) => {
@@ -234,6 +238,8 @@ app.use('/api/recordings', recordingRoutes);
 app.use('/api/coding', codingAssessmentRoutes);
 app.use('/api/assessment-verification', require('./routes/assessmentVerificationRoutes'));
 app.use('/api/interviews', interviewRoutes);
+app.use('/api/user/me', require('./routes/privacyRoutes'));
+app.use('/api/privacy', require('./routes/privacyRoutes'));
 
 // Health check for AI service (separate path to avoid conflict with router)
 app.get('/api/ai/health', async (req, res) => {
@@ -943,6 +949,14 @@ const startServer = async () => {
       }, 60000).unref?.();
     } catch (proctorErr) {
       logger.warn('Failed to start proctoring reapers:', proctorErr.message);
+    }
+
+    // Start automated GDPR data retention & purge scheduler
+    try {
+      const { initRetentionScheduler } = require('./jobs/retentionPurgeJob');
+      initRetentionScheduler();
+    } catch (retentionErr) {
+      logger.warn('Failed to start retention purge scheduler:', retentionErr.message);
     }
 
     logger.info(`📋 Mounted routes:

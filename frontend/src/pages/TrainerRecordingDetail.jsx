@@ -116,7 +116,23 @@ export default function TrainerRecordingDetail({ user }) {
         setQuizResult(d.data.quizResult)
         const MONITORING_EVENTS = new Set(['HEARTBEAT_LOST', 'HEARTBEAT_RESTORED', 'SESSION_STARTED', 'SESSION_RESUMED'])
         setViolations((d.data.violations || []).filter(v => !MONITORING_EVENTS.has(v.type)))
-        setStreamUrl(`${API_BASE}/recordings/${id}/stream?token=${user.token}`)
+        
+        // Fetch short-lived signed ticket for HTML5 video player
+        try {
+          const ticketRes = await fetch(`${API_BASE}/recordings/${id}/ticket`, {
+            method: 'POST',
+            headers: auth(user),
+          })
+          const ticketData = await ticketRes.json()
+          const ticket = ticketData?.data?.ticket || ticketData?.ticket
+          if (ticket) {
+            setStreamUrl(`${API_BASE}/recordings/${id}/stream?ticket=${encodeURIComponent(ticket)}`)
+          } else {
+            setStreamUrl(`${API_BASE}/recordings/${id}/stream`)
+          }
+        } catch {
+          setStreamUrl(`${API_BASE}/recordings/${id}/stream`)
+        }
       } catch (e) {
         showError(e.message)
       } finally {
@@ -128,7 +144,7 @@ export default function TrainerRecordingDetail({ user }) {
 
   const handleDownload = async () => {
     try {
-      const r = await fetch(`${API_BASE}/recordings/${id}/stream?token=${user.token}`)
+      const r = await fetch(`${API_BASE}/recordings/${id}/stream`, { headers: auth(user) })
       if (!r.ok) throw new Error('Download failed')
       const blob = await r.blob()
       const url = URL.createObjectURL(blob)

@@ -42,7 +42,7 @@ class AssessmentVerificationController {
       });
     } catch (error) {
       logger.error('Error initiating assessment verification', { error: error.message });
-      return res.status(500).json({ error: error.message || 'Failed to initiate verification' });
+      return res.status(500).json({ error: 'Failed to initiate verification' });
     }
   }
 
@@ -71,7 +71,7 @@ class AssessmentVerificationController {
       });
     } catch (error) {
       logger.error('Error refreshing assessment QR', { error: error.message });
-      return res.status(500).json({ error: error.message || 'Failed to refresh QR code' });
+      return res.status(500).json({ error: 'Failed to refresh QR code' });
     }
   }
 
@@ -101,7 +101,7 @@ class AssessmentVerificationController {
       return res.json({ success: true, ...status });
     } catch (error) {
       logger.error('Error getting assessment verification status', { error: error.message });
-      return res.status(500).json({ error: error.message || 'Failed to get verification status' });
+      return res.status(500).json({ error: 'Failed to get verification status' });
     }
   }
 
@@ -159,7 +159,7 @@ class AssessmentVerificationController {
       return res.json({ success: true, ...result });
     } catch (error) {
       logger.error('Error recording mobile camera connection', { error: error.message });
-      return res.status(500).json({ error: error.message || 'Failed to record mobile camera status' });
+      return res.status(500).json({ error: 'Failed to record mobile camera status' });
     }
   }
 
@@ -197,7 +197,7 @@ class AssessmentVerificationController {
       return res.json({ success: true, ...result });
     } catch (error) {
       logger.error('Error recording laptop camera connection', { error: error.message });
-      return res.status(500).json({ error: error.message || 'Failed to record laptop camera status' });
+      return res.status(500).json({ error: 'Failed to record laptop camera status' });
     }
   }
 
@@ -236,7 +236,7 @@ class AssessmentVerificationController {
       return res.json({ success: true, message: 'Verification valid. Assessment unlocked.', data: result });
     } catch (error) {
       logger.error('Error verifying assessment start', { error: error.message });
-      return res.status(500).json({ error: error.message || 'Failed to verify assessment' });
+      return res.status(500).json({ error: 'Failed to verify assessment' });
     }
   }
 
@@ -271,7 +271,7 @@ class AssessmentVerificationController {
       return res.json({ success: true, ...result });
     } catch (error) {
       logger.error('Error ending assessment verification session', { error: error.message });
-      return res.status(500).json({ error: error.message || 'Failed to end verification session' });
+      return res.status(500).json({ error: 'Failed to end verification session' });
     }
   }
 
@@ -343,7 +343,7 @@ class AssessmentVerificationController {
         mobileVerified: session?.mobile_verified ?? true,
       });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return res.status(500).json({ error: 'Failed to fetch mobile status' });
     }
   }
 }

@@ -58,7 +58,7 @@ const createOrUpdateProfile = async (req, res) => {
     res.json({ success: true, message: 'Profile saved', profile: updatedProfile });
   } catch (error) {
     console.error('Profile save error:', error.message);
-    res.status(500).json({ success: false, error: error.message || 'Server error saving profile' });
+    res.status(500).json({ success: false, error: 'Server error saving profile' });
   }
 };
 
@@ -77,21 +77,42 @@ const getProfile = async (req, res) => {
     res.json({ success: true, profile, experiences, educations });
   } catch (error) {
     console.error('Profile fetch error:', error.message);
-    res.status(500).json({ success: false, error: error.message || 'Server error fetching profile' });
+    res.status(500).json({ success: false, error: 'Server error fetching profile' });
   }
 };
+
+const PUBLIC_TRAINER_PROFILE_ATTRS = [
+  'id',
+  'userId',
+  'headline',
+  'about',
+  'qualification',
+  'experience',
+  'imagePath',
+  'skills',
+  'certifications',
+];
 
 const getPublicProfile = async (req, res) => {
   try {
     const { userId } = req.params;
     const profile = await TrainerProfile.findOne({
       where: { userId },
-      include: [{ model: User, as: 'user', attributes: ['id', 'name', 'email'] }],
+      attributes: PUBLIC_TRAINER_PROFILE_ATTRS,
+      include: [{ model: User, as: 'user', attributes: ['id', 'name'] }],
     });
     if (!profile) return res.json({ success: true, profile: null });
 
-    const experiences = await TrainerExperience.findAll({ where: { userId }, order: [['startDate', 'DESC']] });
-    const educations = await TrainerEducation.findAll({ where: { userId }, order: [['startYear', 'DESC']] });
+    const experiences = await TrainerExperience.findAll({
+      where: { userId },
+      attributes: ['id', 'title', 'company', 'description', 'startDate', 'endDate', 'isCurrent'],
+      order: [['startDate', 'DESC']],
+    });
+    const educations = await TrainerEducation.findAll({
+      where: { userId },
+      attributes: ['id', 'degree', 'institution', 'fieldOfStudy', 'startYear', 'endYear'],
+      order: [['startYear', 'DESC']],
+    });
 
     const courseCount = await Course.count({ where: { trainerId: userId } });
     const enrolledCount = await Enrollment.count({
@@ -101,7 +122,7 @@ const getPublicProfile = async (req, res) => {
     res.json({ success: true, profile, experiences, educations, stats: { courseCount, enrolledCount } });
   } catch (error) {
     console.error('Public profile error:', error.message);
-    res.status(500).json({ success: false, error: error.message || 'Server error' });
+    res.status(500).json({ success: false, error: 'Server error fetching public profile' });
   }
 };
 
@@ -109,11 +130,11 @@ const getAllTrainers = async (req, res) => {
   try {
     const trainers = await User.findAll({
       where: { role: 'TRAINER', isDeleted: false, status: 'APPROVED' },
-      attributes: ['id', 'name', 'email', 'username'],
+      attributes: ['id', 'name'],
       include: [{
         model: TrainerProfile,
         as: 'profile',
-        attributes: ['dob', 'phone', 'address', 'qualification', 'experience', 'imagePath', 'headline', 'skills'],
+        attributes: ['id', 'qualification', 'experience', 'imagePath', 'headline', 'skills'],
       }],
     });
     res.json({ success: true, trainers });
@@ -134,7 +155,7 @@ const addExperience = async (req, res) => {
     res.json({ success: true, experience: exp });
   } catch (error) {
     console.error('Add experience error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: 'Internal server error processing profile data' });
   }
 };
 
@@ -149,7 +170,7 @@ const updateExperience = async (req, res) => {
     res.json({ success: true, experience: exp });
   } catch (error) {
     console.error('Update experience error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: 'Internal server error processing profile data' });
   }
 };
 
@@ -163,7 +184,7 @@ const deleteExperience = async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     console.error('Delete experience error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: 'Internal server error processing profile data' });
   }
 };
 
@@ -176,7 +197,7 @@ const addEducation = async (req, res) => {
     res.json({ success: true, education: edu });
   } catch (error) {
     console.error('Add education error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: 'Internal server error processing profile data' });
   }
 };
 
@@ -191,7 +212,7 @@ const updateEducation = async (req, res) => {
     res.json({ success: true, education: edu });
   } catch (error) {
     console.error('Update education error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: 'Internal server error processing profile data' });
   }
 };
 
@@ -205,7 +226,7 @@ const deleteEducation = async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     console.error('Delete education error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: 'Internal server error processing profile data' });
   }
 };
 
@@ -216,7 +237,7 @@ const updateProfile = async (req, res) => {
     res.json({ success: true, message: 'Profile updated', imageUrl });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ success: false, error: 'Internal server error updating profile' });
   }
 };
 

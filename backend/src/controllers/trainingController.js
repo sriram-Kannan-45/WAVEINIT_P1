@@ -712,7 +712,7 @@ const deleteTraining = async (req, res) => {
   } catch (error) {
     console.error('Delete training error:', error.message);
     console.error('Delete training stack:', error.stack);
-    res.status(500).json({ error: 'Server error deleting training', details: error.message });
+    res.status(500).json({ error: 'Server error deleting training' });
   }
 };
 

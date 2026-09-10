@@ -550,7 +550,7 @@ function RegistrationPage() {
                   </div>
                   <label className="reg-terms-check">
                     <input type="checkbox" checked={form.agreeTerms} onChange={e => set('agreeTerms', e.target.checked)} />
-                    <span>I agree to the <button type="button" className="reg-link-inline">Terms of Service</button> and <button type="button" className="reg-link-inline">Privacy Policy</button></span>
+                    <span>I agree to the <button type="button" className="reg-link-inline">Terms of Service</button> and <a href="/privacy" target="_blank" rel="noopener noreferrer" className="reg-link-inline">Privacy Policy</a></span>
                   </label>
                 </div>
               )}

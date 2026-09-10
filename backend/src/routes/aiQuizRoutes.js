@@ -195,7 +195,10 @@ const router = express.Router();
     } catch (error) {
       console.error('Prompt generation endpoint error:', error.message);
       const statusCode = error.status || 500;
-      res.status(statusCode).json({ error: error.message, code: error.code });
+      res.status(statusCode).json({
+        error: error.status ? error.message : 'Server error generating prompt quiz',
+        code: error.code,
+      });
     }
     }
   );
@@ -217,7 +220,7 @@ router.get('/trainer/quizzes',
       });
       res.json({ quizzes });
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: 'Server error processing AI quiz request' });
     }
   }
 );
@@ -264,7 +267,7 @@ router.put('/trainer/quiz/:id',
       await quiz.update(update);
       res.json({ message: 'Quiz updated', quiz });
     } catch (error) {
-      res.status(error.status || 500).json({ error: error.message });
+      res.status(error.status || 500).json({ error: error.status ? error.message : 'Server error updating quiz' });
     }
   }
 );
@@ -304,7 +307,7 @@ router.delete('/trainer/quiz/:id',
       res.json({ success: true, message: 'Quiz deleted successfully' });
     } catch (error) {
       console.error('[DELETE quiz] Error:', error.message);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: 'Server error processing AI quiz request' });
     }
   }
 );
@@ -411,7 +414,7 @@ router.post('/trainer/quiz/:id/send',
       });
     } catch (error) {
       console.error('[send quiz] Error:', error.message);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: 'Server error processing AI quiz request' });
     }
   }
 );
@@ -455,7 +458,7 @@ router.post('/trainer/quiz/:id/publish-result',
       res.json({ success: true, message: 'Results published. Participants can now view their scores.' });
     } catch (error) {
       console.error('[publish-result] Error:', error.message);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: 'Server error processing AI quiz request' });
     }
   }
 );
@@ -707,7 +710,7 @@ router.post('/participant/start/:quizId',
       res.status(201).json({ attemptId: attempt.id, quiz, sessionToken });
     } catch (error) {
       console.error('[participant/start] Error:', error.message);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: 'Server error processing AI quiz request' });
     }
   }
 );
@@ -938,7 +941,7 @@ router.post('/participant/submit/:attemptId',
       if (error.status) {
         return res.status(error.status).json({ error: error.message });
       }
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: 'Server error processing AI quiz request' });
     }
   }
 );
@@ -973,7 +976,7 @@ router.get('/leaderboard/:quizId',
 
       res.json({ leaderboard: leaderboard.slice(0, 50) });
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: 'Server error processing AI quiz request' });
     }
   }
 );
@@ -1115,7 +1118,7 @@ router.get('/participant/quizzes',
     } catch (error) {
       console.error('[participant/quizzes] Error:', error.message);
       console.error('[participant/quizzes] Stack:', error.stack);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: 'Server error processing AI quiz request' });
     }
   }
 );
@@ -1483,7 +1486,7 @@ router.post('/participant/:attemptId/quiz-ai-assist',
     } catch (err) {
       console.error('[quiz-ai-assist]', err);
       if (err.status) return res.status(err.status).json({ error: err.message, code: err.code, remaining: err.remaining });
-      return res.status(500).json({ error: err.message || 'Failed to get AI assistance' });
+      return res.status(500).json({ error: 'Failed to get AI assistance' });
     }
   }
 );

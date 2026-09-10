@@ -239,13 +239,24 @@ exports.getMyProfile = async (req, res) => {
     res.json({ success: true, profile, stats, completion });
   } catch (error) {
     console.error('getMyProfile error:', error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
 exports.getProfileById = async (req, res) => {
   try {
     const { id } = req.params;
+    const requester = req.user;
+    const isSelf = requester && String(requester.id) === String(id);
+    const isAdmin = requester && requester.role === 'ADMIN';
+
+    if (!isSelf && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: You do not have permission to view this private profile.',
+      });
+    }
+
     const user = await User.findByPk(id, { attributes: { exclude: ['password'] } });
     if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
@@ -259,8 +270,8 @@ exports.getProfileById = async (req, res) => {
 
     res.json({ success: true, profile, stats, completion });
   } catch (error) {
-    console.error('getProfileById error:', error);
-    res.status(500).json({ success: false, message: error.message });
+    console.error('getProfileById error:', error.message);
+    res.status(500).json({ success: false, message: 'Failed to fetch user profile' });
   }
 };
 
@@ -291,7 +302,7 @@ exports.updateProfile = async (req, res) => {
   } catch (error) {
     await t.rollback();
     console.error('updateProfile error:', error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -309,7 +320,7 @@ exports.uploadBanner = async (req, res) => {
     res.json({ success: true, bannerImage: bannerPath });
   } catch (error) {
     console.error('uploadBanner error:', error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -328,7 +339,7 @@ exports.uploadAvatar = async (req, res) => {
     res.json({ success: true, profileImage: profilePath });
   } catch (error) {
     console.error('uploadAvatar error:', error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -340,7 +351,7 @@ exports.deleteAvatar = async (req, res) => {
     await User.update({ profilePic: null }, { where: { id: userId } });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -358,7 +369,7 @@ exports.uploadResume = async (req, res) => {
     res.json({ success: true, resume: resumePath });
   } catch (error) {
     console.error('uploadResume error:', error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -369,7 +380,7 @@ exports.deleteResume = async (req, res) => {
     if (profile) await profile.update({ resume: null });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -380,7 +391,7 @@ exports.deleteBanner = async (req, res) => {
     if (profile) await profile.update({ bannerImage: null });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -400,7 +411,7 @@ exports.addSkill = async (req, res) => {
     await ProfileActivityLog.create({ profileId: profile.id, activity: `Added skill: ${skill.trim()}` });
     res.json({ success: true, skill: created });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -414,7 +425,7 @@ exports.deleteSkill = async (req, res) => {
     if (!deleted) return res.status(404).json({ success: false, message: 'Skill not found' });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -432,7 +443,7 @@ exports.addExperience = async (req, res) => {
     await ProfileActivityLog.create({ profileId: profile.id, activity: `Added experience at ${company}` });
     res.json({ success: true, experience: exp });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -449,7 +460,7 @@ exports.updateExperience = async (req, res) => {
     await exp.update({ company, role, employmentType, location, startDate, endDate: currentlyWorking ? null : endDate, currentlyWorking, description, logo });
     res.json({ success: true, experience: exp });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -463,7 +474,7 @@ exports.deleteExperience = async (req, res) => {
     if (!deleted) return res.status(404).json({ success: false, message: 'Experience not found' });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -478,7 +489,7 @@ exports.addEducation = async (req, res) => {
     await ProfileActivityLog.create({ profileId: profile.id, activity: `Added education at ${institution}` });
     res.json({ success: true, education: edu });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -494,7 +505,7 @@ exports.updateEducation = async (req, res) => {
     await edu.update(req.body);
     res.json({ success: true, education: edu });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -508,7 +519,7 @@ exports.deleteEducation = async (req, res) => {
     if (!deleted) return res.status(404).json({ success: false, message: 'Education not found' });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -526,7 +537,7 @@ exports.addCertificate = async (req, res) => {
     await ProfileActivityLog.create({ profileId: profile.id, activity: `Added certificate: ${title}` });
     res.json({ success: true, certificate: cert });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -544,7 +555,7 @@ exports.updateCertificate = async (req, res) => {
     await cert.update(updates);
     res.json({ success: true, certificate: cert });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -558,7 +569,7 @@ exports.deleteCertificate = async (req, res) => {
     if (!deleted) return res.status(404).json({ success: false, message: 'Certificate not found' });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -573,7 +584,7 @@ exports.addProject = async (req, res) => {
     await ProfileActivityLog.create({ profileId: profile.id, activity: `Added project: ${title}` });
     res.json({ success: true, project });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -589,7 +600,7 @@ exports.updateProject = async (req, res) => {
     await project.update(req.body);
     res.json({ success: true, project });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -603,7 +614,7 @@ exports.deleteProject = async (req, res) => {
     if (!deleted) return res.status(404).json({ success: false, message: 'Project not found' });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -621,7 +632,7 @@ exports.updateContactLinks = async (req, res) => {
     }
     res.json({ success: true, contactLinks: links });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };
 
@@ -634,6 +645,6 @@ exports.deleteContactLinks = async (req, res) => {
     await ProfileContactLink.destroy({ where: { profileId: profile.id } });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Server error processing profile request' });
   }
 };

@@ -208,9 +208,6 @@ router.put(
       }
       res.status(500).json({
         error: 'Server error saving profile',
-        // Surface the underlying message in dev so the cause isn't hidden
-        // behind the generic banner. Safe to expose — never contains user data.
-        detail: err?.message || 'unknown',
       });
     }
   }

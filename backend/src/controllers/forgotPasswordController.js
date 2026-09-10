@@ -46,6 +46,8 @@ function generateOtp() {
   return String(crypto.randomInt(100000, 1_000_000));
 }
 
+const { maskEmail } = require('../utils/privacyMask');
+
 // Background email dispatcher — never blocks the HTTP response
 function dispatchOtpEmail(email, otp) {
   if (!isEmailConfigured()) {
@@ -56,7 +58,7 @@ function dispatchOtpEmail(email, otp) {
   setImmediate(() => {
     sendOtpEmail(email, otp, { expiresInMinutes: Math.round(OTP_TTL_MS / 60000) })
       .catch(mailErr => {
-        console.error(`[MAIL ERROR] Failed to send OTP to ${email}:`, mailErr.message);
+        console.error(`[MAIL ERROR] Failed to send OTP to ${maskEmail(email)}:`, mailErr.message);
         if (mailErr.code) console.error('   error code:', mailErr.code);
         if (mailErr.response) console.error('   smtp response:', mailErr.response);
         explainSmtpError(mailErr);
@@ -123,7 +125,7 @@ const sendOtp = async (req, res) => {
 
     return res.status(200).json({ message: 'OTP sent successfully. Please check your inbox.' });
   } catch (err) {
-    console.error('[FORGOT PASSWORD ERROR]', err);
+    console.error('[FORGOT PASSWORD ERROR]', err.message);
     return res.status(500).json({ error: 'Internal server error. Please try again.' });
   }
 };
@@ -233,7 +235,7 @@ const resetPassword = async (req, res) => {
 
     return res.json({ message: 'Password reset successfully' });
   } catch (err) {
-    console.error('[RESET PASSWORD ERROR]', err);
+    console.error('[RESET PASSWORD ERROR]', err.message);
     return res.status(500).json({ error: 'Password reset failed' });
   }
 };

@@ -476,18 +476,12 @@ router.put(
     try {
       const userId = req.user.id;
       
-      console.log('🔍 UPDATE PROFILE - userId:', userId);
-      console.log('🔍 UPDATE PROFILE - body:', JSON.stringify(req.body));
-      console.log('🔍 UPDATE PROFILE - file:', req.file ? req.file.originalname : 'no file');
-
       // SAFE FIELD EXTRACTION - Handle undefined/null gracefully
       const name = req.body.name ? String(req.body.name).trim() : '';
       const phone = req.body.phone ? String(req.body.phone).trim() : '';
       const dob = req.body.dob ? String(req.body.dob).trim() : '';
       const qualification = req.body.qualification ? String(req.body.qualification).trim() : '';
       const experience = req.body.experience ? String(req.body.experience).trim() : '';
-
-      console.log('🔍 Extracted fields - name:', name, 'phone:', phone, 'dob:', dob);
 
       // Update user base info (User table)
       const trainer = await User.findByPk(userId);
@@ -520,8 +514,6 @@ router.put(
       if (qualification) profileUpdateData.qualification = qualification;
       if (experience) profileUpdateData.experience = experience;
       if (imagePath) profileUpdateData.imagePath = imagePath;
-
-      console.log('🔍 Profile update data:', profileUpdateData);
 
       // Check if profile exists
       let profile = await TrainerProfile.findOne({ where: { userId } });
@@ -561,10 +553,9 @@ router.put(
       });
 
     } catch (error) {
-      console.error('❌ Trainer update profile ERROR:', error.message, error.stack);
+      console.error('❌ Trainer update profile ERROR:', error.message);
       res.status(500).json({ 
-        error: 'Failed to update profile',
-        details: error.message 
+        error: 'Failed to update profile'
       });
     }
   }
@@ -578,10 +569,6 @@ router.post(
   async (req, res) => {
     try {
       const userId = req.user.id;
-      
-      console.log('🔍 POST PROFILE UPDATE - userId:', userId);
-      console.log('🔍 POST PROFILE UPDATE - body:', JSON.stringify(req.body));
-
       const { name, phone, dob, qualification, experience } = req.body;
 
       // Update User table
@@ -623,7 +610,7 @@ router.post(
 
     } catch (error) {
       console.error('❌ POST Profile update error:', error.message);
-      res.status(500).json({ error: 'Server error: ' + error.message });
+      res.status(500).json({ error: 'Server error updating profile' });
     }
   }
 );
@@ -692,10 +679,6 @@ router.put(
   upload.single('profileImage'),
   async (req, res) => {
     try {
-      // ── Debug logging ──────────────────────────────────────────────────────
-      console.log('📥 [PUT /trainer/update] req.body :', req.body);
-      console.log('📥 [PUT /trainer/update] req.file :', req.file ? req.file.filename : 'none');
-
       const trainerId = req.user?.id;
       if (!trainerId) {
         return res.status(401).json({ success: false, message: 'Unauthorized' });
@@ -803,11 +786,9 @@ router.put(
 
     } catch (error) {
       console.error('❌ [PUT /trainer/update] ERROR:', error.message);
-      console.error(error.stack);
       return res.status(500).json({
         success: false,
-        message: error.message,
-        stack: process.env.NODE_ENV !== 'production' ? error.stack : undefined
+        message: 'Server error updating trainer profile'
       });
     }
   }
@@ -893,7 +874,7 @@ router.get(
       return res.json({ success: true, quizzes });
     } catch (error) {
       console.error('Error fetching trainer quizzes:', error);
-      return res.status(500).json({ error: error.message });
+      return res.status(500).json({ error: 'Server error fetching trainer quizzes' });
     }
   }
 );

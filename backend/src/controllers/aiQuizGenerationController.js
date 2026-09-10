@@ -273,7 +273,10 @@ async function generateAIQuiz(req, res) {
       try { fs.unlinkSync(filePath); } catch (_) {}
     }
     console.error('[generateAIQuiz] Error:', error.message);
-    return res.status(error.status || 500).json({ error: error.message, code: error.code });
+    return res.status(error.status || 500).json({
+      error: error.status ? error.message : 'Server error generating AI quiz',
+      code: error.code,
+    });
   }
 }
 

@@ -131,6 +131,22 @@ const getSessions = async (req, res) => {
         { trainerId: user.id },
         ...(courseId ? [{ courseId }] : [])
       ];
+    } else if (user.role === 'PARTICIPANT') {
+      const myEnrollments = await Enrollment.findAll({
+        where: { participantId: user.id, status: { [Op.in]: ['ENROLLED', 'COMPLETED'] } },
+        attributes: ['courseId', 'trainingId'],
+      });
+      const enrolledCourseIds = myEnrollments.map(e => e.courseId).filter(Boolean);
+      const enrolledTrainingIds = myEnrollments.map(e => e.trainingId).filter(Boolean);
+
+      if (!enrolledCourseIds.length && !enrolledTrainingIds.length) {
+        return res.json({ success: true, sessions: [], pagination: formatPaginationMeta(0, page, limit), total: 0 });
+      }
+
+      where[Op.or] = [
+        ...(enrolledCourseIds.length ? [{ courseId: { [Op.in]: enrolledCourseIds } }] : []),
+        ...(enrolledTrainingIds.length ? [{ trainingId: { [Op.in]: enrolledTrainingIds } }] : []),
+      ];
     }
 
     const { count, rows: sessions } = await AttendanceSession.findAndCountAll({
@@ -241,6 +257,54 @@ const getSessionDetail = async (req, res) => {
     const tStart = session.training?.startDate || null;
     const tEnd = session.training?.endDate || null;
     const lockStatus = calculateSessionStatus(session.sessionDate, tStart, tEnd, todayIST);
+
+    // If user is PARTICIPANT, enforce IDOR defense: only return their own attendance record
+    if (req.user.role === 'PARTICIPANT') {
+      const isEnrolled = await Enrollment.findOne({
+        where: {
+          ...(session.courseId ? { courseId: session.courseId } : { trainingId: session.trainingId }),
+          participantId: req.user.id,
+          status: { [Op.in]: ['ENROLLED', 'COMPLETED'] },
+        },
+      });
+
+      if (!isEnrolled) {
+        return res.status(403).json({ success: false, error: 'Access denied: You are not enrolled in this session.' });
+      }
+
+      const myRecord = (session.records || []).find(r => String(r.studentId) === String(req.user.id));
+      return res.json({
+        success: true,
+        session: {
+          id: session.id,
+          title: session.title,
+          sessionDate: session.sessionDate,
+          startTime: session.startTime,
+          endTime: session.endTime,
+          sessionType: session.sessionType || 'MORNING',
+          dayNumber: session.dayNumber || null,
+          batchName: session.batchName,
+          topic: session.topic,
+          courseId: session.courseId,
+          trainingId: session.trainingId,
+          courseTitle: session.course?.title || session.training?.title || 'General',
+          trainerName: session.trainer?.name,
+          isOpen: lockStatus.isOpen,
+          isLocked: lockStatus.isLocked,
+          lockReason: lockStatus.lockReason,
+          lockMessage: lockStatus.lockMessage,
+          todayDate: todayIST,
+        },
+        myRecord: myRecord ? {
+          id: myRecord.id,
+          status: myRecord.status,
+          remarks: myRecord.remarks,
+          markedAt: myRecord.markedAt,
+        } : null,
+        isLocked: lockStatus.isLocked,
+        isOpen: lockStatus.isOpen,
+      });
+    }
 
     // Fetch all enrolled students in this course or training program
     let enrolledStudents = [];
@@ -764,11 +828,85 @@ const getAdminAnalytics = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/attendance/sessions/:sessionId/my-record
+ * Dedicated endpoint for a student to fetch only their own record
+ */
+const getMySessionRecord = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const userId = req.user.id;
+    const todayIST = getKolkataDate();
+
+    const session = await AttendanceSession.findByPk(sessionId, {
+      include: [
+        { model: Course, as: 'course', attributes: ['id', 'title'] },
+        { model: Training, as: 'training', attributes: ['id', 'title', 'startDate', 'endDate'] },
+        { model: User, as: 'trainer', attributes: ['id', 'name'] },
+        {
+          model: AttendanceRecord,
+          as: 'records',
+          where: { studentId: userId },
+          required: false,
+        },
+      ],
+    });
+
+    if (!session) {
+      return res.status(404).json({ success: false, error: 'Session not found' });
+    }
+
+    if (req.user.role === 'PARTICIPANT') {
+      const isEnrolled = await Enrollment.findOne({
+        where: {
+          ...(session.courseId ? { courseId: session.courseId } : { trainingId: session.trainingId }),
+          participantId: userId,
+          status: { [Op.in]: ['ENROLLED', 'COMPLETED'] },
+        },
+      });
+
+      if (!isEnrolled) {
+        return res.status(403).json({ success: false, error: 'Access denied: You are not enrolled in this session.' });
+      }
+    }
+
+    const tStart = session.training?.startDate || null;
+    const tEnd = session.training?.endDate || null;
+    const lockStatus = calculateSessionStatus(session.sessionDate, tStart, tEnd, todayIST);
+    const myRecord = session.records && session.records.length > 0 ? session.records[0] : null;
+
+    return res.json({
+      success: true,
+      session: {
+        id: session.id,
+        title: session.title,
+        sessionDate: session.sessionDate,
+        startTime: session.startTime,
+        endTime: session.endTime,
+        courseTitle: session.course?.title || session.training?.title || 'General',
+        trainerName: session.trainer?.name,
+        isOpen: lockStatus.isOpen,
+        isLocked: lockStatus.isLocked,
+      },
+      myRecord: myRecord ? {
+        id: myRecord.id,
+        status: myRecord.status,
+        remarks: myRecord.remarks,
+        markedAt: myRecord.markedAt,
+      } : null,
+    });
+  } catch (error) {
+    logger.error('Error fetching student attendance record', { error: error.message });
+    return res.status(500).json({ success: false, error: 'Failed to fetch attendance record' });
+  }
+};
+
 module.exports = {
   createSession,
   generateTrainingSessions,
   getSessions,
   getSessionDetail,
+  getMySessionRecord,
   markAttendance,
   updateRecord,
   getStudentSummary,

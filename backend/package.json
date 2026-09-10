@@ -13,7 +13,8 @@
     "worker:ai": "node src/workers/aiWorkerService.js",
     "test": "jest --no-coverage --passWithNoTests",
     "test:routes": "jest src/routes --no-coverage --passWithNoTests",
-    "test:security": "node --test test/securityConfig.test.js"
+    "test:gdpr": "node --test test/gdprRemediation.test.js",
+    "test:security": "node --test test/securityConfig.test.js test/gdprRemediation.test.js"
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.1.2",

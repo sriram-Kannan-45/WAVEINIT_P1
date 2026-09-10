@@ -11,6 +11,8 @@ import { API_BASE } from './api/api'
 
 import AssessmentMobileJoin from './pages/assessment/AssessmentMobileJoin'
 import MobileJoin from './pages/interview/MobileJoin'
+import PrivacyPolicy from './pages/PrivacyPolicy'
+import CookieConsentBanner from './components/common/CookieConsentBanner'
 
 // Resilient lazy loader with auto-retry and auto-reload on stale Vite chunks / HMR
 function ChunkLoadFallback({ error }) {
@@ -229,13 +231,10 @@ function App() {
       if (refreshPromise) return refreshPromise
       refreshPromise = (async () => {
         try {
-          const user = JSON.parse(localStorage.getItem('user') || '{}')
-          const body = user.refreshToken ? { refreshToken: user.refreshToken } : {}
           const res = await originalFetch(`${API_BASE}/auth/refresh`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify(body),
           })
           if (res.ok) {
             const data = await res.json()
@@ -350,6 +349,7 @@ function App() {
             <ErrorBoundary>
               <Suspense fallback={<PageLoader />}>
                 <AppRoutes user={user} onLogin={handleLogin} onLogout={handleLogout} />
+                <CookieConsentBanner />
               </Suspense>
             </ErrorBoundary>
           </AlertModalProvider>
@@ -919,6 +919,9 @@ function AppRoutes({ user, onLogin, onLogout }) {
       <Route path="/verify-certificate" element={<CertificateVerifyPage />} />
       <Route path="/verify-certificate/:code" element={<CertificateVerifyPage />} />
       <Route path="/certificates/verify/:code" element={<CertificateVerifyPage />} />
+
+      {/* Public Privacy Policy & GDPR Documentation */}
+      <Route path="/privacy" element={<PrivacyPolicy />} />
 
       <Route
         path="*"

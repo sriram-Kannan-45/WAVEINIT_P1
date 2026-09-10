@@ -247,6 +247,16 @@ function otpEmailHtml({ otp, expiresInMinutes, brand = APP_NAME }) {
 }
 
 async function sendOtpEmail(email, otp, { expiresInMinutes = 5 } = {}) {
+function maskEmail(email) {
+  if (!email || typeof email !== 'string') return '***';
+  const parts = email.split('@');
+  if (parts.length !== 2) return '***';
+  const user = parts[0];
+  const domain = parts[1];
+  const maskedUser = user.length > 2 ? `${user[0]}***${user.slice(-1)}` : `${user[0]}***`;
+  return `${maskedUser}@${domain}`;
+}
+
   if (!transporter) throw new Error('Mailer not configured');
   const info = await transporter.sendMail({
     from: `"${APP_NAME} Support" <${GMAIL_USER}>`,
@@ -255,7 +265,7 @@ async function sendOtpEmail(email, otp, { expiresInMinutes = 5 } = {}) {
     text: `Your ${APP_NAME} password reset code is ${otp}. It expires in ${expiresInMinutes} minutes. If you didn't request this, ignore this email.`,
     html: otpEmailHtml({ otp, expiresInMinutes }),
   });
-  console.log(`[MAIL SUCCESS] OTP email sent to ${email} | MessageID: ${info.messageId}`);
+  console.log(`[MAIL SUCCESS] OTP email sent to ${maskEmail(email)} | MessageID: ${info.messageId}`);
   return info;
 }
 
@@ -319,7 +329,7 @@ async function sendCredentialsEmail({ to, participantName, trainingName, partici
     text: `Hello ${participantName},\n\nYour registration has been approved!\n\nTraining: ${trainingName}\nParticipant ID: ${participantId}\nTemporary Password: ${temporaryPassword}\n\nLogin: ${loginUrl}\n\nPlease change your password after your first login.\n\nRegards,\n${APP_NAME} LMS`,
     html: credentialsEmailHtml({ participantName, trainingName, participantId, temporaryPassword, loginUrl }),
   });
-  console.log(`[MAIL SUCCESS] Credentials email sent to ${to} | MessageID: ${info.messageId}`);
+  console.log(`[MAIL SUCCESS] Credentials email sent to ${maskEmail(to)} | MessageID: ${info.messageId}`);
   return info;
 }
 
@@ -332,7 +342,7 @@ async function sendTestEmail(to) {
     text: `Hello! This is a test email from ${APP_NAME}. If you can read this, SMTP is working.`,
     html: `<div style="font-family:sans-serif;padding:24px"><h2>SMTP test ✅</h2><p>If you can read this, your ${APP_NAME} mailer is correctly configured.</p><p style="color:#94a3b8;font-size:12px">Sent at ${new Date().toISOString()}</p></div>`,
   });
-  console.log(`[MAIL TEST] sent to ${to} | MessageID: ${info.messageId}`);
+  console.log(`[MAIL TEST] sent to ${maskEmail(to)} | MessageID: ${info.messageId}`);
   return info;
 }
 

@@ -46,7 +46,7 @@ router.get(   '/quizzes',                         participant, async (req, res) 
     return res.json({ success: true, quizzes: availableQuizzes, completedQuizzes });
   } catch (error) {
     console.error('Error fetching participant quizzes:', error);
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: 'Server error fetching participant quizzes' });
   }
 });
 router.post(  '/quizzes/:quizId/start',           participant, c.startQuiz);
@@ -75,7 +75,7 @@ router.get(   '/results',                         participant, async (req, res) 
     return res.json({ success: true, results });
   } catch (error) {
     console.error('Error fetching participant results:', error);
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: 'Server error fetching participant results' });
   }
 });
 
@@ -161,7 +161,7 @@ router.get('/activity/heatmap', participant, async (req, res) => {
     return res.json({ success: true, heatmap, dailyMap });
   } catch (error) {
     console.error('Error fetching participant activity heatmap:', error);
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: 'Server error fetching participant activity heatmap' });
   }
 });
 

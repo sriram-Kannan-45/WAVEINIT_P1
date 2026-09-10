@@ -164,7 +164,7 @@ router.post('/:id/publish', roleMiddleware('TRAINER', 'ADMIN'), async (req, res)
     res.json({ success: true, message: 'Quiz published successfully', quiz });
   } catch (error) {
     console.error('Error publishing quiz:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });
 
@@ -209,7 +209,7 @@ router.post('/:id/close', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) =
     res.json({ success: true, message: 'Quiz closed successfully', autoSubmitted: inProgressAttempts.length });
   } catch (error) {
     console.error('Error closing quiz:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });
 
@@ -247,7 +247,7 @@ router.post('/:id/unpublish', roleMiddleware('TRAINER', 'ADMIN'), async (req, re
     res.json({ success: true, message: 'Quiz returned to draft' });
   } catch (error) {
     console.error('Error unpublishing quiz:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });
 
@@ -380,7 +380,7 @@ router.post('/:id/send', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) =>
     });
   } catch (error) {
     console.error('[send] Error sending quiz:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });
 
@@ -453,7 +453,7 @@ router.get('/:id/results-summary', roleMiddleware('TRAINER', 'ADMIN'), async (re
     });
   } catch (error) {
     console.error('[results-summary] Error:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });
 
@@ -595,7 +595,7 @@ router.post('/:id/publish-result', roleMiddleware('TRAINER', 'ADMIN'), async (re
     res.json({ success: true, message: 'Results published successfully', published_at: now, enrolled, completed });
   } catch (error) {
     console.error('Error publishing results:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });
 
@@ -619,7 +619,7 @@ router.get('/:id', async (req, res) => {
     if (!quiz) return res.status(404).json({ error: 'Quiz not found' });
     res.json({ quiz });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });
 
@@ -710,7 +710,7 @@ router.get('/:id/results', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) 
     });
   } catch (error) {
     console.error('[results] Error:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });
 
@@ -788,7 +788,7 @@ router.post('/:id/publish-participant/:participantId', roleMiddleware('TRAINER',
     res.json({ success: true, message: 'Result published for participant', participantId });
   } catch (error) {
     console.error('[publish-participant] Error:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });
 
@@ -804,8 +804,7 @@ router.get('/:id/questions', async (req, res) => {
     const userRole = (req.user.role || '').toUpperCase();
     const userId = req.user.id;
 
-    console.log(`[GET /api/quizzes/${quizId}/questions] Request by user #${userId}, role: ${userRole}`);
-    console.log(`[GET /api/quizzes/${quizId}/questions] JWT Payload:`, req.user);
+    logger.debug(`[GET /api/quizzes/${quizId}/questions] Request by user #${userId}, role: ${userRole}`);
 
     const quiz = await AIQuiz.findByPk(quizId, {
       attributes: [
@@ -932,7 +931,7 @@ router.get('/:id/questions', async (req, res) => {
     }
   } catch (error) {
     console.error(`[GET /api/quizzes/${req.params.id}/questions] Error:`, error);
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });
 
@@ -974,7 +973,7 @@ router.post('/:id/questions', roleMiddleware('TRAINER', 'ADMIN'), async (req, re
 
     res.status(201).json({ success: true, question });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });
 
@@ -1010,7 +1009,7 @@ router.put('/questions/:id', roleMiddleware('TRAINER', 'ADMIN'), async (req, res
 
     res.json({ success: true, question });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });
 
@@ -1032,7 +1031,7 @@ router.delete('/questions/:id', roleMiddleware('TRAINER', 'ADMIN'), async (req, 
     await question.destroy();
     res.json({ success: true, message: 'Question deleted' });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });
 
@@ -1059,7 +1058,7 @@ router.post('/:id/questions/reorder', roleMiddleware('TRAINER', 'ADMIN'), async 
 
     res.json({ success: true, message: 'Questions reordered' });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });
 
@@ -1182,7 +1181,7 @@ router.get('/:id/participants', roleMiddleware('TRAINER', 'ADMIN'), async (req, 
     res.json({ participants, total: participants.length });
   } catch (error) {
     console.error('[participants] Error:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });
 
@@ -1248,7 +1247,7 @@ router.delete('/:id', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) => {
     res.json({ success: true, message: 'Quiz deleted successfully' });
   } catch (error) {
     console.error('Error deleting quiz:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });
 
@@ -1259,15 +1258,7 @@ router.delete('/:id', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) => {
 const startQuizAttempt = async (req, res) => {
   try {
     const quizId = req.params.quizId;
-    const participantId = req.user.id;
-    const authHeader = req.headers['authorization'];
-
-    console.log("--- START QUIZ ATTEMPT API HIT ---");
-    console.log("Participant ID:", participantId);
-    console.log("JWT:", authHeader);
-    console.log("req.user:", req.user);
-    console.log("req.params:", req.params);
-    console.log("req.body:", req.body);
+    logger.debug(`[startQuizAttempt] Quiz #${quizId} attempt initiated by user #${participantId}`);
 
     const quiz = await AIQuiz.findByPk(quizId);
     if (!quiz) {
@@ -1517,7 +1508,7 @@ const startQuizAttempt = async (req, res) => {
     return res.json(apiResponse);
   } catch (error) {
     console.error('[startQuizAttempt] Error starting quiz attempt:', error);
-    return res.status(500).json({ error: error.message || 'Failed to start quiz attempt' });
+    return res.status(500).json({ error: 'Failed to start quiz attempt' });
   }
 };
 
@@ -1549,7 +1540,7 @@ router.get('/attempts/:attemptId', async (req, res) => {
     return res.json({ attempt });
   } catch (err) {
     console.error('Error fetching quiz attempt:', err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Server error fetching quiz attempt' });
   }
 });
 
@@ -2099,7 +2090,7 @@ router.get('/', roleMiddleware('ADMIN', 'TRAINER'), async (req, res) => {
     });
   } catch (error) {
     console.error('[GET /api/quizzes] Error:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });
 

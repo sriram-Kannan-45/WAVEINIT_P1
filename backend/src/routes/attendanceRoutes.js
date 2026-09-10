@@ -13,6 +13,7 @@ router.get('/student/summary', attendanceController.getStudentSummary);
 router.post('/trainings/:trainingId/generate', roleMiddleware('TRAINER', 'ADMIN'), attendanceController.generateTrainingSessions);
 router.post('/sessions', roleMiddleware('TRAINER', 'ADMIN'), attendanceController.createSession);
 router.get('/sessions', attendanceController.getSessions);
+router.get('/sessions/:sessionId/my-record', attendanceController.getMySessionRecord);
 router.get('/sessions/:sessionId', attendanceController.getSessionDetail);
 router.post('/sessions/:sessionId/mark', roleMiddleware('TRAINER', 'ADMIN'), attendanceController.markAttendance);
 router.put('/sessions/:sessionId/records/:recordId', roleMiddleware('TRAINER', 'ADMIN'), attendanceController.updateRecord);

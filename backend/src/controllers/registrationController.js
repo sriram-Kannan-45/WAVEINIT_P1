@@ -299,7 +299,6 @@ async function getApplications(req, res) {
       trainerName: a.trainer?.name || null,
       trainerId: a.trainerId,
       participantId: a.participantId,
-      participantPassword: a.plainPassword || null,
       credentialsSentAt: a.credentialsSentAt,
       rejectionReason: a.rejectionReason,
       createdAt: a.created_at,
@@ -474,7 +473,7 @@ async function approveApplication(req, res) {
       success: true,
       message: 'Application approved successfully.',
       participantId,
-      plainPassword,
+      temporaryPasswordGenerated: !!plainPassword,
       userId: user.id,
     });
   } catch (error) {
@@ -812,7 +811,6 @@ async function sendCredentials(req, res) {
     console.error(error.stack);
     res.status(500).json({
       error: 'Server error sending credentials.',
-      details: process.env.NODE_ENV !== 'production' ? error.message : undefined,
     });
   }
 }
@@ -901,7 +899,7 @@ async function exportApplications(req, res) {
     const headers = [
       'Application ID', 'Participant ID', 'Name', 'Email', 'Phone',
       'Training Program', 'Trainer', 'Status', 'AI Score',
-      'Generated Password', 'Application Date', 'Review Date',
+      'Credentials Status', 'Application Date', 'Review Date',
     ];
     const hRow = sheet.addRow(headers);
     hRow.eachCell((cell) => {
@@ -922,7 +920,7 @@ async function exportApplications(req, res) {
         app.trainer?.name || '-',
         app.status,
         app.aiScore ? `${app.aiScore}%` : '-',
-        app.plainPassword || '(sent)',
+        app.credentialsSentAt ? 'Credentials Sent' : (app.participantId ? 'Generated' : 'Pending'),
         app.created_at ? new Date(app.created_at).toLocaleDateString() : '-',
         app.reviewedAt ? new Date(app.reviewedAt).toLocaleDateString() : '-',
       ]);

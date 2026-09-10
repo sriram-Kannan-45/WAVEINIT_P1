@@ -252,21 +252,50 @@ exports.getOne = async (req, res) => {
   }
 };
 
+exports.getStreamingTicket = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const recording = await QuizRecording.findByPk(id);
+    if (!recording || recording.isDeleted) {
+      return fail(res, 404, 'Recording not found');
+    }
+
+    const userRole = (req.user.role || '').toUpperCase();
+    const userId = req.user.id;
+
+    if (userRole === 'TRAINER' && recording.trainerId !== userId) {
+      return fail(res, 403, 'Access denied');
+    }
+    if (userRole === 'PARTICIPANT' && recording.participantId !== userId) {
+      return fail(res, 403, 'Access denied');
+    }
+
+    const { issueStreamingTicket } = require('../services/streamingTicketService');
+    const ticket = issueStreamingTicket({
+      userId,
+      role: userRole,
+      resourceId: id,
+    });
+
+    return ok(res, { ticket, expiresIn: 60 });
+  } catch (error) {
+    logger.error('[recordingController.getStreamingTicket]', { error: error.message });
+    return fail(res, 500, 'Failed to generate streaming ticket');
+  }
+};
+
 exports.stream = async (req, res) => {
   try {
     const { id } = req.params;
     if (!req.user) {
-      const token = req.query.token;
-      if (token) {
-        try {
-          const jwt = require('jsonwebtoken');
-          const decoded = jwt.verify(token, process.env.JWT_SECRET);
-          req.user = decoded;
-          if (req.user && typeof req.user.role === 'string') {
-            req.user.role = req.user.role.toUpperCase();
-          }
-        } catch (e) {
-          return fail(res, 403, 'Invalid or expired token');
+      const ticket = req.query.ticket;
+      if (ticket) {
+        const { verifyStreamingTicket } = require('../services/streamingTicketService');
+        const ticketUser = verifyStreamingTicket(ticket, id);
+        if (ticketUser) {
+          req.user = { id: ticketUser.userId, role: ticketUser.role };
+        } else {
+          return fail(res, 403, 'Invalid or expired streaming ticket');
         }
       } else {
         return fail(res, 401, 'Authentication required');
@@ -293,6 +322,11 @@ exports.stream = async (req, res) => {
       return fail(res, 404, 'Video file not found on disk');
     }
 
+    // Sensitive media protection headers
+    res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
     const stat = fs.statSync(filePath);
     const fileSize = stat.size;
     const ext = path.extname(filePath).toLowerCase();
@@ -310,7 +344,8 @@ exports.stream = async (req, res) => {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
         'Content-Length': chunkSize,
-        'Content-Type': contentType
+        'Content-Type': contentType,
+        'Cache-Control': 'private, no-cache, no-store, must-revalidate',
       });
 
       const stream = fs.createReadStream(filePath, { start, end });
@@ -319,13 +354,14 @@ exports.stream = async (req, res) => {
       res.writeHead(200, {
         'Content-Length': fileSize,
         'Content-Type': contentType,
-        'Accept-Ranges': 'bytes'
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'private, no-cache, no-store, must-revalidate',
       });
       fs.createReadStream(filePath).pipe(res);
     }
   } catch (error) {
     logger.error('[recordingController.stream]', { error: error.message });
-    if (!res.headersSent) return fail(res, 500, error.message);
+    if (!res.headersSent) return fail(res, 500, 'Error streaming recording');
   }
 };
 

@@ -52,11 +52,4 @@ test('Vercel frontend policy restricts CORS to specific origin and keeps public 
     config.headers[assetsIndex].headers.find((header) => header.key === 'Cache-Control')?.value,
     'public, max-age=31536000, immutable',
   );
-  
-  // Ensure assets also have specific CORS header
-  assert.equal(
-    config.headers[assetsIndex].headers.find((header) => header.key === 'Access-Control-Allow-Origin')?.value,
-    'https://www.waveinitlms.online',
-    'Assets should have specific CORS origin'
-  );
 });

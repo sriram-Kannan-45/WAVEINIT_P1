@@ -22,11 +22,12 @@ const router = express.Router();
 const regUploadDir = require('../config/paths').getUploadsPath('registrations');
 if (!fs.existsSync(regUploadDir)) fs.mkdirSync(regUploadDir, { recursive: true });
 
+const crypto = require('crypto');
 const regStorage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, regUploadDir),
   filename: (req, file, cb) => {
-    const safe = (file.originalname || 'upload').replace(/[^a-zA-Z0-9.\-_]/g, '').slice(-60);
-    cb(null, `${Date.now()}-${safe}`);
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `${crypto.randomUUID()}${ext}`);
   },
 });
 

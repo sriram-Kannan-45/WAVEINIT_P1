@@ -2116,7 +2116,7 @@ async function generateCourseStructure(req, res) {
       try { fs.unlinkSync(req.file.path); } catch (_) {}
     }
     console.error('[STRUCTURE] ❌ generateCourseStructure failed:', e.message);
-    res.status(e.status || 500).json({ error: `AI generation failed: ${e.message}`, code:e.code });
+    res.status(e.status || 500).json({ error: 'AI generation failed', code: e.code });
   }
 }
 
@@ -2171,7 +2171,7 @@ async function saveCourseStructure(req, res) {
     });
   } catch (e) {
     console.error('saveCourseStructure error:', e.message);
-    res.status(500).json({ error: e.message || 'Failed to save course structure' });
+    res.status(500).json({ error: 'Failed to save course structure' });
   }
 }
 
@@ -2189,7 +2189,7 @@ async function clearCourseStructure(req, res) {
     });
   } catch (e) {
     console.error('clearCourseStructure error:', e.message);
-    res.status(500).json({ error: e.message || 'Failed to clear course structure' });
+    res.status(500).json({ error: 'Failed to clear course structure' });
   }
 }
 
@@ -2214,7 +2214,7 @@ async function deleteStructureModule(req, res) {
     });
   } catch (e) {
     console.error('deleteStructureModule error:', e.message);
-    res.status(500).json({ error: e.message || 'Failed to delete module' });
+    res.status(500).json({ error: 'Failed to delete module' });
   }
 }
 
@@ -2239,7 +2239,7 @@ async function deleteStructureSubModule(req, res) {
     });
   } catch (e) {
     console.error('deleteStructureSubModule error:', e.message);
-    res.status(500).json({ error: e.message || 'Failed to delete sub module' });
+    res.status(500).json({ error: 'Failed to delete sub module' });
   }
 }
 
@@ -2260,7 +2260,7 @@ async function deleteStructureTopic(req, res) {
     });
   } catch (e) {
     console.error('deleteStructureTopic error:', e.message);
-    res.status(500).json({ error: e.message || 'Failed to delete topic' });
+    res.status(500).json({ error: 'Failed to delete topic' });
   }
 }
 

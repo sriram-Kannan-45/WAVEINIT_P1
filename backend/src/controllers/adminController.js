@@ -95,6 +95,135 @@ const { invalidateSummaryCache } = require('./adminSummaryController');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 const cacheService = require('../services/cacheService');
 const { sequelize } = require('../config/db');
+const fs = require('fs');
+const path = require('path');
+const { resolveUploadsPath } = require('../config/paths');
+
+/**
+ * Phase 11: Identify and safely unlink all physical files associated with a user
+ * before deleting database rows to prevent orphaned files on disk.
+ */
+async function cleanupUserPhysicalFiles(userId) {
+  const filesToUnlink = new Set();
+
+  try {
+    // 1. UserProfile & certificates
+    const up = await UserProfile.findAll({
+      where: { userId },
+      attributes: ['resumePath', 'bannerPath', 'profilePath'],
+    }).catch(() => []);
+    up.forEach(p => {
+      if (p.resumePath) filesToUnlink.add(p.resumePath);
+      if (p.bannerPath) filesToUnlink.add(p.bannerPath);
+      if (p.profilePath) filesToUnlink.add(p.profilePath);
+    });
+
+    const certs = await ProfileCertificate.findAll({
+      attributes: ['certificateFile'],
+      include: [{ model: UserProfile, as: 'profile', where: { userId }, attributes: ['id'] }],
+    }).catch(() => []);
+    certs.forEach(c => {
+      if (c.certificateFile) filesToUnlink.add(c.certificateFile);
+    });
+
+    // 2. ParticipantProfile
+    const partProfile = await ParticipantProfile.findOne({
+      where: { userId },
+      attributes: ['avatarUrl'],
+    }).catch(() => null);
+    if (partProfile?.avatarUrl) filesToUnlink.add(partProfile.avatarUrl);
+
+    // 3. RegistrationApplication
+    const regApps = await RegistrationApplication.findAll({
+      where: { userId },
+      attributes: ['resumeUrl', 'profilePhotoUrl'],
+    }).catch(() => []);
+    regApps.forEach(r => {
+      if (r.resumeUrl) filesToUnlink.add(r.resumeUrl);
+      if (r.profilePhotoUrl) filesToUnlink.add(r.profilePhotoUrl);
+    });
+
+    // 4. QuizRecordings
+    const quizRecs = await QuizRecording.findAll({
+      where: { participantId: userId },
+      attributes: ['filePath'],
+    }).catch(() => []);
+    quizRecs.forEach(qr => {
+      if (qr.filePath) filesToUnlink.add(qr.filePath);
+    });
+
+    // 5. ExamSessions & Screenshots
+    const examSessions = await ExamSession.findAll({
+      where: { participantId: userId },
+      attributes: ['id'],
+    }).catch(() => []);
+    const examSessionIds = examSessions.map(e => e.id);
+    if (examSessionIds.length > 0) {
+      const shots = await Screenshot.findAll({
+        where: { sessionId: examSessionIds },
+        attributes: ['imageUrl'],
+      }).catch(() => []);
+      shots.forEach(s => {
+        if (s.imageUrl) filesToUnlink.add(s.imageUrl);
+      });
+
+      const segs = await VideoSegment.findAll({
+        where: { sessionId: examSessionIds },
+        attributes: ['filePath'],
+      }).catch(() => []);
+      segs.forEach(v => {
+        if (v.filePath) filesToUnlink.add(v.filePath);
+      });
+    }
+
+    // 6. Monitor attempts & monitor screenshots
+    const monAttempts = await MonitorAttempt.findAll({
+      where: { participantId: userId },
+      attributes: ['id'],
+    }).catch(() => []);
+    const monAttemptIds = monAttempts.map(m => m.id);
+    if (monAttemptIds.length > 0) {
+      const monShots = await MonitorScreenshot.findAll({
+        where: { attemptId: monAttemptIds },
+        attributes: ['imageUrl'],
+      }).catch(() => []);
+      monShots.forEach(ms => {
+        if (ms.imageUrl) filesToUnlink.add(ms.imageUrl);
+      });
+    }
+
+    // 7. Video segments from MonitoringSessions
+    const monSessions = await MonitoringSession.findAll({
+      where: { participantId: userId },
+      attributes: ['sessionId'],
+    }).catch(() => []);
+    const monUuids = monSessions.map(m => m.sessionId).filter(Boolean);
+    if (monUuids.length > 0) {
+      const monSegs = await VideoSegment.findAll({
+        where: { monitoringSessionId: monUuids },
+        attributes: ['filePath'],
+      }).catch(() => []);
+      monSegs.forEach(ms => {
+        if (ms.filePath) filesToUnlink.add(ms.filePath);
+      });
+    }
+  } catch (collectErr) {
+    logger.error(`[DELETE PARTICIPANT FILE SCAN ERROR] ${collectErr.message}`);
+  }
+
+  // Safely delete all resolved files from disk
+  for (const fileRef of filesToUnlink) {
+    try {
+      const fullPath = resolveUploadsPath(fileRef);
+      if (fullPath && fs.existsSync(fullPath) && !fs.statSync(fullPath).isDirectory()) {
+        fs.unlinkSync(fullPath);
+        logger.info(`[DELETE PARTICIPANT] Unlinked personal file: ${path.basename(fullPath)}`);
+      }
+    } catch (unlinkErr) {
+      logger.warn(`[DELETE PARTICIPANT] Could not unlink ${fileRef}: ${unlinkErr.message}`);
+    }
+  }
+}
 
 const updateTraining = async (req, res) => {
   try {
@@ -392,7 +521,7 @@ const deleteTraining = async (req, res) => {
   } catch (error) {
     console.error('Delete training error:', error.message);
     console.error('Delete training stack:', error.stack);
-    res.status(500).json({ error: 'Server error deleting training', details: error.message });
+    res.status(500).json({ error: 'Server error deleting training' });
   }
 };
 
@@ -637,7 +766,7 @@ const deleteTrainer = async (req, res) => {
       stack: error.stack,
     });
 
-    res.status(500).json({ error: error.message || 'Internal server error deleting trainer' });
+    res.status(500).json({ error: 'Internal server error deleting trainer' });
   }
 };
 
@@ -933,6 +1062,9 @@ const deleteParticipant = async (req, res) => {
 
     const email = participant.email;
 
+    // Pre-deletion: unlink all physical personal files from disk
+    await cleanupUserPhysicalFiles(id);
+
     // 1. Unified Monitoring Sessions & Async Video Pipeline
     const monitoringSessions = await MonitoringSession.findAll({
       where: { participantId: id },
@@ -1227,7 +1359,7 @@ const deleteParticipant = async (req, res) => {
   } catch (error) {
     if (t && !t.finished) await t.rollback();
     console.error('Delete participant error:', error.stack || error.message);
-    res.status(500).json({ success: false, error: error.message || 'Server error deleting participant' });
+    res.status(500).json({ success: false, error: 'Server error deleting participant' });
   }
 };
 
@@ -1759,6 +1891,11 @@ const bulkDeleteParticipants = async (req, res) => {
     // Execute deletion in a single database transaction
     const t = await sequelize.transaction();
     try {
+      // Pre-deletion: unlink physical files for all eligible participants
+      for (const pId of eligibleIds) {
+        await cleanupUserPhysicalFiles(pId);
+      }
+
       // 1. Unified Monitoring Sessions & Async Video Pipeline
       const monitoringSessions = await MonitoringSession.findAll({
         where: { participantId: { [Op.in]: eligibleIds } },
@@ -2070,7 +2207,7 @@ const bulkDeleteParticipants = async (req, res) => {
     } catch (err) {
       if (t && !t.finished) await t.rollback();
       console.error('Bulk delete participants transaction error:', err);
-      return res.status(500).json({ success: false, error: err.message || 'Database error during participant bulk delete.' });
+      return res.status(500).json({ success: false, error: 'Database error during participant bulk delete.' });
     }
 
   } catch (error) {
@@ -2229,7 +2366,7 @@ const bulkDeleteTrainers = async (req, res) => {
     } catch (err) {
       await t.rollback();
       console.error('Bulk delete trainers transaction error:', err);
-      return res.status(500).json({ success: false, error: 'Database transaction error during trainer bulk delete.', details: err.message });
+      return res.status(500).json({ success: false, error: 'Database transaction error during trainer bulk delete.' });
     }
 
   } catch (error) {
@@ -2451,7 +2588,7 @@ const bulkDeleteTrainings = async (req, res) => {
     } catch (err) {
       await t.rollback();
       console.error('Bulk delete trainings transaction error:', err);
-      return res.status(500).json({ success: false, error: 'Database transaction error during training bulk delete.', details: err.message });
+      return res.status(500).json({ success: false, error: 'Database transaction error during training bulk delete.' });
     }
 
   } catch (error) {

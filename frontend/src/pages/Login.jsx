@@ -7,6 +7,7 @@ import AuthLayout from '../components/auth/AuthLayout';
 import AuthCard from '../components/auth/AuthCard';
 import RoleSelector from '../components/auth/RoleSelector';
 import AuthButton from '../components/auth/AuthButton';
+import { hasConsent } from '../components/common/CookieConsentBanner';
 
 const ROLES = [
   { id: 'ADMIN', label: 'Admin', icon: ShieldCheck, placeholder: 'Enter your email' },
@@ -110,9 +111,11 @@ export default function Login({ onLogin, defaultRole }) {
         throw new Error(errorDetail || 'Invalid email or password');
       }
 
-      localStorage.setItem('user', JSON.stringify(data));
+      const safeUserData = { ...data };
+      delete safeUserData.refreshToken;
+      localStorage.setItem('user', JSON.stringify(safeUserData));
       localStorage.setItem('lastRole', form.role);
-      if (rememberMe) {
+      if (rememberMe && hasConsent('preferences')) {
         localStorage.setItem('rememberMe', 'true');
         localStorage.setItem('rememberedEmail', trimmedEmail);
       } else {
@@ -254,9 +257,14 @@ export default function Login({ onLogin, defaultRole }) {
           </form>
 
           {/* Enterprise Data Protection Note */}
-          <div className="auth-card-security-note">
-            <ShieldCheck size={14} color="#127c34" />
-            <span>Your data is protected with enterprise-grade security</span>
+          <div className="auth-card-security-note flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <ShieldCheck size={14} color="#127c34" />
+              <span>Your data is protected with enterprise-grade security</span>
+            </div>
+            <Link to="/privacy" className="text-xs text-teal-600 hover:underline ml-2">
+              Privacy Policy
+            </Link>
           </div>
         </div>
 

@@ -1,4 +1,5 @@
 require('dotenv').config();
+const fs = require('fs');
 const { Sequelize } = require('sequelize');
 const logger = require('../utils/logger');
 const { bootstrapPerformanceIndexes } = require('./bootstrapPerformanceIndexes');
@@ -55,6 +56,51 @@ if (dbPort === 5432 || (dbHost && (dbHost.includes('supabase') || dbHost.include
 
 const isPostgres = dbDialect === 'postgres';
 
+function resolveDatabaseSsl(env = process.env) {
+  const isProd = env.NODE_ENV === 'production';
+  const isExplicitSsl = env.DB_SSL === 'true';
+  const shouldEnableSsl = isProd || isPostgres || isExplicitSsl;
+  if (!shouldEnableSsl) return null;
+
+  let caCert = undefined;
+  if (env.DB_CA_CERT) {
+    try {
+      const caVal = env.DB_CA_CERT.trim();
+      if (fs.existsSync(caVal)) {
+        caCert = fs.readFileSync(caVal, 'utf8');
+      } else {
+        caCert = caVal;
+      }
+    } catch (e) {
+      logger.error('Failed to read DB_CA_CERT:', e.message);
+    }
+  }
+
+  // In production, rejectUnauthorized MUST be true by default to guarantee TLS certificate validation.
+  // In development/testing, if DB_CA_CERT is provided or DB_REJECT_UNAUTHORIZED is explicitly 'true',
+  // rejectUnauthorized is true; otherwise it defaults to false to accommodate local development poolers.
+  let rejectUnauthorized = true;
+  if (isProd) {
+    rejectUnauthorized = env.DB_REJECT_UNAUTHORIZED !== 'false';
+  } else if (env.DB_REJECT_UNAUTHORIZED !== undefined) {
+    rejectUnauthorized = env.DB_REJECT_UNAUTHORIZED === 'true';
+  } else {
+    rejectUnauthorized = Boolean(caCert);
+  }
+
+  if (isProd && rejectUnauthorized && !caCert) {
+    logger.warn('[SECURITY] Database SSL is active with rejectUnauthorized: true, but DB_CA_CERT is not configured. Relying on default system trusted CAs.');
+  }
+
+  return {
+    require: true,
+    rejectUnauthorized,
+    ...(caCert ? { ca: caCert } : {}),
+  };
+}
+
+const dbSslConfig = resolveDatabaseSsl();
+
 const sequelize = new Sequelize(
   dbName,
   dbUser,
@@ -64,11 +110,8 @@ const sequelize = new Sequelize(
     port: dbPort,
     dialect: dbDialect,
     logging: isProduction ? false : (process.env.DB_LOGGING === 'true' ? console.log : false),
-    dialectOptions: (isProduction || isPostgres) ? {
-      ssl: {
-        require: true,
-        rejectUnauthorized: false,
-      },
+    dialectOptions: dbSslConfig ? {
+      ssl: dbSslConfig,
       connectTimeout: 30000,
       statement_timeout: 10000,
     } : {
@@ -1053,4 +1096,4 @@ const connectDB = async () => {
   }
 };
 
-module.exports = { sequelize, connectDB };
+module.exports = { sequelize, connectDB, resolveDatabaseSsl };

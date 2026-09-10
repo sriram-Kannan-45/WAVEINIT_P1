@@ -4,6 +4,7 @@ const {
 } = require('../models');
 const NotificationService = require('../services/notificationService');
 const { Training, Course } = require('../models');
+const logger = require('../utils/logger');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -38,7 +39,8 @@ const createLesson = async (req, res) => {
     return res.json({ success: true, lesson });
   } catch (error) {
     console.error('Error creating lesson:', error);
-    return res.status(500).json({ error: error.message });
+    logger.error('Lesson controller error', { error: error.message });
+    return res.status(500).json({ error: 'Server error processing lesson request' });
   }
 };
 
@@ -54,7 +56,8 @@ const getTrainerLessons = async (req, res) => {
     });
     return res.json({ success: true, lessons });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    logger.error('Lesson controller error', { error: error.message });
+    return res.status(500).json({ error: 'Server error processing lesson request' });
   }
 };
 
@@ -66,7 +69,8 @@ const attachQuiz = async (req, res) => {
     const lessonQuiz = await LessonQuiz.create({ lessonId, quizId, isMandatory: isMandatory ?? false });
     return res.json({ success: true, lessonQuiz });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    logger.error('Lesson controller error', { error: error.message });
+    return res.status(500).json({ error: 'Server error processing lesson request' });
   }
 };
 
@@ -78,7 +82,8 @@ const createAssessment = async (req, res) => {
     const assessment = await LessonAssessment.create({ lessonId, title, instructions, maxScore, isMandatory: isMandatory ?? false });
     return res.json({ success: true, assessment });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    logger.error('Lesson controller error', { error: error.message });
+    return res.status(500).json({ error: 'Server error processing lesson request' });
   }
 };
 
@@ -121,7 +126,8 @@ const getLessonDashboard = async (req, res) => {
       assessments: assessmentData,
     });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    logger.error('Lesson controller error', { error: error.message });
+    return res.status(500).json({ error: 'Server error processing lesson request' });
   }
 };
 
@@ -151,7 +157,8 @@ const publishQuizResults = async (req, res) => {
 
     return res.json({ success: true, message: `Results published for ${ids.length} participants` });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    logger.error('Lesson controller error', { error: error.message });
+    return res.status(500).json({ error: 'Server error processing lesson request' });
   }
 };
 
@@ -165,7 +172,8 @@ const getAssessmentSubmissions = async (req, res) => {
     });
     return res.json({ success: true, submissions });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    logger.error('Lesson controller error', { error: error.message });
+    return res.status(500).json({ error: 'Server error processing lesson request' });
   }
 };
 
@@ -183,7 +191,8 @@ const gradeAssessment = async (req, res) => {
     await submission.save();
     return res.json({ success: true, submission });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    logger.error('Lesson controller error', { error: error.message });
+    return res.status(500).json({ error: 'Server error processing lesson request' });
   }
 };
 
@@ -197,7 +206,8 @@ const publishAssessment = async (req, res) => {
     await submission.save();
     return res.json({ success: true, submission });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    logger.error('Lesson controller error', { error: error.message });
+    return res.status(500).json({ error: 'Server error processing lesson request' });
   }
 };
 
@@ -224,7 +234,8 @@ const getParticipantLessons = async (req, res) => {
     });
     return res.json({ success: true, lessons });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    logger.error('Lesson controller error', { error: error.message });
+    return res.status(500).json({ error: 'Server error processing lesson request' });
   }
 };
 
@@ -243,7 +254,8 @@ const viewContent = async (req, res) => {
     }
     return res.json({ success: true, lesson, progress });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    logger.error('Lesson controller error', { error: error.message });
+    return res.status(500).json({ error: 'Server error processing lesson request' });
   }
 };
 
@@ -263,7 +275,8 @@ const completeQuiz = async (req, res) => {
     }
     return res.json({ success: true, progress });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    logger.error('Lesson controller error', { error: error.message });
+    return res.status(500).json({ error: 'Server error processing lesson request' });
   }
 };
 
@@ -282,7 +295,8 @@ const submitAssessment = async (req, res) => {
     });
     return res.json({ success: true, submission });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    logger.error('Lesson controller error', { error: error.message });
+    return res.status(500).json({ error: 'Server error processing lesson request' });
   }
 };
 
@@ -295,7 +309,8 @@ const getQuizResult = async (req, res) => {
     if (!progress) return res.status(404).json({ error: 'No progress found' });
     return res.json({ success: true, progress });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    logger.error('Lesson controller error', { error: error.message });
+    return res.status(500).json({ error: 'Server error processing lesson request' });
   }
 };
 
@@ -308,7 +323,8 @@ const getAssessmentResult = async (req, res) => {
     if (!submission) return res.status(404).json({ error: 'No submission found' });
     return res.json({ success: true, submission });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    logger.error('Lesson controller error', { error: error.message });
+    return res.status(500).json({ error: 'Server error processing lesson request' });
   }
 };
 

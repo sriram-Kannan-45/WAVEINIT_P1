@@ -3,6 +3,8 @@ const path = require('path');
 const fs = require('fs');
 const { getUploadsPath } = require('../config/paths');
 
+const crypto = require('crypto');
+
 const ensureDir = (dir) => { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); };
 
 const createStorage = (subfolder) => multer.diskStorage({
@@ -12,18 +14,21 @@ const createStorage = (subfolder) => multer.diskStorage({
     cb(null, dir);
   },
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    cb(null, `${unique}${ext}`);
+    const ext = path.extname(file.originalname).toLowerCase();
+    const secureId = crypto.randomUUID();
+    cb(null, `${secureId}${ext}`);
   },
 });
 
 const fileFilter = (req, file, cb) => {
-  const allowed = /jpeg|jpg|png|gif|webp|pdf|docx/;
-  const ext = allowed.test(path.extname(file.originalname).toLowerCase());
-  const mime = allowed.test(file.mimetype) || file.mimetype === 'application/pdf' || file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-  if (ext || mime) cb(null, true);
-  else cb(new Error('Only images (JPG, PNG, GIF, WebP) and documents (PDF, DOCX) are allowed'));
+  const allowed = /^\.(jpeg|jpg|png|gif|webp|pdf|docx)$/i;
+  const ext = path.extname(file.originalname).toLowerCase();
+  const mime = /^(image\/(jpeg|png|gif|webp)|application\/pdf|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document)$/i.test(file.mimetype);
+  if (allowed.test(ext) && (mime || !file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only images (JPG, PNG, GIF, WebP) and documents (PDF, DOCX) are allowed'));
+  }
 };
 
 const profileUpload = multer({

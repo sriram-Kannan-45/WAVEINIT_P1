@@ -1669,7 +1669,7 @@ exports.start = async (req, res) => {
       console.warn('Failed to initialize monitoring session for coding attempt:', monErr.message);
     }
 
-    console.log('Attempt created successfully. Attempt ID:', attempt.id, 'Session Token:', session.sessionToken, 'Monitoring Session ID:', monitoringSessionId);
+    logger.info(`[Coding Attempt] Created successfully. Attempt ID: ${attempt.id}, Monitoring Session ID: ${monitoringSessionId}`);
 
     ok(res, {
       success: true,

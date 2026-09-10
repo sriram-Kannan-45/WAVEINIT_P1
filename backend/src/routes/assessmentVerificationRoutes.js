@@ -22,7 +22,10 @@ router.post('/reconnect', authenticateToken, async (req, res) => {
       sessionId: req.body.sessionId, participantId: req.user.id,
     });
     res.json({ success: true, ...result });
-  } catch (error) { res.status(403).json({ success: false, error: error.message }); }
+  } catch (error) {
+    const isClientSafe = error.message && !error.message.includes('Sequelize') && !error.message.includes('database');
+    res.status(403).json({ success: false, error: isClientSafe ? error.message : 'Verification access denied' });
+  }
 });
 router.get('/status/:sessionId', authenticateToken, ctrl.getStatus);
 router.post('/laptop-connected', authenticateToken, ctrl.laptopCameraConnected);
@@ -33,7 +36,10 @@ router.get('/admission/:assessmentType/:attemptId', authenticateToken, async (re
       participantId: req.user.id, assessmentType: req.params.assessmentType.toUpperCase(), attemptId: Number(req.params.attemptId),
     });
     res.json({ success: true });
-  } catch (error) { res.status(403).json({ success: false, error: error.message }); }
+  } catch (error) {
+    const isClientSafe = error.message && !error.message.includes('Sequelize') && !error.message.includes('database');
+    res.status(403).json({ success: false, error: isClientSafe ? error.message : 'Assessment admission denied' });
+  }
 });
 router.post('/end', authenticateToken, ctrl.endVerificationSession);
 

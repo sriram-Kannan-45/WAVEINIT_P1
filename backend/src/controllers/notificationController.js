@@ -74,7 +74,10 @@ const markAsRead = async (req, res) => {
   } catch (error) {
     logger.error('[notificationController] Error marking notification as read:', { error: error.message });
     const statusCode = error.message.includes('not found') ? 404 : 500;
-    res.status(statusCode).json({ success: false, error: error.message });
+    res.status(statusCode).json({
+      success: false,
+      error: statusCode === 404 ? error.message : 'Server error marking notification as read',
+    });
   }
 };
 
@@ -176,7 +179,7 @@ const broadcastAnnouncement = async (req, res) => {
     });
   } catch (error) {
     logger.error('[notificationController] Error broadcasting announcement:', { error: error.message });
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: 'Server error broadcasting announcement' });
   }
 };
 

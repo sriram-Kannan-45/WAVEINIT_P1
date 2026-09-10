@@ -187,7 +187,7 @@ class InterviewController {
       });
     } catch (error) {
       logger.error('Error creating interview', { error: error.message });
-      res.status(error.status||500).json({ error: error.message || 'Failed to create interview' });
+      res.status(error.status || 500).json({ error: error.status ? error.message : 'Failed to create interview' });
     }
   }
 
@@ -320,7 +320,7 @@ class InterviewController {
    */
   async joinInterview(req,res) {
     try { const result=await lifecycle.join(req.params.id,req.user); res.json(result); }
-    catch(error) { logger.error('joinInterview failed',{error:error.message}); res.status(error.status||500).json({error:error.message}); }
+    catch(error) { logger.error('joinInterview failed',{error:error.message}); res.status(error.status||500).json({error: error.status ? error.message : 'Failed to join interview'}); }
   }
 
   /**
@@ -487,7 +487,7 @@ class InterviewController {
       const io=require('../config/socket').getIO();
       io?.to(`interview_${req.params.id}`).emit('interview-started',{startedAt:session.started_at});
       res.json({session}); }
-    catch(error) { logger.error('startInterview failed',{error:error.message}); res.status(error.status||500).json({error:error.message}); }
+    catch(error) { logger.error('startInterview failed',{error:error.message}); res.status(error.status||500).json({error: error.status ? error.message : 'Failed to start interview'}); }
   }
 
   /**
@@ -498,7 +498,7 @@ class InterviewController {
       const io=require('../config/socket').getIO();
       io?.to(`interview_${req.params.id}`).emit('interview-ended',{endedByName:req.user.name,endedAt:session.ended_at});
       res.json({session}); }
-    catch(error) { logger.error('endInterview failed',{error:error.message}); res.status(error.status||500).json({error:error.message}); }
+    catch(error) { logger.error('endInterview failed',{error:error.message}); res.status(error.status||500).json({error: error.status ? error.message : 'Failed to end interview'}); }
   }
 
   /**
@@ -1256,7 +1256,7 @@ class InterviewController {
       res.json({ success: true, message: 'Interview updated successfully', interview: fresh });
     } catch (error) {
       logger.error('Error updating interview', { error: error.message });
-      res.status(error.status||500).json({ error: error.message || 'Failed to update interview' });
+      res.status(error.status || 500).json({ error: error.status ? error.message : 'Failed to update interview' });
     }
   }
 
@@ -1329,7 +1329,7 @@ class InterviewController {
       res.json({ success: true, message: 'Interview status changed successfully', interview: fresh });
     } catch (error) {
       logger.error('Error changing interview status', { error: error.message });
-      res.status(500).json({ error: error.message || 'Failed to change interview status' });
+      res.status(500).json({ error: 'Failed to change interview status' });
     }
   }
 

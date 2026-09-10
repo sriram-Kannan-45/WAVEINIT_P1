@@ -27,6 +27,7 @@ const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const { getClientIp, normalizeIp } = require('../utils/ipHelper');
 const crypto = require('crypto');
 const { transporter } = require('../config/mailer');
+const { maskEmail } = require('../utils/privacyMask');
 
 const APP_NAME = process.env.APP_NAME || 'FeedWeb';
 const GMAIL_USER = (process.env.GMAIL_USER || process.env.EMAIL_USER || '').trim();
@@ -184,7 +185,7 @@ function accountLock(req, res, next) {
   if (isLocked(rec)) {
     const remainingMs = rec.lockoutUntil - Date.now();
     const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
-    logger.warn(`[AUTH LOCKOUT] Blocked request for locked account "${email}". Remaining: ${remainingSeconds}s`);
+    logger.warn(`[AUTH LOCKOUT] Blocked request for locked account "${maskEmail(email)}". Remaining: ${remainingSeconds}s`);
     return res.status(423).json({
       error: 'Account is temporarily locked due to multiple failed login attempts. Please try again later or reset your password.',
       remainingSeconds,
@@ -223,7 +224,7 @@ function trackOutcome(req, res, next) {
         rec.lockoutUntil = Date.now() + LOCKOUT_MS;
         rec.lockedAt = Date.now();
 
-        logger.warn(`[AUTH LOCKOUT] Account "${email}" reached ${rec.count} failed attempts. Locked for ${LOCKOUT_MS / 60000} minutes.`);
+        logger.warn(`[AUTH LOCKOUT] Account "${maskEmail(email)}" reached ${rec.count} failed attempts. Locked for ${LOCKOUT_MS / 60000} minutes.`);
 
         // Fire-and-forget lockout notification email
         sendLockoutEmail(email);

@@ -51,7 +51,7 @@ router.use(authenticateToken);
 // All id-based operations share membership/assigned-interviewer authorization.
 router.param('id', async (req,res,next,id) => {
   try { req.interviewRecord=await require('../services/interviewLifecycleService').access(id,req.user); next(); }
-  catch(error) { res.status(error.status||500).json({error:error.message}); }
+  catch(error) { res.status(error.status||500).json({error: error.status ? error.message : 'Server error verifying interview access'}); }
 });
 
 // Lookup data for scheduling (MUST be before /:id to avoid param capture)
@@ -65,11 +65,11 @@ router.get('/', interviewController.listInterviews);
 router.get('/:id', interviewController.getInterview);
 router.get('/:id/report', async (req,res) => {
   try { res.json(await require('../services/interviewLifecycleService').report(req.params.id,req.user)); }
-  catch(error) { res.status(error.status||500).json({error:error.message}); }
+  catch(error) { res.status(error.status||500).json({error: error.status ? error.message : 'Server error fetching interview report'}); }
 });
 router.post('/:id/participants/:candidateId/evaluation', roleMiddleware('ADMIN','TRAINER'), async (req,res) => {
   try { res.json({success:true,evaluation:await require('../services/interviewLifecycleService').saveEvaluation(req.params.id,req.params.candidateId,req.user,req.body)}); }
-  catch(error) { res.status(error.status||500).json({error:error.message}); }
+  catch(error) { res.status(error.status||500).json({error: error.status ? error.message : 'Server error saving evaluation'}); }
 });
 router.get('/:id/report.xlsx', async (req,res) => {
   try {
@@ -87,7 +87,7 @@ router.get('/:id/report.xlsx', async (req,res) => {
     res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition',`attachment; filename="interview-${report.interview.id}-report.xlsx"`);
     await workbook.xlsx.write(res);res.end();
-  } catch(error) { res.status(error.status||500).json({error:error.message}); }
+  } catch(error) { res.status(error.status||500).json({error: error.status ? error.message : 'Server error generating report export'}); }
 });
 
 // Update & Delete

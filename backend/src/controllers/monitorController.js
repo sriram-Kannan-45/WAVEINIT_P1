@@ -109,7 +109,7 @@ async function startTest(req, res) {
     });
   } catch (err) {
     logger.error('monitor startTest failed', { err: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error processing monitoring request' });
   }
 }
 
@@ -135,7 +135,7 @@ async function saveAnswers(req, res) {
     res.json({ success: true });
   } catch (err) {
     logger.error('monitor saveAnswers failed', { err: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error processing monitoring request' });
   }
 }
 
@@ -188,7 +188,7 @@ async function submitTest(req, res) {
     res.json({ success: true, attemptId: attempt.id, score, lateSubmission: late, autoSubmitted: !!autoSubmitted });
   } catch (err) {
     logger.error('monitor submitTest failed', { err: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error processing monitoring request' });
   }
 }
 
@@ -211,7 +211,7 @@ async function getTimeRemaining(req, res) {
     res.json({ remainingSeconds });
   } catch (err) {
     logger.error('monitor getTimeRemaining failed', { err: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error processing monitoring request' });
   }
 }
 
@@ -235,7 +235,7 @@ async function flagTest(req, res) {
     res.json({ success: true });
   } catch (err) {
     logger.error('monitor flagTest failed', { err: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error processing monitoring request' });
   }
 }
 
@@ -267,7 +267,7 @@ async function getTrainerSessions(req, res) {
     });
   } catch (err) {
     logger.error('monitor getTrainerSessions failed', { err: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error processing monitoring request' });
   }
 }
 
@@ -294,7 +294,7 @@ async function getSessionParticipants(req, res) {
     });
   } catch (err) {
     logger.error('monitor getSessionParticipants failed', { err: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error processing monitoring request' });
   }
 }
 
@@ -314,7 +314,7 @@ async function getParticipantScreenshots(req, res) {
     res.json({ screenshots });
   } catch (err) {
     logger.error('monitor getParticipantScreenshots failed', { err: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error processing monitoring request' });
   }
 }
 
@@ -334,7 +334,7 @@ async function getParticipantViolations(req, res) {
     res.json({ violations });
   } catch (err) {
     logger.error('monitor getParticipantViolations failed', { err: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error processing monitoring request' });
   }
 }
 
@@ -355,7 +355,7 @@ async function flagParticipant(req, res) {
     res.json({ success: true });
   } catch (err) {
     logger.error('monitor flagParticipant failed', { err: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error processing monitoring request' });
   }
 }
 
@@ -379,7 +379,7 @@ async function disqualifyParticipant(req, res) {
     res.json({ success: true });
   } catch (err) {
     logger.error('monitor disqualifyParticipant failed', { err: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error processing monitoring request' });
   }
 }
 
@@ -407,7 +407,7 @@ async function warnParticipant(req, res) {
     res.json({ success: true, message });
   } catch (err) {
     logger.error('monitor warnParticipant failed', { err: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error processing monitoring request' });
   }
 }
 
@@ -431,7 +431,7 @@ async function forceSubmitParticipant(req, res) {
     res.json({ success: true, reason });
   } catch (err) {
     logger.error('monitor forceSubmitParticipant failed', { err: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error processing monitoring request' });
   }
 }
 

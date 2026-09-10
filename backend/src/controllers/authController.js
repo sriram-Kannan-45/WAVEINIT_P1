@@ -254,7 +254,6 @@ const login = async (req, res) => {
       forcePasswordChange,
       token: accessToken,
       accessToken,
-      refreshToken,
       sessionId: session.sessionId,
       warnings: warnings.length > 0 ? warnings : undefined,
     });
@@ -633,7 +632,7 @@ const createTrainer = async (req, res) => {
   } catch (error) {
     if (t) await t.rollback().catch(() => {});
     logger.error('createTrainer error:', { message: error.message, stack: error.stack });
-    res.status(500).json({ error: error.message || 'Server error creating trainer' });
+    res.status(500).json({ error: 'Server error creating trainer' });
   }
 };
 

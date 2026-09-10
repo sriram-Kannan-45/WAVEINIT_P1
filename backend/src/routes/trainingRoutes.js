@@ -52,7 +52,7 @@ router.get('/:id/quizzes', authenticateToken, async (req, res) => {
     return res.json({ success: true, quizzes });
   } catch (error) {
     console.error('Error fetching training quizzes:', error);
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: 'Server error fetching training quizzes' });
   }
 });
 

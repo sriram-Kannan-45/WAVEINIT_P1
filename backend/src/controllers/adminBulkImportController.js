@@ -12,6 +12,7 @@ const path = require('path');
 const { User } = require('../models');
 const { Op } = require('sequelize');
 const { validateEmail } = require('../utils/validators');
+const { maskEmail } = require('../utils/privacyMask');
 
 const BCRYPT_COST = 12;
 const MAX_ROWS = 10000;
@@ -279,7 +280,7 @@ async function validateAndPreview(req, res) {
     });
   } catch (e) {
     console.error('validateAndPreview:', e.message);
-    res.status(500).json({ error: 'Failed to validate file: ' + e.message });
+    res.status(500).json({ error: 'Failed to validate file. Please check file format.' });
   }
 }
 
@@ -358,7 +359,7 @@ async function executeImport(req, res) {
 
         results.push({ row: row.row, email: row.email, userId: user.id, success: true });
       } catch (e) {
-        console.error(`Failed to create participant (${row.email}):`, e.message);
+        console.error(`Failed to create participant (${maskEmail(row.email)}):`, e.message);
         failures.push({
           row: row.row,
           name: row.name,
@@ -441,7 +442,7 @@ async function executeImport(req, res) {
     });
   } catch (e) {
     console.error('executeImport:', e.message);
-    res.status(500).json({ error: 'Failed to execute import: ' + e.message });
+    res.status(500).json({ error: 'Failed to execute import. Please try again or contact support.' });
   }
 }
 

@@ -6,8 +6,9 @@ const roleMiddleware = require('../middleware/roles');
 const uploadRecording = require('../middleware/uploadRecording');
 const ctrl = require('../controllers/recordingController');
 
-// Stream route — requires authentication (token via header, cookie, or ?token= query param for <video> tag)
-router.get('/:id/stream', auth, ctrl.stream);
+// Stream route — requires authentication or signed streaming ticket
+router.get('/:id/stream', ctrl.stream);
+router.post('/:id/ticket', auth, ctrl.getStreamingTicket);
 
 router.use(auth);
 

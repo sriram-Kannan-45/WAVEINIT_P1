@@ -32,7 +32,6 @@ const createSession = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to create live session',
-      stack: process.env.NODE_ENV !== 'production' ? error.stack : undefined
     });
   }
 };
@@ -47,7 +46,8 @@ const getTrainerSessions = async (req, res) => {
 
     res.status(200).json({ success: true, data: sessions });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error('LiveSession error:', error.message);
+    res.status(500).json({ success: false, message: 'Server error processing live session' });
   }
 };
 
@@ -66,7 +66,8 @@ const getParticipantSessions = async (req, res) => {
 
     res.status(200).json({ success: true, data: sessions });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error('LiveSession error:', error.message);
+    res.status(500).json({ success: false, message: 'Server error processing live session' });
   }
 };
 
@@ -88,7 +89,8 @@ const getSessionDetails = async (req, res) => {
 
     res.status(200).json({ success: true, data: session });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error('LiveSession error:', error.message);
+    res.status(500).json({ success: false, message: 'Server error processing live session' });
   }
 };
 

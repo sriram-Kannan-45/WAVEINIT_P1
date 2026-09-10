@@ -1394,7 +1394,7 @@ async function submitQuiz(req, res) {
     if (e.status) {
       return res.status(e.status).json({ error: e.message });
     }
-    res.status(500).json({ error: e.message || 'Failed to submit quiz' });
+    res.status(500).json({ error: 'Failed to submit quiz' });
   }
 }
 
@@ -1536,7 +1536,7 @@ async function getQuizResult(req, res) {
     });
   } catch (e) {
     console.error('getQuizResult:', e.message);
-    res.status(500).json({ error: e.message || 'Failed to load quiz result' });
+    res.status(500).json({ error: 'Failed to load quiz result' });
   }
 }
 
