@@ -1,6 +1,6 @@
 import Badge from './Badge'
 import Card from './Card'
-import { ProgressBar } from './ChartWrappers'
+import ProgressBar from './ProgressBar'
 
 export default function DataCard({
   title,

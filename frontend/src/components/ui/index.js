@@ -32,7 +32,9 @@ export { default as DataTable } from './DataTable'
 export { default as FilterPills } from './FilterPills'
 export { default as StatCard } from './StatCard'
 export { default as DataCard } from './DataCard'
-export { LineAreaChart, DonutChart, ProgressBar } from './ChartWrappers'
+export { LineAreaChart, DonutChart } from './ChartWrappers'
+export { default as ProgressBar } from './ProgressBar'
+
 export { default as ActivityFeedItem } from './ActivityFeedItem'
 
 // ── Layout ───────────────────────────────────────────────────────

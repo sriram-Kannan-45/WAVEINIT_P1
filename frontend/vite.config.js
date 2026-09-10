@@ -77,24 +77,45 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes('node_modules')) {
-            if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/react-router') || id.includes('/scheduler/')) {
-              return 'vendor-react';
-            }
-            if (id.includes('framer-motion') || id.includes('lucide-react') || id.includes('react-hot-toast')) {
-              return 'vendor-ui';
-            }
-            if (id.includes('chart.js') || id.includes('react-chartjs-2') || id.includes('recharts')) {
-              return 'vendor-charts';
-            }
-            if (id.includes('@monaco-editor') || id.includes('monaco-editor')) {
+          const normalized = id.replace(/\\/g, '/');
+          if (normalized.includes('/node_modules/')) {
+            if (
+              normalized.includes('/node_modules/@monaco-editor/') ||
+              normalized.includes('/node_modules/monaco-editor/')
+            ) {
               return 'vendor-monaco';
             }
-            if (id.includes('@tiptap')) {
+            if (normalized.includes('/node_modules/@tiptap/')) {
               return 'vendor-tiptap';
             }
-            if (id.includes('axios') || id.includes('socket.io-client')) {
+            if (
+              normalized.includes('/node_modules/chart.js/') ||
+              normalized.includes('/node_modules/react-chartjs-2/') ||
+              normalized.includes('/node_modules/recharts/')
+            ) {
+              return 'vendor-charts';
+            }
+            if (
+              normalized.includes('/node_modules/framer-motion/') ||
+              normalized.includes('/node_modules/lucide-react/') ||
+              normalized.includes('/node_modules/react-hot-toast/')
+            ) {
+              return 'vendor-ui';
+            }
+            if (
+              normalized.includes('/node_modules/axios/') ||
+              normalized.includes('/node_modules/socket.io-client/')
+            ) {
               return 'vendor-network';
+            }
+            if (
+              normalized.includes('/node_modules/react/') ||
+              normalized.includes('/node_modules/react-dom/') ||
+              normalized.includes('/node_modules/react-router/') ||
+              normalized.includes('/node_modules/react-router-dom/') ||
+              normalized.includes('/node_modules/scheduler/')
+            ) {
+              return 'vendor-react';
             }
           }
         }
