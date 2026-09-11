@@ -81,9 +81,16 @@ function getTmpRoot() {
  */
 function resolveUploadsPath(p) {
   if (!p) return p;
-  if (path.isAbsolute(p)) return p;
-  const normalized = String(p).replace(/\\/g, '/').replace(/^\/uploads\//, '');
-  return path.join(getUploadsRoot(), normalized);
+  const text = String(p);
+  // Web URL-style references (`/uploads/...` or `uploads/...`) map under the
+  // SHARED uploads root, so the exact filesystem path depends on the running
+  // platform and must NOT be treated as an OS-absolute path (a leading slash
+  // is absolute only on POSIX, but is the documented URL form here).
+  if (/^\/?uploads\//.test(text)) {
+    return path.join(getUploadsRoot(), text.replace(/^\/?uploads\//, '').replace(/\\/g, '/'));
+  }
+  if (path.isAbsolute(text)) return text;
+  return path.join(getUploadsRoot(), text.replace(/\\/g, '/'));
 }
 
 module.exports = {

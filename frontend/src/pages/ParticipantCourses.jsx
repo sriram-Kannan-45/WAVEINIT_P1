@@ -1300,7 +1300,7 @@ function QuizzesView({ user, courseId, trainingId }) {
       const startUrl = `${API_BASE}/quizzes/${quizId}/start`
       const res = await fetch(startUrl, { method: 'POST', headers: auth(token) })
       const response = await res.json()
-      if (!res.ok) { showError(response.error || 'Failed to start quiz'); return }
+      if (!res.ok) { showError(response.error || response.message || 'Failed to start quiz'); return }
       const params = new URLSearchParams({
         attemptId: String(response.attemptId),
         sessionToken: response.sessionToken || '',

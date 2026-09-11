@@ -32,6 +32,7 @@ const NotificationService = require('../services/notificationService');
 const { assertTransition } = require('../utils/quizStateMachine');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 const { assertQuizPayloadClean } = require('../services/starterCodeIntegrity');
+const logger = require('../utils/logger');
 
 const router = express.Router();
 
@@ -1258,9 +1259,14 @@ router.delete('/:id', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) => {
 const startQuizAttempt = async (req, res) => {
   try {
     const quizId = req.params.quizId;
+    const participantId = req.user?.id || req.user?.userId;
     logger.debug(`[startQuizAttempt] Quiz #${quizId} attempt initiated by user #${participantId}`);
 
-    const quiz = await AIQuiz.findByPk(quizId);
+    const quiz = await AIQuiz.findByPk(quizId, {
+      include: [
+        { model: Course, as: 'course' }
+      ]
+    });
     if (!quiz) {
       console.log(`[startQuizAttempt] Quiz not found: #${quizId}`);
       return res.status(404).json({ error: 'Quiz not found' });
@@ -1281,16 +1287,21 @@ const startQuizAttempt = async (req, res) => {
     });
 
     if (!assignment) {
-      const enrollmentCheck = await Enrollment.findOne({
-        where: {
-          participantId,
-          status: 'ENROLLED',
-          [Op.or]: [
-            ...(quiz.courseId ? [{ courseId: quiz.courseId }] : []),
-            ...(quiz.trainingId ? [{ trainingId: quiz.trainingId }] : []),
-          ]
-        }
-      });
+      const enrollmentConditions = [];
+      if (quiz.courseId) enrollmentConditions.push({ courseId: quiz.courseId });
+      if (quiz.trainingId) enrollmentConditions.push({ trainingId: quiz.trainingId });
+      if (quiz.course?.trainingProgramId) enrollmentConditions.push({ trainingId: quiz.course.trainingProgramId });
+
+      let enrollmentCheck = null;
+      if (enrollmentConditions.length > 0) {
+        enrollmentCheck = await Enrollment.findOne({
+          where: {
+            participantId,
+            status: { [Op.in]: ['ENROLLED', 'COMPLETED'] },
+            [Op.or]: enrollmentConditions
+          }
+        });
+      }
       
       console.log(`[startQuizAttempt] Enrollment check result:`, enrollmentCheck ? `Enrolled (ID: ${enrollmentCheck.id})` : 'Not Enrolled');
 
@@ -1390,7 +1401,7 @@ const startQuizAttempt = async (req, res) => {
         const apiResponse = {
           success: true,
           attemptId: attempt.id,
-          monitoringSessionId: monitoring.session.sessionId,
+          monitoringSessionId: monitoring?.session?.sessionId || proctorSession.sessionId,
           sessionToken: session.sessionToken,
           quiz: {
             id: quiz.id,
@@ -1406,6 +1417,7 @@ const startQuizAttempt = async (req, res) => {
         console.log(`[startQuizAttempt] Rejecting start: attempt already exists and is completed for quiz #${quiz.id}, participant #${participantId}`);
         return res.status(400).json({
           success: false,
+          error: "You have already attempted this quiz.",
           message: "You have already attempted this quiz."
         });
       }
@@ -1494,7 +1506,7 @@ const startQuizAttempt = async (req, res) => {
     const apiResponse = {
       success: true,
       attemptId: attempt.id,
-      monitoringSessionId: monitoring.session.sessionId,
+      monitoringSessionId: monitoring?.session?.sessionId || monitoringSessionId,
       sessionToken: session.sessionToken,
       quiz: {
         id: quiz.id,
@@ -1508,7 +1520,7 @@ const startQuizAttempt = async (req, res) => {
     return res.json(apiResponse);
   } catch (error) {
     console.error('[startQuizAttempt] Error starting quiz attempt:', error);
-    return res.status(500).json({ error: 'Failed to start quiz attempt' });
+    return res.status(500).json({ error: error.message || 'Failed to start quiz attempt' });
   }
 };
 

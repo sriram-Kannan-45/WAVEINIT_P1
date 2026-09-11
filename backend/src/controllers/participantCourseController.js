@@ -1196,6 +1196,7 @@ async function startQuiz(req, res) {
       if (transError.status === 400) {
         return res.status(400).json({
           success: false,
+          error: transError.message,
           message: transError.message
         });
       }

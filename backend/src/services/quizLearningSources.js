@@ -3,7 +3,8 @@ const path = require('path');
 const fs = require('fs');
 const axios = require('axios');
 const {Op} = require('sequelize');
-const {getUploadsRoot} = require('../config/paths');
+const {getUploadsRoot, resolveUploadsPath} = require('../config/paths');
+const logger = require('../utils/logger');
 const {Lesson, LessonMaterial} = require('../models');
 
 // courseId has already passed trainer/admin authorization at the route boundary.
@@ -18,6 +19,7 @@ async function loadLearningSources({courseId, materials, lessonIds, instructions
   const lessons = await Lesson.findAll({where: {courseId, ...(lessonIds?.length ? {id: {[Op.in]: lessonIds}} : {})}, include: [{model: LessonMaterial, as: 'materials'}], order: [['orderIndex', 'ASC']]});
   if (lessonIds?.length && lessons.length !== new Set(lessonIds.map(String)).size) throw Object.assign(new Error('A selected lesson does not belong to this course.'), {status: 403});
   const parts = [];
+  let skippedFiles = 0;
   const stripHtml = value => String(value || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').trim();
   for (const lesson of lessons) {
     const text = stripHtml(lesson.content || lesson.description);
@@ -30,9 +32,20 @@ async function loadLearningSources({courseId, materials, lessonIds, instructions
       if (/^https?:\/\//i.test(location)) payload = {source_url: location};
       else {
         const uploadRoot = path.resolve(getUploadsRoot());
-        const relative = location.replace(/^\/?uploads\//, '');
-        const filePath = path.resolve(uploadRoot, relative);
-        if (!filePath.startsWith(uploadRoot + path.sep) || !fs.existsSync(filePath)) throw Object.assign(new Error(`Learning file unavailable: ${material.title}`), {status: 422});
+        const filePath = path.resolve(resolveUploadsPath(location));
+        // Guard against path traversal: the resolved file must stay inside the
+        // uploads root. An out-of-root path is a data/security error, not a
+        // stale reference, so it must not be skipped silently.
+        if (!filePath.startsWith(uploadRoot + path.sep)) throw Object.assign(new Error(`Invalid learning file location: ${material.title}`), {status: 422});
+        if (!fs.existsSync(filePath)) {
+          // The material once referenced a real upload but the file is no
+          // longer present (deleted, storage cleared, or migrated). This is a
+          // stale reference that must not abort the whole quiz generation —
+          // drop it and continue with the remaining course content.
+          skippedFiles++;
+          logger.warn(`[quizLearningSources] Skipping material #${material.id} "${material.title}" (lesson #${lesson.id}) — referenced file missing on disk: ${location}`);
+          continue;
+        }
         const realRoot = fs.realpathSync(uploadRoot), realPath = fs.realpathSync(filePath);
         payload = {file_path: realPath};
       }
@@ -42,6 +55,7 @@ async function loadLearningSources({courseId, materials, lessonIds, instructions
       parts.push(`${material.title}\n${response.data.text}`);
     }
   }
+  if (skippedFiles > 0) logger.warn(`[quizLearningSources] Skipped ${skippedFiles} file-backed material(s) whose files are missing; they were excluded from the learning source.`);
   const text = parts.join('\n\n');
   if (text.length > 150000) {
     const aiUrl = (process.env.AI_SERVICE_URL || 'http://localhost:8000').replace(/\/+$/, '');

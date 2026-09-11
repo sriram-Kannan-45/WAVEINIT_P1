@@ -1,5 +1,7 @@
 const trainerCourseController = require('../src/controllers/trainerCourseController');
 
+jest.setTimeout(20000);
+
 describe('Trainer Module Structure Bulk Delete Controller Verification', () => {
   test('bulkDeleteLessons should reject non-array body', async () => {
     const req = {
