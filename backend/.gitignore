@@ -23,3 +23,7 @@ target/
 Thumbs.db
 .vscode/
 .idea/
+
+# Database Backups
+database/backups/
+
