@@ -76,8 +76,12 @@ export default defineConfig({
     } : {}),
     rollupOptions: {
       output: {
+        hoistTransitiveImports: false,
         manualChunks(id) {
           const normalized = id.replace(/\\/g, '/');
+          if (normalized.includes('vite/preload-helper') || normalized.includes('vite/modulepreload-polyfill')) {
+            return 'vendor-preload';
+          }
           if (normalized.includes('/node_modules/')) {
             if (
               normalized.includes('/node_modules/@monaco-editor/') ||

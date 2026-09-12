@@ -9,11 +9,6 @@ import { AlertModalProvider } from './components/ui/AlertModal'
 import { AppThemeProvider } from './contexts/AppThemeContext'
 import { API_BASE } from './api/api'
 
-import AssessmentMobileJoin from './pages/assessment/AssessmentMobileJoin'
-import MobileJoin from './pages/interview/MobileJoin'
-import PrivacyPolicy from './pages/PrivacyPolicy'
-import CookieConsentBanner from './components/common/CookieConsentBanner'
-
 // Resilient lazy loader with auto-retry and auto-reload on stale Vite chunks / HMR
 function ChunkLoadFallback({ error }) {
   return (
@@ -115,6 +110,10 @@ function lazyRetry(componentImport) {
 
 // Lazy-loaded pages — each chunk is separate with auto-retry
 const AdminDashboard = lazyRetry(() => import('./pages/AdminDashboard'))
+const AssessmentMobileJoin = lazyRetry(() => import('./pages/assessment/AssessmentMobileJoin'))
+const MobileJoin = lazyRetry(() => import('./pages/interview/MobileJoin'))
+const PrivacyPolicy = lazyRetry(() => import('./pages/PrivacyPolicy'))
+const CookieConsentBanner = lazyRetry(() => import('./components/common/CookieConsentBanner'))
 const ExamPage = lazyRetry(() => import('./pages/ExamPage'))
 const ExamResultPage = lazyRetry(() => import('./pages/ExamResultPage'))
 const ForgotPassword = lazyRetry(() => import('./pages/ForgotPassword'))

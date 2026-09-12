@@ -205,6 +205,7 @@ body:has(.auth-page) {
   max-width: 490px;
   max-height: 395px;
   height: auto;
+  aspect-ratio: 800 / 722;
   object-fit: contain;
   object-position: center center;
   display: block;

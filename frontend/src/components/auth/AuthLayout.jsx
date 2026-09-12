@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 import { BookOpen } from 'lucide-react';
-import classroomImg from '../../assets/lms-classroom-empower.png';
+import { useEffect } from 'react';
 
 const fadeUp = (delay = 0) => ({
   initial: { opacity: 0, y: 12 },
@@ -9,6 +9,18 @@ const fadeUp = (delay = 0) => ({
 });
 
 export default function AuthLayout() {
+  useEffect(() => {
+    const href = '/lms-classroom-empower.webp';
+    if (!document.querySelector(`link[rel="preload"][href="${href}"]`)) {
+      const link = document.createElement('link');
+      link.rel = 'preload';
+      link.as = 'image';
+      link.type = 'image/webp';
+      link.href = href;
+      document.head.appendChild(link);
+    }
+  }, []);
+
   return (
     <div className="auth-layout--left">
       {/* Background gradients and subtle decorative curves */}
@@ -62,11 +74,17 @@ export default function AuthLayout() {
           animate={{ opacity: 1, scale: 1, y: 0 }}
           transition={{ delay: 0.16, duration: 0.55, ease: [0.4, 0, 0.2, 1] }}
         >
-          <img
-            src={classroomImg}
-            alt="Wave Init LMS Interactive Classroom"
-            className="auth-classroom-empower-img"
-          />
+          <picture>
+            <source type="image/webp" srcSet="/lms-classroom-empower.webp" />
+            <img
+              src="/lms-classroom-empower-800.png"
+              alt="Wave Init LMS Interactive Classroom"
+              className="auth-classroom-empower-img"
+              width={800}
+              height={722}
+              fetchPriority="high"
+            />
+          </picture>
         </motion.div>
       </div>
     </div>
