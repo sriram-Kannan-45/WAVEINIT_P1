@@ -1271,6 +1271,31 @@ function ResourcesView({ user, courseId }) {
   )
 }
 
+function getAssessmentWindowMessage(item) {
+  if (!item) return null
+  if (item.myStatus === 'ABSENT') {
+    return { text: 'You were marked ABSENT (Assessment ended)', type: 'error' }
+  }
+  if (item.availabilityStatus === 'NOT_STARTED_YET') {
+    const formattedStart = item.startTime ? new Date(item.startTime).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : 'soon'
+    return { text: `Assessment has not started yet. (Starts: ${formattedStart})`, type: 'upcoming' }
+  }
+  if (item.availabilityStatus === 'ENDED' || item.availabilityStatus === 'FINALIZED') {
+    return { text: 'This assessment has ended.', type: 'ended' }
+  }
+  if (item.endTime) {
+    const end = new Date(item.endTime).getTime()
+    const diffSec = Math.floor((end - Date.now()) / 1000)
+    if (diffSec > 0 && diffSec <= 600) {
+      const mins = Math.max(1, Math.ceil(diffSec / 60))
+      return { text: `Assessment ends in ${mins} minute${mins === 1 ? '' : 's'}`, type: 'urgent' }
+    }
+    const formattedEnd = new Date(item.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
+    return { text: `Assessment ends at ${formattedEnd}`, type: 'active' }
+  }
+  return null
+}
+
 // ── Quizzes Tab ─────────────────────────────────────────────────────────────
 function QuizzesView({ user, courseId, trainingId }) {
   const { error: showError } = useToast()
@@ -1306,8 +1331,22 @@ function QuizzesView({ user, courseId, trainingId }) {
         sessionToken: response.sessionToken || '',
         monitoringSessionId: response.monitoringSessionId || '',
       })
-      navigate(`/trainings/${trainingId}/quizzes/${quizId}/verification?${params.toString()}`)
+      if (response.admitted) {
+        navigate(`/trainings/${trainingId}/quizzes/${quizId}/attempt?${params.toString()}`)
+      } else {
+        navigate(`/trainings/${trainingId}/quizzes/${quizId}/verification?${params.toString()}`)
+      }
     } catch (err) { showError(err.message) }
+  }
+
+  const handleViewResult = (q) => {
+    const targetTrainingId = trainingId || courseId || 0
+    const attemptQuery = q.attemptId ? `?attemptId=${q.attemptId}` : ''
+    if (targetTrainingId && targetTrainingId !== '0') {
+      navigate(`/trainings/${targetTrainingId}/quizzes/${q.quizId}/result${attemptQuery}`)
+    } else {
+      navigate(`/quizzes/${q.quizId}/result${attemptQuery}`)
+    }
   }
 
   if (loading) {
@@ -1348,58 +1387,148 @@ function QuizzesView({ user, courseId, trainingId }) {
         </span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
-        {list.map(q => (
-          <div key={q.quizId} className="enterprise-card" style={{ padding: 18, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6, gap: 8 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>{q.title}</div>
-              {q.myStatus !== 'NOT_STARTED' && (
-                q.resultStatus === 'PUBLISHED' ? (
-                  <span className="wl-detail-status-badge wl-detail-status-badge--published" style={{ fontSize: 9, flexShrink: 0 }}>
-                    Result Available
+        {list.map(q => {
+          const winMsg = getAssessmentWindowMessage(q)
+          const isBlockedBySchedule = q.availabilityStatus === 'NOT_STARTED_YET' || q.availabilityStatus === 'ENDED' || q.availabilityStatus === 'FINALIZED' || q.myStatus === 'ABSENT'
+          const canStart = (q.myStatus === 'IN_PROGRESS' || q.myStatus === 'NOT_STARTED') && !isBlockedBySchedule
+          const isSubmitted = q.myStatus !== 'NOT_STARTED' && q.myStatus !== 'IN_PROGRESS' && q.myStatus !== 'ABSENT'
+
+          return (
+            <div
+              key={q.quizId}
+              className="enterprise-card"
+              onClick={() => {
+                if (isSubmitted) handleViewResult(q)
+              }}
+              style={{
+                padding: 18,
+                display: 'flex',
+                flexDirection: 'column',
+                cursor: isSubmitted ? 'pointer' : 'default',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6, gap: 8 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>{q.title}</div>
+                {q.myStatus === 'ABSENT' ? (
+                  <span className="wl-detail-status-badge" style={{ background: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA', fontSize: 9, flexShrink: 0 }}>
+                    ABSENT
                   </span>
-                ) : (
-                  <span className="wl-detail-status-badge wl-detail-status-badge--draft" style={{ fontSize: 9, flexShrink: 0 }}>
-                    Pending Result
-                  </span>
-                )
+                ) : q.myStatus !== 'NOT_STARTED' && (
+                  q.resultStatus === 'PUBLISHED' ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleViewResult(q)
+                      }}
+                      className="wl-detail-status-badge wl-detail-status-badge--published"
+                      style={{ fontSize: 9, flexShrink: 0, cursor: 'pointer', border: 'none' }}
+                      title="Click to view detailed quiz result"
+                    >
+                      Result Available
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleViewResult(q)
+                      }}
+                      className="wl-detail-status-badge wl-detail-status-badge--draft"
+                      style={{ fontSize: 9, flexShrink: 0, cursor: 'pointer', border: 'none' }}
+                      title="Click to view submission status"
+                    >
+                      Pending Result
+                    </button>
+                  )
+                )}
+              </div>
+
+              <div style={{ fontSize: 11, color: '#6B7280', marginBottom: winMsg ? 6 : 12 }}>
+                {q.lessonTitle || 'Course-level'} · {q.questionCount} question{q.questionCount !== 1 ? 's' : ''}
+              </div>
+
+              {winMsg && (
+                <div style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: winMsg.type === 'error' || winMsg.type === 'ended' || winMsg.type === 'urgent' ? '#DC2626' : winMsg.type === 'upcoming' ? '#D97706' : '#2563EB',
+                  background: winMsg.type === 'error' || winMsg.type === 'ended' || winMsg.type === 'urgent' ? '#FEF2F2' : winMsg.type === 'upcoming' ? '#FFFBEB' : '#EFF6FF',
+                  padding: '3px 8px',
+                  borderRadius: 6,
+                  marginBottom: 12,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5
+                }}>
+                  <Clock size={11} />
+                  {winMsg.text}
+                </div>
               )}
-            </div>
-            <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 12 }}>
-              {q.lessonTitle || 'Course-level'} · {q.questionCount} question{q.questionCount !== 1 ? 's' : ''}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 'auto', justifyContent: 'space-between' }}>
-              {q.myStatus === 'IN_PROGRESS' ? (
-                <span style={{ fontSize: 11, color: '#d97706', fontWeight: 600 }}>In Progress</span>
-              ) : q.myStatus !== 'NOT_STARTED' ? (
-                q.resultStatus === 'PUBLISHED' ? (
-                  <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>
-                    ✓ Submitted{q.myScore != null ? ` · ${q.myScore.toFixed(0)}%` : ''}
-                  </span>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 'auto', justifyContent: 'space-between' }}>
+                {q.myStatus === 'ABSENT' ? (
+                  <span style={{ fontSize: 11, color: '#DC2626', fontWeight: 600 }}>Absent (Did not attend)</span>
+                ) : q.myStatus === 'IN_PROGRESS' ? (
+                  <span style={{ fontSize: 11, color: '#d97706', fontWeight: 600 }}>In Progress</span>
+                ) : q.myStatus !== 'NOT_STARTED' ? (
+                  q.resultStatus === 'PUBLISHED' ? (
+                    <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>
+                      ✓ Submitted{q.myScore != null ? ` · ${q.myScore.toFixed(0)}%` : ''}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 11, color: '#d97706', fontWeight: 600 }}>Result Pending</span>
+                  )
                 ) : (
-                  <span style={{ fontSize: 11, color: '#d97706', fontWeight: 600 }}>Result Pending</span>
-                )
-              ) : (
-                <span style={{ fontSize: 11, color: '#6B7280' }}>Not started</span>
-              )}
-              <button
-                onClick={() => {
-                  if (q.myStatus === 'IN_PROGRESS' || q.myStatus === 'NOT_STARTED') handleStart(q.quizId)
-                }}
-                disabled={q.myStatus !== 'NOT_STARTED' && q.myStatus !== 'IN_PROGRESS'}
-                className="wl-btn-primary"
-                style={{
-                  height: 32, padding: '0 14px', fontSize: 11,
-                  opacity: (q.myStatus !== 'NOT_STARTED' && q.myStatus !== 'IN_PROGRESS') ? 0.6 : 1,
-                  cursor: (q.myStatus !== 'NOT_STARTED' && q.myStatus !== 'IN_PROGRESS') ? 'default' : 'pointer',
-                }}
-              >
-                {q.myStatus === 'IN_PROGRESS' ? <><PlayCircle size={11} /> Resume</>
-                  : q.myStatus !== 'NOT_STARTED' ? 'Submitted'
-                  : <><PlayCircle size={11} /> Start</>}
-              </button>
+                  <span style={{ fontSize: 11, color: '#6B7280' }}>Not started</span>
+                )}
+
+                {isSubmitted ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleViewResult(q)
+                    }}
+                    className="wl-btn-primary"
+                    style={{
+                      height: 32, padding: '0 14px', fontSize: 11,
+                      cursor: 'pointer',
+                      background: q.resultStatus === 'PUBLISHED' ? '#0D9488' : '#2563EB',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5
+                    }}
+                    title={q.resultStatus === 'PUBLISHED' ? 'View Result Breakdown' : 'View Submission Details'}
+                  >
+                    <Eye size={12} /> {q.resultStatus === 'PUBLISHED' ? 'View Result' : 'View Submission'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (canStart) handleStart(q.quizId)
+                    }}
+                    disabled={!canStart}
+                    className="wl-btn-primary"
+                    style={{
+                      height: 32, padding: '0 14px', fontSize: 11,
+                      opacity: !canStart ? 0.6 : 1,
+                      cursor: !canStart ? 'default' : 'pointer',
+                    }}
+                  >
+                    {q.myStatus === 'ABSENT' ? 'Absent'
+                      : q.availabilityStatus === 'NOT_STARTED_YET' ? 'Not Started Yet'
+                      : (q.availabilityStatus === 'ENDED' || q.availabilityStatus === 'FINALIZED') ? 'Ended'
+                      : q.myStatus === 'IN_PROGRESS' ? <><PlayCircle size={11} /> Resume</>
+                      : <><PlayCircle size={11} /> Start</>}
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
@@ -1508,59 +1637,94 @@ function CodingAssessmentsView({ user, courseId, trainingId }) {
         </span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
-        {list.map(a => (
-          <div key={a.assessmentId} className="enterprise-card" style={{ padding: 18, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6, gap: 8 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>{a.title}</div>
-              {a.myStatus !== 'NOT_STARTED' && (
-                a.resultStatus === 'PUBLISHED' ? (
-                  <span className="wl-detail-status-badge wl-detail-status-badge--published" style={{ fontSize: 9, flexShrink: 0 }}>
-                    Result Available
+        {list.map(a => {
+          const winMsg = getAssessmentWindowMessage(a)
+          const isBlockedBySchedule = a.availabilityStatus === 'NOT_STARTED_YET' || a.availabilityStatus === 'ENDED' || a.availabilityStatus === 'FINALIZED' || a.myStatus === 'ABSENT'
+          const canStart = (a.myStatus === 'IN_PROGRESS' || a.myStatus === 'NOT_STARTED') && !isBlockedBySchedule
+
+          return (
+            <div key={a.assessmentId} className="enterprise-card" style={{ padding: 18, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6, gap: 8 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>{a.title}</div>
+                {a.myStatus === 'ABSENT' ? (
+                  <span className="wl-detail-status-badge" style={{ background: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA', fontSize: 9, flexShrink: 0 }}>
+                    ABSENT
                   </span>
-                ) : (
-                  <span className="wl-detail-status-badge wl-detail-status-badge--draft" style={{ fontSize: 9, flexShrink: 0 }}>
-                    Pending Result
-                  </span>
-                )
+                ) : a.myStatus !== 'NOT_STARTED' && (
+                  a.resultStatus === 'PUBLISHED' ? (
+                    <span className="wl-detail-status-badge wl-detail-status-badge--published" style={{ fontSize: 9, flexShrink: 0 }}>
+                      Result Available
+                    </span>
+                  ) : (
+                    <span className="wl-detail-status-badge wl-detail-status-badge--draft" style={{ fontSize: 9, flexShrink: 0 }}>
+                      Pending Result
+                    </span>
+                  )
+                )}
+              </div>
+
+              <div style={{ fontSize: 11, color: '#6B7280', marginBottom: winMsg ? 6 : 12 }}>
+                {a.problemCount} problem{a.problemCount !== 1 ? 's' : ''} · Coding Challenge
+              </div>
+
+              {winMsg && (
+                <div style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: winMsg.type === 'error' || winMsg.type === 'ended' || winMsg.type === 'urgent' ? '#DC2626' : winMsg.type === 'upcoming' ? '#D97706' : '#2563EB',
+                  background: winMsg.type === 'error' || winMsg.type === 'ended' || winMsg.type === 'urgent' ? '#FEF2F2' : winMsg.type === 'upcoming' ? '#FFFBEB' : '#EFF6FF',
+                  padding: '3px 8px',
+                  borderRadius: 6,
+                  marginBottom: 12,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5
+                }}>
+                  <Clock size={11} />
+                  {winMsg.text}
+                </div>
               )}
-            </div>
-            <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 12 }}>
-              {a.problemCount} problem{a.problemCount !== 1 ? 's' : ''} · Coding Challenge
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 'auto', justifyContent: 'space-between' }}>
-              {a.myStatus === 'IN_PROGRESS' ? (
-                <span style={{ fontSize: 11, color: '#d97706', fontWeight: 600 }}>In Progress</span>
-              ) : a.myStatus !== 'NOT_STARTED' ? (
-                a.resultStatus === 'PUBLISHED' ? (
-                  <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>
-                    ✓ Submitted{a.myScore != null ? ` · ${a.myScore.toFixed(0)}%` : ''}
-                  </span>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 'auto', justifyContent: 'space-between' }}>
+                {a.myStatus === 'ABSENT' ? (
+                  <span style={{ fontSize: 11, color: '#DC2626', fontWeight: 600 }}>Absent (Did not attend)</span>
+                ) : a.myStatus === 'IN_PROGRESS' ? (
+                  <span style={{ fontSize: 11, color: '#d97706', fontWeight: 600 }}>In Progress</span>
+                ) : a.myStatus !== 'NOT_STARTED' ? (
+                  a.resultStatus === 'PUBLISHED' ? (
+                    <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>
+                      ✓ Submitted{a.myScore != null ? ` · ${a.myScore.toFixed(0)}%` : ''}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 11, color: '#d97706', fontWeight: 600 }}>Result Pending</span>
+                  )
                 ) : (
-                  <span style={{ fontSize: 11, color: '#d97706', fontWeight: 600 }}>Result Pending</span>
-                )
-              ) : (
-                <span style={{ fontSize: 11, color: '#6B7280' }}>Not started</span>
-              )}
-              <button
-                onClick={() => {
-                  if (a.myStatus === 'IN_PROGRESS' || a.myStatus === 'NOT_STARTED') handleStart(a.assessmentId)
-                }}
-                disabled={a.myStatus !== 'NOT_STARTED' && a.myStatus !== 'IN_PROGRESS'}
-                className="wl-btn-primary"
-                style={{
-                  height: 32, padding: '0 14px', fontSize: 11,
-                  background: '#16A34A',
-                  opacity: (a.myStatus !== 'NOT_STARTED' && a.myStatus !== 'IN_PROGRESS') ? 0.6 : 1,
-                  cursor: (a.myStatus !== 'NOT_STARTED' && a.myStatus !== 'IN_PROGRESS') ? 'default' : 'pointer',
-                }}
-              >
-                {a.myStatus === 'IN_PROGRESS' ? <><PlayCircle size={11} /> Resume</>
-                  : a.myStatus !== 'NOT_STARTED' ? 'Submitted'
-                  : <><PlayCircle size={11} /> Start</>}
-              </button>
+                  <span style={{ fontSize: 11, color: '#6B7280' }}>Not started</span>
+                )}
+                <button
+                  onClick={() => {
+                    if (canStart) handleStart(a.assessmentId)
+                  }}
+                  disabled={!canStart}
+                  className="wl-btn-primary"
+                  style={{
+                    height: 32, padding: '0 14px', fontSize: 11,
+                    background: '#16A34A',
+                    opacity: !canStart ? 0.6 : 1,
+                    cursor: !canStart ? 'default' : 'pointer',
+                  }}
+                >
+                  {a.myStatus === 'ABSENT' ? 'Absent'
+                    : a.availabilityStatus === 'NOT_STARTED_YET' ? 'Not Started Yet'
+                    : (a.availabilityStatus === 'ENDED' || a.availabilityStatus === 'FINALIZED') ? 'Ended'
+                    : a.myStatus === 'IN_PROGRESS' ? <><PlayCircle size={11} /> Resume</>
+                    : a.myStatus !== 'NOT_STARTED' ? 'Submitted'
+                    : <><PlayCircle size={11} /> Start</>}
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )

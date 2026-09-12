@@ -66,6 +66,12 @@ const CodingAssessment = sequelize.define('CodingAssessment', {
     allowNull: true,
     field: 'end_time'
   },
+  timezone: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    defaultValue: 'Asia/Kolkata',
+    field: 'timezone'
+  },
   totalMarks: {
     type: DataTypes.DECIMAL(10, 2),
     allowNull: false,
@@ -134,6 +140,11 @@ const CodingAssessment = sequelize.define('CodingAssessment', {
     type: DataTypes.DATE,
     allowNull: true,
     field: 'result_published_at'
+  },
+  finalizedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    field: 'finalized_at'
   },
   aiHelpLimit: {
     type: DataTypes.INTEGER,

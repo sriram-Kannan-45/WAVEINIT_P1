@@ -80,15 +80,221 @@ class AssessmentVerificationService {
     return monitor;
   }
 
-  async getReconnectQr({ sessionId, participantId }) {
-    const { session, monitor } = await this.authorizeSocket({ sessionId, participantId });
-    await this.assertReconnectAllowed(session, monitor);
-    // Reuse the admitted room and credential. Never rotate admission, restart
-    // the attempt, reset its timer, or clear accumulated monitoring scores.
-    return { sessionId: session.session_id, status: session.status,
-      qrPayload: qrGenerator.generatePairingPayload({ assessmentType: session.assessment_type,
-        assessmentId: session.assessment_id, attemptId: session.attempt_id,
-        participantId: session.participant_id, sessionId: session.session_id, token: session.token }) };
+  async getReconnectQr({ sessionId, participantId, attemptId = null, assessmentType = null, assessmentId = null }) {
+    let session = null;
+    let monitor = null;
+
+    // 1. First try direct socket authorization if sessionId is supplied
+    if (sessionId) {
+      try {
+        const auth = await this.authorizeSocket({ sessionId, participantId });
+        session = auth.session;
+        monitor = auth.monitor;
+      } catch (_) {}
+    }
+
+    // 2. If already admitted & active, reuse existing session directly without mutating it
+    if (session && monitor) {
+      try {
+        await this.assertReconnectAllowed(session, monitor);
+        const qrPayload = qrGenerator.generatePairingPayload({
+          assessmentType: session.assessment_type,
+          assessmentId: session.assessment_id,
+          attemptId: session.attempt_id,
+          participantId: session.participant_id,
+          sessionId: session.session_id,
+          token: session.token,
+          socketUrl: process.env.SOCKET_URL || null,
+        });
+        return {
+          sessionId: session.session_id,
+          token: session.token,
+          monitoringSessionId: monitor.sessionId,
+          status: session.status,
+          expiresAt: session.expires_at,
+          qrPayload: {
+            ...qrPayload,
+            token: session.token,
+          },
+          shortUrl: qrPayload.shortUrl,
+        };
+      } catch (err) {
+        // If unadmitted, foreign, ended, or mismatched, re-throw if attempt ended or participant mismatch
+        if (err.message?.includes('attempt has ended') || err.message?.includes('not active')) {
+          throw err;
+        }
+      }
+    }
+
+    // 3. Auto-recovery flow: resolve Attempt
+    const normType = String(assessmentType || session?.assessment_type || 'QUIZ').toUpperCase();
+    const Attempt = normType === 'CODING' ? CodingAttempt : QuizAttempt;
+    const idField = normType === 'CODING' ? 'assessmentId' : 'quizId';
+
+    let attempt = null;
+    if (attemptId) {
+      attempt = await Attempt.findOne({ where: { id: Number(attemptId), participantId, status: 'IN_PROGRESS' } });
+    }
+    if (!attempt && session?.attempt_id) {
+      attempt = await Attempt.findOne({ where: { id: session.attempt_id, participantId, status: 'IN_PROGRESS' } });
+    }
+    if (!attempt && monitor?.attemptId) {
+      attempt = await Attempt.findOne({ where: { id: monitor.attemptId, participantId, status: 'IN_PROGRESS' } });
+    }
+
+    if (!attempt) {
+      throw new Error('Active assessment attempt not found or has already ended.');
+    }
+
+    const resolvedAssessmentId = attempt[idField] || assessmentId || monitor?.contextId || session?.assessment_id;
+
+    // 4. Resolve or resume MonitoringSession
+    if (!monitor) {
+      monitor = await MonitoringSession.findOne({
+        where: {
+          participantId,
+          contextType: normType,
+          attemptId: attempt.id,
+          status: { [Op.in]: ['CALIBRATING', 'READY', 'ACTIVE', 'PAUSED'] },
+        },
+        order: [['id', 'DESC']],
+      });
+    }
+
+    if (!monitor) {
+      const monitoringService = require('./monitoringService');
+      const started = await monitoringService.startSession({
+        participantId,
+        contextType: normType,
+        contextId: resolvedAssessmentId,
+        attemptId: attempt.id,
+        mobileEnabled: true,
+      });
+      monitor = started?.session || null;
+    }
+
+    if (!monitor || ['COMPLETED', 'ABORTED'].includes(monitor.status)) {
+      throw new Error('This assessment is not available for camera reconnection.');
+    }
+
+    // 4b. Before creating a new session, check if an existing valid session exists for this attempt/monitor
+    if (!session) {
+      const linkedSessionId = monitor.metadata?.mobileAdmission?.verificationSessionId;
+      if (linkedSessionId) {
+        session = await AssessmentVerificationSession.findOne({
+          where: { session_id: linkedSessionId, participant_id: participantId },
+        });
+      }
+      if (!session) {
+        session = await AssessmentVerificationSession.findOne({
+          where: {
+            attempt_id: attempt.id,
+            participant_id: participantId,
+            assessment_type: normType,
+            status: { [Op.ne]: 'EXPIRED' },
+          },
+          order: [['id', 'DESC']],
+        });
+      }
+    }
+
+    const isExpired = !session || session.status === 'EXPIRED' || (session.status !== 'USED' && new Date() > new Date(session.expires_at));
+
+    if (!isExpired) {
+      // Reuse existing active session!
+      const socketToken = this._issueSocketToken(session);
+      await session.update({ socket_token: socketToken });
+
+      // Ensure monitor has mobileAdmission pointing to this session
+      if (monitor.metadata?.mobileAdmission?.verificationSessionId !== session.session_id) {
+        await monitor.update({
+          metadata: {
+            ...monitor.metadata,
+            mobileAdmission: {
+              verificationSessionId: session.session_id,
+              admittedAt: monitor.metadata?.mobileAdmission?.admittedAt || new Date().toISOString(),
+            },
+          },
+        });
+      }
+
+      const qrPayload = qrGenerator.generatePairingPayload({
+        assessmentType: session.assessment_type,
+        assessmentId: session.assessment_id,
+        attemptId: session.attempt_id,
+        participantId: session.participant_id,
+        sessionId: session.session_id,
+        token: session.token,
+        socketUrl: process.env.SOCKET_URL || null,
+      });
+
+      return {
+        sessionId: session.session_id,
+        token: session.token,
+        monitoringSessionId: monitor.sessionId,
+        status: session.status,
+        expiresAt: session.expires_at,
+        qrPayload: {
+          ...qrPayload,
+          token: session.token,
+        },
+        shortUrl: qrPayload.shortUrl,
+      };
+    }
+
+    // 5. Generate fresh verification session linked to the active attempt & monitor
+    const token = this._generateToken();
+    const newSessionId = this._generateSessionId(normType, resolvedAssessmentId, attempt.id);
+    const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+
+    session = await AssessmentVerificationSession.create({
+      participant_id: participantId,
+      assessment_id: resolvedAssessmentId,
+      assessment_type: normType,
+      attempt_id: attempt.id,
+      session_id: newSessionId,
+      token,
+      status: 'USED',
+      laptop_verified: true,
+      mobile_verified: false,
+      expires_at: expiresAt,
+    });
+
+    const socketToken = this._issueSocketToken(session);
+    await session.update({ socket_token: socketToken });
+
+    await monitor.update({
+      metadata: {
+        ...monitor.metadata,
+        mobileAdmission: {
+          verificationSessionId: session.session_id,
+          admittedAt: monitor.metadata?.mobileAdmission?.admittedAt || new Date().toISOString(),
+        },
+      },
+    });
+
+    const qrPayload = qrGenerator.generatePairingPayload({
+      assessmentType: session.assessment_type,
+      assessmentId: session.assessment_id,
+      attemptId: session.attempt_id,
+      participantId: session.participant_id,
+      sessionId: session.session_id,
+      token: session.token,
+      socketUrl: process.env.SOCKET_URL || null,
+    });
+
+    return {
+      sessionId: session.session_id,
+      token: session.token,
+      monitoringSessionId: monitor.sessionId,
+      status: session.status,
+      expiresAt: session.expires_at,
+      qrPayload: {
+        ...qrPayload,
+        token: session.token,
+      },
+      shortUrl: qrPayload.shortUrl,
+    };
   }
   /**
    * Helper to generate a secure random hex token.
@@ -472,7 +678,7 @@ class AssessmentVerificationService {
   /**
    * End / close verification session when assessment is submitted or closed.
    */
-  async endSession({ sessionId, token, participantId, attemptId, assessmentType } = {}) {
+  async endSession({ sessionId, token, participantId, attemptId, assessmentType, force = false } = {}) {
     if (!participantId || (!sessionId && !token && !(attemptId && assessmentType))) return { success: false };
     const where = { participant_id: participantId,
       ...(sessionId ? { session_id: sessionId } : token ? { token } : { attempt_id: attemptId, assessment_type: assessmentType }) };
@@ -482,7 +688,7 @@ class AssessmentVerificationService {
     for (const session of sessions) {
       const Attempt = session.assessment_type === 'CODING' ? CodingAttempt : QuizAttempt;
       const attempt = await Attempt.findOne({ where: { id: session.attempt_id, participantId } });
-      if (!attempt || attempt.status === 'IN_PROGRESS') continue;
+      if (!force && (!attempt || attempt.status === 'IN_PROGRESS')) continue;
       await session.update({ status: 'EXPIRED' });
       closed.push(session.session_id);
       io?.to(`assessment_verif_${session.session_id}`).emit('assessment_verif:session_ended', {

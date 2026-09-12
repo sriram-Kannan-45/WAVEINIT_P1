@@ -784,10 +784,14 @@ async function createManualQuiz(req, res) {
     const course = await loadOwnedCourse(req, res, req.params.courseId);
     if (!course) return;
 
-    const { title, lessonId, isMandatory, questions } = req.body;
+    const { title, lessonId, isMandatory, questions, startTime, endTime, timezone, timeLimit } = req.body;
     if (!title || !title.trim()) return res.status(422).json({ error: 'Title is required' });
     if (!Array.isArray(questions) || questions.length === 0) {
       return res.status(422).json({ error: 'At least one question is required' });
+    }
+
+    if (startTime && endTime && new Date(startTime) >= new Date(endTime)) {
+      return res.status(400).json({ error: 'Start time must be before end time' });
     }
 
     if (lessonId) {
@@ -806,6 +810,10 @@ async function createManualQuiz(req, res) {
         status:      'DRAFT',
         resultStatus: 'HIDDEN',
         isMandatory: isMandatory !== false,
+        startTime:   startTime ? new Date(startTime) : null,
+        endTime:     endTime ? new Date(endTime) : null,
+        timezone:    timezone || 'Asia/Kolkata',
+        timeLimit:   timeLimit ? Number(timeLimit) : 30,
       }, { transaction: t });
 
       for (let i = 0; i < questions.length; i++) {
@@ -925,8 +933,15 @@ async function updateCourseQuiz(req, res) {
       allowMultipleAttempts, maxAttempts, difficulty, timeLimit,
       copyProtectionEnabled, maxCopyWarnings, copyViolationActions,
       copyWarningMessage, copyDisqualifyAction,
-      proctoringEnabled, proctoringLevel, gracePeriodMinutes
+      proctoringEnabled, proctoringLevel, gracePeriodMinutes,
+      startTime, endTime, timezone
     } = req.body;
+
+    const resolvedStartTime = startTime !== undefined ? (startTime ? new Date(startTime) : null) : quiz.startTime;
+    const resolvedEndTime = endTime !== undefined ? (endTime ? new Date(endTime) : null) : quiz.endTime;
+    if (resolvedStartTime && resolvedEndTime && resolvedStartTime >= resolvedEndTime) {
+      return res.status(400).json({ error: 'Start time must be before end time' });
+    }
 
     if (status && !['DRAFT', 'PUBLISHED', 'CLOSED'].includes(status)) {
       return res.status(422).json({ error: 'Invalid status' });
@@ -945,6 +960,9 @@ async function updateCourseQuiz(req, res) {
         isPublished:                status === 'PUBLISHED' ? true : (status === 'DRAFT' ? false : quiz.isPublished),
         published:                  status === 'PUBLISHED' ? true : (status === 'DRAFT' ? false : quiz.published),
         publishedAt:                status === 'PUBLISHED' ? (quiz.publishedAt || new Date()) : quiz.publishedAt,
+        startTime:                  resolvedStartTime,
+        endTime:                    resolvedEndTime,
+        timezone:                   timezone                   || quiz.timezone || 'Asia/Kolkata',
         showResultImmediately:      showResultImmediately      !== undefined ? showResultImmediately : quiz.showResultImmediately,
         showCorrectAnswersOnResult: showCorrectAnswersOnResult !== undefined ? showCorrectAnswersOnResult : quiz.showCorrectAnswersOnResult,
         shuffleQuestions:           shuffleQuestions           !== undefined ? shuffleQuestions : quiz.shuffleQuestions,

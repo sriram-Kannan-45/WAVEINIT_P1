@@ -8,7 +8,7 @@ import {
   Plus, Pencil, Trash2, Save, X, Check, Send, Loader2, Star,
   Search, Clock, Calendar, AlertCircle, AlertTriangle, RefreshCw,
   Code, Shield, ShieldCheck, Copy, Info, BarChart2, Sparkles,
-  Eye, MoreVertical, ChevronDown, ChevronUp, GripVertical, Download
+  Eye, MoreVertical, ChevronDown, ChevronUp, GripVertical, Download, Award
 } from 'lucide-react'
 import { SingleAttemptProctoringModal } from '../proctoring/components/TrainerMonitoringReport'
 import { API, API_BASE } from '../api/api'
@@ -355,6 +355,7 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
     { key: 'problems',     label: 'Problems',     icon: Code },
     { key: 'participants', label: 'Participants', icon: Users },
     { key: 'results',      label: 'Results',      icon: BarChart3 },
+    { key: 'finalReport',  label: 'Final Report', icon: Award },
     { key: 'leaderboard',  label: 'Leaderboard',  icon: Trophy },
     { key: 'analytics',    label: 'Analytics',    icon: Star },
     { key: 'settings',     label: 'Settings',     icon: Settings },
@@ -509,6 +510,15 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
                       }}>
                         Results: {assessment.resultStatus === 'PUBLISHED' ? 'Published' : 'Hidden'}
                       </span>
+
+                      {assessment.endTime && (
+                        <span style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 9px', borderRadius: 999,
+                          fontSize: 11, fontWeight: 600, background: '#EFF6FF', color: '#1E40AF',
+                        }}>
+                          <Clock size={11} /> End: {new Date(assessment.endTime).toLocaleString()} ({assessment.timezone || 'Asia/Kolkata'})
+                        </span>
+                      )}
 
                       {/* Metadata row */}
                       <span style={{ fontSize: 12.5, color: '#64748B' }}>• {assessment.problems?.length || 1} problem</span>
@@ -699,6 +709,9 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
                 )}
                 {activeTab === 'results' && (
                   <ResultsTab assessment={assessment} auth={auth} toast={toast} onRefresh={fetchAssessment} />
+                )}
+                {activeTab === 'finalReport' && (
+                  <CodingFinalReportTab assessment={assessment} auth={auth} toast={toast} />
                 )}
                 {activeTab === 'leaderboard' && (
                   <LeaderboardTab assessment={assessment} auth={auth} />
@@ -2407,21 +2420,48 @@ function AnalyticsTab({ assessment, auth }) {
    ───────────────────────────────────────────────────────────────────────────── */
 function SettingsTab({ assessment, onRefresh, auth, toast }) {
   const [saving, setSaving] = useState(false)
+  const formatDatetimeLocal = (iso) => {
+    if (!iso) return ''
+    try {
+      const d = new Date(iso)
+      if (isNaN(d.getTime())) return ''
+      const pad = (n) => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+    } catch { return '' }
+  }
+
   const [form, setForm] = useState({
     title: assessment.title || '',
     timeLimit: assessment.timeLimit || 120,
     maxAttempts: assessment.maxAttempts || 1,
     passingMarks: assessment.passingMarks || 50,
     aiAssistantEnabled: assessment.aiAssistantEnabled !== false,
+    startTime: formatDatetimeLocal(assessment.startTime),
+    endTime: formatDatetimeLocal(assessment.endTime),
+    timezone: assessment.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata',
   })
 
   const handleSave = async (e) => {
     e.preventDefault()
+    if (form.endTime) {
+      const endD = new Date(form.endTime)
+      if (isNaN(endD.getTime())) { toast.error('Please enter a valid End Date/Time'); return }
+      if (form.startTime) {
+        const startD = new Date(form.startTime)
+        if (!isNaN(startD.getTime()) && endD <= startD) {
+          toast.error('End Date/Time must be strictly after Start Date/Time'); return
+        }
+      }
+    }
     setSaving(true)
     try {
       const r = await fetch(API.CODING.UPDATE(assessment.id), {
         method: 'PUT', headers: auth(),
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          startTime: form.startTime ? new Date(form.startTime).toISOString() : null,
+          endTime: form.endTime ? new Date(form.endTime).toISOString() : null,
+        }),
       })
       if (!r.ok) throw new Error('Update failed')
       toast.success('Settings updated')
@@ -2431,9 +2471,9 @@ function SettingsTab({ assessment, onRefresh, auth, toast }) {
   }
 
   return (
-    <div style={{ background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 16, padding: 22, maxWidth: 600 }}>
+    <div style={{ background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: 16, padding: 22, maxWidth: 680 }}>
       <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: '#0F172A' }}>
-        Assessment Settings
+        Assessment Settings & Scheduling
       </h3>
       <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div>
@@ -2449,6 +2489,58 @@ function SettingsTab({ assessment, onRefresh, auth, toast }) {
             <label style={lblStyle}>Max Attempts</label>
             <input style={inputStyle} type="number" min={1} value={form.maxAttempts} onChange={e => setForm({ ...form, maxAttempts: parseInt(e.target.value) || 1 })} />
           </div>
+        </div>
+
+        {/* ── Scheduling & Availability Window ── */}
+        <div style={{
+          background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 10,
+          padding: 14
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+            <Calendar size={15} color="#16A34A" />
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#0F172A' }}>Assessment Scheduling & Availability Window</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={lblStyle}>Start Date & Time (Optional)</label>
+              <input
+                type="datetime-local"
+                value={form.startTime}
+                onChange={e => setForm({ ...form, startTime: e.target.value })}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={lblStyle}>End Date & Time <span style={{ color: colors.danger[600] }}>*</span></label>
+              <input
+                type="datetime-local"
+                value={form.endTime}
+                onChange={e => setForm({ ...form, endTime: e.target.value })}
+                style={inputStyle}
+              />
+            </div>
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <label style={lblStyle}>Timezone</label>
+            <input
+              type="text"
+              value={form.timezone}
+              onChange={e => setForm({ ...form, timezone: e.target.value })}
+              placeholder="e.g. Asia/Kolkata"
+              style={inputStyle}
+            />
+          </div>
+          {form.endTime && (
+            <div style={{
+              marginTop: 10, padding: '8px 12px', background: '#EFF6FF', borderRadius: 8,
+              fontSize: 12, color: '#1E40AF', display: 'flex', alignItems: 'center', gap: 6
+            }}>
+              <Clock size={13} />
+              <span>
+                <strong>Window:</strong> {form.startTime ? `${new Date(form.startTime).toLocaleString()} to ` : 'Immediate start until '}{new Date(form.endTime).toLocaleString()} ({form.timezone})
+              </span>
+            </div>
+          )}
         </div>
 
         {/* ── AI Student Assistant settings ── */}
@@ -2475,6 +2567,216 @@ function SettingsTab({ assessment, onRefresh, auth, toast }) {
           </button>
         </div>
       </form>
+    </div>
+  )
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   8. CODING FINAL REPORT TAB
+   ───────────────────────────────────────────────────────────────────────────── */
+function CodingFinalReportTab({ assessment, auth, toast }) {
+  const [report, setReport] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [exporting, setExporting] = useState(false)
+
+  const loadReport = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(API.CODING.FINAL_REPORT(assessment.id), { headers: auth() })
+      const data = await res.json()
+      if (data.success) {
+        setReport(data.report)
+      } else {
+        toast.error(data.error || 'Failed to load report')
+      }
+    } catch (e) {
+      toast.error('Failed to load coding assessment report')
+    } finally {
+      setLoading(false)
+    }
+  }, [assessment.id, auth, toast])
+
+  useEffect(() => {
+    loadReport()
+  }, [loadReport])
+
+  const handleExportCsv = async () => {
+    setExporting(true)
+    try {
+      const res = await fetch(API.CODING.RESULTS_EXPORT(assessment.id), { headers: auth() })
+      if (!res.ok) throw new Error('Failed to export CSV report')
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `coding_assessment_report_${assessment.id}.csv`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+      toast.success('Assessment CSV report downloaded ✓')
+    } catch (err) {
+      toast.error(err.message || 'Export failed')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 300 }}>
+        <Loader2 size={28} className="animate-spin" color="#16a34a" />
+      </div>
+    )
+  }
+
+  if (!report) {
+    return (
+      <div style={{ textAlign: 'center', padding: 40, color: '#64748b' }}>
+        No report data available.
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Header bar */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Award size={20} color="#16A34A" /> Coding Assessment Final Report
+          </h3>
+          <p style={{ margin: '4px 0 0', fontSize: 12.5, color: '#64748B' }}>
+            Authoritative attendance, scoring, auto-finalization, and proctoring audit
+          </p>
+        </div>
+        <button
+          onClick={handleExportCsv}
+          disabled={exporting}
+          style={{
+            padding: '8px 16px', borderRadius: 8, border: '1px solid #16A34A',
+            background: '#F0FDF4', color: '#15803D', fontSize: 12.5, fontWeight: 700,
+            cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+            boxShadow: '0 1px 2px rgba(22,163,74,0.1)'
+          }}
+        >
+          <Download size={15} /> {exporting ? 'Exporting CSV...' : 'Export Complete CSV (21 Cols)'}
+        </button>
+      </div>
+
+      {/* Summary metric grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 12 }}>
+        <div style={{ background: '#F8FAFC', padding: 14, borderRadius: 10, border: '1px solid #E2E8F0' }}>
+          <div style={{ fontSize: 10, color: '#64748B', fontWeight: 700, textTransform: 'uppercase' }}>Total Enrolled</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#0F172A', marginTop: 4 }}>{report.summary?.totalEnrolled ?? 0}</div>
+        </div>
+        <div style={{ background: '#F0FDF4', padding: 14, borderRadius: 10, border: '1px solid #BBF7D0' }}>
+          <div style={{ fontSize: 10, color: '#166534', fontWeight: 700, textTransform: 'uppercase' }}>Present</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#15803D', marginTop: 4 }}>{report.summary?.presentCount ?? 0}</div>
+        </div>
+        <div style={{ background: '#FEF2F2', padding: 14, borderRadius: 10, border: '1px solid #FECACA' }}>
+          <div style={{ fontSize: 10, color: '#991B1B', fontWeight: 700, textTransform: 'uppercase' }}>Absent</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#DC2626', marginTop: 4 }}>{report.summary?.absentCount ?? 0}</div>
+        </div>
+        <div style={{ background: '#EFF6FF', padding: 14, borderRadius: 10, border: '1px solid #BFDBFE' }}>
+          <div style={{ fontSize: 10, color: '#1E40AF', fontWeight: 700, textTransform: 'uppercase' }}>Completed</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#2563EB', marginTop: 4 }}>{report.summary?.completedCount ?? 0}</div>
+        </div>
+        <div style={{ background: '#FFFBEB', padding: 14, borderRadius: 10, border: '1px solid #FDE68A' }}>
+          <div style={{ fontSize: 10, color: '#92400E', fontWeight: 700, textTransform: 'uppercase' }}>Auto Submitted</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#D97706', marginTop: 4 }}>{report.summary?.autoSubmittedCount ?? 0}</div>
+        </div>
+        <div style={{ background: '#FAF5FF', padding: 14, borderRadius: 10, border: '1px solid #E9D5FF' }}>
+          <div style={{ fontSize: 10, color: '#6B21A8', fontWeight: 700, textTransform: 'uppercase' }}>Average Score</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#7E22CE', marginTop: 4 }}>{report.summary?.averageScore ?? 0}%</div>
+        </div>
+        <div style={{ background: '#F8FAFC', padding: 14, borderRadius: 10, border: '1px solid #E2E8F0' }}>
+          <div style={{ fontSize: 10, color: '#64748B', fontWeight: 700, textTransform: 'uppercase' }}>Highest / Lowest</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: '#0F172A', marginTop: 4 }}>
+            {report.summary?.highestScore ?? 0}% / {report.summary?.lowestScore ?? 0}%
+          </div>
+        </div>
+        <div style={{ background: '#FFF7ED', padding: 14, borderRadius: 10, border: '1px solid #FFEDD5' }}>
+          <div style={{ fontSize: 10, color: '#9A3412', fontWeight: 700, textTransform: 'uppercase' }}>Malpractice Flags</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#EA580C', marginTop: 4 }}>{report.summary?.malpracticeCases ?? 0}</div>
+        </div>
+        <div style={{ background: '#F8FAFC', padding: 14, borderRadius: 10, border: '1px solid #E2E8F0' }}>
+          <div style={{ fontSize: 10, color: '#64748B', fontWeight: 700, textTransform: 'uppercase' }}>Pass / Fail</div>
+          <div style={{ fontSize: 17, fontWeight: 800, marginTop: 4 }}>
+            <span style={{ color: '#16A34A' }}>{report.summary?.passCount ?? 0} P</span> / <span style={{ color: '#DC2626' }}>{report.summary?.failCount ?? 0} F</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Participant breakdown table */}
+      <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 12, overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
+              <th style={{ padding: '12px 14px', fontWeight: 700, color: '#475569' }}>PARTICIPANT</th>
+              <th style={{ padding: '12px 14px', fontWeight: 700, color: '#475569', textAlign: 'center' }}>ATTENDANCE</th>
+              <th style={{ padding: '12px 14px', fontWeight: 700, color: '#475569', textAlign: 'center' }}>ATTEMPT STATUS</th>
+              <th style={{ padding: '12px 14px', fontWeight: 700, color: '#475569', textAlign: 'center' }}>SCORE</th>
+              <th style={{ padding: '12px 14px', fontWeight: 700, color: '#475569', textAlign: 'center' }}>RESULT</th>
+              <th style={{ padding: '12px 14px', fontWeight: 700, color: '#475569', textAlign: 'center' }}>MALPRACTICE</th>
+              <th style={{ padding: '12px 14px', fontWeight: 700, color: '#475569', textAlign: 'center' }}>SUBMISSION</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(report.participants || []).map((p, idx) => (
+              <tr key={p.userId || idx} style={{ borderBottom: '1px solid #F1F5F9', background: p.attendanceStatus === 'ABSENT' ? '#FFFDFD' : '#FFFFFF' }}>
+                <td style={{ padding: '12px 14px' }}>
+                  <div style={{ fontWeight: 700, color: '#0F172A' }}>{p.name}</div>
+                  <div style={{ fontSize: 11, color: '#64748B' }}>{p.email} {p.participantId ? `· ${p.participantId}` : ''}</div>
+                </td>
+                <td style={{ padding: '12px 14px', textAlign: 'center' }}>
+                  <span style={{
+                    padding: '3px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 800,
+                    background: p.attendanceStatus === 'PRESENT' ? '#DCFCE7' : '#FEE2E2',
+                    color: p.attendanceStatus === 'PRESENT' ? '#15803D' : '#B91C1C'
+                  }}>
+                    {p.attendanceStatus}
+                  </span>
+                </td>
+                <td style={{ padding: '12px 14px', textAlign: 'center' }}>
+                  <span style={{
+                    padding: '3px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 700,
+                    background: p.attemptStatus === 'COMPLETED' ? '#E0F2FE' : p.attemptStatus === 'AUTO_SUBMITTED' ? '#FEF3C7' : '#F1F5F9',
+                    color: p.attemptStatus === 'COMPLETED' ? '#0369A1' : p.attemptStatus === 'AUTO_SUBMITTED' ? '#92400E' : '#64748B'
+                  }}>
+                    {p.attemptStatus}
+                  </span>
+                </td>
+                <td style={{ padding: '12px 14px', textAlign: 'center', fontWeight: 800, color: p.attendanceStatus === 'ABSENT' ? '#94A3B8' : '#0F172A' }}>
+                  {p.attendanceStatus === 'ABSENT' ? '0 / 100' : `${p.score ?? 0} / ${p.maxMarks ?? 100} (${p.percentage ?? 0}%)`}
+                </td>
+                <td style={{ padding: '12px 14px', textAlign: 'center' }}>
+                  <span style={{
+                    padding: '3px 8px', borderRadius: 6, fontSize: 10.5, fontWeight: 800,
+                    background: p.passFail === 'PASS' ? '#DCFCE7' : '#FEE2E2',
+                    color: p.passFail === 'PASS' ? '#15803D' : '#B91C1C'
+                  }}>
+                    {p.passFail}
+                  </span>
+                </td>
+                <td style={{ padding: '12px 14px', textAlign: 'center' }}>
+                  <span style={{
+                    padding: '3px 8px', borderRadius: 6, fontSize: 10.5, fontWeight: 700,
+                    background: p.malpracticeStatus === 'CLEAR' ? '#F0FDF4' : p.malpracticeStatus === 'N/A' ? '#F8FAFC' : '#FEF2F2',
+                    color: p.malpracticeStatus === 'CLEAR' ? '#166534' : p.malpracticeStatus === 'N/A' ? '#64748B' : '#DC2626'
+                  }}>
+                    {p.malpracticeStatus} {p.malpracticeScore > 0 ? `(${p.malpracticeScore}%)` : ''}
+                  </span>
+                </td>
+                <td style={{ padding: '12px 14px', textAlign: 'center', fontSize: 11, color: '#64748B' }}>
+                  <div>{p.submissionType || '-'}</div>
+                  {p.timeExpired === 'YES' && <span style={{ color: '#D97706', fontSize: 10, fontWeight: 700 }}>EXPIRED</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

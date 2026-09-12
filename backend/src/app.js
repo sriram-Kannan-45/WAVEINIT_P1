@@ -752,6 +752,14 @@ const startServer = async () => {
       logger.error('Could not sync assessment_verification_sessions table', { error: e.message });
     }
 
+    // Assessment Scheduling, Auto-Closing & Attendance Schema Bootstrap
+    try {
+      const { bootstrapAssessmentSchedulingSchema } = require('./config/bootstrapAssessmentSchedulingSchema');
+      await bootstrapAssessmentSchedulingSchema(logger);
+    } catch (e) {
+      logger.warn('Could not bootstrap assessment scheduling columns', { error: e.message });
+    }
+
     // Interview Module tables — additive sync, scoped to module
     try {
       const {
@@ -848,12 +856,12 @@ const startServer = async () => {
       logger.warn('Could not start attendance auto job', { error: e.message });
     }
 
-    // Quiz Auto-Close scheduler
+    // Assessment Auto-Close & Finalization Scheduler (Quizzes + Coding Assessments)
     try {
-      const { start: startQuizAutoClose } = require('./jobs/quizAutoClose');
-      startQuizAutoClose();
+      const assessmentAutoCloseJob = require('./jobs/assessmentAutoCloseJob');
+      assessmentAutoCloseJob.start();
     } catch (e) {
-      logger.warn('Could not start quiz auto-close scheduler', { error: e.message });
+      logger.warn('Could not start assessment auto-close job', { error: e.message });
     }
 
     // Workers: In multi-server cluster mode, workers run in dedicated independent processes.
@@ -907,13 +915,6 @@ const startServer = async () => {
       logger.info('Admin already exists');
     }
 
-    // Start quiz auto-close scheduler
-    try {
-      const quizAutoClose = require('./jobs/quizAutoClose');
-      quizAutoClose.start();
-    } catch (jobErr) {
-      logger.warn('Failed to start quiz auto-close job:', jobErr.message);
-    }
 
     // Start proctoring reapers — leader-guarded so only one instance in a
     // scale-out pool expires/auto-submits sessions (double-submitting would

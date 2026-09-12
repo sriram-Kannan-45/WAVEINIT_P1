@@ -204,6 +204,8 @@ export const API = {
     QUIZ_PARTICIPANTS:   (quizId)      => `${API_BASE}/quizzes/${quizId}/participants`,
     PUBLISH_QUIZ_NOW:    (quizId)      => `${API_BASE}/quizzes/${quizId}/publish`,
     RESULTS_SUMMARY:     (quizId)      => `${API_BASE}/quizzes/${quizId}/results-summary`,
+    QUIZ_FINAL_REPORT:   (quizId)      => `${API_BASE}/quizzes/${quizId}/final-report`,
+    QUIZ_RESULTS_EXPORT: (quizId)      => `${API_BASE}/quizzes/${quizId}/results/export`,
 
     PARTICIPANTS:  (courseId)          => `${API_BASE}/trainer/courses/${courseId}/participants`,
     PARTICIPANT:   (courseId, userId)  => `${API_BASE}/trainer/courses/${courseId}/participants/${userId}`,
@@ -266,6 +268,7 @@ export const API = {
     HIDE_RESULT:   (id) => `${API_BASE}/coding/assessments/${id}/hide-result`,
     RESULTS:       (id) => `${API_BASE}/coding/assessments/${id}/results`,
     RESULTS_EXPORT:(id) => `${API_BASE}/coding/assessments/${id}/results/export`,
+    FINAL_REPORT:  (id) => `${API_BASE}/coding/assessments/${id}/final-report`,
     PARTICIPANTS:  (id) => `${API_BASE}/coding/assessments/${id}/participants`,
     RESULTS_SUMMARY:(id) => `${API_BASE}/coding/assessments/${id}/results-summary`,
     ANALYTICS:     (id) => `${API_BASE}/coding/assessments/${id}/analytics`,

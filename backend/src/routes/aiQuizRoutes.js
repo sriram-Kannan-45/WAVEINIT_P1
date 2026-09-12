@@ -159,6 +159,10 @@ const router = express.Router();
 
         // Save Quiz to database
         const timeLimit = parseInt(req.body.timeLimit || req.body.time_limit, 10) || 30;
+        const startTime = req.body.startTime ? new Date(req.body.startTime) : null;
+        const endTime = req.body.endTime ? new Date(req.body.endTime) : null;
+        const timezone = req.body.timezone || 'Asia/Kolkata';
+
         const quiz = await sequelize.transaction(async transaction => {
           const savedQuiz = await AIQuiz.create({
             trainerId,
@@ -173,7 +177,10 @@ const router = express.Router();
             isPublished: false,
             isActive: true,
             published: false,
-            createdBy: trainerId
+            createdBy: trainerId,
+            startTime,
+            endTime,
+            timezone
           }, { transaction });
 
           await aiQuizService.saveQuestions(savedQuiz.id, questions, { transaction, difficulty: diffUpper });

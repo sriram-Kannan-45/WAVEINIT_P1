@@ -16,10 +16,22 @@ router.get('/mobile-status/:token', ctrl.getMobileStatus);
 router.post('/initiate', authenticateToken, ctrl.initiateVerification);
 router.post('/refresh', authenticateToken, ctrl.refreshQr);
 router.post('/reconnect', authenticateToken, async (req, res) => {
-  if (!req.body.sessionId) return res.status(400).json({ success: false, error: 'sessionId is required' });
+  const sessionId = req.body.sessionId || req.body.monitoringSessionId || null;
+  const attemptId = req.body.attemptId ? Number(req.body.attemptId) : null;
+  const assessmentType = (req.body.assessmentType || req.body.contextType || 'QUIZ').toUpperCase();
+  const assessmentId = req.body.assessmentId || req.body.contextId ? Number(req.body.assessmentId || req.body.contextId) : null;
+
+  if (!sessionId && !attemptId) {
+    return res.status(400).json({ success: false, error: 'sessionId or attemptId is required' });
+  }
+
   try {
     const result = await require('../services/assessmentVerificationService').getReconnectQr({
-      sessionId: req.body.sessionId, participantId: req.user.id,
+      sessionId,
+      participantId: req.user.id,
+      attemptId,
+      assessmentType,
+      assessmentId,
     });
     res.json({ success: true, ...result });
   } catch (error) {

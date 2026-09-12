@@ -61,6 +61,7 @@ router.post('/assessments/:id/hide-result', roleMiddleware('TRAINER', 'ADMIN'), 
 // ── Results & Participants ──
 router.get('/assessments/:id/results', roleMiddleware('TRAINER', 'ADMIN'), ctrl.getResults);
 router.get('/assessments/:id/results/export', roleMiddleware('TRAINER', 'ADMIN'), ctrl.exportResultsToExcel);
+router.get('/assessments/:id/final-report', roleMiddleware('TRAINER', 'ADMIN'), ctrl.getFinalReport);
 router.get('/assessments/:id/participants', roleMiddleware('TRAINER', 'ADMIN'), ctrl.getParticipants);
 router.get('/assessments/:id/results-summary', roleMiddleware('TRAINER', 'ADMIN'), ctrl.getResultsSummary);
 router.get('/assessments/:id/analytics', roleMiddleware('TRAINER', 'ADMIN'), ctrl.getAnalytics);

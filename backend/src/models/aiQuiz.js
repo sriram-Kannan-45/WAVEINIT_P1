@@ -87,6 +87,12 @@ const AIQuiz = sequelize.define('AIQuiz', {
     allowNull: true,
     field: 'end_time'
   },
+  timezone: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    defaultValue: 'Asia/Kolkata',
+    field: 'timezone'
+  },
   // ── Marks / scoring ──
   totalMarks: {
     type: DataTypes.DECIMAL(10, 2),
@@ -154,6 +160,11 @@ const AIQuiz = sequelize.define('AIQuiz', {
     type: DataTypes.DATE,
     allowNull: true,
     field: 'result_published_at'
+  },
+  finalizedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    field: 'finalized_at'
   },
   // ── Legacy booleans (kept for backward compatibility, driven by status) ──
   quizId: {

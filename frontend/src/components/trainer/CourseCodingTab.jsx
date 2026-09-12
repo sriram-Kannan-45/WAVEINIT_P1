@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Plus, Pencil, Trash2, Eye, Send, Sparkles, Code, X, BookOpen,
   BarChart3, Trophy, Check, AlertTriangle, ChevronDown, ChevronUp, Search, Clock,
-  Loader2, RefreshCw,
+  Loader2, RefreshCw, Calendar, Award, Download,
 } from 'lucide-react'
 import { CodingAssessmentDetailModal } from '../../pages/TrainerCodingAssessmentDetails'
 import { API } from '../../api/api'
@@ -521,11 +521,28 @@ function CodingLeaderboardModal({ assessment, data, onClose }) {
 
 function AICodingWizard({ user, courseId, onClose, onGenerated }) {
   const { success, error: showError } = useToast()
+  const formatDatetimeLocal = (iso) => {
+    if (!iso) return ''
+    try {
+      const d = new Date(iso)
+      if (isNaN(d.getTime())) return ''
+      const pad = (n) => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+    } catch { return '' }
+  }
+
   const [promptText, setPromptText] = useState('')
   const [problemCount, setProblemCount] = useState(1)
   const [difficulty, setDifficulty] = useState('MEDIUM')
   const [timeLimit, setTimeLimit] = useState(60)
   const [languages, setLanguages] = useState(['javascript', 'python'])
+  const [startTime, setStartTime] = useState('')
+  const [endTime, setEndTime] = useState(() => {
+    const d = new Date(Date.now() + 2 * 3600 * 1000)
+    const pad = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  })
+  const [timezone, setTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata')
   const [generating, setGenerating] = useState(false)
   const [genStep, setGenStep] = useState(0)
   const [genError, setGenError] = useState('')
@@ -553,6 +570,15 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
     e.preventDefault()
     if (!promptText.trim()) { showError('Please enter a topic or prompt'); return }
     if (languages.length === 0) { showError('Please select at least one language'); return }
+    if (!endTime) { showError('End Date/Time is mandatory'); return }
+    const endD = new Date(endTime)
+    if (isNaN(endD.getTime())) { showError('Please enter a valid End Date/Time'); return }
+    if (startTime) {
+      const startD = new Date(startTime)
+      if (!isNaN(startD.getTime()) && endD <= startD) {
+        showError('End Date/Time must be strictly after Start Date/Time'); return
+      }
+    }
     setGenError('')
     setGenerating(true)
     const countToSend = Math.max(1, Math.min(parseInt(problemCount, 10) || 1, 10))
@@ -572,6 +598,9 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
           difficulty: difficulty.toUpperCase(),
           timeLimit: parseInt(timeLimit, 10) || 60,
           languages,
+          startTime: startTime ? new Date(startTime).toISOString() : null,
+          endTime: endTime ? new Date(endTime).toISOString() : null,
+          timezone: timezone || 'Asia/Kolkata',
         }),
       })
       const d = await r.json()
@@ -605,13 +634,15 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
         exit={{ scale: 0.95, opacity: 0 }}
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: colors.surface.primary, borderRadius: 14, width: '100%', maxWidth: 580,
-          boxShadow: '0 25px 60px -10px rgba(0,0,0,0.25)', overflow: 'hidden',
+          background: colors.surface.primary, borderRadius: 16, width: '100%', maxWidth: 680,
+          maxHeight: 'min(92vh, 760px)', display: 'flex', flexDirection: 'column',
+          boxShadow: '0 25px 70px -10px rgba(0,0,0,0.35)', overflow: 'hidden',
         }}
       >
         <div style={{
-          padding: '18px 20px', borderBottom: `1px solid ${colors.border.default}`,
+          padding: '18px 24px', borderBottom: `1px solid ${colors.border.default}`,
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          flexShrink: 0, background: colors.surface.primary,
         }}>
           <div>
             <div style={lblTiny}>AI Coding Wizard</div>
@@ -626,11 +657,11 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
 
         {generating ? (
           <div style={{
-            padding: '36px 28px', textAlign: 'center', display: 'flex',
-            flexDirection: 'column', alignItems: 'center', gap: 16,
+            padding: '40px 28px', textAlign: 'center', display: 'flex',
+            flexDirection: 'column', alignItems: 'center', gap: 16, flex: 1, overflowY: 'auto'
           }}>
             <div style={{
-              width: 40, height: 40, border: '4px solid #f3f3f3',
+              width: 42, height: 42, border: '4px solid #f3f3f3',
               borderTop: `4px solid ${colors.primary[600]}`, borderRadius: '50%',
               animation: 'spin 1s linear infinite',
             }} />
@@ -638,14 +669,14 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
             <div style={{ fontWeight: 700, fontSize: 15, color: colors.slate[900] }}>
               AI is crafting your coding assessment...
             </div>
-            <div style={{ width: '100%', maxWidth: 360, textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ width: '100%', maxWidth: 400, textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 8 }}>
               {genSteps.map((step, i) => {
                 const done = i < genStep
                 const active = i === genStep
                 return (
                   <div key={step} style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 13 }}>
                     <span style={{
-                      width: 18, height: 18, borderRadius: '50%', display: 'inline-flex',
+                      width: 20, height: 20, borderRadius: '50%', display: 'inline-flex',
                       alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                       background: done ? colors.success[600] : active ? colors.primary[50] : colors.slate[100],
                       color: done ? '#fff' : active ? colors.primary[600] : colors.slate[400],
@@ -661,10 +692,10 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
             </div>
           </div>
         ) : genError ? (
-          <div style={{ padding: '32px 24px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+          <div style={{ padding: '36px 24px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, flex: 1, overflowY: 'auto' }}>
             <AlertTriangle size={34} style={{ color: colors.warning[500] }} />
             <div style={{ fontWeight: 700, fontSize: 15, color: colors.slate[900] }}>Generation failed</div>
-            <div style={{ fontSize: 13, color: colors.slate[500], maxWidth: 380, wordBreak: 'break-word' }}>{genError}</div>
+            <div style={{ fontSize: 13, color: colors.slate[500], maxWidth: 420, wordBreak: 'break-word' }}>{genError}</div>
             <div style={{ display: 'flex', gap: 10, paddingTop: 8 }}>
               <button type="button" onClick={onClose} style={btnSecondary}>Close</button>
               <button type="button" onClick={handleGenerate} style={{ ...btnPrimary, background: `linear-gradient(135deg, ${colors.primary[400]}, ${colors.primary[600]})` }}>
@@ -673,75 +704,147 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
             </div>
           </div>
         ) : (
-          <form onSubmit={handleGenerate} style={{ padding: 20 }}>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ ...lblStyle, marginTop: 0 }}>Topic or Prompt <span style={{ color: colors.danger[600] }}>*</span></label>
-              <textarea
-                value={promptText}
-                onChange={(e) => {
-                  const val = e.target.value
-                  setPromptText(val)
-                  const m = val.match(/\b([1-9]|10)\s*(?:(?:easy|medium|hard|simple|basic|coding|programming|algorithm)\s+)*(?:problems?|questions?|tasks?|challenges?)\b/i)
-                  if (m && m[1]) {
-                    setProblemCount(parseInt(m[1], 10))
-                  }
-                }}
-                placeholder='e.g. "Generate 3 easy problems on array sorting" or "Write a program that prints HI"'
-                rows={4}
-                style={{ ...inputStyle, resize: 'vertical', fontSize: 13 }}
-                required
-              />
-              <div style={{ fontSize: 11, color: colors.slate[500], marginTop: 4, lineHeight: 1.4 }}>
-                Describe the coding topics or skills you want to assess, including how many problems you'd like (e.g. 'Generate 3 easy problems on array sorting'). If not specified, 1 problem will be generated.
-              </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
-              <div>
-                <label style={{ ...lblStyle, marginTop: 0 }}>Difficulty</label>
-                <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)} style={inputStyle}>
-                  <option value="EASY">Easy</option>
-                  <option value="MEDIUM">Medium</option>
-                  <option value="HARD">Hard</option>
-                  <option value="MIXED">Mixed</option>
-                </select>
-              </div>
-              <div>
-                <label style={{ ...lblStyle, marginTop: 0 }}>Problems</label>
-                <select value={problemCount} onChange={(e) => setProblemCount(parseInt(e.target.value, 10))} style={inputStyle}>
-                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
-                    <option key={n} value={n}>{n} {n === 1 ? 'Problem' : 'Problems'}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label style={{ ...lblStyle, marginTop: 0 }}>Time Limit (mins)</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="360"
-                  value={timeLimit}
-                  onChange={(e) => setTimeLimit(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
-                  placeholder="e.g. 60"
-                  style={inputStyle}
+          <form
+            onSubmit={handleGenerate}
+            style={{
+              display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden'
+            }}
+          >
+            <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ ...lblStyle, marginTop: 0 }}>Topic or Prompt <span style={{ color: colors.danger[600] }}>*</span></label>
+                <textarea
+                  value={promptText}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setPromptText(val)
+                    const m = val.match(/\b([1-9]|10)\s*(?:(?:easy|medium|hard|simple|basic|coding|programming|algorithm)\s+)*(?:problems?|questions?|tasks?|challenges?)\b/i)
+                    if (m && m[1]) {
+                      setProblemCount(parseInt(m[1], 10))
+                    }
+                  }}
+                  placeholder='e.g. "Generate 3 easy problems on array sorting" or "Write a program that prints HI"'
+                  rows={3}
+                  style={{ ...inputStyle, resize: 'vertical', fontSize: 13 }}
                   required
                 />
+                <div style={{ fontSize: 11, color: colors.slate[500], marginTop: 4, lineHeight: 1.4 }}>
+                  Describe the coding topics or skills you want to assess, including how many problems you'd like (e.g. 'Generate 3 easy problems on array sorting'). If not specified, 1 problem will be generated.
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
+                <div>
+                  <label style={{ ...lblStyle, marginTop: 0 }}>Difficulty</label>
+                  <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)} style={inputStyle}>
+                    <option value="EASY">Easy</option>
+                    <option value="MEDIUM">Medium</option>
+                    <option value="HARD">Hard</option>
+                    <option value="MIXED">Mixed</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ ...lblStyle, marginTop: 0 }}>Problems</label>
+                  <select value={problemCount} onChange={(e) => setProblemCount(parseInt(e.target.value, 10))} style={inputStyle}>
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                      <option key={n} value={n}>{n} {n === 1 ? 'Problem' : 'Problems'}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ ...lblStyle, marginTop: 0 }}>Time Limit (mins)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="360"
+                    value={timeLimit}
+                    onChange={(e) => setTimeLimit(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    placeholder="e.g. 60"
+                    style={inputStyle}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ ...lblStyle, marginTop: 0 }}>
+                  Languages <span style={{ color: colors.danger[600] }}>*</span>
+                </label>
+                <LanguageMultiSelect value={languages} onChange={setLanguages} />
+                <div style={{ fontSize: 11, color: colors.slate[400], marginTop: 4 }}>
+                  AI generates a starter template and a reference solution for every selected language.
+                </div>
+              </div>
+
+              {/* ── Assessment Scheduling & Availability Window ── */}
+              <div style={{
+                background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 10,
+                padding: 14, marginBottom: 8
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                  <Calendar size={15} color="#16A34A" />
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#0F172A' }}>Assessment Scheduling & Availability Window</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 10 }}>
+                  <div>
+                    <label style={{ ...lblStyle, marginTop: 0 }}>Start Date & Time (Optional)</label>
+                    <input
+                      type="datetime-local"
+                      value={startTime}
+                      onChange={(e) => setStartTime(e.target.value)}
+                      style={inputStyle}
+                    />
+                    <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 2 }}>
+                      Accessible only after this time
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ ...lblStyle, marginTop: 0 }}>End Date & Time <span style={{ color: colors.danger[600] }}>*</span></label>
+                    <input
+                      type="datetime-local"
+                      value={endTime}
+                      onChange={(e) => setEndTime(e.target.value)}
+                      style={inputStyle}
+                      required
+                    />
+                    <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 2 }}>
+                      Mandatory end cutoff
+                    </div>
+                  </div>
+                </div>
+                <div style={{ marginBottom: endTime ? 8 : 0 }}>
+                  <label style={{ ...lblStyle, marginTop: 0 }}>Timezone</label>
+                  <input
+                    type="text"
+                    value={timezone}
+                    onChange={(e) => setTimezone(e.target.value)}
+                    placeholder="e.g. Asia/Kolkata"
+                    style={inputStyle}
+                  />
+                  <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 2 }}>
+                    Timezone for availability window
+                  </div>
+                </div>
+                {endTime && (
+                  <div style={{
+                    marginTop: 8, padding: '6px 10px', background: '#EFF6FF', borderRadius: 6,
+                    fontSize: 11.5, color: '#1E40AF', display: 'flex', alignItems: 'center', gap: 6
+                  }}>
+                    <Clock size={12} />
+                    <span>
+                      <strong>Window:</strong> {startTime ? `${new Date(startTime).toLocaleString()} to ` : 'Immediate until '}{new Date(endTime).toLocaleString()} ({timezone})
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 
-            <div style={{ marginBottom: 20 }}>
-              <label style={{ ...lblStyle, marginTop: 0 }}>
-                Languages <span style={{ color: colors.danger[600] }}>*</span>
-              </label>
-              <LanguageMultiSelect value={languages} onChange={setLanguages} />
-              <div style={{ fontSize: 11, color: colors.slate[400], marginTop: 4 }}>
-                AI generates a starter template and a reference solution for every selected language.
-              </div>
-            </div>
-
+            {/* Sticky Action Footer */}
             <div style={{
+              flexShrink: 0,
               display: 'flex', justifyContent: 'flex-end', gap: 10,
-              borderTop: `1px solid ${colors.border.default}`, paddingTop: 16,
+              borderTop: `1px solid ${colors.border.default}`, padding: '14px 24px',
+              background: colors.surface.primary,
             }}>
               <button type="button" onClick={onClose} style={btnSecondary}>Cancel</button>
               <button type="submit" style={{ ...btnPrimary, background: `linear-gradient(135deg, ${colors.primary[400]}, ${colors.primary[600]})` }}>
@@ -982,9 +1085,11 @@ export default function CourseCodingTab({ user, courseId, onCountChange }) {
   }
 
   const publishToParticipants = async (a) => {
+    const endFormatted = a.endTime ? new Date(a.endTime).toLocaleString() : 'Not configured'
+    const startFormatted = a.startTime ? new Date(a.startTime).toLocaleString() : 'Immediate'
     const ok = await confirm({
       title: 'Publish Assessment',
-      message: `Are you sure you want to publish "${a.title}" to enrolled participants?`,
+      message: `Are you sure you want to publish "${a.title}" to enrolled participants?\n\nConfigured Availability Period:\n• Start: ${startFormatted}\n• End: ${endFormatted}\n• Timezone: ${a.timezone || 'Asia/Kolkata'}`,
       type: 'publish',
       confirmText: 'Yes, Publish',
     })

@@ -57,6 +57,32 @@ const QuizAttempt = sequelize.define('QuizAttempt', {
     defaultValue: 0,
     field: 'ai_help_usage',
     comment: 'Number of AI mentor exchanges used this attempt'
+  },
+  submissionType: {
+    type: DataTypes.STRING(32),
+    allowNull: true,
+    defaultValue: 'MANUAL',
+    field: 'submission_type',
+    comment: 'MANUAL, AUTO_SUBMITTED, or TIME_EXPIRED'
+  },
+  attendanceStatus: {
+    type: DataTypes.STRING(32),
+    allowNull: true,
+    defaultValue: 'PRESENT',
+    field: 'attendance_status',
+    comment: 'PRESENT or ABSENT'
+  },
+  timeExpired: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    field: 'time_expired'
+  },
+  autoSubmitted: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    field: 'auto_submitted'
   }
 }, {
   tableName: 'quiz_attempts',

@@ -36,11 +36,13 @@ const {
   CodingAttempt,
   CodingResult,
   User,
+  ProctoringReport,
 } = require('../models');
 
 const { gradeAnswer } = require('../utils/gradeAnswer');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 const cacheService = require('../services/cacheService');
+const availabilityService = require('../services/assessmentAvailabilityService');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helpers
@@ -856,18 +858,31 @@ async function listCourseQuizzes(req, res) {
       const attempt = attemptMap[String(q.id)];
       const result = resultMap[String(q.id)];
       const showScore = q.isResultPublished && !!result;
+      const availability = availabilityService.checkAvailability(q);
+      const hasEnded = availability.status === 'ENDED' || q.status === 'CLOSED';
+      let myStatus = attempt?.status || 'NOT_STARTED';
+      if (!attempt && hasEnded) {
+        myStatus = 'ABSENT';
+      }
       return {
         quizId: q.id,
+        attemptId: attempt?.id || null,
         title: q.title,
         lessonId: q.lessonId,
         lessonTitle: q.lesson?.title || null,
         questionCount: (q.questions || []).length,
         isMandatory: q.isMandatory,
-        myStatus: attempt?.status || 'NOT_STARTED', // IN_PROGRESS | SUBMITTED
+        myStatus,
         resultStatus: q.resultStatus,
         myScore: showScore ? Number(result.percentage) : null,
         proctoringEnabled: q.proctoringEnabled,
         proctoringLevel: q.proctoringLevel,
+        startTime: q.startTime,
+        endTime: q.endTime,
+        timezone: q.timezone || 'Asia/Kolkata',
+        availabilityStatus: availability.status,
+        endsAtFormatted: availabilityService.formatTimeOnly(q.endTime, q.timezone),
+        startsAtFormatted: availabilityService.formatTimeOnly(q.startTime, q.timezone),
       };
     });
     const available = out.filter(q => q.myStatus === 'NOT_STARTED' || q.myStatus === 'IN_PROGRESS');
@@ -913,15 +928,27 @@ async function listCourseCodingAssessments(req, res) {
       const attempt = attemptMap[String(a.id)];
       const result = resultMap[String(a.id)];
       const showScore = a.resultStatus === 'PUBLISHED' && !!result;
+      const availability = availabilityService.checkAvailability(a);
+      const hasEnded = availability.status === 'ENDED' || a.status === 'CLOSED';
+      let myStatus = attempt?.status || 'NOT_STARTED';
+      if (!attempt && hasEnded) {
+        myStatus = 'ABSENT';
+      }
       return {
         assessmentId: a.id,
         title: a.title,
         problemCount: (a.problems || []).length,
-        myStatus: attempt?.status || 'NOT_STARTED', // IN_PROGRESS | SUBMITTED
+        myStatus,
         resultStatus: a.resultStatus,
         myScore: showScore ? Number(result.percentage) : null,
         proctoringEnabled: a.proctoringEnabled,
         proctoringLevel: a.proctoringLevel,
+        startTime: a.startTime,
+        endTime: a.endTime,
+        timezone: a.timezone || 'Asia/Kolkata',
+        availabilityStatus: availability.status,
+        endsAtFormatted: availabilityService.formatTimeOnly(a.endTime, a.timezone),
+        startsAtFormatted: availabilityService.formatTimeOnly(a.startTime, a.timezone),
       };
     });
     const available = out.filter(a => a.myStatus === 'NOT_STARTED' || a.myStatus === 'IN_PROGRESS');
@@ -1410,7 +1437,7 @@ async function getQuizResult(req, res) {
     const attemptWhere = {
       quizId: quiz.id,
       participantId: req.user.id,
-      status: { [Op.in]: ['SUBMITTED', 'EVALUATED', 'AUTO_SUBMITTED', 'disqualified_copy_violation', 'disqualified_policy_violation'] }
+      status: { [Op.in]: ['SUBMITTED', 'EVALUATED', 'AUTO_SUBMITTED', 'COMPLETED', 'disqualified_copy_violation', 'disqualified_policy_violation'] }
     };
     if (targetAttemptId) {
       attemptWhere.id = targetAttemptId;
@@ -1427,6 +1454,15 @@ async function getQuizResult(req, res) {
       });
     }
 
+    // Fetch participant name
+    let participantName = req.user.name || req.user.email || 'Participant';
+    try {
+      const u = await User.findByPk(req.user.id, { attributes: ['id', 'name', 'email', 'firstName', 'lastName'] });
+      if (u) {
+        participantName = u.name || [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email;
+      }
+    } catch (_) {}
+
     if (!attempt) {
       // Check if an in-progress attempt exists
       const anyAttempt = await QuizAttempt.findOne({
@@ -1439,20 +1475,65 @@ async function getQuizResult(req, res) {
           status: 'SUBMITTED_HIDDEN',
           resultStatus: quiz.resultStatus || 'HIDDEN',
           quizTitle: quiz.title,
+          quizName: quiz.title,
+          participantName,
+          participantId: req.user.id,
           message: 'Your quiz has been submitted. Results are pending trainer review.',
+          startedAt: anyAttempt.startedAt,
           submittedAt: anyAttempt.submittedAt || anyAttempt.updatedAt,
           attemptStatus: anyAttempt.status,
+          submissionStatus: anyAttempt.status,
           attemptId: anyAttempt.id,
+          attemptNumber: 1,
           timeTaken: anyAttempt.timeTaken || 0,
         });
       }
-      return res.json({ success: true, status: 'NOT_SUBMITTED', resultStatus: quiz.resultStatus, quizTitle: quiz.title });
+      return res.json({
+        success: true,
+        status: 'NOT_SUBMITTED',
+        resultStatus: quiz.resultStatus,
+        quizTitle: quiz.title,
+        quizName: quiz.title,
+        participantName
+      });
     }
+
+    // Calculate attempt number
+    const attemptNumber = (await QuizAttempt.count({
+      where: {
+        quizId: quiz.id,
+        participantId: req.user.id,
+        id: { [Op.lte]: attempt.id }
+      }
+    })) || 1;
+
+    // Resolve malpractice / proctoring data if available
+    let malpracticeScore = 0;
+    let malpracticeStatus = 'CLEAN';
+    try {
+      const proctorReport = await ProctoringReport.findOne({ where: { attemptId: attempt.id } });
+      if (proctorReport) {
+        malpracticeScore = proctorReport.riskScore != null ? Number(proctorReport.riskScore) : 0;
+        malpracticeStatus = proctorReport.riskLevel || (malpracticeScore > 50 ? 'FLAGGED' : malpracticeScore > 20 ? 'SUSPICIOUS' : 'CLEAN');
+      }
+    } catch (_) {}
+
+    // Find result record
+    const result = await QuizResult.findOne({
+      where: {
+        [Op.or]: [
+          { attemptId: attempt.id },
+          { quizId: quiz.id, participantId: req.user.id },
+        ],
+      },
+      order: [['id', 'DESC']],
+    });
 
     const isResultPublished =
       quiz.status === 'RESULTS_PUBLISHED' ||
       quiz.resultStatus === 'PUBLISHED' ||
-      !!quiz.isResultPublished;
+      !!quiz.isResultPublished ||
+      !!result?.resultPublished;
 
     if (!isResultPublished) {
       const totalQuestionsCount = await AIQuestion.count({ where: { quizId: quiz.id } });
@@ -1462,24 +1543,28 @@ async function getQuizResult(req, res) {
         status: 'SUBMITTED_HIDDEN',
         resultStatus: 'HIDDEN',
         quizTitle: quiz.title,
+        quizName: quiz.title,
+        courseId: quiz.courseId,
+        trainingId: quiz.trainingId,
+        participantName,
+        participantId: req.user.id,
         message: 'Your quiz has been submitted successfully. Results will be published by the trainer.',
+        startedAt: attempt.startedAt,
         submittedAt: attempt.submittedAt || attempt.updatedAt,
         attemptStatus: attempt.status,
+        submissionStatus: attempt.status,
+        submissionType: attempt.submissionType || 'MANUAL',
+        autoSubmitted: !!attempt.autoSubmitted,
+        timeExpired: !!attempt.timeExpired,
         attemptId: attempt.id,
+        attemptNumber,
         timeTaken: attempt.timeTaken || 0,
         totalQuestions: totalQuestionsCount,
         answeredCount,
+        malpracticeScore,
+        malpracticeStatus,
       });
     }
-
-    const result = await QuizResult.findOne({
-      where: {
-        [Op.or]: [
-          { attemptId: attempt.id },
-          { quizId: quiz.id, participantId: req.user.id },
-        ],
-      },
-    });
 
     const reviewQuestions = await AIQuestion.findAll({
       where: { quizId: quiz.id },
@@ -1502,23 +1587,43 @@ async function getQuizResult(req, res) {
       ? Number(result.maxScore)
       : (quiz.totalMarks ? Number(quiz.totalMarks) : totalCount);
 
+    const passingCutoff = quiz.passingPercentage != null ? Number(quiz.passingPercentage) : 50;
+    const passStatus = computedPercentage >= passingCutoff ? 'Pass' : 'Fail';
+
     res.json({
       success: true,
       status: 'PUBLISHED',
       resultStatus: 'PUBLISHED',
       quizTitle: quiz.title,
+      quizName: quiz.title,
+      courseId: quiz.courseId,
+      trainingId: quiz.trainingId,
+      participantName,
+      participantId: req.user.id,
       attemptId: attempt.id,
+      attemptNumber,
       score: computedPercentage,
+      percentage: computedPercentage,
       totalScore: computedTotalScore,
+      marksObtained: computedTotalScore,
       maxScore: computedMaxScore,
-      submittedAt: attempt.submittedAt,
+      maximumMarks: computedMaxScore,
+      startedAt: attempt.startedAt,
+      submittedAt: attempt.submittedAt || attempt.updatedAt,
       attemptStatus: attempt.status,
+      submissionStatus: attempt.status,
+      submissionType: attempt.submissionType || 'MANUAL',
+      autoSubmitted: !!attempt.autoSubmitted,
+      timeExpired: !!attempt.timeExpired,
       timeTaken: attempt.timeTaken || 0,
       totalQuestions: totalCount,
       answeredCount: myAnswers.length,
       correctCount,
       wrongCount: Math.max(0, totalCount - correctCount),
-      passStatus: computedPercentage >= 50 ? 'Pass' : 'Fail',
+      incorrectAnswers: Math.max(0, totalCount - correctCount),
+      passStatus,
+      malpracticeScore,
+      malpracticeStatus,
       review: reviewQuestions.map(q => {
         const my = answerMap[String(q.id)];
         return {

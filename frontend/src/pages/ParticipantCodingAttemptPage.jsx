@@ -139,7 +139,8 @@ const AssessmentTimer = React.memo(function AssessmentTimer({
   timeLimitMinutes = 60,
   startedAt,
   onExpire,
-  submitted
+  submitted,
+  scheduledEndTime = null
 }) {
   const totalSeconds = (timeLimitMinutes || 60) * 60
   const endsAtKeyRef = useRef(null)
@@ -160,12 +161,18 @@ const AssessmentTimer = React.memo(function AssessmentTimer({
   const [endsAt, setEndsAt] = useState(() => {
     const key = `coding_ends_at_${typeof startedAt === 'number' ? startedAt : 'na'}`
     endsAtKeyRef.current = key
+    const start = typeof startedAt === 'number' && startedAt > 0 ? startedAt : Date.now()
+    let computed = start + totalSeconds * 1000
     try {
       const cached = readNumber(key)
-      if (cached) return cached
+      if (cached) computed = cached
     } catch (_) {}
-    const start = typeof startedAt === 'number' && startedAt > 0 ? startedAt : Date.now()
-    const computed = start + totalSeconds * 1000
+    if (scheduledEndTime) {
+      const sched = new Date(scheduledEndTime).getTime()
+      if (!isNaN(sched) && sched < computed) {
+        computed = sched
+      }
+    }
     try {
       sessionStorage.setItem(key, String(computed))
     } catch (_) {}
@@ -387,6 +394,8 @@ function ParticipantCodingAttemptInner({ user }) {
     })
   }, [])
 
+  const handleSubmitRef = useRef(null)
+
   // ── Socket.IO Connection & Live Updates ──
   useEffect(() => {
     if (!user?.token) return
@@ -398,6 +407,14 @@ function ParticipantCodingAttemptInner({ user }) {
       sock.on('connect', () => {
         debugLog.info('WebSocket connected for coding evaluation')
         if (attemptId) sock.emit('coding:join', { assessmentId, participantId: user.id })
+      })
+
+      sock.on('assessment:ended', (data) => {
+        if (data?.assessmentType === 'coding' && String(data?.assessmentId) === String(assessmentId)) {
+          debugLog.warn('Assessment ended event received from server. Auto-finalizing attempt.')
+          showError('This assessment has reached its scheduled end time. Auto-submitting...')
+          handleSubmitRef.current?.(true)
+        }
       })
 
       sock.on('submission:progress', (data) => {
@@ -1213,10 +1230,26 @@ function ParticipantCodingAttemptInner({ user }) {
       }
     }
   }
+  handleSubmitRef.current = handleSubmit
 
   const currentLanguage = currentQState.language || currentProblem?.programmingLanguage || 'javascript'
   const allProblemsCompleted = problems.length > 0 && problems.every(p => questionState[p.id]?.isCompleted && !questionState[p.id]?.isModified)
   const completedCount = problems.filter(p => questionState[p.id]?.isCompleted && !questionState[p.id]?.isModified).length
+
+  const scheduleText = useMemo(() => {
+    if (!assessment?.endTime) return null
+    const end = new Date(assessment.endTime).getTime()
+    if (isNaN(end)) return null
+    const now = Date.now()
+    if (now >= end) return 'This assessment has ended.'
+    const diffSec = Math.floor((end - now) / 1000)
+    if (diffSec <= 600) {
+      const mins = Math.max(1, Math.ceil(diffSec / 60))
+      return `Assessment ends in ${mins} minute${mins === 1 ? '' : 's'}`
+    }
+    const formatted = new Date(assessment.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
+    return `Assessment ends at ${formatted}`
+  }, [assessment?.endTime])
 
   if (loading) {
     return (
@@ -1569,11 +1602,29 @@ function ParticipantCodingAttemptInner({ user }) {
           </div>
 
           <div style={s.headerRight}>
+            {scheduleText && (
+              <span style={{
+                fontSize: 12,
+                fontWeight: 700,
+                color: scheduleText.includes('in') || scheduleText.includes('ended') ? '#DC2626' : '#2563EB',
+                background: scheduleText.includes('in') || scheduleText.includes('ended') ? '#FEF2F2' : '#EFF6FF',
+                border: `1px solid ${scheduleText.includes('in') || scheduleText.includes('ended') ? '#FECACA' : '#BFDBFE'}`,
+                padding: '3px 9px',
+                borderRadius: 6,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5
+              }}>
+                <Clock size={12} />
+                {scheduleText}
+              </span>
+            )}
             <AssessmentTimer
               timeLimitMinutes={assessment?.timeLimit || 60}
               startedAt={testStartedAt}
               onExpire={() => handleSubmit(true)}
               submitted={submitted}
+              scheduledEndTime={assessment?.endTime}
             />
             <button
               onClick={() => handleSubmit(false)}

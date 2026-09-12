@@ -22,7 +22,7 @@ import {
   Sliders,
   Check,
   XCircle,
-  HelpCircle,
+  AlertCircle,
   Loader2,
 } from 'lucide-react';
 import { API_BASE, BACKEND_ORIGIN } from '../../api/api';
@@ -95,6 +95,18 @@ export default function UnifiedMonitoringWidget({
         })()
       : null;
 
+  const qrStorageKey = `assessment_qr_${contextType}_${contextId}_${attemptId}`;
+  const storedQrUrl =
+    typeof window !== 'undefined'
+      ? (() => {
+          try {
+            return sessionStorage.getItem(qrStorageKey) || null;
+          } catch {
+            return null;
+          }
+        })()
+      : null;
+
   const [activeSessionId, setActiveSessionId] = useState(sessionId || storedSessionId || null);
 
   // Calibration State — For Quiz & Coding, pre-test verification already performed calibration
@@ -108,27 +120,68 @@ export default function UnifiedMonitoringWidget({
   const [mobileConnected, setMobileConnected] = useState(false);
   const [mobileEvidence, setMobileEvidence] = useState(null);
   const [statusClock, setStatusClock] = useState(Date.now());
-  const [reconnectUrl, setReconnectUrl] = useState(null);
+  const [reconnectUrl, setReconnectUrl] = useState(storedQrUrl);
   const [reconnectLoading, setReconnectLoading] = useState(false);
   const [reconnectError, setReconnectError] = useState(null);
   const [socketError, setSocketError] = useState(null);
   const mobileStatus = mobileCameraStatus({ connected: mobileConnected, evidence: mobileEvidence, now: statusClock });
   const keepCameraVisible = mobileEnabled && isQuizOrCoding && isTestActive;
 
-  const showReconnectQr = async () => {
+  const fetchReconnectQr = useCallback(async ({ forceNew = false } = {}) => {
+    if (!userToken || !keepCameraVisible) return;
     setReconnectLoading(true);
     setReconnectError(null);
     try {
+      const effectiveSessionId = activeSessionId || sessionId || storedSessionId;
       const response = await fetch(`${API_BASE}/assessment-verification/reconnect`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${activeToken}` },
-        body: JSON.stringify({ sessionId: activeSessionId }),
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${userToken}`,
+        },
+        body: JSON.stringify({
+          sessionId: effectiveSessionId,
+          attemptId: attemptId ? Number(attemptId) : null,
+          contextType,
+          assessmentType: contextType,
+          contextId: contextId ? Number(contextId) : null,
+          assessmentId: contextId ? Number(contextId) : null,
+          forceNew,
+        }),
       });
       const result = await response.json();
-      if (!response.ok || !result.success) throw new Error(result.error || 'Could not load the reconnect QR code.');
-      setReconnectUrl(buildAssessmentMobileUrl(result.qrPayload.shortUrl));
-    } catch (error) { setReconnectError(error.message); }
-    finally { setReconnectLoading(false); }
-  };
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'Could not load the reconnect QR code.');
+      }
+      const url = buildAssessmentMobileUrl(result.qrPayload?.shortUrl || result.shortUrl);
+      if (url) {
+        setReconnectUrl(url);
+        try {
+          sessionStorage.setItem(qrStorageKey, url);
+        } catch (_) {}
+      }
+      if (result.sessionId && result.sessionId !== activeSessionId) {
+        setActiveSessionId(result.sessionId);
+        try {
+          sessionStorage.setItem(
+            `assessment_verif_${contextType}_${contextId}_${attemptId}`,
+            JSON.stringify({ sessionId: result.sessionId, token: result.qrPayload?.token })
+          );
+        } catch (_) {}
+      }
+    } catch (error) {
+      console.warn('[UnifiedMonitoringWidget] fetchReconnectQr note:', error.message);
+      setReconnectError(error.message);
+    } finally {
+      setReconnectLoading(false);
+    }
+  }, [userToken, keepCameraVisible, activeSessionId, sessionId, storedSessionId, attemptId, contextType, contextId, qrStorageKey]);
+
+  // Auto-fetch reconnect QR code on mount and whenever mobile is not connected
+  useEffect(() => {
+    if (!keepCameraVisible || mobileConnected || remoteVideoPlaying) return;
+    fetchReconnectQr();
+  }, [keepCameraVisible, mobileConnected, remoteVideoPlaying, fetchReconnectQr]);
 
   const [laptopMetrics, setLaptopMetrics] = useState({
     faceDetected: true,
@@ -324,7 +377,11 @@ export default function UnifiedMonitoringWidget({
       setRemoteMobileStream(stream);
       if (mobileVideoRef.current) {
         mobileVideoRef.current.srcObject = stream;
-        mobileVideoRef.current.play().then(() => setRemoteVideoPlaying(true)).catch(() => {});
+        mobileVideoRef.current.play().then(() => {
+          setRemoteVideoPlaying(true);
+          setMobileConnected(true);
+          lastMobileActivityRef.current = Date.now();
+        }).catch(() => {});
       }
     };
 
@@ -564,6 +621,12 @@ export default function UnifiedMonitoringWidget({
     socket.on('monitoring:grace_warning', handleGraceWarning);
     socket.on('assessment_verif:grace_warning', handleGraceWarning);
 
+    const handleSessionExpired = () => {
+      console.log('[UnifiedMonitoringWidget] Session expired notification received, auto-renewing QR...');
+      fetchReconnectQr({ forceNew: true });
+    };
+    socket.on('assessment_verif:session_expired', handleSessionExpired);
+
     // Watchdog check for genuine mobile drop (Grace period active after 8s of no frames/heartbeat)
     let lastVideoFrames = 0;
     const watchdog = setInterval(() => {
@@ -794,16 +857,68 @@ export default function UnifiedMonitoringWidget({
             </div>
           </div>
         </div>
-        {keepCameraVisible && !mobileConnected && <div className="dual-proctor-reconnect">
-          {socketError && <p role="alert">{socketError}</p>}
-          {reconnectUrl ? <>
-            <QRCodeSVG value={reconnectUrl} size={152} level="M" marginSize={2} />
-            <p>Scan to reconnect your mobile camera to this test. Your answers and timer stay unchanged.</p>
-          </> : <button type="button" onClick={showReconnectQr} disabled={reconnectLoading}>
-              {reconnectLoading ? 'Loading QR…' : 'Reconnect mobile camera'}
-            </button>}
-          {reconnectError && <p role="alert">{reconnectError}</p>}
-        </div>}
+        {keepCameraVisible && !mobileConnected && !remoteVideoPlaying && (
+          <div className="dual-proctor-reconnect" style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center',
+            padding: '12px', background: '#F8FAFC', borderRadius: '8px',
+            border: '1px solid #E2E8F0', marginTop: '10px', minHeight: '210px',
+            justifyContent: 'center', textAlign: 'center'
+          }}>
+            <div style={{ fontSize: '12px', fontWeight: 600, color: '#1E293B', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Camera size={14} color="#2563EB" />
+              <span>Mobile Camera Pairing</span>
+            </div>
+
+            {reconnectLoading && !reconnectUrl ? (
+              <div style={{ padding: '24px 12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                <Loader2 size={28} style={{ color: '#2563EB', animation: 'spin 1s linear infinite' }} />
+                <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 500 }}>Generating secure pairing QR…</span>
+              </div>
+            ) : reconnectUrl ? (
+              <>
+                <div style={{
+                  padding: '8px', background: '#FFFFFF', borderRadius: '8px',
+                  boxShadow: '0 2px 6px rgba(0,0,0,0.06)', border: '1px solid #E2E8F0',
+                  display: 'inline-block'
+                }}>
+                  <QRCodeSVG value={reconnectUrl} size={140} level="M" marginSize={2} />
+                </div>
+                <p style={{ fontSize: '11px', color: '#475569', marginTop: '8px', marginBottom: '4px', lineHeight: 1.4, maxWidth: '200px' }}>
+                  Scan with your mobile camera to pair. Your answers and timer stay unchanged.
+                </p>
+                {reconnectLoading && (
+                  <span style={{ fontSize: '10px', color: '#2563EB', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> Refreshing QR…
+                  </span>
+                )}
+              </>
+            ) : (
+              <div style={{ padding: '16px 8px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                <AlertCircle size={24} color="#DC2626" />
+                <span style={{ fontSize: '11px', color: '#DC2626', fontWeight: 500 }}>
+                  {reconnectError || 'Unable to generate QR code.'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => fetchReconnectQr({ forceNew: true })}
+                  style={{
+                    padding: '6px 14px', background: '#2563EB', color: '#FFF',
+                    border: 'none', borderRadius: '6px', fontSize: '11px',
+                    fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px'
+                  }}
+                >
+                  <RefreshCw size={12} /> Retry QR Generation
+                </button>
+              </div>
+            )}
+
+            {socketError && !reconnectLoading && (
+              <p style={{ fontSize: '10px', color: '#DC2626', marginTop: '6px', background: '#FEE2E2', padding: '3px 8px', borderRadius: '4px' }}>
+                {socketError}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Live Proctor Grace Warning Banner (First 3 Alerts As On-Screen Warnings) */}

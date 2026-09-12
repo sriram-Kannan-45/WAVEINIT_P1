@@ -11,6 +11,7 @@ const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = requi
 const { LANGUAGES: JUDGE_LANGUAGES } = require('../judge/languageConfig');
 const { getDefaultStarterCode } = require('../utils/languageTemplates');
 const { sanitiseServedProblem, auditSavedCode } = require('../services/starterCodeIntegrity');
+const availabilityService = require('../services/assessmentAvailabilityService');
 
 // ── Helpers ──
 // Follow the same response format as aiQuizRoutes / trainerRoutes:
@@ -456,13 +457,19 @@ exports.getOne = async (req, res) => {
 
 exports.create = async (req, res) => {
   try {
-    const { title, description, timeLimit, difficulty, courseId, trainingId, languages } = req.body;
+    const { title, description, timeLimit, difficulty, courseId, trainingId, languages, startTime, endTime, timezone } = req.body;
+    if (startTime && endTime && new Date(startTime) >= new Date(endTime)) {
+      return fail(res, 400, 'Start time must be before end time');
+    }
     const resolvedCourseId = courseId && courseId !== 'undefined' ? courseId : null;
     const resolvedTrainingId = trainingId && trainingId !== 'undefined' && trainingId !== 'null' ? trainingId : null;
     const assessment = await CodingAssessment.create({
       title: title || 'Untitled Coding Assessment', description, timeLimit,
       difficulty: normalizeAssessmentDifficulty(difficulty), courseId: resolvedCourseId, trainingId: resolvedTrainingId,
       languages: Array.isArray(languages) ? languages : ['javascript'],
+      startTime: startTime ? new Date(startTime) : null,
+      endTime: endTime ? new Date(endTime) : null,
+      timezone: timezone || 'Asia/Kolkata',
       trainerId: req.user.id, status: 'DRAFT'
     });
     ok(res, { assessment });
@@ -478,8 +485,14 @@ exports.update = async (req, res) => {
     const allowed = await canManageAssessment(req.user, assessment);
     if (!allowed) return fail(res, 403, 'Permission denied');
 
+    const resolvedStartTime = req.body.startTime !== undefined ? (req.body.startTime ? new Date(req.body.startTime) : null) : assessment.startTime;
+    const resolvedEndTime = req.body.endTime !== undefined ? (req.body.endTime ? new Date(req.body.endTime) : null) : assessment.endTime;
+    if (resolvedStartTime && resolvedEndTime && resolvedStartTime >= resolvedEndTime) {
+      return fail(res, 400, 'Start time must be before end time');
+    }
+
     // NOTE: 'status' is intentionally excluded — status transitions must go through /publish, /close endpoints
-    const allowedFields = ['title', 'description', 'timeLimit', 'difficulty', 'startTime', 'endTime', 'showResultImmediately', 'allowMultipleAttempts', 'maxAttempts', 'proctoringEnabled', 'proctoringLevel', 'gracePeriodMinutes', 'maxCopyWarnings', 'aiAssistantEnabled'];
+    const allowedFields = ['title', 'description', 'timeLimit', 'difficulty', 'startTime', 'endTime', 'timezone', 'showResultImmediately', 'allowMultipleAttempts', 'maxAttempts', 'proctoringEnabled', 'proctoringLevel', 'gracePeriodMinutes', 'maxCopyWarnings', 'aiAssistantEnabled'];
     const updates = {};
     for (const key of allowedFields) {
       if (req.body[key] !== undefined) {
@@ -1364,8 +1377,30 @@ exports.publish = async (req, res) => {
       }
     }
 
+    const now = new Date();
+    const startTime = req.body.startTime ? new Date(req.body.startTime) : (assessment.startTime ? new Date(assessment.startTime) : null);
+    const endTime = req.body.endTime ? new Date(req.body.endTime) : (assessment.endTime ? new Date(assessment.endTime) : null);
+    const timezone = req.body.timezone || assessment.timezone || 'Asia/Kolkata';
+
+    if (!endTime) {
+      return fail(res, 400, 'End Date/Time is mandatory to publish an assessment');
+    }
+    if (endTime <= now) {
+      return fail(res, 400, 'End time must be in the future');
+    }
+    if (startTime && startTime >= endTime) {
+      return fail(res, 400, 'Start time must be before end time');
+    }
+
     const totalMarks = problems.reduce((s, p) => s + (p.marks || 10), 0);
-    await assessment.update({ status: 'PUBLISHED', publishedAt: new Date(), totalMarks });
+    await assessment.update({
+      status: 'PUBLISHED',
+      publishedAt: now,
+      totalMarks,
+      startTime,
+      endTime,
+      timezone,
+    });
     await CodingProblem.update(
       { aiValidationStatus: 'VALIDATED' },
       { where: { assessmentId: assessment.id } }
@@ -1567,6 +1602,18 @@ exports.start = async (req, res) => {
       return fail(res, 404, 'Assessment not available');
     }
 
+    const availability = availabilityService.checkAvailability(assessment);
+    if (!availability.allowed) {
+      return res.status(403).json({
+        error: availability.message,
+        availabilityStatus: availability.status,
+        reason: availability.reason,
+        startTime: assessment.startTime,
+        endTime: assessment.endTime,
+        timezone: assessment.timezone,
+      });
+    }
+
     // ── Log incoming request ──
     console.log('=== Coding Assessment Start ===');
     console.log('Assessment ID:', assessmentId);
@@ -1611,7 +1658,16 @@ exports.start = async (req, res) => {
     // 3. Find or create IN_PROGRESS attempt
     let attempt = await CodingAttempt.findOne({ where: { assessmentId, participantId, status: 'IN_PROGRESS' } });
     if (!attempt) {
-      attempt = await CodingAttempt.create({ assessmentId, participantId, status: 'IN_PROGRESS', startedAt: new Date() });
+      attempt = await CodingAttempt.create({
+        assessmentId,
+        participantId,
+        status: 'IN_PROGRESS',
+        attendanceStatus: 'PRESENT',
+        submissionType: 'MANUAL',
+        timeExpired: false,
+        autoSubmitted: false,
+        startedAt: new Date()
+      });
       console.log('Created CodingAttempt:', JSON.stringify({ id: attempt.id, assessmentId, participantId, status: 'IN_PROGRESS' }));
     } else {
       console.log('Reusing existing IN_PROGRESS CodingAttempt:', attempt.id);
@@ -1701,6 +1757,19 @@ exports.start = async (req, res) => {
 exports.runCode = async (req, res) => {
   try {
     const { attemptId, problemId, code, language = 'javascript', timeLimit, memoryLimit, input: customInput } = req.body;
+
+    if (attemptId) {
+      const attempt = await CodingAttempt.findByPk(attemptId, {
+        include: [{ model: CodingAssessment, as: 'assessment' }]
+      });
+      if (attempt?.assessment) {
+        const avail = availabilityService.checkAvailability(attempt.assessment);
+        if (!avail.allowed) {
+          return fail(res, 403, avail.message);
+        }
+      }
+    }
+
     const { JudgeEngine } = require('../judge/engine');
     const engine = new JudgeEngine();
     let problem = null;
@@ -1834,9 +1903,16 @@ exports.saveCode = async (req, res) => {
     if (!attemptId || !problemId) return fail(res, 400, 'attemptId and problemId are required');
 
     const attempt = await CodingAttempt.findOne({
-      where: { id: attemptId, participantId: req.user.id, status: 'IN_PROGRESS' }
+      where: { id: attemptId, participantId: req.user.id, status: 'IN_PROGRESS' },
+      include: [{ model: CodingAssessment, as: 'assessment' }]
     });
     if (!attempt) return fail(res, 404, 'Attempt not found or already submitted');
+    if (attempt.assessment) {
+      const avail = availabilityService.checkAvailability(attempt.assessment);
+      if (!avail.allowed) {
+        return fail(res, 403, avail.message);
+      }
+    }
 
     let submission = await CodingSubmission.findOne({
       where: { attemptId, problemId }
@@ -1865,9 +1941,16 @@ exports.saveCodeBatch = async (req, res) => {
     if (!attemptId || !Array.isArray(saves)) return fail(res, 400, 'attemptId and saves array are required');
 
     const attempt = await CodingAttempt.findOne({
-      where: { id: attemptId, participantId: req.user.id, status: 'IN_PROGRESS' }
+      where: { id: attemptId, participantId: req.user.id, status: 'IN_PROGRESS' },
+      include: [{ model: CodingAssessment, as: 'assessment' }]
     });
     if (!attempt) return fail(res, 404, 'Attempt not found or already submitted');
+    if (attempt.assessment) {
+      const avail = availabilityService.checkAvailability(attempt.assessment);
+      if (!avail.allowed) {
+        return fail(res, 403, avail.message);
+      }
+    }
 
     const uniqueSaves = new Map();
     for (const item of saves) {
@@ -1913,8 +1996,17 @@ exports.saveCodeBatch = async (req, res) => {
 exports.submitCode = async (req, res) => {
   try {
     const { attemptId, problemId, code, language = 'javascript' } = req.body;
-    const attempt = await CodingAttempt.findOne({ where: { id: attemptId, participantId: req.user.id, status: 'IN_PROGRESS' } });
+    const attempt = await CodingAttempt.findOne({
+      where: { id: attemptId, participantId: req.user.id, status: 'IN_PROGRESS' },
+      include: [{ model: CodingAssessment, as: 'assessment' }]
+    });
     if (!attempt) return fail(res, 404, 'Attempt not found or already submitted');
+    if (attempt.assessment) {
+      const avail = availabilityService.checkAvailability(attempt.assessment);
+      if (!avail.allowed) {
+        return fail(res, 403, avail.message);
+      }
+    }
     const problem = await CodingProblem.findByPk(problemId, {
       include: [{ model: CodingTestCase, as: 'testCases' }]
     });
@@ -2286,8 +2378,18 @@ exports.submitAssessment = async (req, res) => {
     const attempt = await CodingAttempt.findOne({
       where: { id: attemptId, participantId: req.user.id }
     });
-    if (!attempt) throw Object.assign(new Error('Attempt not found'), { status: 404 });
-    if (attempt.status !== 'IN_PROGRESS') throw Object.assign(new Error('Attempt already submitted'), { status: 409 });
+    if (attempt.status !== 'IN_PROGRESS') {
+      const existingResult = await CodingResult.findOne({ where: { attemptId: attempt.id } });
+      return ok(res, {
+        message: 'Attempt already submitted',
+        alreadySubmitted: true,
+        attemptId: attempt.id,
+        status: attempt.status,
+        autoSubmitted: !!attempt.autoSubmitted,
+        timeExpired: !!attempt.timeExpired,
+        result: existingResult,
+      });
+    }
 
     const assessment = await CodingAssessment.findByPk(attempt.assessmentId, {
       include: [{ model: CodingProblem, as: 'problems', include: [{ model: CodingTestCase, as: 'testCases' }] }]
@@ -2459,8 +2561,18 @@ exports.submitAssessment = async (req, res) => {
         }
       } catch (_) {}
 
+      const availability = availabilityService.checkAvailability(assessment);
+      const hasExpired = availability.status === 'ENDED' || lockedAttempt.timeExpired;
+      const finalAttemptStatus = hasExpired ? 'AUTO_SUBMITTED' : 'SUBMITTED';
+      const submissionType = hasExpired ? 'AUTO' : 'MANUAL';
+
       await lockedAttempt.update({
-        status: 'SUBMITTED', submittedAt: new Date(),
+        status: finalAttemptStatus,
+        attendanceStatus: 'PRESENT',
+        submissionType,
+        timeExpired: hasExpired,
+        autoSubmitted: hasExpired,
+        submittedAt: new Date(),
         ...(timeTaken != null ? { timeTaken } : {})
       }, { transaction: t });
 
@@ -2571,110 +2683,92 @@ exports.getResults = async (req, res) => {
 };
 
 /**
- * Exports assessment results to Excel format with AI usage information.
+ * Helper to fetch all participants (enrolled + attempted), proctoring and monitoring
+ * to construct a complete, unified final report for coding assessments.
+ */
+async function fetchCodingReportData(assessment) {
+  const { User, Enrollment, ProctoringReport, MonitoringSession, Course } = require('../models');
+  const enrollmentConditions = [];
+  if (assessment.courseId) enrollmentConditions.push({ courseId: assessment.courseId });
+  if (assessment.trainingId) enrollmentConditions.push({ trainingId: assessment.trainingId });
+
+  let enrolledUsers = [];
+  if (enrollmentConditions.length > 0) {
+    const enrollments = await Enrollment.findAll({
+      where: {
+        status: { [Op.in]: ['ENROLLED', 'COMPLETED'] },
+        [Op.or]: enrollmentConditions,
+      },
+      include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email', 'profilePic'] }],
+    });
+    enrolledUsers = enrollments.map(e => e.participant).filter(Boolean);
+  }
+
+  const attempts = await CodingAttempt.findAll({
+    where: { assessmentId: assessment.id },
+    include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email', 'profilePic'] }],
+  });
+  const results = await CodingResult.findAll({
+    where: { assessmentId: assessment.id },
+  });
+  const proctoringReports = await ProctoringReport.findAll({
+    where: { assessmentId: assessment.id, assessmentType: 'CODING' },
+  });
+  const monitoringSessions = await MonitoringSession.findAll({
+    where: { assessmentId: assessment.id, assessmentType: 'CODING' },
+  });
+
+  const course = assessment.courseId ? await Course.findByPk(assessment.courseId) : null;
+
+  return availabilityService.buildFinalReport({
+    assessment,
+    assessmentType: 'Coding',
+    courseName: course?.title || '',
+    enrolledUsers,
+    attempts,
+    results,
+    proctoringReports,
+    monitoringSessions,
+  });
+}
+
+/**
+ * GET /api/coding-assessments/assessments/:id/final-report
+ * Full final report with summary metrics + all enrolled learners (including ABSENT).
+ */
+exports.getFinalReport = async (req, res) => {
+  try {
+    const assessment = await CodingAssessment.findByPk(req.params.id);
+    if (!assessment) return fail(res, 404, 'Assessment not found');
+    const allowed = await canManageAssessment(req.user, assessment);
+    if (!allowed) return fail(res, 403, 'Permission denied');
+
+    const report = await fetchCodingReportData(assessment);
+    return ok(res, report);
+  } catch (err) {
+    return fail(res, 500, err.message);
+  }
+};
+
+/**
+ * Exports assessment results to CSV with all 21 columns including both attended and absent learners.
  */
 exports.exportResultsToExcel = async (req, res) => {
   try {
-    const { CodingAiHelp, CodingProblem } = require('../models');
     const assessment = await CodingAssessment.findByPk(req.params.id);
     if (!assessment) return fail(res, 404, 'Assessment not found');
+    const allowed = await canManageAssessment(req.user, assessment);
+    if (!allowed) return fail(res, 403, 'Permission denied');
 
-    const results = await CodingResult.findAll({
-      where: { assessmentId: req.params.id },
-      include: [
-        { model: User, as: 'participant', attributes: ['id', 'name', 'email'] },
-        {
-          model: CodingAttempt,
-          as: 'attempt',
-          attributes: ['id', 'status', 'timeTaken', 'startedAt', 'submittedAt'],
-        }
-      ],
-      order: [['percentage', 'DESC']],
-    });
+    const report = await fetchCodingReportData(assessment);
+    const csvContent = availabilityService.generateCsvReport(report);
 
-    // Get detailed AI usage for each result
-    const resultsWithAiDetails = await Promise.all(results.map(async (result) => {
-      const aiHelpRecords = await CodingAiHelp.findAll({
-        where: { attemptId: result.attemptId, participantId: result.participantId },
-        include: [
-          {
-            model: CodingProblem,
-            as: 'problem',
-            attributes: ['id', 'title'],
-          }
-        ],
-        order: [['created_at', 'ASC']],
-      });
-
-      const totalInteractions = aiHelpRecords.length;
-      const questionsWithAi = new Set(aiHelpRecords.map(r => String(r.problemId))).size;
-
-      // Group by problem for question-level breakdown
-      const problemBreakdown = {};
-      aiHelpRecords.forEach(record => {
-        const problemId = String(record.problemId);
-        if (!problemBreakdown[problemId]) {
-          problemBreakdown[problemId] = {
-            problemId,
-            problemTitle: record.problem?.title || 'Unknown',
-            aiUsed: true,
-            interactions: 0,
-          };
-        }
-        problemBreakdown[problemId].interactions += 1;
-      });
-
-      return {
-        ...result.toJSON(),
-        participantName: result.participant?.name || '—',
-        participantEmail: result.participant?.email || '—',
-        aiUsed: result.aiUsed || false,
-        aiInteractionCount: result.aiInteractionCount || 0,
-        questionsWithAi,
-        problemBreakdown: Object.values(problemBreakdown),
-      };
-    }));
-
-    // Create Excel-compatible CSV format
-    const headers = [
-      'Participant Name',
-      'Participant Email',
-      'Score',
-      'Percentage',
-      'Problems Solved',
-      'Total Problems',
-      'Time Taken (seconds)',
-      'AI Used',
-      'AI Interaction Count',
-      'Questions With AI',
-      'AI Usage Level',
-      'Submitted At',
-    ];
-
-    const rows = resultsWithAiDetails.map(r => [
-      r.participantName,
-      r.participantEmail,
-      r.totalScore,
-      r.percentage,
-      r.problemsSolved,
-      r.totalProblems,
-      r.attempt?.timeTaken || 0,
-      r.aiUsed ? 'Yes' : 'No',
-      r.aiInteractionCount,
-      r.questionsWithAi,
-      r.aiUsageLevel || 'NONE',
-      r.attempt?.submittedAt ? new Date(r.attempt.submittedAt).toISOString() : '—',
-    ]);
-
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(',')),
-    ].join('\n');
-
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="coding-assessment-${assessment.title}-${Date.now()}.csv"`);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="coding_assessment_${assessment.id}_report.csv"`);
     res.send(csvContent);
-  } catch (err) { fail(res, 500, err.message); }
+  } catch (err) {
+    fail(res, 500, err.message);
+  }
 };
 
 exports.getParticipants = async (req, res) => {

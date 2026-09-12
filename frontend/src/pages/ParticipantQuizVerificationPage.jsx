@@ -158,6 +158,22 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
 
         // Initiate Verification Session for this exact attempt
         if (curAttemptId) {
+          try {
+            const adminRes = await fetch(`${API_BASE}/assessment-verification/admission/${currentAssessmentType}/${curAttemptId}`, {
+              headers: activeToken ? { Authorization: `Bearer ${activeToken}` } : {},
+            });
+            if (adminRes.ok && !aborted) {
+              const coursePath = trainingId ? `/trainings/${trainingId}` : '';
+              const params = new URLSearchParams({
+                attemptId: String(curAttemptId),
+                sessionToken: curSessionToken || '',
+                monitoringSessionId: activeMonitoringSessionId || '',
+              });
+              navigate(`${coursePath}/${isCoding ? 'coding' : 'quizzes'}/${effectiveId}/attempt?${params.toString()}`, { replace: true });
+              return;
+            }
+          } catch (_) {}
+
           const verifRes = await fetch(`${API_BASE}/assessment-verification/initiate`, {
             method: 'POST',
             headers: {

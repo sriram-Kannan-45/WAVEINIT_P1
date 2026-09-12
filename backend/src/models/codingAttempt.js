@@ -57,6 +57,32 @@ const CodingAttempt = sequelize.define('CodingAttempt', {
     defaultValue: {},
     field: 'ai_help_usage',
     comment: 'JSON map of { problemId: number_of_ai_hints_used }'
+  },
+  submissionType: {
+    type: DataTypes.STRING(32),
+    allowNull: true,
+    defaultValue: 'MANUAL',
+    field: 'submission_type',
+    comment: 'MANUAL, AUTO_SUBMITTED, or TIME_EXPIRED'
+  },
+  attendanceStatus: {
+    type: DataTypes.STRING(32),
+    allowNull: true,
+    defaultValue: 'PRESENT',
+    field: 'attendance_status',
+    comment: 'PRESENT or ABSENT'
+  },
+  timeExpired: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    field: 'time_expired'
+  },
+  autoSubmitted: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    field: 'auto_submitted'
   }
 }, {
   tableName: 'coding_attempts',

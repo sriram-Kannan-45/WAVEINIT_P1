@@ -181,6 +181,10 @@ async function generateAIQuiz(req, res) {
       status: 'PROCESSING',
     });
 
+    const startTime = req.body.startTime ? new Date(req.body.startTime) : null;
+    const endTime = req.body.endTime ? new Date(req.body.endTime) : null;
+    const timezone = req.body.timezone || 'Asia/Kolkata';
+
     const quizValues = {
       documentId: document.id,
       trainerId,
@@ -195,6 +199,9 @@ async function generateAIQuiz(req, res) {
       isActive: true,
       published: false,
       createdBy: trainerId,
+      startTime,
+      endTime,
+      timezone,
     };
 
     const result = req.file

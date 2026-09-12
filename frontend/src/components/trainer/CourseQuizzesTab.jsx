@@ -1904,6 +1904,13 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
   const [fileGenerating, setFileGenerating] = useState(false)
   const fileInputRef = useRef(null)
 
+  // Scheduling Fields
+  const [startTime, setStartTime] = useState('')
+  const [endTime, setEndTime] = useState('')
+  const [timezone, setTimezone] = useState(
+    Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
+  )
+
   const handleGenerateFromPrompt = async (e) => {
     e.preventDefault()
     if (!promptText.trim()) {
@@ -1924,7 +1931,10 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
           prompt: promptText.trim(),
           questionCount: parseInt(questionCount, 10),
           difficulty,
-          timeLimit: parseInt(timeLimit, 10) || 30
+          timeLimit: parseInt(timeLimit, 10) || 30,
+          startTime: startTime || undefined,
+          endTime: endTime || undefined,
+          timezone: timezone || undefined
         })
       })
       const text = await response.text()
@@ -1960,6 +1970,9 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
     formData.append('difficulty', difficulty)
     formData.append('timeLimit', timeLimit)
     formData.append('questionType', 'MCQ')
+    if (startTime) formData.append('startTime', startTime)
+    if (endTime) formData.append('endTime', endTime)
+    if (timezone) formData.append('timezone', timezone)
     if (promptText.trim()) formData.append('prompt', promptText.trim())
 
     try {
@@ -2014,7 +2027,8 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
           background: '#FFFFFF',
           borderRadius: 16,
           width: '100%',
-          maxWidth: 560,
+          maxWidth: 600,
+          maxHeight: 'min(92vh, 820px)',
           boxShadow: '0 25px 70px -10px rgba(0,0,0,0.35)',
           overflow: 'hidden',
           display: 'flex',
@@ -2114,76 +2128,159 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
             </div>
           </div>
         ) : activeTab === 'prompt' ? (
-          <form onSubmit={handleGenerateFromPrompt} style={{ padding: '20px 24px' }}>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
-                Topic / Subject Prompt <span style={{ color: '#DC2626' }}>*</span>
-              </label>
-              <textarea
-                value={promptText}
-                onChange={(e) => setPromptText(e.target.value)}
-                placeholder="e.g. Python list comprehensions, lambda functions, generators, and exception handling..."
-                rows={3}
-                style={{
-                  width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #CBD5E1',
-                  fontSize: 13, outline: 'none', resize: 'vertical', boxSizing: 'border-box',
-                  fontFamily: 'inherit'
-                }}
-                required
-              />
-              <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 4 }}>
-                Describe what specific topics, skills, or lesson areas you want the quiz to test.
+          <form onSubmit={handleGenerateFromPrompt} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
+                  Topic / Subject Prompt <span style={{ color: '#DC2626' }}>*</span>
+                </label>
+                <textarea
+                  value={promptText}
+                  onChange={(e) => setPromptText(e.target.value)}
+                  placeholder="e.g. Python list comprehensions, lambda functions, generators, and exception handling..."
+                  rows={3}
+                  style={{
+                    width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #CBD5E1',
+                    fontSize: 13, outline: 'none', resize: 'vertical', boxSizing: 'border-box',
+                    fontFamily: 'inherit'
+                  }}
+                  required
+                />
+                <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 4 }}>
+                  Describe what specific topics, skills, or lesson areas you want the quiz to test.
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
+                    Questions (1 to N)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={questionCount}
+                    onChange={(e) => setQuestionCount(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    placeholder="e.g. 10"
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5, boxSizing: 'border-box' }}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
+                    Difficulty
+                  </label>
+                  <select
+                    value={difficulty}
+                    onChange={(e) => setDifficulty(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5 }}
+                  >
+                    {QUIZ_DIFFICULTY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
+                    Time Limit (mins)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="360"
+                    value={timeLimit}
+                    onChange={(e) => setTimeLimit(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    placeholder="e.g. 30"
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5, boxSizing: 'border-box' }}
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* ── Assessment Scheduling & Availability Window ── */}
+              <div style={{
+                background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10,
+                padding: '14px 16px', marginBottom: 8
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 12 }}>
+                  <span style={{ fontSize: 15 }}>📅</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: '#15803D' }}>
+                    Assessment Scheduling &amp; Availability Window
+                  </span>
+                  <span style={{
+                    fontSize: 10, fontWeight: 600, color: '#166534', background: '#DCFCE7',
+                    border: '1px solid #BBF7D0', borderRadius: 4, padding: '1px 6px', marginLeft: 'auto'
+                  }}>Optional</span>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 10 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#166534', marginBottom: 4 }}>
+                      Start Date &amp; Time
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={startTime}
+                      onChange={e => setStartTime(e.target.value)}
+                      style={{
+                        width: '100%', padding: '8px 10px', borderRadius: 7,
+                        border: '1px solid #86EFAC', fontSize: 12, boxSizing: 'border-box',
+                        background: '#FFFFFF', color: '#0F172A'
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#166534', marginBottom: 4 }}>
+                      End Date &amp; Time
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={endTime}
+                      onChange={e => setEndTime(e.target.value)}
+                      min={startTime || undefined}
+                      style={{
+                        width: '100%', padding: '8px 10px', borderRadius: 7,
+                        border: '1px solid #86EFAC', fontSize: 12, boxSizing: 'border-box',
+                        background: '#FFFFFF', color: '#0F172A'
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#166534', marginBottom: 4 }}>
+                    Timezone
+                  </label>
+                  <select
+                    value={timezone}
+                    onChange={e => setTimezone(e.target.value)}
+                    style={{
+                      width: '100%', padding: '8px 10px', borderRadius: 7,
+                      border: '1px solid #86EFAC', fontSize: 12, background: '#FFFFFF', color: '#0F172A'
+                    }}
+                  >
+                    <option value="Asia/Kolkata">Asia/Kolkata (IST, UTC+5:30)</option>
+                    <option value="UTC">UTC (UTC+0)</option>
+                    <option value="America/New_York">America/New_York (EST/EDT)</option>
+                    <option value="America/Chicago">America/Chicago (CST/CDT)</option>
+                    <option value="America/Denver">America/Denver (MST/MDT)</option>
+                    <option value="America/Los_Angeles">America/Los_Angeles (PST/PDT)</option>
+                    <option value="Europe/London">Europe/London (GMT/BST)</option>
+                    <option value="Europe/Paris">Europe/Paris (CET/CEST)</option>
+                    <option value="Asia/Dubai">Asia/Dubai (GST, UTC+4)</option>
+                    <option value="Asia/Singapore">Asia/Singapore (SGT, UTC+8)</option>
+                    <option value="Asia/Tokyo">Asia/Tokyo (JST, UTC+9)</option>
+                    <option value="Australia/Sydney">Australia/Sydney (AEST/AEDT)</option>
+                  </select>
+                  <div style={{ fontSize: 10.5, color: '#16A34A', marginTop: 4 }}>
+                    Participants can only access this quiz during the set window. Leave blank to allow anytime access.
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
-              <div>
-                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                  Questions (1 to N)
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={questionCount}
-                  onChange={(e) => setQuestionCount(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
-                  placeholder="e.g. 10"
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5, boxSizing: 'border-box' }}
-                  required
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                  Difficulty
-                </label>
-                <select
-                  value={difficulty}
-                  onChange={(e) => setDifficulty(e.target.value)}
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5 }}
-                >
-                  {QUIZ_DIFFICULTY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                  Time Limit (mins)
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="360"
-                  value={timeLimit}
-                  onChange={(e) => setTimeLimit(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
-                  placeholder="e.g. 30"
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5, boxSizing: 'border-box' }}
-                  required
-                />
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, borderTop: '1px solid #F1F5F9', paddingTop: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, borderTop: '1px solid #F1F5F9', padding: '14px 24px', background: '#FFFFFF', flexShrink: 0 }}>
               <button
                 type="button"
                 onClick={onClose}
@@ -2208,103 +2305,186 @@ function AIQuizGeneratorModal({ user, courseId, onClose, onGenerated }) {
             </div>
           </form>
         ) : (
-          <form onSubmit={handleGenerateFromDocument} style={{ padding: '20px 24px' }}>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
-                Upload Syllabus or Course Material <span style={{ color: '#DC2626' }}>*</span>
+          <form onSubmit={handleGenerateFromDocument} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
+                  Upload Syllabus or Course Material <span style={{ color: '#DC2626' }}>*</span>
+                </label>
+
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={(e) => setFile(e.target.files[0] || null)}
+                  accept=".pdf,.docx,.pptx,.txt"
+                  style={{ display: 'none' }}
+                />
+
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{
+                    border: '2px dashed #CBD5E1', borderRadius: 10, padding: 24, textAlign: 'center',
+                    background: '#F8FAFC', cursor: 'pointer', transition: 'all 150ms ease'
+                  }}
+                >
+                  <Upload size={24} color="#16A34A" style={{ margin: '0 auto 8px' }} />
+                  {file ? (
+                    <div>
+                      <div style={{ fontSize: 13.5, fontWeight: 600, color: '#0F172A' }}>{file.name}</div>
+                      <div style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                        {(file.size / 1024).toFixed(1)} KB — Click to change
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>
+                        Click to upload document (PDF, Word, PowerPoint, Text)
+                      </div>
+                      <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 2 }}>
+                        AI will analyze the file and generate matching questions
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <label style={{ display: 'block', marginBottom: 16, fontSize: 13 }}>
+                Topic and requirements (optional)
+                <textarea value={promptText} onChange={e => setPromptText(e.target.value)}
+                  placeholder="Choose what to cover from this material, or leave blank to cover its key concepts."
+                  rows={3} style={{ width: '100%', marginTop: 6, padding: 10, border: '1px solid #CBD5E1', borderRadius: 8, boxSizing: 'border-box' }} />
               </label>
 
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={(e) => setFile(e.target.files[0] || null)}
-                accept=".pdf,.docx,.pptx,.txt"
-                style={{ display: 'none' }}
-              />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
+                    Questions (1 to N)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={questionCount}
+                    onChange={(e) => setQuestionCount(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    placeholder="e.g. 10"
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5, boxSizing: 'border-box' }}
+                    required
+                  />
+                </div>
 
-              <div
-                onClick={() => fileInputRef.current?.click()}
-                style={{
-                  border: '2px dashed #CBD5E1', borderRadius: 10, padding: 24, textAlign: 'center',
-                  background: '#F8FAFC', cursor: 'pointer', transition: 'all 150ms ease'
-                }}
-              >
-                <Upload size={24} color="#16A34A" style={{ margin: '0 auto 8px' }} />
-                {file ? (
+                <div>
+                  <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
+                    Difficulty
+                  </label>
+                  <select
+                    value={difficulty}
+                    onChange={(e) => setDifficulty(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5 }}
+                  >
+                    {QUIZ_DIFFICULTY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
+                    Time Limit (mins)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="360"
+                    value={timeLimit}
+                    onChange={(e) => setTimeLimit(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    placeholder="e.g. 30"
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5, boxSizing: 'border-box' }}
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* ── Assessment Scheduling & Availability Window ── */}
+              <div style={{
+                background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10,
+                padding: '14px 16px', marginBottom: 8
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 12 }}>
+                  <span style={{ fontSize: 15 }}>📅</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: '#15803D' }}>
+                    Assessment Scheduling &amp; Availability Window
+                  </span>
+                  <span style={{
+                    fontSize: 10, fontWeight: 600, color: '#166534', background: '#DCFCE7',
+                    border: '1px solid #BBF7D0', borderRadius: 4, padding: '1px 6px', marginLeft: 'auto'
+                  }}>Optional</span>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 10 }}>
                   <div>
-                    <div style={{ fontSize: 13.5, fontWeight: 600, color: '#0F172A' }}>{file.name}</div>
-                    <div style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
-                      {(file.size / 1024).toFixed(1)} KB — Click to change
-                    </div>
+                    <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#166534', marginBottom: 4 }}>
+                      Start Date &amp; Time
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={startTime}
+                      onChange={e => setStartTime(e.target.value)}
+                      style={{
+                        width: '100%', padding: '8px 10px', borderRadius: 7,
+                        border: '1px solid #86EFAC', fontSize: 12, boxSizing: 'border-box',
+                        background: '#FFFFFF', color: '#0F172A'
+                      }}
+                    />
                   </div>
-                ) : (
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>
-                      Click to upload document (PDF, Word, PowerPoint, Text)
-                    </div>
-                    <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 2 }}>
-                      AI will analyze the file and generate matching questions
-                    </div>
+                    <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#166534', marginBottom: 4 }}>
+                      End Date &amp; Time
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={endTime}
+                      onChange={e => setEndTime(e.target.value)}
+                      min={startTime || undefined}
+                      style={{
+                        width: '100%', padding: '8px 10px', borderRadius: 7,
+                        border: '1px solid #86EFAC', fontSize: 12, boxSizing: 'border-box',
+                        background: '#FFFFFF', color: '#0F172A'
+                      }}
+                    />
                   </div>
-                )}
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#166534', marginBottom: 4 }}>
+                    Timezone
+                  </label>
+                  <select
+                    value={timezone}
+                    onChange={e => setTimezone(e.target.value)}
+                    style={{
+                      width: '100%', padding: '8px 10px', borderRadius: 7,
+                      border: '1px solid #86EFAC', fontSize: 12, background: '#FFFFFF', color: '#0F172A'
+                    }}
+                  >
+                    <option value="Asia/Kolkata">Asia/Kolkata (IST, UTC+5:30)</option>
+                    <option value="UTC">UTC (UTC+0)</option>
+                    <option value="America/New_York">America/New_York (EST/EDT)</option>
+                    <option value="America/Chicago">America/Chicago (CST/CDT)</option>
+                    <option value="America/Denver">America/Denver (MST/MDT)</option>
+                    <option value="America/Los_Angeles">America/Los_Angeles (PST/PDT)</option>
+                    <option value="Europe/London">Europe/London (GMT/BST)</option>
+                    <option value="Europe/Paris">Europe/Paris (CET/CEST)</option>
+                    <option value="Asia/Dubai">Asia/Dubai (GST, UTC+4)</option>
+                    <option value="Asia/Singapore">Asia/Singapore (SGT, UTC+8)</option>
+                    <option value="Asia/Tokyo">Asia/Tokyo (JST, UTC+9)</option>
+                    <option value="Australia/Sydney">Australia/Sydney (AEST/AEDT)</option>
+                  </select>
+                  <div style={{ fontSize: 10.5, color: '#16A34A', marginTop: 4 }}>
+                    Participants can only access this quiz during the set window. Leave blank to allow anytime access.
+                  </div>
+                </div>
               </div>
             </div>
 
-            <label style={{ display: 'block', marginBottom: 16, fontSize: 13 }}>
-              Topic and requirements (optional)
-              <textarea value={promptText} onChange={e => setPromptText(e.target.value)}
-                placeholder="Choose what to cover from this material, or leave blank to cover its key concepts."
-                rows={3} style={{ width: '100%', marginTop: 6, padding: 10, border: '1px solid #CBD5E1', borderRadius: 8, boxSizing: 'border-box' }} />
-            </label>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
-              <div>
-                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                  Questions (1 to N)
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={questionCount}
-                  onChange={(e) => setQuestionCount(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
-                  placeholder="e.g. 10"
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5, boxSizing: 'border-box' }}
-                  required
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                  Difficulty
-                </label>
-                <select
-                  value={difficulty}
-                  onChange={(e) => setDifficulty(e.target.value)}
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5 }}
-                >
-                  {QUIZ_DIFFICULTY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                  Time Limit (mins)
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="360"
-                  value={timeLimit}
-                  onChange={(e) => setTimeLimit(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1))}
-                  placeholder="e.g. 30"
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: 12.5, boxSizing: 'border-box' }}
-                  required
-                />
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, borderTop: '1px solid #F1F5F9', paddingTop: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, borderTop: '1px solid #F1F5F9', padding: '14px 24px', background: '#FFFFFF', flexShrink: 0 }}>
               <button
                 type="button"
                 onClick={onClose}

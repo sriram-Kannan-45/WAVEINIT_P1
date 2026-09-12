@@ -49,6 +49,7 @@ import {
   purgeStaleAttemptDrafts,
 } from '../utils/attemptDraftStorage'
 import '../styles/quiz-taking.css'
+import { useSocket } from '../hooks/useSocket'
 
 import { fsApi, useAssessmentFullscreen } from '../proctoring/hooks/useAssessmentFullscreen'
 import { FullscreenWarningTitle, FullscreenWarningDescription } from '../proctoring/components/FullscreenWarningContent'
@@ -536,23 +537,61 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
   // Authoritative end timestamp derived once from the quiz start (persisted so a
   // refresh resumes the same countdown). The display is always recomputed from
   // this end timestamp rather than decremented, so it never jumps, skips or
-  // repeats and always reaches exactly 0 at the exam end.
   const [endsAt, setEndsAt] = useState(() => {
     const totalSec = (quizData?.timeLimit || 30) * 60
+    let durationEnd = Date.now() + totalSec * 1000
     try {
       const startKey = `quiz_${quizId}_test_start_${attemptId}`
       const storedStart = parseInt(sessionStorage.getItem(startKey), 10)
       if (Number.isFinite(storedStart) && storedStart > 0) {
-        return storedStart + totalSec * 1000
+        durationEnd = storedStart + totalSec * 1000
+      } else {
+        const start = parseInt(sessionStorage.getItem(`quiz_${quizId}_test_start_${attemptId}`), 10)
+        const base = Number.isFinite(start) && start > 0 ? start : Date.now()
+        sessionStorage.setItem(`quiz_${quizId}_test_start_${attemptId}`, String(base))
+        durationEnd = base + totalSec * 1000
       }
     } catch (_) {}
-    const start = parseInt(sessionStorage.getItem(`quiz_${quizId}_test_start_${attemptId}`), 10)
-    const base = Number.isFinite(start) && start > 0 ? start : Date.now()
-    try {
-      sessionStorage.setItem(`quiz_${quizId}_test_start_${attemptId}`, String(base))
-    } catch (_) {}
-    return base + totalSec * 1000
+
+    if (quizData?.endTime) {
+      const sched = new Date(quizData.endTime).getTime()
+      if (!isNaN(sched) && sched < durationEnd) {
+        return sched
+      }
+    }
+    return durationEnd
   })
+
+  const { socket } = useSocket()
+  useEffect(() => {
+    if (!socket) return
+    const onEnded = (data) => {
+      if (data?.assessmentType === 'quiz' && (String(data?.assessmentId) === String(quizId))) {
+        console.warn('[QuizTaking] Assessment ended event received. Auto-submitting quiz.')
+        showError('This assessment has reached its scheduled end time. Auto-submitting...')
+        handleSubmit({ autoSubmit: true, silent: false })
+      }
+    }
+    socket.on('assessment:ended', onEnded)
+    return () => {
+      socket.off('assessment:ended', onEnded)
+    }
+  }, [socket, quizId, handleSubmit, showError])
+
+  const scheduleText = useMemo(() => {
+    if (!quizData?.endTime) return null
+    const end = new Date(quizData.endTime).getTime()
+    if (isNaN(end)) return null
+    const now = Date.now()
+    if (now >= end) return 'This assessment has ended.'
+    const diffSec = Math.floor((end - now) / 1000)
+    if (diffSec <= 600) {
+      const mins = Math.max(1, Math.ceil(diffSec / 60))
+      return `Assessment ends in ${mins} minute${mins === 1 ? '' : 's'}`
+    }
+    const formatted = new Date(quizData.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
+    return `Assessment ends at ${formatted}`
+  }, [quizData?.endTime])
 
   useEffect(() => {
     if (isCopyDisqualified || isPaused || submittedRef.current) return
@@ -744,6 +783,21 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
                 {warnings > 0 && `Exits: ${warnings}`}
                 {warnings > 0 && copyViolationCount > 0 && ' | '}
                 {copyViolationCount > 0 && `Copy: ${copyViolationCount}/${quizData?.maxCopyWarnings || 3}`}
+              </span>
+            )}
+            {scheduleText && (
+              <span
+                className="qt-timer-pill"
+                style={{
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: scheduleText.includes('in') || scheduleText.includes('ended') ? '#DC2626' : '#2563EB',
+                  background: scheduleText.includes('in') || scheduleText.includes('ended') ? '#FEF2F2' : '#EFF6FF',
+                  border: `1px solid ${scheduleText.includes('in') || scheduleText.includes('ended') ? '#FECACA' : '#BFDBFE'}`,
+                }}
+              >
+                <Clock size={14} aria-hidden />
+                <span>{scheduleText}</span>
               </span>
             )}
             <span

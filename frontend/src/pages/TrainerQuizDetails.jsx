@@ -4,7 +4,7 @@ import {
   ArrowLeft, Settings, Users, BarChart3, Trophy, FileText,
   Plus, Pencil, Trash2, Save, X, Send, Loader2, AlertTriangle, Eye, Star,
   Search, Clock, HelpCircle, CheckCircle2, AlertCircle, RefreshCw, Monitor, Ban, XCircle,
-  Shield, ShieldCheck, ShieldAlert, Download,
+  Shield, ShieldCheck, ShieldAlert, Download, Award, Calendar,
 } from 'lucide-react'
 import { API, API_BASE } from '../api/api'
 import { useToast } from '../components/Toast'
@@ -167,6 +167,7 @@ export default function TrainerQuizDetails({ user, onLogout }) {
     { key: 'participants', label: 'Participants', icon: Users },
     ...(quiz.proctoringEnabled ? [{ key: 'proctor', label: 'Monitor Live', icon: Monitor }] : []),
     { key: 'results',    label: 'Results',    icon: BarChart3 },
+    { key: 'finalReport', label: 'Final Report', icon: Award },
     { key: 'leaderboard', label: 'Leaderboard', icon: Trophy },
     { key: 'analytics',  label: 'Analytics',  icon: Star },
     { key: 'settings',   label: 'Settings',   icon: Settings },
@@ -186,6 +187,12 @@ export default function TrainerQuizDetails({ user, onLogout }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
             <span className="reg-admin-status" style={{ ...(STATUS_BADGE[quiz.status] || STATUS_BADGE.DRAFT) }}>{STATUS_LABELS[quiz.status] || 'Draft'}</span>
             <span className="reg-admin-status" style={{ ...(RESULT_STATUS_BADGE[quiz.resultStatus] || RESULT_STATUS_BADGE.HIDDEN) }}>Results: {RESULT_LABELS[quiz.resultStatus] || 'Hidden'}</span>
+            {quiz.endTime && (
+              <span className="reg-admin-status" style={{ background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <Clock size={11} />
+                End: {new Date(quiz.endTime).toLocaleString()} ({quiz.timezone || 'Asia/Kolkata'})
+              </span>
+            )}
             {quiz.course && <span style={{ fontSize: 12, color: '#64748b', fontFamily: 'var(--font-primary)' }}>Course: {quiz.course.title}</span>}
             {quiz.training && <span style={{ fontSize: 12, color: '#64748b', fontFamily: 'var(--font-primary)' }}>Training: {quiz.training.title}</span>}
             <span style={{ fontSize: 12, color: '#94a3b8' }}>•</span>
@@ -238,6 +245,9 @@ export default function TrainerQuizDetails({ user, onLogout }) {
         )}
         {activeTab === 'results' && (
           <ResultsTab quiz={quiz} onRefresh={fetchQuiz} auth={auth} toast={toast} />
+        )}
+        {activeTab === 'finalReport' && (
+          <QuizFinalReportTab quiz={quiz} auth={auth} toast={toast} />
         )}
         {activeTab === 'leaderboard' && (
           <LeaderboardTab quiz={quiz} auth={auth} />
@@ -676,43 +686,78 @@ function ResultsTab({ quiz, onRefresh, auth, toast }) {
           </div>
 
           {results.length > 0 && (
-            <button
-              className="reg-admin-btn"
-              onClick={async () => {
-                const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
-                const token = storedUser?.token || localStorage.getItem('token') || sessionStorage.getItem('token');
-                const downloadUrl = `${API_BASE}/monitoring/reports/assessment/${quiz.id}/excel?contextType=QUIZ&token=${encodeURIComponent(token || '')}`;
-                try {
-                  const res = await fetch(downloadUrl, {
-                    headers: token ? { Authorization: `Bearer ${token}` } : {}
-                  });
-                  if (!res.ok) throw new Error('Download failed');
-                  const blob = await res.blob();
-                  const url = window.URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `assessment_marks_${quiz.id}.xlsx`;
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                  window.URL.revokeObjectURL(url);
-                } catch (e) {
-                  window.open(downloadUrl, '_blank');
-                }
-              }}
-              style={{
-                cursor: 'pointer',
-                background: '#ecfdf5',
-                border: '1px solid #10b981',
-                color: '#047857',
-                fontWeight: 700,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6
-              }}
-            >
-              <Download size={14} /> Export Marks (Excel)
-            </button>
+            <>
+              <button
+                className="reg-admin-btn"
+                onClick={async () => {
+                  const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
+                  const token = storedUser?.token || localStorage.getItem('token') || sessionStorage.getItem('token');
+                  const downloadUrl = `${API_BASE}/monitoring/reports/assessment/${quiz.id}/excel?contextType=QUIZ&token=${encodeURIComponent(token || '')}`;
+                  try {
+                    const res = await fetch(downloadUrl, {
+                      headers: token ? { Authorization: `Bearer ${token}` } : {}
+                    });
+                    if (!res.ok) throw new Error('Download failed');
+                    const blob = await res.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `assessment_marks_${quiz.id}.xlsx`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                  } catch (e) {
+                    window.open(downloadUrl, '_blank');
+                  }
+                }}
+                style={{
+                  cursor: 'pointer',
+                  background: '#ecfdf5',
+                  border: '1px solid #10b981',
+                  color: '#047857',
+                  fontWeight: 700,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6
+                }}
+              >
+                <Download size={14} /> Export Marks (Excel)
+              </button>
+              <button
+                className="reg-admin-btn"
+                onClick={async () => {
+                  try {
+                    const res = await fetch(API.QUIZZES.RESULTS_EXPORT(quiz.id), { headers: auth() })
+                    if (!res.ok) throw new Error('Failed to export CSV report')
+                    const blob = await res.blob()
+                    const url = window.URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url
+                    a.download = `quiz_report_${quiz.id}.csv`
+                    document.body.appendChild(a)
+                    a.click()
+                    document.body.removeChild(a)
+                    window.URL.revokeObjectURL(url)
+                    toast.success('Assessment CSV report downloaded ✓')
+                  } catch (err) {
+                    toast.error(err.message || 'Export failed')
+                  }
+                }}
+                style={{
+                  cursor: 'pointer',
+                  background: '#f0fdf4',
+                  border: '1px solid #16a34a',
+                  color: '#15803d',
+                  fontWeight: 700,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6
+                }}
+              >
+                <Download size={14} /> Export CSV (21 Cols)
+              </button>
+            </>
           )}
           {quiz.resultStatus === 'HIDDEN' ? (
             <button
@@ -1197,6 +1242,218 @@ function QuestionPreview({ questions, onClose }) {
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  )
+}
+
+function QuizFinalReportTab({ quiz, auth, toast }) {
+  const [report, setReport] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [exporting, setExporting] = useState(false)
+
+  const loadReport = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(API.QUIZZES.FINAL_REPORT(quiz.id), { headers: auth() })
+      const data = await res.json()
+      if (data.success) {
+        setReport(data.report)
+      } else {
+        toast.error(data.error || 'Failed to load report')
+      }
+    } catch (e) {
+      toast.error('Failed to load assessment report')
+    } finally {
+      setLoading(false)
+    }
+  }, [quiz.id, auth, toast])
+
+  useEffect(() => {
+    loadReport()
+  }, [loadReport])
+
+  const handleExportCsv = async () => {
+    setExporting(true)
+    try {
+      const res = await fetch(API.QUIZZES.RESULTS_EXPORT(quiz.id), { headers: auth() })
+      if (!res.ok) throw new Error('Failed to export CSV report')
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `quiz_report_${quiz.id}.csv`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+      toast.success('Assessment CSV report downloaded ✓')
+    } catch (err) {
+      toast.error(err.message || 'Export failed')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 300 }}>
+        <Loader2 size={28} className="animate-spin" color="#16a34a" />
+      </div>
+    )
+  }
+
+  if (!report) {
+    return (
+      <div style={{ textAlign: 'center', padding: 40, color: '#64748b' }}>
+        No report data available.
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Header bar */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Award size={20} color="#16A34A" /> Assessment Final Report
+          </h3>
+          <p style={{ margin: '4px 0 0', fontSize: 12.5, color: '#64748B' }}>
+            Authoritative attendance, scoring, auto-finalization, and proctoring audit
+          </p>
+        </div>
+        <button
+          onClick={handleExportCsv}
+          disabled={exporting}
+          className="reg-admin-btn"
+          style={{
+            cursor: 'pointer',
+            background: '#f0fdf4',
+            border: '1px solid #16a34a',
+            color: '#15803d',
+            fontWeight: 700,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6
+          }}
+        >
+          <Download size={15} /> {exporting ? 'Exporting CSV...' : 'Export Complete CSV (21 Cols)'}
+        </button>
+      </div>
+
+      {/* Summary metric grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 12 }}>
+        <div style={{ background: '#F8FAFC', padding: 14, borderRadius: 10, border: '1px solid #E2E8F0' }}>
+          <div style={{ fontSize: 10, color: '#64748B', fontWeight: 700, textTransform: 'uppercase' }}>Total Enrolled</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#0F172A', marginTop: 4 }}>{report.summary?.totalEnrolled ?? 0}</div>
+        </div>
+        <div style={{ background: '#F0FDF4', padding: 14, borderRadius: 10, border: '1px solid #BBF7D0' }}>
+          <div style={{ fontSize: 10, color: '#166534', fontWeight: 700, textTransform: 'uppercase' }}>Present</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#15803D', marginTop: 4 }}>{report.summary?.presentCount ?? 0}</div>
+        </div>
+        <div style={{ background: '#FEF2F2', padding: 14, borderRadius: 10, border: '1px solid #FECACA' }}>
+          <div style={{ fontSize: 10, color: '#991B1B', fontWeight: 700, textTransform: 'uppercase' }}>Absent</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#DC2626', marginTop: 4 }}>{report.summary?.absentCount ?? 0}</div>
+        </div>
+        <div style={{ background: '#EFF6FF', padding: 14, borderRadius: 10, border: '1px solid #BFDBFE' }}>
+          <div style={{ fontSize: 10, color: '#1E40AF', fontWeight: 700, textTransform: 'uppercase' }}>Completed</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#2563EB', marginTop: 4 }}>{report.summary?.completedCount ?? 0}</div>
+        </div>
+        <div style={{ background: '#FFFBEB', padding: 14, borderRadius: 10, border: '1px solid #FDE68A' }}>
+          <div style={{ fontSize: 10, color: '#92400E', fontWeight: 700, textTransform: 'uppercase' }}>Auto Submitted</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#D97706', marginTop: 4 }}>{report.summary?.autoSubmittedCount ?? 0}</div>
+        </div>
+        <div style={{ background: '#FAF5FF', padding: 14, borderRadius: 10, border: '1px solid #E9D5FF' }}>
+          <div style={{ fontSize: 10, color: '#6B21A8', fontWeight: 700, textTransform: 'uppercase' }}>Average Score</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#7E22CE', marginTop: 4 }}>{report.summary?.averageScore ?? 0}%</div>
+        </div>
+        <div style={{ background: '#F8FAFC', padding: 14, borderRadius: 10, border: '1px solid #E2E8F0' }}>
+          <div style={{ fontSize: 10, color: '#64748B', fontWeight: 700, textTransform: 'uppercase' }}>Highest / Lowest</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: '#0F172A', marginTop: 4 }}>
+            {report.summary?.highestScore ?? 0}% / {report.summary?.lowestScore ?? 0}%
+          </div>
+        </div>
+        <div style={{ background: '#FFF7ED', padding: 14, borderRadius: 10, border: '1px solid #FFEDD5' }}>
+          <div style={{ fontSize: 10, color: '#9A3412', fontWeight: 700, textTransform: 'uppercase' }}>Malpractice Flags</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#EA580C', marginTop: 4 }}>{report.summary?.malpracticeCases ?? 0}</div>
+        </div>
+        <div style={{ background: '#F8FAFC', padding: 14, borderRadius: 10, border: '1px solid #E2E8F0' }}>
+          <div style={{ fontSize: 10, color: '#64748B', fontWeight: 700, textTransform: 'uppercase' }}>Pass / Fail</div>
+          <div style={{ fontSize: 17, fontWeight: 800, marginTop: 4 }}>
+            <span style={{ color: '#16A34A' }}>{report.summary?.passCount ?? 0} P</span> / <span style={{ color: '#DC2626' }}>{report.summary?.failCount ?? 0} F</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Participant breakdown table */}
+      <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 12, overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
+              <th style={{ padding: '12px 14px', fontWeight: 700, color: '#475569' }}>PARTICIPANT</th>
+              <th style={{ padding: '12px 14px', fontWeight: 700, color: '#475569', textAlign: 'center' }}>ATTENDANCE</th>
+              <th style={{ padding: '12px 14px', fontWeight: 700, color: '#475569', textAlign: 'center' }}>ATTEMPT STATUS</th>
+              <th style={{ padding: '12px 14px', fontWeight: 700, color: '#475569', textAlign: 'center' }}>SCORE</th>
+              <th style={{ padding: '12px 14px', fontWeight: 700, color: '#475569', textAlign: 'center' }}>RESULT</th>
+              <th style={{ padding: '12px 14px', fontWeight: 700, color: '#475569', textAlign: 'center' }}>MALPRACTICE</th>
+              <th style={{ padding: '12px 14px', fontWeight: 700, color: '#475569', textAlign: 'center' }}>SUBMISSION</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(report.participants || []).map((p, idx) => (
+              <tr key={p.userId || idx} style={{ borderBottom: '1px solid #F1F5F9', background: p.attendanceStatus === 'ABSENT' ? '#FFFDFD' : '#FFFFFF' }}>
+                <td style={{ padding: '12px 14px' }}>
+                  <div style={{ fontWeight: 700, color: '#0F172A' }}>{p.name}</div>
+                  <div style={{ fontSize: 11, color: '#64748B' }}>{p.email} {p.participantId ? `· ${p.participantId}` : ''}</div>
+                </td>
+                <td style={{ padding: '12px 14px', textAlign: 'center' }}>
+                  <span style={{
+                    padding: '3px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 800,
+                    background: p.attendanceStatus === 'PRESENT' ? '#DCFCE7' : '#FEE2E2',
+                    color: p.attendanceStatus === 'PRESENT' ? '#15803D' : '#B91C1C'
+                  }}>
+                    {p.attendanceStatus}
+                  </span>
+                </td>
+                <td style={{ padding: '12px 14px', textAlign: 'center' }}>
+                  <span style={{
+                    padding: '3px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 700,
+                    background: p.attemptStatus === 'COMPLETED' ? '#E0F2FE' : p.attemptStatus === 'AUTO_SUBMITTED' ? '#FEF3C7' : '#F1F5F9',
+                    color: p.attemptStatus === 'COMPLETED' ? '#0369A1' : p.attemptStatus === 'AUTO_SUBMITTED' ? '#92400E' : '#64748B'
+                  }}>
+                    {p.attemptStatus}
+                  </span>
+                </td>
+                <td style={{ padding: '12px 14px', textAlign: 'center', fontWeight: 800, color: p.attendanceStatus === 'ABSENT' ? '#94A3B8' : '#0F172A' }}>
+                  {p.attendanceStatus === 'ABSENT' ? '0 / 100' : `${p.score ?? 0} / ${p.maxMarks ?? 100} (${p.percentage ?? 0}%)`}
+                </td>
+                <td style={{ padding: '12px 14px', textAlign: 'center' }}>
+                  <span style={{
+                    padding: '3px 8px', borderRadius: 6, fontSize: 10.5, fontWeight: 800,
+                    background: p.passFail === 'PASS' ? '#DCFCE7' : '#FEE2E2',
+                    color: p.passFail === 'PASS' ? '#15803D' : '#B91C1C'
+                  }}>
+                    {p.passFail}
+                  </span>
+                </td>
+                <td style={{ padding: '12px 14px', textAlign: 'center' }}>
+                  <span style={{
+                    padding: '3px 8px', borderRadius: 6, fontSize: 10.5, fontWeight: 700,
+                    background: p.malpracticeStatus === 'CLEAR' ? '#F0FDF4' : p.malpracticeStatus === 'N/A' ? '#F8FAFC' : '#FEF2F2',
+                    color: p.malpracticeStatus === 'CLEAR' ? '#166534' : p.malpracticeStatus === 'N/A' ? '#64748B' : '#DC2626'
+                  }}>
+                    {p.malpracticeStatus} {p.malpracticeScore > 0 ? `(${p.malpracticeScore}%)` : ''}
+                  </span>
+                </td>
+                <td style={{ padding: '12px 14px', textAlign: 'center', fontSize: 11, color: '#64748B' }}>
+                  <div>{p.submissionType || '-'}</div>
+                  {p.timeExpired === 'YES' && <span style={{ color: '#D97706', fontSize: 10, fontWeight: 700 }}>EXPIRED</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   )

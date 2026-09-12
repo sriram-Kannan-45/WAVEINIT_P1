@@ -12,7 +12,9 @@ import {
   FileText,
   RefreshCw,
   ShieldCheck,
-  BookOpen
+  BookOpen,
+  User,
+  AlertTriangle,
 } from 'lucide-react';
 import { API_BASE } from '../api/api';
 import { getAuthHeaders } from '../api/request';
@@ -68,10 +70,11 @@ export default function ParticipantQuizResultPage({ user }) {
   }, [fetchResult, result]);
 
   const handleReturn = () => {
-    if (trainingId && trainingId !== '0') {
-      navigate(`/participant?tab=myEnrollments&courseId=${trainingId}&subtab=quizzes`);
+    const targetCourse = (trainingId && trainingId !== '0') ? trainingId : (result?.courseId || result?.trainingId);
+    if (targetCourse) {
+      navigate(`/participant?tab=myEnrollments&courseId=${targetCourse}&subtab=quizzes`);
     } else {
-      navigate('/participant?tab=myEnrollments');
+      navigate('/participant?tab=myEnrollments&subtab=quizzes');
     }
   };
 
@@ -272,24 +275,39 @@ export default function ParticipantQuizResultPage({ user }) {
             fontSize: 24,
             fontWeight: 800,
             color: '#0f172a',
-            margin: '0 0 10px',
+            margin: '0 0 8px',
             letterSpacing: '-0.02em',
           }}
         >
-          {isPublished ? quizTitle : 'Test Completed Successfully'}
+          {result?.quizName || result?.quizTitle || quizTitle}
         </h1>
+
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+            fontSize: 13,
+            color: '#64748b',
+            marginBottom: 16
+          }}
+        >
+          <User size={14} style={{ color: '#2563eb' }} />
+          <span>Participant: <strong style={{ color: '#0f172a' }}>{result?.participantName || user?.name || user?.email || 'Participant'}</strong></span>
+        </div>
 
         <p
           style={{
             color: '#64748b',
             fontSize: 14.5,
             lineHeight: 1.6,
-            maxWidth: 500,
+            maxWidth: 540,
             margin: '0 auto 24px',
           }}
         >
           {isPublished
-            ? 'Your answers have been graded and evaluated. You can view your performance breakdown below.'
+            ? 'Your answers have been graded and evaluated. You can view your complete performance breakdown and question review below.'
             : 'Your answers have been submitted successfully and stored directly in the database. Please wait while your trainer reviews and publishes the final scores.'}
         </p>
 
@@ -315,7 +333,7 @@ export default function ParticipantQuizResultPage({ user }) {
                 Results Pending Trainer Review
               </div>
               <div style={{ fontSize: 12.5, color: '#b45309', marginTop: 2 }}>
-                Your responses and proctoring audit are verified and safe. Scores will appear on your dashboard once published.
+                Your responses and proctoring audit are verified and safe. Scores and question reviews will appear here once published.
               </div>
             </div>
           </div>
@@ -327,15 +345,15 @@ export default function ParticipantQuizResultPage({ user }) {
               borderRadius: 16,
               padding: '20px 24px',
               margin: '0 auto 28px',
-              maxWidth: 420,
+              maxWidth: 480,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-around',
             }}
           >
             <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
-                Your Score
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
+                Percentage
               </div>
               <div
                 style={{
@@ -346,12 +364,30 @@ export default function ParticipantQuizResultPage({ user }) {
                   marginTop: 4
                 }}
               >
-                {result.score}%
+                {result?.percentage ?? result?.score ?? 0}%
               </div>
             </div>
             <div style={{ width: 1, height: 48, background: '#e2e8f0' }} />
             <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
+                Marks Obtained
+              </div>
+              <div
+                style={{
+                  fontSize: 22,
+                  fontWeight: 800,
+                  color: '#0f172a',
+                  lineHeight: 1.1,
+                  marginTop: 6
+                }}
+              >
+                {result?.marksObtained ?? result?.totalScore ?? 0}
+                <span style={{ fontSize: 14, fontWeight: 600, color: '#64748b' }}> / {result?.maximumMarks ?? result?.maxScore ?? (result?.totalQuestions || 0)}</span>
+              </div>
+            </div>
+            <div style={{ width: 1, height: 48, background: '#e2e8f0' }} />
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
                 Status
               </div>
               <span
@@ -366,7 +402,7 @@ export default function ParticipantQuizResultPage({ user }) {
                   color: '#ffffff',
                 }}
               >
-                {result.passStatus || (result.score >= 50 ? 'Pass' : 'Fail')}
+                {result?.passStatus || ((result?.percentage ?? result?.score) >= 50 ? 'Pass' : 'Fail')}
               </span>
             </div>
           </div>
@@ -379,73 +415,78 @@ export default function ParticipantQuizResultPage({ user }) {
             gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
             gap: 12,
             margin: '0 auto 28px',
-            maxWidth: 600,
+            maxWidth: 680,
+            textAlign: 'center'
           }}
         >
-          <div
-            style={{
-              background: '#f8fafc',
-              border: '1px solid #e2e8f0',
-              borderRadius: 12,
-              padding: '12px 14px',
-            }}
-          >
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
-              Attempt ID
-            </div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
-              #{result?.attemptId || attemptId || '—'}
+          <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: '12px 14px' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Attempt</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              #{result?.attemptNumber || 1} <span style={{ fontSize: 11, color: '#94a3b8' }}>(ID: {result?.attemptId || attemptId || '—'})</span>
             </div>
           </div>
 
-          <div
-            style={{
-              background: '#f8fafc',
-              border: '1px solid #e2e8f0',
-              borderRadius: 12,
-              padding: '12px 14px',
-            }}
-          >
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
-              Questions
-            </div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+          <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: '12px 14px' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Questions</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
               {result?.answeredCount ?? result?.totalQuestions ?? '—'}
               {result?.totalQuestions ? ` / ${result.totalQuestions}` : ''}
             </div>
           </div>
 
-          <div
-            style={{
-              background: '#f8fafc',
-              border: '1px solid #e2e8f0',
-              borderRadius: 12,
-              padding: '12px 14px',
-            }}
-          >
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
-              Time Taken
+          {isPublished && (
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: '12px 14px' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Correct / Wrong</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a', marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <span style={{ color: '#16a34a' }}>✓ {result?.correctCount ?? 0}</span>
+                <span style={{ color: '#cbd5e1' }}>|</span>
+                <span style={{ color: '#dc2626' }}>✗ {result?.incorrectAnswers ?? result?.wrongCount ?? 0}</span>
+              </div>
             </div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+          )}
+
+          <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: '12px 14px' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Time Taken</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
               {formatTime(result?.timeTaken)}
             </div>
           </div>
 
-          <div
-            style={{
-              background: '#f8fafc',
-              border: '1px solid #e2e8f0',
-              borderRadius: 12,
-              padding: '12px 14px',
-            }}
-          >
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
-              Integrity
-            </div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: '#16a34a', marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-              <ShieldCheck size={16} /> Verified
+          <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: '12px 14px' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Submission</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: (result?.autoSubmitted || result?.timeExpired) ? '#d97706' : '#2563eb', marginTop: 4 }}>
+              {result?.autoSubmitted || result?.timeExpired ? 'Auto-Submitted' : (result?.submissionType || 'Manual')}
             </div>
           </div>
+
+          <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: '12px 14px' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Integrity</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: result?.malpracticeScore > 20 ? '#dc2626' : '#16a34a', marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+              {result?.malpracticeScore > 20 ? (
+                <><AlertTriangle size={14} /> {result.malpracticeStatus || 'Flagged'} ({result.malpracticeScore}% risk)</>
+              ) : (
+                <><ShieldCheck size={14} /> Verified Clean</>
+              )}
+            </div>
+          </div>
+
+          {result?.startedAt && (
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: '12px 14px' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Started At</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#334155', marginTop: 4 }}>
+                {new Date(result.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </div>
+            </div>
+          )}
+
+          {result?.submittedAt && (
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: '12px 14px' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Submitted At</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#334155', marginTop: 4 }}>
+                {new Date(result.submittedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── Return / Navigation Actions ────────────────────────────────── */}

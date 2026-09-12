@@ -32,6 +32,7 @@ const NotificationService = require('../services/notificationService');
 const { assertTransition } = require('../utils/quizStateMachine');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 const { assertQuizPayloadClean } = require('../services/starterCodeIntegrity');
+const availabilityService = require('../services/assessmentAvailabilityService');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -100,15 +101,19 @@ router.post('/:id/publish', roleMiddleware('TRAINER', 'ADMIN'), async (req, res)
     }
 
     const now = new Date();
-    const startTime = req.body.startTime ? new Date(req.body.startTime) : null;
-    const endTime = req.body.endTime ? new Date(req.body.endTime) : null;
+    const startTime = req.body.startTime ? new Date(req.body.startTime) : (quiz.startTime ? new Date(quiz.startTime) : null);
+    const endTime = req.body.endTime ? new Date(req.body.endTime) : (quiz.endTime ? new Date(quiz.endTime) : null);
+    const timezone = req.body.timezone || quiz.timezone || 'Asia/Kolkata';
 
-    // If end_time is provided, validate it
-    if (endTime && endTime <= now) {
-      return res.status(400).json({ error: 'end_time must be in the future' });
+    // End time is mandatory before publishing
+    if (!endTime) {
+      return res.status(400).json({ error: 'End Date/Time is mandatory to publish an assessment' });
     }
-    if (startTime && endTime && startTime >= endTime) {
-      return res.status(400).json({ error: 'start_time must be before end_time' });
+    if (endTime <= now) {
+      return res.status(400).json({ error: 'End time must be in the future' });
+    }
+    if (startTime && startTime >= endTime) {
+      return res.status(400).json({ error: 'Start time must be before end time' });
     }
 
     const updateData = {
@@ -118,6 +123,7 @@ router.post('/:id/publish', roleMiddleware('TRAINER', 'ADMIN'), async (req, res)
       status: 'PUBLISHED',
       startTime,
       endTime,
+      timezone,
     };
     if (trainingId && !quiz.trainingId) updateData.trainingId = trainingId;
     await quiz.update(updateData);
@@ -716,6 +722,108 @@ router.get('/:id/results', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) 
 });
 
 /**
+ * Helper to fetch all participants (enrolled + attempted), proctoring and monitoring
+ * to construct a complete, unified final report.
+ */
+async function fetchQuizReportData(quiz) {
+  const { User, MonitoringSession } = require('../models');
+  const enrollmentConditions = [];
+  if (quiz.courseId) enrollmentConditions.push({ courseId: quiz.courseId });
+  if (quiz.trainingId) enrollmentConditions.push({ trainingId: quiz.trainingId });
+
+  let enrolledUsers = [];
+  if (enrollmentConditions.length > 0) {
+    const enrollments = await Enrollment.findAll({
+      where: {
+        status: { [Op.in]: ['ENROLLED', 'COMPLETED'] },
+        [Op.or]: enrollmentConditions,
+      },
+      include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email', 'profilePic'] }],
+    });
+    enrolledUsers = enrollments.map(e => e.participant).filter(Boolean);
+  }
+
+  const assignments = await QuizAssignment.findAll({
+    where: { quizId: quiz.id },
+    include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email', 'profilePic'] }],
+  });
+  assignments.forEach(a => {
+    if (a.participant && !enrolledUsers.some(u => String(u.id) === String(a.participant.id))) {
+      enrolledUsers.push(a.participant);
+    }
+  });
+
+  const attempts = await QuizAttempt.findAll({
+    where: { quizId: quiz.id },
+    include: [{ model: User, as: 'participant', attributes: ['id', 'name', 'email', 'profilePic'] }],
+  });
+  const results = await QuizResult.findAll({
+    where: { quizId: quiz.id },
+  });
+  const proctoringReports = await ProctoringReport.findAll({
+    where: { assessmentId: quiz.id, assessmentType: 'QUIZ' },
+  });
+  const monitoringSessions = await MonitoringSession.findAll({
+    where: { assessmentId: quiz.id, assessmentType: 'QUIZ' },
+  });
+
+  const course = quiz.courseId ? await Course.findByPk(quiz.courseId) : null;
+
+  return availabilityService.buildFinalReport({
+    assessment: quiz,
+    assessmentType: 'Quiz',
+    courseName: course?.title || '',
+    enrolledUsers,
+    attempts,
+    results,
+    proctoringReports,
+    monitoringSessions,
+  });
+}
+
+/**
+ * GET /api/quizzes/:id/final-report
+ * Full final report with summary metrics + all enrolled learners (including ABSENT).
+ */
+router.get('/:id/final-report', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) => {
+  try {
+    const quiz = await AIQuiz.findByPk(req.params.id);
+    if (!quiz) return res.status(404).json({ error: 'Quiz not found' });
+    const hasAccess = await verifyTrainerAccess(req, res, quiz);
+    if (!hasAccess) return;
+
+    const report = await fetchQuizReportData(quiz);
+    return res.json({ success: true, ...report });
+  } catch (error) {
+    console.error('[final-report] Error:', error);
+    return res.status(500).json({ error: 'Failed to generate final report' });
+  }
+});
+
+/**
+ * GET /api/quizzes/:id/results/export
+ * Exports 21-column CSV including all enrolled learners (attendees + absentees).
+ */
+router.get('/:id/results/export', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) => {
+  try {
+    const quiz = await AIQuiz.findByPk(req.params.id);
+    if (!quiz) return res.status(404).json({ error: 'Quiz not found' });
+    const hasAccess = await verifyTrainerAccess(req, res, quiz);
+    if (!hasAccess) return;
+
+    const report = await fetchQuizReportData(quiz);
+    const csv = availabilityService.generateCsvReport(report);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="quiz_${quiz.id}_report.csv"`);
+    return res.send(csv);
+  } catch (error) {
+    console.error('[results/export] Error:', error);
+    return res.status(500).json({ error: 'Failed to export results CSV' });
+  }
+});
+
+
+/**
  * POST /api/quizzes/:id/publish-participant/:participantId
  * Trainer-only: publishes a single participant's result.
  */
@@ -840,6 +948,17 @@ router.get('/:id/questions', async (req, res) => {
         return res.status(403).json({ error: 'Quiz is not published or is currently unavailable.' });
       }
 
+      // Check scheduling window
+      const availability = availabilityService.checkAvailability(quiz);
+      if (availability.status === 'NOT_STARTED') {
+        return res.status(403).json({
+          error: 'Assessment has not started yet.',
+          availabilityStatus: 'SCHEDULED',
+          startTime: quiz.startTime,
+          timezone: quiz.timezone,
+        });
+      }
+
       // 2. Check enrollment
       const enrollmentCheck = await Enrollment.findOne({
         where: {
@@ -880,6 +999,23 @@ router.get('/:id/questions', async (req, res) => {
 
       console.log(`[GET /api/quizzes/${quizId}/questions] Permission check result: APPROVED. Returning ${questions.length} questions.`);
       
+      let resolvedMonitoringSessionId = hasAttempt.monitoringSessionId || null;
+      if (!resolvedMonitoringSessionId) {
+        const activeMonitor = await MonitoringSession.findOne({
+          where: {
+            participantId: userId,
+            contextType: 'QUIZ',
+            attemptId: hasAttempt.id,
+            status: { [Op.in]: ['CALIBRATING', 'READY', 'ACTIVE', 'PAUSED'] }
+          },
+          order: [['id', 'DESC']]
+        });
+        if (activeMonitor) {
+          resolvedMonitoringSessionId = activeMonitor.sessionId;
+          await hasAttempt.update({ monitoringSessionId: resolvedMonitoringSessionId }).catch(() => {});
+        }
+      }
+
       const apiResponse = {
         success: true,
         quiz: {
@@ -893,13 +1029,16 @@ router.get('/:id/questions', async (req, res) => {
           copyDisqualifyAction: quiz.copyDisqualifyAction,
           proctoringEnabled: quiz.proctoringEnabled,
           proctoringLevel: quiz.proctoringLevel,
-          gracePeriodMinutes: quiz.gracePeriodMinutes
+          gracePeriodMinutes: quiz.gracePeriodMinutes,
+          startTime: quiz.startTime,
+          endTime: quiz.endTime,
+          timezone: quiz.timezone || 'UTC'
         },
         attempt: {
           id: hasAttempt.id,
           violationCount: hasAttempt.violationCount || 0,
           status: hasAttempt.status,
-          monitoringSessionId: hasAttempt.monitoringSessionId || null,
+          monitoringSessionId: resolvedMonitoringSessionId,
         },
         questions: questions.map(q => ({
           id: q.id,
@@ -1281,6 +1420,19 @@ const startQuizAttempt = async (req, res) => {
       return res.status(403).json({ error: 'Quiz not published' });
     }
 
+    const availability = availabilityService.checkAvailability(quiz);
+    if (!availability.allowed) {
+      console.log(`[startQuizAttempt] Permission denied: ${availability.message}`);
+      return res.status(403).json({
+        error: availability.message,
+        availabilityStatus: availability.status,
+        reason: availability.reason,
+        startTime: quiz.startTime,
+        endTime: quiz.endTime,
+        timezone: quiz.timezone,
+      });
+    }
+
     // Verify participant has access — either via QuizAssignment or enrollment
     let assignment = await QuizAssignment.findOne({
       where: { quizId: quiz.id, participantId }
@@ -1403,6 +1555,8 @@ const startQuizAttempt = async (req, res) => {
           attemptId: attempt.id,
           monitoringSessionId: monitoring?.session?.sessionId || proctorSession.sessionId,
           sessionToken: session.sessionToken,
+          isResumed: true,
+          admitted: !!(monitoring?.session?.metadata?.mobileAdmission),
           quiz: {
             id: quiz.id,
             title: quiz.title,
@@ -1430,6 +1584,10 @@ const startQuizAttempt = async (req, res) => {
       quizId: quiz.id,
       participantId,
       status: 'IN_PROGRESS',
+      attendanceStatus: 'PRESENT',
+      submissionType: 'MANUAL',
+      timeExpired: false,
+      autoSubmitted: false,
       startedAt: new Date(),
       monitoringSessionId
     });
@@ -1587,8 +1745,15 @@ router.post('/:quizId/attempts/:attemptId/submit', require('../middleware/requir
       }
       console.log(`[submit] Recovery successful. Found active attempt #${attempt.id} for participant #${participantId}, quiz #${quizId}`);
     }
-    if (attempt.status === 'SUBMITTED' || attempt.status === 'EVALUATED') {
-      return res.json({ success: true, message: 'Quiz already submitted', attemptId: attempt.id });
+    if (attempt.status === 'SUBMITTED' || attempt.status === 'EVALUATED' || attempt.status === 'AUTO_SUBMITTED') {
+      return res.json({
+        success: true,
+        message: 'Quiz already submitted',
+        attemptId: attempt.id,
+        status: attempt.status,
+        autoSubmitted: !!attempt.autoSubmitted,
+        timeExpired: !!attempt.timeExpired,
+      });
     }
 
     const quiz = await AIQuiz.findByPk(quizId);
@@ -1721,8 +1886,17 @@ router.post('/:quizId/attempts/:attemptId/submit', require('../middleware/requir
         }
       } catch (e) { /* non-fatal */ }
 
+      const availability = availabilityService.checkAvailability(quiz);
+      const hasExpired = availability.status === 'ENDED' || attempt.timeExpired;
+      const finalAttemptStatus = hasExpired ? 'AUTO_SUBMITTED' : 'EVALUATED';
+      const submissionType = hasExpired ? 'AUTO' : 'MANUAL';
+
       await attempt.update({
-        status: 'EVALUATED',
+        status: finalAttemptStatus,
+        attendanceStatus: 'PRESENT',
+        submissionType,
+        timeExpired: hasExpired,
+        autoSubmitted: hasExpired,
         submittedAt,
         ...(timeTaken != null ? { timeTaken } : {})
       }, { transaction: t });

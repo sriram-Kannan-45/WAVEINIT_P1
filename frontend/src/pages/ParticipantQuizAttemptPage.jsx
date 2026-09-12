@@ -60,7 +60,15 @@ function ParticipantQuizAttemptPageInner({ user }) {
       return null
     }
   })
-  const [consented, setConsented] = useState(false)
+  const [consented, setConsented] = useState(() => {
+    try {
+      const cachedConsent = sessionStorage.getItem(`quiz_${quizId}_consented_${attemptId}`);
+      const cachedStart = sessionStorage.getItem(`quiz_${quizId}_test_start_${attemptId}`);
+      return Boolean(cachedConsent || cachedStart);
+    } catch {
+      return false;
+    }
+  });
   const [resolvedMonitoringSessionId, setResolvedMonitoringSessionId] = useState(monitoringSessionId || null)
 
   useEffect(() => {
@@ -108,6 +116,9 @@ function ParticipantQuizAttemptPageInner({ user }) {
           proctoringEnabled: true,
           proctoringLevel: data.quiz.proctoringLevel || 'MEDIUM',
           gracePeriodMinutes: data.quiz.gracePeriodMinutes || 2,
+          startTime: data.quiz.startTime || null,
+          endTime: data.quiz.endTime || null,
+          timezone: data.quiz.timezone || 'UTC',
           initialViolationCount: data.attempt?.violationCount || 0,
           initialStatus: data.attempt?.status || 'IN_PROGRESS',
           questions: data.questions || []
@@ -139,6 +150,7 @@ function ParticipantQuizAttemptPageInner({ user }) {
     setTestStartedAt(start);
     try {
       sessionStorage.setItem(`quiz_${quizId}_test_start_${attemptId}`, String(start));
+      sessionStorage.setItem(`quiz_${quizId}_consented_${attemptId}`, 'true');
     } catch {}
     setConsented(true);
   }, [quizId, attemptId]);
