@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import Editor from '../security/SecureMonacoEditor'
 import {
   ArrowLeft, Settings, Users, BarChart3, Trophy, FileText,
@@ -191,13 +191,16 @@ function MonoField({ language, value, onChange, readOnly = false, height = 160 }
 export default function TrainerCodingAssessmentDetails({ user }) {
   const { assessmentId } = useParams()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const fromHire = searchParams.get('from') === 'hire'
 
   return (
     <CodingAssessmentDetailModal
       assessmentId={assessmentId}
       user={user}
-      onClose={() => navigate('/trainer')}
+      onClose={() => navigate(fromHire ? '/admin?tab=hire-assessments' : '/trainer')}
       isFullPageRoute={true}
+      isHireWorkflow={fromHire}
     />
   )
 }
@@ -205,7 +208,7 @@ export default function TrainerCodingAssessmentDetails({ user }) {
 /* ─────────────────────────────────────────────────────────────────────────────
    LARGE POPUP / OVERLAY MODAL: CODING ASSESSMENT DETAIL MODAL
    ───────────────────────────────────────────────────────────────────────────── */
-export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRefresh, isFullPageRoute }) {
+export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRefresh, isFullPageRoute, isHireWorkflow = false }) {
   const toast = useToast()
   const confirm = useConfirm()
   const auth = useCallback(() => ({
@@ -643,8 +646,8 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
                   );
                 })()}
 
-                {/* Delete Assessment Button */}
-                <button
+                {/* Hire owns deletion so canonical content and assignments remain consistent. */}
+                {!isHireWorkflow && <button
                   onClick={handleDelete}
                   style={{
                     display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -656,7 +659,7 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
                   onMouseOut={e => e.currentTarget.style.background = '#DC2626'}
                 >
                   <Trash2 size={13} /> Delete Assessment
-                </button>
+                </button>}
               </div>
 
               {/* Edit Form Card Drawer */}

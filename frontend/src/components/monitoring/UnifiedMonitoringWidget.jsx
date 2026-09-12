@@ -73,6 +73,7 @@ export default function UnifiedMonitoringWidget({
   externalWebcamStream: suppliedWebcamStream = null,
   onWebcamStreamReady = null,
   onCalibrationPassed = null,
+  hirePolicy = null,
 }) {
   // Only browser MediaStreams can be assigned to a video element. Ignore
   // invalid caller values and acquire the local webcam through the normal path.
@@ -200,6 +201,7 @@ export default function UnifiedMonitoringWidget({
   const [recentViolation, setRecentViolation] = useState(null);
   const [activeGraceWarning, setActiveGraceWarning] = useState(null);
   const graceWarningTimeoutRef = useRef(null);
+  const identityCheckBusyRef = useRef(false);
 
   const webcamVideoRef = useRef(null);
   const mobileVideoRef = useRef(null);
@@ -696,6 +698,39 @@ export default function UnifiedMonitoringWidget({
   useEffect(() => {
     monitoringClient.setPaused(isPaused);
   }, [isPaused]);
+
+  // Hire-only continuity checks reuse this widget's webcam and monitoring
+  // session. Course/Training runs never receive a Hire policy and are untouched.
+  useEffect(() => {
+    if (!hirePolicy?.enabled || !hirePolicy.identityVerification || !hirePolicy.continuousFaceVerification || !isTestActive || !activeSessionId || !webcamStream) return;
+    const language = hirePolicy.allowParticipantLanguage === false ? (hirePolicy.defaultLanguage || 'en-IN') : (sessionStorage.getItem('hire_proctor_language') || hirePolicy.defaultLanguage || 'en-IN');
+    const verify = async () => {
+      if (identityCheckBusyRef.current || !webcamVideoRef.current?.videoWidth) return;
+      identityCheckBusyRef.current = true;
+      try {
+        const video = webcamVideoRef.current;
+        const canvas = document.createElement('canvas'); canvas.width = 360; canvas.height = Math.round(360 * video.videoHeight / video.videoWidth);
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        const response = await fetch(`${API_BASE}/hire/proctoring/sessions/${activeSessionId}/identity/verify`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${activeToken}` },
+          body: JSON.stringify({ frame: canvas.toDataURL('image/jpeg', .7) }),
+        });
+        const result = await response.json();
+        if (response.ok && result.matched === false && hirePolicy.voiceWarnings) {
+          const { speakHireWarning } = await import('../../utils/hireVoiceProctor');
+          speakHireWarning({ language, key: 'mismatch', rate: hirePolicy.voiceRate, volume: hirePolicy.voiceVolume });
+        }
+      } catch (_) {} finally { identityCheckBusyRef.current = false; }
+    };
+    const timer = setInterval(verify, Math.max(15, Number(hirePolicy.identityCheckIntervalSeconds) || 30) * 1000);
+    return () => clearInterval(timer);
+  }, [hirePolicy, isTestActive, activeSessionId, webcamStream, activeToken]);
+
+  useEffect(() => {
+    if (!hirePolicy?.enabled || !hirePolicy.voiceWarnings || !recentViolation) return;
+    const language = hirePolicy.allowParticipantLanguage === false ? (hirePolicy.defaultLanguage || 'en-IN') : (sessionStorage.getItem('hire_proctor_language') || hirePolicy.defaultLanguage || 'en-IN');
+    import('../../utils/hireVoiceProctor').then(({ speakHireWarning }) => speakHireWarning({ language, key: 'warning', rate: hirePolicy.voiceRate, volume: hirePolicy.voiceVolume }));
+  }, [recentViolation, hirePolicy]);
 
   // 6. Start Laptop & Mobile Monitoring Loops
   useEffect(() => {

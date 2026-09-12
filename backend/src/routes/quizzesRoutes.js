@@ -20,6 +20,7 @@ const {
   TrainingTrainerAssignment,
   QuizAssignment,
   QuizCopyViolation,
+  HiringAssessment,
   ProctoringSession,
   ProctoringEvent,
   ProctoringReport
@@ -33,6 +34,9 @@ const { assertTransition } = require('../utils/quizStateMachine');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 const { assertQuizPayloadClean } = require('../services/starterCodeIntegrity');
 const availabilityService = require('../services/assessmentAvailabilityService');
+const aiService = require('../services/aiService');
+const aiQuizService = require('../services/aiQuizService');
+const { normalizeQuizDifficulty } = require('../utils/quizDifficulty');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -73,7 +77,7 @@ async function verifyTrainerAccess(req, res, quiz) {
  * POST /api/quizzes/:id/publish
  * DRAFT → PUBLISHED. Accepts optional start_time, end_time.
  */
-router.post('/:id/publish', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) => {
+async function publishQuiz(req, res) {
   try {
     const quiz = await AIQuiz.findByPk(req.params.id);
     if (!quiz) return res.status(404).json({ error: 'Quiz not found' });
@@ -84,13 +88,18 @@ router.post('/:id/publish', roleMiddleware('TRAINER', 'ADMIN'), async (req, res)
     const hasAccess = await verifyTrainerAccess(req, res, quiz);
     if (!hasAccess) return;
 
+    const questions = await AIQuestion.findAll({ where: { quizId: quiz.id } });
+    if (quiz.context === 'HIRE' && questions.length === 0) {
+      return res.status(400).json({ error: 'Add questions before publishing this hiring quiz' });
+    }
+
     // Resolve trainingId
     let trainingId = quiz.trainingId;
     if (!trainingId && quiz.courseId) {
       const course = await Course.findByPk(quiz.courseId);
       if (course && course.trainingProgramId) trainingId = course.trainingProgramId;
     }
-    if (!trainingId) {
+    if (!trainingId && quiz.context !== 'HIRE') {
       const { Training, TrainingTrainerAssignment } = require('../models');
       const { Op } = require('sequelize');
       const training = await Training.findOne({
@@ -131,7 +140,6 @@ router.post('/:id/publish', roleMiddleware('TRAINER', 'ADMIN'), async (req, res)
     await quiz.update(updateData);
 
     // Recompute total_marks from questions
-    const questions = await AIQuestion.findAll({ where: { quizId: quiz.id } });
     if (questions.length > 0) {
       const total = questions.reduce((sum, q) => sum + (q.marks || 1), 0);
       await quiz.update({ totalMarks: total });
@@ -142,7 +150,10 @@ router.post('/:id/publish', roleMiddleware('TRAINER', 'ADMIN'), async (req, res)
     // Notifications + socket event
     let participantIds = [];
     const effectiveTrainingId = trainingId || quiz.trainingId;
-    if (quiz.courseId) {
+    if (quiz.context === 'HIRE') {
+      const assignments = await QuizAssignment.findAll({ where: { quizId: quiz.id } });
+      participantIds = assignments.map(a => a.participantId);
+    } else if (quiz.courseId) {
       const enrollments = await Enrollment.findAll({ where: { courseId: quiz.courseId, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } } });
       participantIds = enrollments.map(e => e.participantId);
     } else if (effectiveTrainingId) {
@@ -161,7 +172,7 @@ router.post('/:id/publish', roleMiddleware('TRAINER', 'ADMIN'), async (req, res)
           userId: pId,
           message: `New AI Quiz Available: ${quiz.title}`,
           type: 'ANNOUNCEMENT',
-          actionUrl: quiz.courseId ? `/participant/courses/${quiz.courseId}/quizzes` : '/participant/quizzes',
+          actionUrl: quiz.context === 'HIRE' ? '/participant?tab=hiring-assessments' : quiz.courseId ? `/participant/courses/${quiz.courseId}/quizzes` : '/participant/quizzes',
           relatedEntityId: quiz.id,
           relatedEntityType: 'AI_QUIZ'
         }, io);
@@ -175,13 +186,14 @@ router.post('/:id/publish', roleMiddleware('TRAINER', 'ADMIN'), async (req, res)
     console.error('Error publishing quiz:', error);
     res.status(500).json({ error: 'Server error processing quiz request' });
   }
-});
+}
+router.post('/:id/publish', roleMiddleware('TRAINER', 'ADMIN'), publishQuiz);
 
 /**
  * POST /api/quizzes/:id/close
  * PUBLISHED → CLOSED. Manual force-close. Auto-submits any IN_PROGRESS attempts.
  */
-router.post('/:id/close', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) => {
+async function closeQuiz(req, res) {
   try {
     const quiz = await AIQuiz.findByPk(req.params.id);
     if (!quiz) return res.status(404).json({ error: 'Quiz not found' });
@@ -220,7 +232,8 @@ router.post('/:id/close', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) =
     console.error('Error closing quiz:', error);
     res.status(500).json({ error: 'Server error processing quiz request' });
   }
-});
+}
+router.post('/:id/close', roleMiddleware('TRAINER', 'ADMIN'), closeQuiz);
 
 /**
  * POST /api/quizzes/:id/unpublish
@@ -626,6 +639,17 @@ router.get('/:id', async (req, res) => {
       ]
     });
     if (!quiz) return res.status(404).json({ error: 'Quiz not found' });
+    if (quiz.context === 'HIRE') {
+      if (req.user.role === 'PARTICIPANT') {
+        const assignment = await QuizAssignment.findOne({ where: { quizId: quiz.id, participantId: req.user.id } });
+        if (!assignment) return res.status(403).json({ error: 'You are not assigned to this hiring quiz' });
+        // Attempts use the existing sanitized questions API, never authoring answers.
+        const details = quiz.toJSON();
+        delete details.questions;
+        return res.json({ quiz: details });
+      }
+      if (!await verifyTrainerAccess(req, res, quiz)) return;
+    }
     res.json({ quiz });
   } catch (error) {
     res.status(500).json({ error: 'Server error processing quiz request' });
@@ -906,6 +930,41 @@ router.post('/:id/publish-participant/:participantId', roleMiddleware('TRAINER',
 // ── Question CRUD ─────────────────────────────────────────────────────────
 
 /**
+ * POST /api/quizzes/:id/generate-questions
+ * Shared AI generation extension for an existing draft quiz. Both Training and
+ * Hire call this canonical endpoint; no Hire-specific generator or question
+ * store is involved.
+ */
+router.post('/:id/generate-questions', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) => {
+  try {
+    const quiz = await AIQuiz.findByPk(req.params.id);
+    if (!quiz) return res.status(404).json({ error: 'Quiz not found' });
+    if (!await verifyTrainerAccess(req, res, quiz)) return;
+    if (quiz.status !== 'DRAFT') return res.status(409).json({ error: 'Questions can only be generated for a draft quiz.' });
+    if (await AIQuestion.count({ where: { quizId: quiz.id } })) {
+      return res.status(409).json({ error: 'This quiz already has questions. Review or delete them before generating a new set.' });
+    }
+    const prompt = String(req.body.prompt || '').trim();
+    const questionCount = Number(req.body.questionCount || 10);
+    const difficulty = normalizeQuizDifficulty(req.body.difficulty || quiz.difficulty || 'MIXED');
+    if (!prompt) return res.status(422).json({ error: 'Describe the topics or skills to assess.' });
+    if (!Number.isInteger(questionCount) || questionCount < 1 || questionCount > 100) {
+      return res.status(422).json({ error: 'Question count must be between 1 and 100.' });
+    }
+    const questions = await aiService.generateQuizFromPrompt(prompt, questionCount, difficulty, {
+      marksPerQuestion: req.body.marksPerQuestion,
+    });
+    await aiQuizService.saveQuestions(quiz.id, questions, { difficulty });
+    const totalMarks = await AIQuestion.sum('marks', { where: { quizId: quiz.id } }) || 0;
+    await quiz.update({ numQuestions: questions.length, questionCount: questions.length, totalMarks });
+    res.status(201).json({ success: true, count: questions.length });
+  } catch (error) {
+    logger.error('AI quiz question generation failed', { error: error.message });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'AI question generation failed.' });
+  }
+});
+
+/**
  * GET /api/quizzes/:id/questions
  * Returns all questions for a quiz, ordered by `order` ASC.
  */
@@ -921,7 +980,7 @@ router.get('/:id/questions', async (req, res) => {
       attributes: [
         'id', 'courseId', 'trainingId', 'createdBy', 'status', 'timeLimit', 'title',
         'copyProtectionEnabled', 'maxCopyWarnings', 'copyViolationActions', 'copyWarningMessage', 'copyDisqualifyAction',
-        'proctoringEnabled', 'proctoringLevel', 'gracePeriodMinutes'
+        'proctoringEnabled', 'proctoringLevel', 'gracePeriodMinutes', 'context', 'startTime', 'endTime', 'timezone'
       ]
     });
     if (!quiz) {
@@ -961,23 +1020,37 @@ router.get('/:id/questions', async (req, res) => {
         });
       }
 
-      // 2. Check enrollment
-      const enrollmentCheck = await Enrollment.findOne({
-        where: {
-          participantId: userId,
-          status: 'ENROLLED',
-          [Op.or]: [
-            ...(quiz.courseId ? [{ courseId: quiz.courseId }] : []),
-            ...(quiz.trainingId ? [{ trainingId: quiz.trainingId }] : []),
-          ]
-        }
+      // 2. Check the canonical assignment first. Training participants may
+      // still fall back to enrollment; Hire participants are assigned directly.
+      const quizAssignment = await QuizAssignment.findOne({
+        where: { quizId: quiz.id, participantId: userId }
       });
+      const enrollmentScopes = [
+        ...(quiz.courseId ? [{ courseId: quiz.courseId }] : []),
+        ...(quiz.trainingId ? [{ trainingId: quiz.trainingId }] : []),
+      ];
+      const enrollmentCheck = !quizAssignment && enrollmentScopes.length
+        ? await Enrollment.findOne({
+          where: {
+            participantId: userId,
+            status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] },
+            [Op.or]: enrollmentScopes,
+          }
+        })
+        : null;
 
       console.log(`[GET /api/quizzes/${quizId}/questions] Enrollment check result for participant #${userId}:`, enrollmentCheck ? `Enrolled (ID: ${enrollmentCheck.id}, Status: ${enrollmentCheck.status})` : 'Not Enrolled');
 
-      if (!enrollmentCheck) {
+      if (!quizAssignment && !enrollmentCheck) {
         console.log(`[GET /api/quizzes/${quizId}/questions] Permission denied: Participant #${userId} is not enrolled in course #${quiz.courseId} / training #${quiz.trainingId}`);
         return res.status(403).json({ error: 'Access denied. You are not enrolled in this training.' });
+      }
+
+      const hireResolution = quiz.context === 'HIRE'
+        ? await require('../services/hireProctoringPolicy').resolvePolicy('QUIZ', quiz.id, userId)
+        : { isHire: false, assigned: false, policy: null };
+      if (quiz.context === 'HIRE' && (!hireResolution.isHire || !hireResolution.assigned)) {
+        return res.status(403).json({ error: 'Hiring assessment assignment required.' });
       }
 
       // 3. Check attempt
@@ -1042,6 +1115,7 @@ router.get('/:id/questions', async (req, res) => {
           status: hasAttempt.status,
           monitoringSessionId: resolvedMonitoringSessionId,
         },
+        hireProctoring: hireResolution.policy,
         questions: questions.map(q => ({
           id: q.id,
           questionText: q.questionText,
@@ -1340,6 +1414,13 @@ router.delete('/:id', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) => {
     const hasAccess = await verifyTrainerAccess(req, res, quiz);
     if (!hasAccess) return;
 
+    const hiringWorkflow = await HiringAssessment.findOne({ where: { quiz_id: quiz.id } });
+    if (hiringWorkflow) {
+      return res.status(409).json({
+        error: 'This quiz belongs to a Hire workflow. Delete it from Hire · Quiz + Coding Test so its workflow and assignments remain consistent.'
+      });
+    }
+
     const quizId = quiz.id;
     const { sequelize } = require('../config/db');
 
@@ -1559,6 +1640,7 @@ const startQuizAttempt = async (req, res) => {
           sessionToken: session.sessionToken,
           isResumed: true,
           admitted: !!(monitoring?.session?.metadata?.mobileAdmission),
+          hireProctoring: monitoring?.session?.metadata?.hireProctoring?.policy || null,
           quiz: {
             id: quiz.id,
             title: quiz.title,
@@ -1668,6 +1750,7 @@ const startQuizAttempt = async (req, res) => {
       attemptId: attempt.id,
       monitoringSessionId: monitoring?.session?.sessionId || monitoringSessionId,
       sessionToken: session.sessionToken,
+      hireProctoring: monitoring?.session?.metadata?.hireProctoring?.policy || null,
       quiz: {
         id: quiz.id,
         title: quiz.title,
@@ -2283,3 +2366,5 @@ router.get('/', roleMiddleware('ADMIN', 'TRAINER'), async (req, res) => {
 });
 
 module.exports = router;
+module.exports.publishQuiz = publishQuiz;
+module.exports.closeQuiz = closeQuiz;

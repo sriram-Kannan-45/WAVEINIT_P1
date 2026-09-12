@@ -24,13 +24,16 @@ export default function ScheduleInterview({ user }) {
   const { success, error: showError } = useToast()
   const [searchParams] = useSearchParams()
   const editingId = searchParams.get('edit') || searchParams.get('reschedule')
+  const requestedMode = searchParams.get('mode') === 'GROUP_DISCUSSION' ? 'GROUP_DISCUSSION' : 'INTERVIEW'
+  const source = searchParams.get('from')
+  const fromHire = source === 'hire-gd' || source === 'hire-interviews'
   const [loading, setLoading] = useState(false)
   const [candidates, setCandidates] = useState([])
   const [interviewers, setInterviewers] = useState([])
   const [fetching, setFetching] = useState(true)
   const [error, setError] = useState(null)
   const [form, setForm] = useState({
-    mode: 'INTERVIEW', candidateIds: [],
+    mode: requestedMode, context: fromHire ? 'HIRE' : 'TRAINING', candidateIds: [],
     evaluationCriteria: ['Communication','Confidence','Participation','Relevant points','Listening and interaction','Team collaboration','Subject knowledge','Leadership','Overall performance'].map(name=>({name,maxScore:10,weight:1})),
     title: '',
     candidateId: '',
@@ -45,6 +48,10 @@ export default function ScheduleInterview({ user }) {
     requireMobilePairing: true,
     recordInterview: false,
   })
+  const isHire = form.context === 'HIRE'
+  const backPath = isHire && user?.role === 'ADMIN'
+    ? `/admin?tab=${form.mode === 'GROUP_DISCUSSION' ? 'hire-gd' : 'hire-interviews'}`
+    : '/interviews'
 
   useEffect(() => {
     const load = async () => {
@@ -64,6 +71,10 @@ export default function ScheduleInterview({ user }) {
             const pad = n => String(n).padStart(2, '0')
             setForm(f => ({
               ...f,
+              mode: iv.mode || 'INTERVIEW',
+              context: iv.context || 'TRAINING',
+              candidateIds: (iv.participants || []).map(p => String(p.user_id)),
+              evaluationCriteria: iv.evaluation_criteria || f.evaluationCriteria,
               title: iv.title || '',
               candidateId: iv.candidate_id ? String(iv.candidate_id) : '',
               interviewerId: iv.interviewer_id ? String(iv.interviewer_id) : '',
@@ -105,8 +116,9 @@ export default function ScheduleInterview({ user }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (form.mode==='GROUP_DISCUSSION' ? form.candidateIds.length<2 || form.candidateIds.length>6 : !form.candidateId) {
-      showError(form.mode==='GROUP_DISCUSSION'?'Select between 2 and 6 candidates':'Please select a candidate')
+    const invalidGroupCount = isHire ? form.candidateIds.length !== 6 : form.candidateIds.length < 2 || form.candidateIds.length > 6
+    if (form.mode==='GROUP_DISCUSSION' ? invalidGroupCount : !form.candidateId) {
+      showError(form.mode==='GROUP_DISCUSSION'?(isHire?'Select exactly 6 candidates':'Select between 2 and 6 candidates'):'Please select a candidate')
       return
     }
     if (!form.interviewerId) {
@@ -130,7 +142,7 @@ export default function ScheduleInterview({ user }) {
       setLoading(true)
       const scheduledAt = new Date(`${form.date}T${form.time}`).toISOString()
       const payload = {
-        mode: form.mode, candidateIds: form.candidateIds.map(Number),
+        mode: form.mode, context: form.context, candidateIds: form.candidateIds.map(Number),
         evaluationCriteria: form.mode==='GROUP_DISCUSSION'?form.evaluationCriteria:undefined,
         candidateId: parseInt(form.candidateId, 10),
         interviewerId: parseInt(form.interviewerId, 10),
@@ -149,7 +161,7 @@ export default function ScheduleInterview({ user }) {
       } else {
         await interviewService.create(payload)
       }
-      navigate('/interviews', { state: { toast: editingId ? 'Interview updated successfully' : 'Interview scheduled successfully' } })
+      navigate(backPath, { state: { toast: editingId ? 'Interview updated successfully' : 'Interview scheduled successfully' } })
     } catch (err) {
       console.error('Failed to save interview:', err)
       const msg = err?.response?.data?.error || err?.data?.error || err?.message || (editingId ? 'Failed to update interview' : 'Failed to create interview')
@@ -177,8 +189,8 @@ export default function ScheduleInterview({ user }) {
           <p className="reg-admin-subtitle">{editingId ? 'Update the interview details and save your changes' : 'Create a normal interview or a Group Discussion'}</p>
         </div>
         <div style={{ flex: 1 }} />
-        <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => navigate('/interviews')}>
-          <ArrowLeft size={14} /> Back to Interviews
+        <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => navigate(backPath)}>
+          <ArrowLeft size={14} /> {isHire && form.mode === 'GROUP_DISCUSSION' ? 'Back to Group Discussions' : 'Back to Interviews'}
         </button>
       </div>
 
@@ -200,7 +212,8 @@ export default function ScheduleInterview({ user }) {
           <div style={{ padding: 24 }}>
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-              {!editingId&&<label style={labelStyle}>Session format<select style={selectStyle} value={form.mode} onChange={e=>setForm(f=>({...f,mode:e.target.value,meetingType:'IN_PLATFORM'}))}><option value="INTERVIEW">Normal Interview</option><option value="GROUP_DISCUSSION">Group Discussion</option></select></label>}
+              {!editingId&&<label style={labelStyle}>Session format<select style={selectStyle} value={form.mode} disabled={fromHire} onChange={e=>setForm(f=>({...f,mode:e.target.value,meetingType:'IN_PLATFORM'}))}><option value="INTERVIEW">Normal Interview</option><option value="GROUP_DISCUSSION">Group Discussion</option></select></label>}
+              {isHire && <p style={{ margin: 0, color: '#64748b' }}>Hiring session{form.mode === 'GROUP_DISCUSSION' ? ' · Select exactly 6 candidates and 1 trainer as HR/Moderator.' : ''}</p>}
               {form.mode==='GROUP_DISCUSSION'&&<fieldset style={{border:'1px solid #e2e8f0',borderRadius:8,padding:16}}><legend>Evaluation criteria</legend>
                 <p>Scores are combined using these maximum scores and weights. Configure before scheduling.</p>
                 {form.evaluationCriteria.map((c,i)=><div key={i} style={{display:'flex',gap:8,marginBottom:8}}>
@@ -393,7 +406,7 @@ export default function ScheduleInterview({ user }) {
                 <button
                   type="button"
                   className="reg-admin-btn reg-admin-btn--secondary"
-                  onClick={() => navigate('/interviews')}
+                  onClick={() => navigate(backPath)}
                   style={{ flex: '0 0 auto' }}
                 >
                   Cancel

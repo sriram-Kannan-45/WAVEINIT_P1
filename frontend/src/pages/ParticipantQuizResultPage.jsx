@@ -70,6 +70,10 @@ export default function ParticipantQuizResultPage({ user }) {
   }, [fetchResult, result]);
 
   const handleReturn = () => {
+    if (trainingId === 'hire') {
+      navigate('/participant?tab=hiring-assessments');
+      return;
+    }
     const targetCourse = (trainingId && trainingId !== '0') ? trainingId : (result?.courseId || result?.trainingId);
     if (targetCourse) {
       navigate(`/participant?tab=myEnrollments&courseId=${targetCourse}&subtab=quizzes`);

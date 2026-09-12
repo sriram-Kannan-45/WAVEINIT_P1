@@ -103,12 +103,14 @@ function ProgressRing({ percent, size = 132 }) {
 /* ──────────────────────────────────────────────────────────────────────────
    MAIN COMPONENT
    ────────────────────────────────────────────────────────────────────────── */
-function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isStandardQuiz = false, screenStream, examSession, onScreenShareResumed, onRecordingStop, monitoringSessionId = null, monitoringParticipant = null, testStartedAt = null }) {
+function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isStandardQuiz = false, screenStream, examSession, onScreenShareResumed, onRecordingStop, monitoringSessionId = null, monitoringParticipant = null, testStartedAt = null, hirePolicy: suppliedHirePolicy = null }) {
   const { error: showError, success: showSuccess } = useToast()
 
   /* ── Question / answer state ─────────────────────────────────────────── */
   const [currentQ, setCurrentQ] = useState(0)
   const [answers, setAnswers] = useState({})
+  const storedHirePolicy = useMemo(() => { try { return JSON.parse(sessionStorage.getItem(`hire_proctor_policy_${attemptId}`) || 'null') } catch { return null } }, [attemptId])
+  const hirePolicy = suppliedHirePolicy || storedHirePolicy
   const [timeLeft, setTimeLeft] = useState(() => {
     const totalSec = (quizData?.timeLimit || 30) * 60
     try {
@@ -1112,7 +1114,7 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
 
         {/* SIDEBAR — MONITORING & AI MENTOR */}
         <aside className="qt-side" aria-label="Monitoring and AI Mentor">
-          {!resultData && (
+          {!resultData && hirePolicy?.enabled !== false && (
             <div className="qt-side-card">
               <UnifiedMonitoringWidget
                 key={attemptId}
@@ -1127,6 +1129,8 @@ function QuizTaking({ quizId, attemptId, quizData, sessionToken, onSubmit, isSta
                 isPaused={isPaused}
                 testStartedAt={testStartedAt}
                 configuredDurationSeconds={(quizData?.timeLimit || 30) * 60}
+                mobileEnabled={hirePolicy ? !!hirePolicy.mobileRoomScan : true}
+                hirePolicy={hirePolicy}
               />
             </div>
           )}

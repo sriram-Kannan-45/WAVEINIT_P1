@@ -10,14 +10,19 @@ export const interviewService = {
   create: (data) => api.post(`${INTERVIEW_BASE}/create`, data),
 
   list: (params = {}) => {
-    const query = new URLSearchParams(params).toString()
+    const clean = {}
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== '' && v !== 'ALL' && v !== 'undefined') {
+        clean[k] = v
+      }
+    }
+    const query = new URLSearchParams(clean).toString()
     return api.get(`${INTERVIEW_BASE}${query ? '?' + query : ''}`)
   },
 
   get: (id) => api.get(`${INTERVIEW_BASE}/${id}`),
   report: (id) => api.get(`${INTERVIEW_BASE}/${id}/report`),
   evaluateParticipant: (id,userId,data) => api.post(`${INTERVIEW_BASE}/${id}/participants/${userId}/evaluation`,data),
-
   update: (id, data) => api.put(`${INTERVIEW_BASE}/${id}`, data),
 
   updateStatus: (id, status) => api.patch(`${INTERVIEW_BASE}/${id}/status`, { status }),
@@ -60,7 +65,10 @@ export const interviewService = {
 
   getInterviewers: () => api.get(`${INTERVIEW_BASE}/interviewers`),
 
-  getStats: () => api.get(`${INTERVIEW_BASE}/stats`),
+  getStats: (params = {}) => {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== '')).toString()
+    return api.get(`${INTERVIEW_BASE}/stats${query ? `?${query}` : ''}`)
+  },
 }
 
 export default interviewService

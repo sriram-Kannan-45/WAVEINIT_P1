@@ -240,6 +240,14 @@ const connectDB = async () => {
       logger.error('⚠️ Error bootstrapping coding schema', { error: codingBootstrapErr.message });
     }
 
+    // Ensure Hiring module schema is bootstrapped and verified.
+    try {
+      const { ensureHiringSchema } = require('./bootstrapHiringSchema');
+      await ensureHiringSchema();
+    } catch (hiringBootstrapErr) {
+      logger.error('⚠️ Error bootstrapping hiring schema', { error: hiringBootstrapErr.message });
+    }
+
     // Ensure lesson status column exists for training progress tracking
     try {
       if (isPostgres) {

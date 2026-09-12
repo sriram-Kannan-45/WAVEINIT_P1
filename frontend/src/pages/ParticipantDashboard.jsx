@@ -22,6 +22,7 @@ import StudentLeaderboardView from '../components/student/leaderboard/StudentLea
 import StudentProgressView from '../components/student/progress/StudentProgressView'
 import StudentFeedbackModal from '../components/student/feedback/StudentFeedbackModal'
 import CertificateModal from '../components/common/CertificateModal'
+import ParticipantHiringAssessments from '../components/participant/ParticipantHiringAssessments'
 import { useContinueLearning } from '../hooks/useContinueLearning'
 import { Button, Badge, Table, PageHeader, EmptyState, StatCard, ProgressBar } from '../components/ui'
 import { useSocketEvent } from '../hooks/useSocket'
@@ -625,6 +626,12 @@ function ParticipantDashboard({ user, onLogout, activeTab, onTabChange }) {
             onResume={handleResume}
             onTabChange={handleTabChange}
           />
+        </motion.div>
+      )}
+
+      {tab === 'hiring-assessments' && (
+        <motion.div key="hiring-assessments" {...fadeVariant} transition={{ duration: 0.25 }}>
+          <ParticipantHiringAssessments user={user} />
         </motion.div>
       )}
 

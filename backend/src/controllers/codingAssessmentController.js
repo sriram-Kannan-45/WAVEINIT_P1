@@ -4,7 +4,8 @@ const {
   CodingAssessment, CodingProblem, CodingProblemLanguage, CodingTestCase, CodingAttempt, CodingSubmission, CodingResult, CodingAiHelp,
   AssessmentSession, ExamSession, Violation, ProctorActivity, Screenshot,
   ProctoringSession, ProctoringEvent, ProctoringReport, MonitoringSession,
-  Training, Course, CourseTrainerAssignment, TrainingTrainerAssignment, User, QuizRecording
+  Training, Course, CourseTrainerAssignment, TrainingTrainerAssignment, User, QuizRecording,
+  Enrollment, HiringAssessment, HiringAssignment
 } = require('../models');
 const logger = require('../utils/logger');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
@@ -45,6 +46,33 @@ async function canManageAssessment(user, assessment) {
     }
   }
   return false;
+}
+
+async function participantCanAccessAssessment(participantId, assessment) {
+  if (!participantId || !assessment) return false;
+  if (assessment.context === 'HIRE') {
+    const workflow = await HiringAssessment.findOne({
+      where: { coding_assessment_id: assessment.id, assessment_type: 'CODING' },
+      attributes: ['id'],
+    });
+    if (!workflow) return false;
+    return Boolean(await HiringAssignment.findOne({
+      where: { assessment_id: workflow.id, participant_id: participantId },
+      attributes: ['id'],
+    }));
+  }
+  const conditions = [];
+  if (assessment.courseId) conditions.push({ courseId: assessment.courseId });
+  if (assessment.trainingId) conditions.push({ trainingId: assessment.trainingId });
+  if (!conditions.length) return false;
+  return Boolean(await Enrollment.findOne({
+    where: {
+      participantId,
+      status: { [Op.in]: ['ENROLLED', 'COMPLETED'] },
+      [Op.or]: conditions,
+    },
+    attributes: ['id'],
+  }));
 }
 
 const normalizeAssessmentDifficulty = (d) => {
@@ -242,7 +270,7 @@ exports.list = async (req, res) => {
     const { page, limit, offset } = parsePagination(req.query, 10, 100);
     const isPaginated = !!(req.query.page || req.query.limit || req.query.offset !== undefined);
 
-    const where = {};
+    const where = { context: String(req.query.context || 'TRAINING').toUpperCase() === 'HIRE' ? 'HIRE' : 'TRAINING' };
     if (resolvedCourseId) {
       where.courseId = resolvedCourseId;
     } else if (resolvedTrainingId) {
@@ -317,6 +345,7 @@ exports.getOne = async (req, res) => {
 
     if (isParticipant) {
       if (assessment.status !== 'PUBLISHED') return fail(res, 403, 'Assessment is not available');
+      if (!await participantCanAccessAssessment(req.user.id, assessment)) return fail(res, 403, 'Assessment is not assigned to you');
       // For participants: do NOT expose reference solutions or hidden test cases.
       // Load user's saved/submitted code for a SINGLE attempt only (strict isolation).
       // NEVER merge submissions across attempts: code/answers from one attempt must not
@@ -433,7 +462,10 @@ exports.getOne = async (req, res) => {
 
       const assessmentJson = assessment.toJSON();
       assessmentJson.problems = problemsJson;
-      return ok(res, { assessment: assessmentJson });
+      const hireResolution = assessment.context === 'HIRE'
+        ? await require('../services/hireProctoringPolicy').resolvePolicy('CODING', assessment.id, req.user.id)
+        : { policy: null };
+      return ok(res, { assessment: assessmentJson, hireProctoring: hireResolution.policy });
     }
 
     // Trainer / admin: expose full per-language config (including reference solutions).
@@ -466,6 +498,7 @@ exports.create = async (req, res) => {
     const assessment = await CodingAssessment.create({
       title: title || 'Untitled Coding Assessment', description, timeLimit,
       difficulty: normalizeAssessmentDifficulty(difficulty), courseId: resolvedCourseId, trainingId: resolvedTrainingId,
+      context: String(req.body.context || 'TRAINING').toUpperCase() === 'HIRE' ? 'HIRE' : 'TRAINING',
       languages: Array.isArray(languages) ? languages : ['javascript'],
       startTime: startTime ? new Date(startTime) : null,
       endTime: endTime ? new Date(endTime) : null,
@@ -608,6 +641,11 @@ exports.destroy = async (req, res) => {
     const allowed = await canManageAssessment(req.user, assessment);
     if (!allowed) return fail(res, 403, 'Permission denied');
 
+    const hiringWorkflow = await HiringAssessment.findOne({ where: { coding_assessment_id: assessment.id } });
+    if (hiringWorkflow) {
+      return fail(res, 409, 'This coding assessment belongs to a Hire workflow. Delete it from Hire · Quiz + Coding Test so its workflow and assignments remain consistent.');
+    }
+
     await sequelize.transaction(async (t) => {
       await deleteAssessmentsCascade([assessment.id], t);
     });
@@ -644,6 +682,14 @@ exports.bulkDestroy = async (req, res) => {
     }
 
     const foundIds = allowedAssessments.map(a => a.id);
+
+    const protectedWorkflows = await HiringAssessment.findAll({
+      where: { coding_assessment_id: { [Op.in]: foundIds } },
+      attributes: ['coding_assessment_id'],
+    });
+    if (protectedWorkflows.length > 0) {
+      return fail(res, 409, 'One or more selected assessments belong to a Hire workflow. Delete them from Hire · Quiz + Coding Test.');
+    }
 
     await sequelize.transaction(async (t) => {
       await deleteAssessmentsCascade(foundIds, t);
@@ -1327,8 +1373,9 @@ exports.generateLanguageCode = async (req, res) => {
 
 exports.publish = async (req, res) => {
   try {
-    const assessment = await CodingAssessment.findOne({ where: { id: req.params.id, trainerId: req.user.id } });
+    const assessment = await CodingAssessment.findByPk(req.params.id);
     if (!assessment) return fail(res, 404, 'Assessment not found');
+    if (!await canManageAssessment(req.user, assessment)) return fail(res, 403, 'Permission denied');
     if (assessment.status !== 'DRAFT') return fail(res, 400, 'Assessment is not in DRAFT status');
     const problems = await CodingProblem.findAll({
       where: { assessmentId: assessment.id },
@@ -1413,7 +1460,11 @@ exports.publish = async (req, res) => {
         const io = req.app?.get('io');
 
         let enrollments = [];
-        if (assessment.courseId) {
+        if (assessment.context === 'HIRE') {
+          const workflow = await HiringAssessment.findOne({ where: { coding_assessment_id: assessment.id } });
+          const assignments = workflow ? await HiringAssignment.findAll({ where: { assessment_id: workflow.id } }) : [];
+          enrollments = assignments.map(a => ({ participantId: a.participant_id }));
+        } else if (assessment.courseId) {
           enrollments = await Enrollment.findAll({ where: { courseId: assessment.courseId, status: 'ENROLLED' }, attributes: ['participantId'] });
         } else if (assessment.trainingId) {
           enrollments = await Enrollment.findAll({ where: { trainingId: assessment.trainingId, status: 'ENROLLED' }, attributes: ['participantId'] });
@@ -1432,7 +1483,7 @@ exports.publish = async (req, res) => {
                 category: NotificationService.CATEGORIES.ACADEMIC || 'ACADEMIC',
                 relatedEntityType: 'coding_assessment',
                 relatedEntityId: assessment.id,
-                actionUrl: `/participant/coding/${assessment.id}`,
+                actionUrl: assessment.context === 'HIRE' ? '/participant?tab=hiring-assessments' : `/participant/coding/${assessment.id}`,
                 priority: 'HIGH',
               }, io).catch(() => {})
             )
@@ -1452,8 +1503,9 @@ exports.publish = async (req, res) => {
 
 exports.close = async (req, res) => {
   try {
-    const assessment = await CodingAssessment.findOne({ where: { id: req.params.id, trainerId: req.user.id } });
+    const assessment = await CodingAssessment.findByPk(req.params.id);
     if (!assessment) return fail(res, 404, 'Assessment not found');
+    if (!await canManageAssessment(req.user, assessment)) return fail(res, 403, 'Permission denied');
     await CodingAttempt.update({ status: 'AUTO_SUBMITTED', submittedAt: new Date() }, {
       where: { assessmentId: assessment.id, status: 'IN_PROGRESS' }
     });
@@ -1594,7 +1646,7 @@ exports.start = async (req, res) => {
   try {
     const { assessmentId } = req.params;
     const participantId = req.user.id;
-    const { Enrollment, AssessmentSession } = require('../models');
+    const { AssessmentSession } = require('../models');
 
     const assessment = await CodingAssessment.findByPk(assessmentId);
     if (!assessment || assessment.status !== 'PUBLISHED') {
@@ -1625,18 +1677,11 @@ exports.start = async (req, res) => {
     console.log('training_id:', trainingId);
     console.log('lesson_id:', lessonId);
 
-    // 1. Verify access via enrollment (both courseId and trainingId)
-    const enrollmentCheck = await Enrollment.findOne({
-      where: {
-        participantId,
-        status: 'ENROLLED',
-        [Op.or]: [
-          ...(assessment.courseId ? [{ courseId: assessment.courseId }] : []),
-          ...(assessment.trainingId ? [{ trainingId: assessment.trainingId }] : []),
-        ]
-      }
-    });
-    if (!enrollmentCheck) return fail(res, 403, 'Participant not enrolled');
+    // 1. Reuse the normal enrollment gate for training and the Hire workflow
+    // assignment gate for recruitment. No parallel coding assignment engine.
+    if (!await participantCanAccessAssessment(participantId, assessment)) {
+      return fail(res, 403, assessment.context === 'HIRE' ? 'Assessment is not assigned to you' : 'Participant not enrolled');
+    }
 
     // 2. Check for duplicate attempts (respect allowMultipleAttempts)
     if (!assessment.allowMultipleAttempts) {
@@ -1707,6 +1752,7 @@ exports.start = async (req, res) => {
     }
 
     let monitoringSessionId = attempt.monitoringSessionId || null;
+    let hireProctoring = null;
     try {
       const monitoringService = require('../services/monitoringService');
       const { session: monSession } = await monitoringService.startSession({
@@ -1718,6 +1764,7 @@ exports.start = async (req, res) => {
       });
       if (monSession?.sessionId) {
         monitoringSessionId = monSession.sessionId;
+        hireProctoring = monSession.metadata?.hireProctoring?.policy || null;
         await attempt.update({ monitoringSessionId });
       }
     } catch (monErr) {
@@ -1731,6 +1778,7 @@ exports.start = async (req, res) => {
       attemptId: attempt.id,
       sessionToken: session.sessionToken,
       monitoringSessionId,
+      hireProctoring,
       assessment: {
         id: assessment.id,
         title: assessment.title,

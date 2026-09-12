@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useCallback, useEffect, useRef } from 'react'
+import React, { createContext, useState, useContext, useCallback, useEffect, useRef, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useLocation } from 'react-router-dom'
 import { Check, AlertCircle, Info, X, AlertTriangle } from 'lucide-react'
@@ -105,8 +105,11 @@ export const ToastProvider = ({ children }) => {
   toastFn.info = info
   toastFn.warning = warning
 
+  const contextValue = useMemo(() => ({ addToast, removeToast, success, error, info, warning, toast: toastFn }),
+    [addToast, removeToast, success, error, info, warning, toastFn])
+
   return (
-    <ToastContext.Provider value={{ addToast, removeToast, success, error, info, warning, toast: toastFn }}>
+    <ToastContext.Provider value={contextValue}>
       {children}
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </ToastContext.Provider>
@@ -118,12 +121,8 @@ export const useToast = () => {
   if (!context) {
     throw new Error('useToast must be used within ToastProvider')
   }
-  // Return context directly, but also allow calling as toast.success() or { success, error }
-  const result = {
-    ...context,
-    toast: context.toast || context,
-  }
-  return result
+  // Consumers use this object in effect dependencies; preserve its identity.
+  return context
 }
 
 const toastStyles = {

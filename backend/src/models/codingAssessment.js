@@ -22,6 +22,13 @@ const CodingAssessment = sequelize.define('CodingAssessment', {
     allowNull: false,
     field: 'trainer_id'
   },
+  context: {
+    type: DataTypes.STRING(16),
+    allowNull: false,
+    defaultValue: 'TRAINING',
+    validate: { isIn: [['TRAINING', 'HIRE']] },
+    comment: 'Business workflow using this shared coding engine.'
+  },
   title: {
     type: DataTypes.STRING,
     allowNull: false

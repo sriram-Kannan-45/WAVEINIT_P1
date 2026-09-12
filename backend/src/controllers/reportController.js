@@ -1,7 +1,9 @@
 const {
   User, Training, Lesson, Enrollment, Feedback, AIQuiz, QuizResult,
   AssessmentSubmission, LessonProgress, Certificate, ParticipantTracking,
-  LessonAssessment, Course, TrainingTrainerAssignment, CourseTrainerAssignment
+  LessonAssessment, Course, TrainingTrainerAssignment, CourseTrainerAssignment,
+  HiringAssessment, HiringCandidate, HiringAssignment, CodingAssessment, CodingAttempt,
+  QuizAttempt, Interview, InterviewParticipant
 } = require('../models');
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/db');
@@ -12,6 +14,31 @@ const getAdminReport = async (req, res) => {
   try {
     if (req.user.role !== 'ADMIN') {
       return res.status(403).json({ error: 'Access denied: Admin role required' });
+    }
+
+    // Recruitment is a filter on the existing report endpoint. Detail links
+    // lead to the canonical quiz, coding and interview report screens.
+    if (String(req.query.context || '').toUpperCase() === 'HIRE') {
+      const [workflows, sessions, assessmentCount, sessionCount, pending, assigned] = await Promise.all([
+        HiringAssessment.findAll({ include: [{model:AIQuiz,as:'quiz'}, {model:CodingAssessment,as:'codingAssessment'}], order:[['created_at','DESC']], limit:100 }),
+        Interview.findAll({ where:{context:'HIRE'}, include:[{model:InterviewParticipant,as:'participants',attributes:['evaluation']}], order:[['scheduled_at','DESC']], limit:100 }),
+        HiringAssessment.count(), Interview.count({where:{context:'HIRE'}}),
+        HiringCandidate.count({where:{registration_status:{[Op.ne]:'REGISTERED'}}}),
+        HiringAssignment.count(),
+      ]);
+      const records = [];
+      for (const workflow of workflows) {
+        const coding=workflow.assessment_type==='CODING';
+        const engine=coding?workflow.codingAssessment:workflow.quiz;
+        const engineId=coding?workflow.coding_assessment_id:workflow.quiz_id;
+        const completed=engineId?await (coding?CodingAttempt:QuizAttempt).count({where:{[coding?'assessmentId':'quizId']:engineId,status:{[Op.in]:['SUBMITTED','AUTO_SUBMITTED','EVALUATED']}}}):0;
+        records.push({id:`assessment-${workflow.id}`,title:engine?.title||workflow.title,type:coding?'Coding':'Quiz',status:engine?.status||'DRAFT',completed,
+          reportUrl:engineId?`/trainer/${coding?'coding':'quiz'}/${engineId}?from=hire`:null});
+      }
+      for (const session of sessions) records.push({id:`interview-${session.id}`,title:session.title||`Session #${session.id}`,type:session.mode==='GROUP_DISCUSSION'?'Group Discussion':'Interview',status:session.status,
+        completed:(session.participants||[]).filter(p=>p.evaluation).length,
+        reportUrl:`/interview/${session.id}?from=${session.mode==='GROUP_DISCUSSION'?'hire-gd':'hire-interviews'}`});
+      return res.json({success:true,data:{context:'HIRE',assessmentCount,sessionCount,pending,assigned,records}});
     }
 
     if (req.query.fresh !== 'true') {

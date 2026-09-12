@@ -117,6 +117,12 @@ const ProfileActivityLog = require('./ProfileActivityLog');
 // Interview Module
 const Interview = require('./interview');
 const InterviewSession = require('./InterviewSession');
+
+// Hiring workflow metadata. Questions, attempts, grading and execution remain
+// owned by the canonical Quiz/Coding models above.
+const HiringAssessment = require('./HiringAssessment');
+const HiringCandidate = require('./HiringCandidate');
+const HiringAssignment = require('./HiringAssignment');
 const InterviewDevice = require('./interviewDevice');
 const InterviewRecording = require('./interviewRecording');
 const InterviewLog = require('./interviewLog');
@@ -527,6 +533,26 @@ InterviewResult.belongsTo(InterviewSession, { foreignKey: 'session_id', as: 'ses
 InterviewResult.belongsTo(User, { foreignKey: 'decided_by', as: 'decidedBy' });
 User.hasMany(InterviewResult, { foreignKey: 'decided_by', as: 'interviewResults' });
 
+// --- Hiring Module Associations ---
+HiringAssessment.belongsTo(User, { foreignKey: 'created_by', as: 'creator' });
+HiringAssessment.belongsTo(User, { foreignKey: 'published_by', as: 'publisher' });
+User.hasMany(HiringAssessment, { foreignKey: 'created_by', as: 'hiringAssessments' });
+
+HiringAssessment.belongsTo(AIQuiz, { foreignKey: 'quiz_id', as: 'quiz' });
+HiringAssessment.belongsTo(CodingAssessment, { foreignKey: 'coding_assessment_id', as: 'codingAssessment' });
+
+HiringAssessment.hasMany(HiringCandidate, { foreignKey: 'assessment_id', as: 'candidates' });
+HiringCandidate.belongsTo(HiringAssessment, { foreignKey: 'assessment_id', as: 'assessment' });
+HiringCandidate.belongsTo(User, { foreignKey: 'created_by', as: 'creator' });
+HiringCandidate.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+
+HiringAssessment.hasMany(HiringAssignment, { foreignKey: 'assessment_id', as: 'assignments' });
+HiringAssignment.belongsTo(HiringAssessment, { foreignKey: 'assessment_id', as: 'assessment' });
+HiringAssignment.belongsTo(HiringCandidate, { foreignKey: 'candidate_id', as: 'candidate' });
+HiringAssignment.belongsTo(User, { foreignKey: 'participant_id', as: 'participant' });
+HiringAssignment.belongsTo(QuizAssignment, { foreignKey: 'quiz_assignment_id', as: 'quizAssignment' });
+HiringCandidate.hasMany(HiringAssignment, { foreignKey: 'candidate_id', as: 'assignments' });
+
 // Unified Monitoring Engine Associations
 User.hasMany(MonitoringSession, { foreignKey: 'participantId', as: 'monitoringSessions' });
 MonitoringSession.belongsTo(User, { foreignKey: 'participantId', as: 'participant' });
@@ -636,7 +662,7 @@ module.exports = {
   ProfileProject,
   ProfileContactLink,
   ProfileActivityLog,
-  // Interview Module
+// Interview Module
   Interview,
   InterviewSession,
   InterviewDevice,
@@ -647,6 +673,10 @@ module.exports = {
   InterviewResult,
   InterviewNotes,
   InterviewParticipant,
+  // Hiring Module
+  HiringAssessment,
+  HiringCandidate,
+  HiringAssignment,
   // Core Enhancements
   AttendanceSession,
   AttendanceRecord,

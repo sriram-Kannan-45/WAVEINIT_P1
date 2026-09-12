@@ -32,6 +32,7 @@ const VALID_CATEGORIES = new Set([
   'screenshots',
   'monitor-screenshots',
   'monitoring-videos',
+  'hire-proctoring',
   'interviews',
   'bulk-import',
   'registrations',
@@ -88,7 +89,7 @@ async function authorizeFileAccess(user, category, subPath, filename) {
 
   // TRAINERS have access to review student submissions, materials, interviews, screenshots, etc.
   if (role === 'TRAINER') {
-    if (['bulk-import'].includes(category)) {
+    if (['bulk-import', 'hire-proctoring'].includes(category)) {
       return false; // bulk imports are admin only
     }
     return true;
@@ -160,6 +161,16 @@ async function authorizeFileAccess(user, category, subPath, filename) {
         }).catch(() => null);
         if (session) return true;
         return false;
+      }
+
+      if (category === 'hire-proctoring') {
+        const sessionId = subPath ? subPath.split('/')[0] : null;
+        if (!sessionId) return false;
+        const monitor = await models.MonitoringSession.findOne({
+          where: { sessionId, participantId: userId },
+          attributes: ['id'],
+        }).catch(() => null);
+        return Boolean(monitor);
       }
 
       if (category === 'interviews') {

@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { AlertCircle, BookOpen, Check, CheckCircle2, ClipboardList, Clock, Eye, FileText, Layers, Loader2, MessageSquare, Plus, RefreshCw, Search, Star, Trash2, TrendingUp, Trophy, User, UserCheck, UserPlus, Users, X, XCircle } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { API, API_BASE } from '../api/api'
 import { fetchWithTimeout } from '../api/request'
@@ -18,6 +18,8 @@ import AdminPagination from '../components/common/AdminPagination'
 import BulkDeleteConfirmModal from '../components/admin/BulkDeleteConfirmModal'
 import AdminAttendanceAnalytics from '../components/admin/attendance/AdminAttendanceAnalytics'
 import AdminFeedbackAnalytics from '../components/admin/feedback/AdminFeedbackAnalytics'
+import HireAssessmentsTab from '../components/admin/hire/HireAssessmentsTab'
+import InterviewDashboard from './interview/InterviewDashboard'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'
@@ -72,6 +74,9 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
   const [editModal, setEditModal] = useState(null)
   const [editForm, setEditForm] = useState({})
   const [adminReport, setAdminReport] = useState(null)
+  const [reportContext, setReportContext] = useState('TRAINING')
+  const [reportError, setReportError] = useState('')
+  const reportRequest = useRef(0)
 
   // Trainers pagination & filters & selection
   const [trainerSearch, setTrainerSearch] = useState('')
@@ -150,17 +155,24 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
 
   const auth = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${user.token}` })
 
-  const fetchAdminReport = async () => {
+  const fetchAdminReport = useCallback(async () => {
+    const request = ++reportRequest.current
+    setReportError('')
     try {
-      const r = await fetchWithTimeout(`${API_BASE}/reports/admin`, { headers: auth() }, 12000)
+      const r = await fetchWithTimeout(`${API_BASE}/reports/admin?context=${reportContext}`, { headers: { Authorization: `Bearer ${user.token}` } }, 12000)
       const d = await r.json().catch(() => ({}))
       if (r.ok && d.success) {
-        setAdminReport(d.data)
-      }
+        if (request === reportRequest.current) setAdminReport(d.data)
+      } else throw new Error(d.error || 'Could not load report')
     } catch (e) {
-      console.error('fetchAdminReport error:', e.message)
+      if (request === reportRequest.current) setReportError(e.message || 'Could not load report')
     }
-  }
+  }, [reportContext, user.token])
+
+  useEffect(() => {
+    if (tab === 'reports') { setAdminReport(null); fetchAdminReport() }
+    return () => { reportRequest.current += 1 }
+  }, [fetchAdminReport, tab])
 
   const fetchDashboardSummary = async (refresh = false) => {
     setSummaryLoading(true)
@@ -211,8 +223,6 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
   useEffect(() => {
     if (tab === 'overview') {
       fetchDashboardSummary()
-    } else if (tab === 'reports') {
-      fetchAdminReport()
     } else if (tab === 'trainers') {
       fetchTrainers(trainerPage, trainerLimit, trainerSearch)
     } else if (tab === 'createTraining' || tab === 'createTrainer') {
@@ -2440,13 +2450,29 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
               <p className="reg-admin-subtitle">Platform-wide metrics, performance insights, and engagement data.</p>
             </div>
             <div style={{ flex: 1 }} />
+            <select aria-label="Report context" className="reg-admin-select" value={reportContext} onChange={e => setReportContext(e.target.value)}>
+              <option value="TRAINING">Training</option><option value="HIRE">Hire</option>
+            </select>
             <button className="reg-admin-btn reg-admin-btn--secondary" onClick={fetchAdminReport}>
               <RefreshCw size={14} /> Refresh Report
             </button>
           </div>
 
-          {!adminReport ? (
+          {reportError ? <div role="alert"><p>{reportError}</p><button className="reg-admin-btn reg-admin-btn--secondary" onClick={fetchAdminReport}>Retry report</button></div> : !adminReport ? (
             <div className="reg-admin-loading"><Loader2 size={24} className="bulk-spin" /><p>Loading reports data...</p></div>
+          ) : adminReport.context === 'HIRE' ? (
+            <div>
+              <div className="reg-admin-stats">
+                {[['Assessments',adminReport.assessmentCount],['Interview / GD sessions',adminReport.sessionCount],['Candidates assigned',adminReport.assigned],['Pending registration',adminReport.pending]].map(([label,value]) => <div className="reg-admin-stat" key={label}><div><span className="reg-admin-stat-num">{value||0}</span><span className="reg-admin-stat-label">{label}</span></div></div>)}
+              </div>
+              <div className="reg-admin-table-wrap" style={{overflowX:'auto'}}>
+                <div className="reg-card-header"><div><div className="reg-card-title">Hiring results</div><div className="reg-card-subtitle">Latest 100 assessments and 100 sessions. Open a report for scores, monitoring and exports.</div></div></div>
+                <table className="reg-admin-table"><thead><tr><th>Title</th><th>Type</th><th>Status</th><th>Completed attempts / evaluations</th><th>Report</th></tr></thead><tbody>
+                  {adminReport.records.map(row => <tr key={row.id}><td>{row.title}</td><td>{row.type}</td><td>{row.status}</td><td>{row.completed}</td><td><button className="reg-admin-btn reg-admin-btn--secondary" disabled={!row.reportUrl} onClick={() => navigate(row.reportUrl)}>Open report</button></td></tr>)}
+                  {!adminReport.records.length && <tr><td colSpan="5">No hiring activity yet.</td></tr>}
+                </tbody></table>
+              </div>
+            </div>
           ) : (
             <div>
               <div className="reg-admin-stats">
@@ -2533,6 +2559,21 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
             </div>
           )}
         </motion.div>
+      )}
+
+      {/* ── HIRE: QUIZ + CODING ASSESSMENTS ── */}
+      {tab === 'hire-assessments' && (
+        <HireAssessmentsTab user={user} />
+      )}
+
+      {/* ── HIRE: 1-TO-1 INTERVIEW ── */}
+      {tab === 'hire-interviews' && (
+        <InterviewDashboard user={user} initialMode="INTERVIEW" />
+      )}
+
+      {/* ── HIRE: GROUP DISCUSSION (GD) ── */}
+      {tab === 'hire-gd' && (
+        <InterviewDashboard user={user} initialMode="GROUP_DISCUSSION" />
       )}
 
       {/* ── EDIT MODAL ── */}

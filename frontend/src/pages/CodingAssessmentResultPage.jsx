@@ -5,7 +5,8 @@ import { API_BASE } from '../api/api';
 
 export default function CodingAssessmentResultPage() {
   const navigate = useNavigate();
-  const { id: assessmentId } = useParams();
+  const { assessmentId, trainingId } = useParams();
+  const returnPath = trainingId === 'hire' ? '/participant?tab=hiring-assessments' : '/participant';
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
@@ -67,7 +68,7 @@ export default function CodingAssessmentResultPage() {
         <p style={{ color: '#64748b', fontSize: '14px', marginBottom: '24px' }}>{error}</p>
         <button
           type="button"
-          onClick={() => navigate('/participant')}
+          onClick={() => navigate(returnPath)}
           style={{
             display: 'inline-flex',
             alignItems: 'center',
@@ -274,7 +275,7 @@ export default function CodingAssessmentResultPage() {
         <div style={{ textAlign: 'center' }}>
           <button
             type="button"
-            onClick={() => navigate('/participant')}
+            onClick={() => navigate(returnPath)}
             style={{
               display: 'inline-flex',
               alignItems: 'center',

@@ -353,6 +353,9 @@ class MonitoringEngineService {
     if (!participantId) throw new Error('participantId is required');
 
     const normalizedContext = String(contextType).toUpperCase();
+    const hire = await require('./hireProctoringPolicy').resolvePolicy(normalizedContext, contextId, participantId);
+    if (hire.isHire && !hire.assigned) throw new Error('Participant is not assigned to this hiring assessment');
+    const effectiveMobileEnabled = hire.isHire ? Boolean(hire.policy.enabled && hire.policy.mobileRoomScan) : !!mobileEnabled;
     const sessionId = `ms_${normalizedContext.toLowerCase()}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
 
     // Check if an active session already exists for this attempt/context
@@ -366,6 +369,11 @@ class MonitoringEngineService {
         },
       });
       if (existing) {
+        if (hire.isHire) await existing.update({
+          mobileEnabled: effectiveMobileEnabled,
+          mobileStatus: effectiveMobileEnabled ? existing.mobileStatus : 'DISABLED',
+          metadata: { ...(existing.metadata || {}), hireProctoring: { ...(existing.metadata?.hireProctoring || {}), policy: hire.policy, assessmentId: hire.workflow.id } },
+        });
         await this._linkAttemptToMonitoringSession(existing, normalizedContext, attemptId);
         return { session: existing, isResumed: true };
       }
@@ -377,19 +385,20 @@ class MonitoringEngineService {
       contextType: normalizedContext,
       contextId: contextId ? Number(contextId) : null,
       attemptId: attemptId ? Number(attemptId) : null,
-      laptopStatus: 'CALIBRATING',
-      mobileStatus: mobileEnabled ? 'PAIRING' : 'DISABLED',
-      mobileEnabled: !!mobileEnabled,
+      laptopStatus: hire.isHire && !hire.policy.enabled ? 'DISABLED' : 'CALIBRATING',
+      mobileStatus: effectiveMobileEnabled ? 'PAIRING' : 'DISABLED',
+      mobileEnabled: effectiveMobileEnabled,
       calibrationPassed: false,
       score: 0.0,
       riskLevel: 'LOW',
       status: 'CALIBRATING',
       startedAt: new Date(),
       integrityFlags: [],
+      metadata: hire.isHire ? { hireProctoring: { policy: hire.policy, assessmentId: hire.workflow.id } } : null,
     });
 
     // If mobile is enabled, pre-generate single-use pairing token
-    if (mobileEnabled) {
+    if (effectiveMobileEnabled) {
       await this.generateMobilePairingToken({ sessionId: session.sessionId, participantId });
       await session.reload();
     }
@@ -1178,7 +1187,7 @@ class MonitoringEngineService {
     const session = await this.getSession(sessionId, { transaction, lock: { level: transaction.LOCK.UPDATE, of: MonitoringSession } });
     if (!session) throw new Error('Monitoring session not found');
 
-    if(session.contextType==='INTERVIEW' && participantId && String(participantId)!==String(session.participantId)) throw new Error('This monitoring session belongs to another candidate');
+    if(participantId && String(participantId)!==String(session.participantId)) throw new Error('This monitoring session belongs to another candidate');
 
     // Ensure session.attemptId is resolved if not present
     let resolvedAttemptId = attemptId || session.attemptId;
@@ -1234,7 +1243,8 @@ class MonitoringEngineService {
     const discreteBrowserIncident = browserEvent && typeof metadata.browserIncidentId === 'string' && metadata.browserIncidentId.length <= 128 && Number(durationMs) >= 2000;
 
     // Ensure test is active and event is not from pre-test calibration
-    if (session.status !== 'ACTIVE' && session.status !== 'PAUSED' && !(discreteBrowserIncident && session.status === 'COMPLETED' && session.endedAt && validReportedAt <= new Date(session.endedAt))) {
+    const preflightSecurityEvent = ['IDENTITY_MISMATCH', 'LIVENESS_FAILED', 'ROOM_SCAN_OBJECT_DETECTED'].includes(eventType);
+    if (session.status !== 'ACTIVE' && session.status !== 'PAUSED' && !preflightSecurityEvent && !(discreteBrowserIncident && session.status === 'COMPLETED' && session.endedAt && validReportedAt <= new Date(session.endedAt))) {
       logger.info(`[MonitoringEngine] Dropping pre-test event ${eventType} for session ${sessionId} (status=${session.status})`);
       return { skipped: true, reason: 'TEST_NOT_ACTIVE', session };
     }
@@ -1287,7 +1297,7 @@ class MonitoringEngineService {
       where: { monitoringSessionId: session.sessionId, eventType: { [Op.in]: [...BROWSER_EVENT_TYPES] } },
     }) : [];
     const browserSwitchCount = aggregateMonitoringEvents(priorBrowserEvents.map(row => row.toJSON ? row.toJSON() : row)).length + 1;
-    const isGraceWarning = mobilePhone ? false : browserEvent ? browserSwitchCount <= BROWSER_SWITCH_LIMIT : existingEventsCount < 3;
+    const isGraceWarning = (mobilePhone || preflightSecurityEvent) ? false : browserEvent ? browserSwitchCount <= BROWSER_SWITCH_LIMIT : existingEventsCount < 3;
     const warningNumber = browserEvent ? browserSwitchCount : existingEventsCount + 1;
     const effectiveScoreDelta = mobilePhone ? 10 : browserEvent
       ? (browserSwitchCount === BROWSER_SWITCH_LIMIT + 1 ? BROWSER_SWITCH_PENALTY : 0)
@@ -1306,6 +1316,9 @@ class MonitoringEngineService {
       PHONE_DETECTED: 'Mobile device detected in testing space',
       SECONDARY_DEVICE: 'Secondary screen or unauthorized device detected',
       BOOK_NOTES_DETECTED: 'Unauthorized books or notes detected',
+      IDENTITY_MISMATCH: 'Identity mismatch detected — return to the camera immediately',
+      LIVENESS_FAILED: 'Liveness check failed — follow the identity instructions and retry',
+      ROOM_SCAN_OBJECT_DETECTED: 'Unauthorized object detected during the room scan',
       FULLSCREEN_EXIT: 'Exited fullscreen mode — please return to fullscreen immediately',
       TAB_SWITCH: 'Switched browser tab — please stay on the assessment tab',
       WINDOW_BLUR: 'Exam window lost focus — please click back into your assessment',
@@ -1996,7 +2009,10 @@ class MonitoringEngineService {
     const tabSwitchScore = tabSwitchCount > BROWSER_SWITCH_LIMIT ? BROWSER_SWITCH_PENALTY : 0;
 
     // Total Malpractice Audit Score out of 100 Marks
-    const finalScore = Math.min(100.0, Math.max(0.0, eyeHeadScore + mobileScore + multiFaceScore + noPersonScore + tabSwitchScore));
+    const hireSecurityScore = Math.min(30, scoredEvents
+      .filter(event => ['IDENTITY_MISMATCH', 'LIVENESS_FAILED', 'ROOM_SCAN_OBJECT_DETECTED'].includes(event.eventType))
+      .reduce((sum, event) => sum + Math.max(0, Number(event.scoreDelta) || 0), 0));
+    const finalScore = Math.min(100.0, Math.max(0.0, eyeHeadScore + mobileScore + multiFaceScore + noPersonScore + tabSwitchScore + hireSecurityScore));
 
     const coverage = {
       faceDetection: `${Math.max(0, Math.min(100, Math.round(100 - (faceAbsentSec / totalDurationSec) * 100)))}%`,
@@ -2185,6 +2201,7 @@ class MonitoringEngineService {
         multiPerson: { score: multiFaceScore, max: 10, detected: multiFaceScore > 0 },
         tabSwitch: { score: tabSwitchScore, max: 10, count: tabSwitchCount, limit: BROWSER_SWITCH_LIMIT, exceeded: tabSwitchCount > BROWSER_SWITCH_LIMIT },
         mobile: { score: mobileScore, max: 10, count: phoneViolations.length },
+        ...(session.metadata?.hireProctoring ? { hireSecurity: { score: hireSecurityScore, max: 30, count: scoredEvents.filter(event => ['IDENTITY_MISMATCH', 'LIVENESS_FAILED', 'ROOM_SCAN_OBJECT_DETECTED'].includes(event.eventType)).length } } : {}),
         total: finalScore,
       },
       finalScore: finalScore,
@@ -2215,6 +2232,14 @@ class MonitoringEngineService {
       },
       events: friendlyTimeline,
       timeline: friendlyTimeline,
+      hireProctoring: session.metadata?.hireProctoring ? {
+        enabled: session.metadata.hireProctoring.policy?.enabled !== false,
+        identityVerifiedAt: session.metadata.hireProctoring.identityVerifiedAt || null,
+        livenessPassed: session.metadata.hireProctoring.livenessPassed === true,
+        roomScanCompletedAt: session.metadata.hireProctoring.roomScanCompletedAt || null,
+        roomScanClear: session.metadata.hireProctoring.roomScanClear === true,
+        lastIdentityCheckAt: session.metadata.hireProctoring.lastIdentityCheckAt || null,
+      } : null,
       session: {
         sessionId: session.sessionId,
         attemptId: session.attemptId,

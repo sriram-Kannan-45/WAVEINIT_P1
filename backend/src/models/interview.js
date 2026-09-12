@@ -2,6 +2,10 @@ const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/db');
 
 const Interview = sequelize.define('Interview', {
+  context: {
+    type: DataTypes.STRING(16), allowNull: false, defaultValue: 'TRAINING',
+    validate: { isIn: [['TRAINING', 'HIRE']] },
+  },
   id: {
     type: DataTypes.BIGINT,
     autoIncrement: true,
@@ -55,7 +59,7 @@ const Interview = sequelize.define('Interview', {
     allowNull: true,
   },
   status: {
-    type: DataTypes.ENUM('SCHEDULED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'RESCHEDULED', 'NO_SHOW'),
+    type: DataTypes.ENUM('SCHEDULED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'RESCHEDULED', 'NO_SHOW', 'EVALUATED'),
     allowNull: false,
     defaultValue: 'SCHEDULED',
   },

@@ -4,6 +4,7 @@
  * evaluation).
  */
 export const STATUS_COLORS = {
+  EVALUATED: { bg: '#ede9fe', text: '#6d28d9', border: '#c4b5fd' },
   SCHEDULED:   { bg: '#dbeafe', text: '#1e40af', border: '#93c5fd' },
   IN_PROGRESS: { bg: '#fef3c7', text: '#92400e', border: '#fcd34d' },
   COMPLETED:   { bg: '#d1fae5', text: '#065f46', border: '#6ee7b7' },
@@ -13,6 +14,7 @@ export const STATUS_COLORS = {
 }
 
 export const STATUS_LABELS = {
+  EVALUATED: 'Fully Evaluated',
   SCHEDULED: 'Scheduled',
   IN_PROGRESS: 'In Progress',
   COMPLETED: 'Completed',

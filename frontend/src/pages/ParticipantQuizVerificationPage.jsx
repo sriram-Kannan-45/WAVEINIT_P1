@@ -30,6 +30,9 @@ import Layout from '../components/Layout'
 import { API_BASE, BACKEND_ORIGIN } from '../api/api'
 import { buildAssessmentMobileUrl } from '../utils/assessmentPairingUrl'
 import { useToast } from '../components/Toast'
+import HireIdentityGate from '../components/assessment/HireIdentityGate'
+import hiringService from '../services/hiringService'
+import { speakHireWarning } from '../utils/hireVoiceProctor'
 import '../styles/assessment-verification.css'
 
 const ICE_SERVERS = [
@@ -63,6 +66,25 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
   const [activeAttemptId, setActiveAttemptId] = useState(attemptId ? parseInt(attemptId, 10) : null)
   const [activeSessionToken, setActiveSessionToken] = useState(sessionToken || null)
   const [activeMonitoringSessionId, setActiveMonitoringSessionId] = useState(searchParams.get('monitoringSessionId') || null)
+  const isHire = trainingId === 'hire'
+  const [hirePolicy, setHirePolicy] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem(`hire_proctor_policy_${attemptId || paramAttemptId}`) || 'null') } catch { return null }
+  })
+  const [identityReady, setIdentityReady] = useState(false)
+  const [roomFrames, setRoomFrames] = useState([])
+  const [roomScanComplete, setRoomScanComplete] = useState(false)
+  const [roomScanBusy, setRoomScanBusy] = useState(false)
+  const [roomScanError, setRoomScanError] = useState('')
+
+  useEffect(() => {
+    if (!isHire || !effectiveId) return
+    hiringService.getProctoringPolicy(currentAssessmentType, effectiveId, activeMonitoringSessionId).then(result => {
+      setHirePolicy(result.policy)
+      if (activeAttemptId || attemptId) sessionStorage.setItem(`hire_proctor_policy_${activeAttemptId || attemptId}`, JSON.stringify(result.policy))
+      if (!result.policy.enabled || !result.policy.identityVerification || result.state?.identityVerifiedAt) setIdentityReady(true)
+      if (result.state?.roomScanClear) setRoomScanComplete(true)
+    }).catch(error => setRoomScanError(error.message || 'Could not load Hire proctoring policy'))
+  }, [isHire, currentAssessmentType, effectiveId, activeAttemptId, attemptId, activeMonitoringSessionId])
 
   // Verification Session States
   const [sessionData, setSessionData] = useState(null)
@@ -162,7 +184,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
             const adminRes = await fetch(`${API_BASE}/assessment-verification/admission/${currentAssessmentType}/${curAttemptId}`, {
               headers: activeToken ? { Authorization: `Bearer ${activeToken}` } : {},
             });
-            if (adminRes.ok && !aborted) {
+            if (adminRes.ok && !aborted && !isHire) {
               const coursePath = trainingId ? `/trainings/${trainingId}` : '';
               const params = new URLSearchParams({
                 attemptId: String(curAttemptId),
@@ -218,7 +240,7 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
         }
 
         // Fetch Course / Training details if trainingId exists
-        if (trainingId) {
+        if (trainingId && trainingId !== 'hire') {
           try {
             const courseRes = await fetch(`${API_BASE}/participant/courses/${trainingId}`, {
               headers: {
@@ -593,7 +615,16 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
     try {
       setVerifyingStart(true)
 
-      if (!isFullyVerified || !mobileStreamConnected || isExpired || isDisconnected) throw new Error('Wait for stable person and laptop verification.')
+      const hireWithoutMobile = isHire && hirePolicy && (!hirePolicy.enabled || !hirePolicy.mobileRoomScan)
+      if (isHire && hirePolicy?.enabled && hirePolicy.identityVerification && !identityReady) throw new Error('Complete identity verification first.')
+      if (isHire && hirePolicy?.enabled && hirePolicy.mobileRoomScan && !roomScanComplete) throw new Error('Complete the 360° room scan first.')
+      if (!hireWithoutMobile && (!isFullyVerified || !mobileStreamConnected || isExpired || isDisconnected)) throw new Error('Wait for stable person and laptop verification.')
+      if (hireWithoutMobile) {
+        const coursePath = `/trainings/hire`
+        const params = new URLSearchParams({ attemptId: String(activeAttemptId), sessionToken: activeSessionToken || '', monitoringSessionId: activeMonitoringSessionId || '' })
+        navigate(`${coursePath}/${isCoding ? 'coding' : 'quizzes'}/${effectiveId}/attempt?${params.toString()}`)
+        return
+      }
       const response = await fetch(`${API_BASE}/assessment-verification/verify-start`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${activeToken}` },
         body: JSON.stringify({ assessmentType: currentAssessmentType, assessmentId: Number(effectiveId),
@@ -619,6 +650,10 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
   }
 
   const handleBackToQuiz = () => {
+    if (trainingId === 'hire') {
+      navigate('/participant?tab=hiring-assessments')
+      return
+    }
     if (trainingId) {
       navigate(`/participant?tab=myEnrollments&courseId=${trainingId}&subtab=${isCoding ? 'coding' : 'quizzes'}`)
     } else {
@@ -626,16 +661,51 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
     }
   }
 
-  const courseDisplayName = courseDetails?.title || (trainingId ? `Training ${trainingId}` : 'react')
+  const courseDisplayName = courseDetails?.title || (trainingId === 'hire' ? 'Hiring assessment' : (trainingId ? `Training ${trainingId}` : 'Assessment'))
   const quizDisplayName = quizDetails?.title || (isCoding ? 'Coding Assessment' : 'AI Generated Quiz')
   const durationDisplay = quizDetails?.timeLimit ? `${quizDetails.timeLimit} Minutes` : '60 Minutes'
   const marksDisplay = quizDetails?.totalMarks || (quizDetails?.questions ? `${quizDetails.questions.length * 5 || 50} Marks` : (isCoding ? `${(quizDetails?.numProblems || 3) * 10} Marks` : '50 Marks'))
   const mobilePairUrl = buildAssessmentMobileUrl(sessionData?.qrPayload?.shortUrl)
 
+  const captureRoomAngle = () => {
+    try {
+      let frame = lastFrame
+      const video = videoRef.current
+      if (video?.videoWidth) {
+        const canvas = document.createElement('canvas'); canvas.width = 480; canvas.height = Math.round(480 * video.videoHeight / video.videoWidth)
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height)
+        frame = canvas.toDataURL('image/jpeg', .75)
+      }
+      if (!frame) throw new Error('Wait for the mobile video feed')
+      setRoomFrames(values => [...values, frame].slice(0, hirePolicy?.roomScanMinFrames || 6))
+      setRoomScanError('')
+      if (hirePolicy?.voiceWarnings) speakHireWarning({ language: hirePolicy.allowParticipantLanguage === false ? hirePolicy.defaultLanguage : (sessionStorage.getItem('hire_proctor_language') || hirePolicy.defaultLanguage), key: 'room', rate: hirePolicy.voiceRate, volume: hirePolicy.voiceVolume })
+    } catch (reason) { setRoomScanError(reason.message) }
+  }
+
+  const inspectRoom = async () => {
+    setRoomScanBusy(true); setRoomScanError('')
+    try {
+      const result = await hiringService.inspectRoom(activeMonitoringSessionId, roomFrames)
+      if (!result.clear) throw new Error(`Remove unauthorized objects and scan again: ${result.detectedObjects.join(', ')}`)
+      setRoomScanComplete(true)
+      showSuccess('360° room scan passed')
+    } catch (reason) { setRoomScanError(reason.message || 'Room scan failed'); setRoomFrames([]) }
+    finally { setRoomScanBusy(false) }
+  }
+
+  if (isHire && hirePolicy?.enabled && hirePolicy.identityVerification && !identityReady) {
+    return <Layout user={user} activeTab="hiring-assessments" onLogout={onLogout}><HireIdentityGate sessionId={activeMonitoringSessionId} policy={hirePolicy} onVerified={() => setIdentityReady(true)} /></Layout>
+  }
+
+  if (isHire && hirePolicy && (!hirePolicy.enabled || !hirePolicy.mobileRoomScan)) {
+    return <Layout user={user} activeTab="hiring-assessments" onLogout={onLogout}><div className="reg-admin-section" style={{ maxWidth: 680, margin: '40px auto', padding: 28, textAlign: 'center' }}><Shield size={36} color="#059669" /><h2>Hire verification ready</h2><p style={{ color: '#64748B' }}>{hirePolicy.enabled ? 'Required identity checks are complete. Mobile room scanning is disabled for this assessment.' : 'AI proctoring is disabled for this assessment.'}</p><button className="reg-admin-btn reg-admin-btn--primary" onClick={handleStartQuiz} disabled={verifyingStart}>{verifyingStart && <Loader2 size={15} className="bulk-spin" />} Proceed to {isCoding ? 'Coding Assessment' : 'Quiz'}</button></div></Layout>
+  }
+
   return (
     <Layout
       user={user}
-      activeTab="myEnrollments"
+      activeTab={trainingId === 'hire' ? 'hiring-assessments' : 'myEnrollments'}
       onTabChange={(tab, cId) => {
         if (tab === 'profile') navigate('/my-profile')
         else if (tab === 'interviews') navigate('/interviews')
@@ -956,12 +1026,19 @@ export default function ParticipantQuizVerificationPage({ user, onLogout, assess
                 </div>
               </div>
 
+              {isHire && hirePolicy?.enabled && hirePolicy.mobileRoomScan && <div className="wi-verif-checklist-box" style={{ marginTop: 12 }}>
+                <div className="wi-verif-checklist-title">360° room scan</div>
+                <p style={{ fontSize: 12, color: '#64748B' }}>Point the paired phone at the front, left, rear, right, desk and floor. Capture each direction.</p>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button className="reg-admin-btn reg-admin-btn--secondary" onClick={captureRoomAngle} disabled={!mobileStreamConnected || roomScanComplete || roomFrames.length >= (hirePolicy.roomScanMinFrames || 6)}><Camera size={14} /> Capture angle {Math.min(roomFrames.length + 1, hirePolicy.roomScanMinFrames || 6)}/{hirePolicy.roomScanMinFrames || 6}</button><button className="reg-admin-btn reg-admin-btn--primary" onClick={inspectRoom} disabled={roomScanBusy || roomScanComplete || roomFrames.length < (hirePolicy.roomScanMinFrames || 6)}>{roomScanBusy && <Loader2 size={14} className="bulk-spin" />} {roomScanComplete ? 'Room scan passed' : 'Analyze room'}</button></div>
+                {roomScanError && <p role="alert" style={{ color: '#B91C1C', fontSize: 12 }}>{roomScanError}</p>}
+              </div>}
+
               {/* Start Assessment CTA Button */}
               <div className="wi-verif-start-btn-wrap">
                 <p role="status">{transportError || (isFullyVerified ? "Person and laptop verified — ready for monitoring." : compositionMessage)}</p>
                 <button
                   onClick={handleStartQuiz}
-                  disabled={verifyingStart || loading || !isFullyVerified || !mobileStreamConnected || isExpired || isDisconnected}
+                  disabled={verifyingStart || loading || !isFullyVerified || !mobileStreamConnected || isExpired || isDisconnected || (isHire && hirePolicy?.mobileRoomScan && !roomScanComplete)}
                   className="wi-verif-start-btn"
                 >
                   {verifyingStart ? (

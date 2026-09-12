@@ -61,7 +61,28 @@ class AssessmentVerificationService {
     const monitor = await MonitoringSession.findOne({ where: {
       participantId, contextType: assessmentType, attemptId,
     }, order: [['id', 'DESC']] });
-    if (!monitor || (monitor.mobileEnabled && !monitor.metadata?.mobileAdmission)) {
+    if (!monitor) {
+      throw new Error('Monitoring session not found for this assessment attempt.');
+    }
+
+    // Hire extends this existing admission gate instead of creating a second
+    // quiz/coding gate. Course and Training retain the original mobile rule.
+    const hire = await require('./hireProctoringPolicy').resolvePolicy(assessmentType, monitor.contextId, participantId);
+    if (hire.isHire) {
+      if (!hire.assigned) throw new Error('Hiring assessment assignment required.');
+      const policy = hire.policy;
+      if (!policy.enabled) return monitor;
+      const state = monitor.metadata?.hireProctoring || {};
+      if (policy.identityVerification && !state.identityVerifiedAt) {
+        throw new Error('Complete identity and liveness verification before entering the assessment.');
+      }
+      if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear !== true)) {
+        throw new Error('Complete a clear 360° room scan before entering the assessment.');
+      }
+      if (!policy.mobileRoomScan) return monitor;
+    }
+
+    if (monitor.mobileEnabled && !monitor.metadata?.mobileAdmission) {
       throw new Error('Complete mobile person and laptop verification before entering the assessment.');
     }
     return monitor;

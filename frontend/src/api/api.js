@@ -92,7 +92,9 @@ export const API = {
   PARTICIPANT: {
     TRAININGS:     `${API_BASE}/trainings`,
     ENROLL:        `${API_BASE}/participant/enroll`,
-    MY_ENROLLMENTS:`${API_BASE}/participant/enrollments`
+    MY_ENROLLMENTS:`${API_BASE}/participant/enrollments`,
+    CHATBOT_ASK:   `${API_BASE}/participant/chatbot/ask`,
+    ACTIVITY_HEATMAP: `${API_BASE}/participant/activity/heatmap`,
   },
 
   FEEDBACK: {
@@ -337,11 +339,6 @@ export const API = {
     UPDATE_PROJECT:(id) => `${API_BASE}/user-profile/projects/${id}`,
     DELETE_PROJECT:(id) => `${API_BASE}/user-profile/projects/${id}`,
     CONTACT_LINKS:        `${API_BASE}/user-profile/contact-links`,
-  },
-
-  PARTICIPANT: {
-    CHATBOT_ASK:          `${API_BASE}/participant/chatbot/ask`,
-    ACTIVITY_HEATMAP:     `${API_BASE}/participant/activity/heatmap`,
   },
 
   ATTENDANCE: {

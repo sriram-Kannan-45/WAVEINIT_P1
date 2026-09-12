@@ -1763,6 +1763,126 @@ class CalibrateRequest(BaseModel):
     baselineFaceWidth: float = 120.0
 
 
+class HireIdentityReferenceRequest(BaseModel):
+    sessionId: str
+    frames: List[str] = Field(min_length=3, max_length=8)
+    challenge: str
+    requireLiveness: bool = True
+
+
+class HireIdentityVerifyRequest(BaseModel):
+    sessionId: str
+    frame: str
+    referenceSignature: List[float] = Field(min_length=10, max_length=80)
+
+
+_HIRE_FACE_POINTS = (10, 33, 61, 93, 133, 152, 234, 263, 291, 323, 362, 454)
+
+
+def _hire_face_observation(frame_data: str) -> Dict[str, Any]:
+    """Build a compact geometry + appearance descriptor without retaining pixels."""
+    if not PROCTORING_ENGINE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="MediaPipe face engine is unavailable")
+    frame = proctor_engine.decode_b64(frame_data)
+    if frame is None:
+        raise HTTPException(status_code=422, detail="Camera frame could not be decoded")
+    result = proctor_engine._detect(frame)
+    faces = result.face_landmarks if result and result.face_landmarks else []
+    if len(faces) != 1:
+        raise HTTPException(status_code=422, detail="Exactly one clear face is required")
+    landmarks = faces[0]
+    import math
+    left, right = landmarks[33], landmarks[263]
+    dx, dy = right.x - left.x, right.y - left.y
+    eye_span = math.sqrt(dx * dx + dy * dy)
+    if eye_span < 0.04:
+        raise HTTPException(status_code=422, detail="Move closer to the camera")
+    cx, cy = (left.x + right.x) / 2, (left.y + right.y) / 2
+    cos_a, sin_a = dx / eye_span, dy / eye_span
+    signature = []
+    for index in _HIRE_FACE_POINTS:
+        point = landmarks[index]
+        x, y = (point.x - cx) / eye_span, (point.y - cy) / eye_span
+        signature.extend((round(x * cos_a + y * sin_a, 5), round(-x * sin_a + y * cos_a, 5)))
+
+    # Add a small normalized DCT appearance vector. Face-mesh geometry alone is
+    # good for presence/pose but is not sufficiently discriminative for identity.
+    # The low-frequency vector remains cheap to compute locally and cannot be
+    # reconstructed into the captured reference image.
+    import cv2
+    import numpy as np
+    height, width = frame.shape[:2]
+    xs = [point.x * width for point in landmarks]
+    ys = [point.y * height for point in landmarks]
+    pad_x, pad_y = (max(xs) - min(xs)) * 0.12, (max(ys) - min(ys)) * 0.12
+    x1, x2 = max(0, int(min(xs) - pad_x)), min(width, int(max(xs) + pad_x))
+    y1, y2 = max(0, int(min(ys) - pad_y)), min(height, int(max(ys) + pad_y))
+    crop = frame[y1:y2, x1:x2]
+    if crop.size == 0 or crop.shape[0] < 32 or crop.shape[1] < 32:
+        raise HTTPException(status_code=422, detail="Move closer to the camera")
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    gray = cv2.equalizeHist(cv2.resize(gray, (32, 32), interpolation=cv2.INTER_AREA))
+    dct = cv2.dct(gray.astype(np.float32) / 255.0)[:8, :8].flatten()[1:41]
+    norm = float(np.linalg.norm(dct)) or 1.0
+    signature.extend(round(float(value / norm), 5) for value in dct)
+    nose_offset = (landmarks[1].x - cx) / eye_span
+    left_eye = abs(landmarks[159].y - landmarks[145].y) / eye_span
+    right_eye = abs(landmarks[386].y - landmarks[374].y) / eye_span
+    return {"signature": signature, "yaw": float(nose_offset), "eyeOpen": float((left_eye + right_eye) / 2)}
+
+
+def _hire_similarity(reference: List[float], candidate: List[float]) -> float:
+    if len(reference) != len(candidate) or not reference:
+        return 0.0
+    import math
+    geometry_size = min(24, len(reference))
+    geom_rmse = math.sqrt(sum((float(reference[i]) - float(candidate[i])) ** 2 for i in range(geometry_size)) / geometry_size)
+    geometry_score = max(0.0, min(1.0, 1.0 - geom_rmse / 0.26))
+    if len(reference) == geometry_size:
+        return geometry_score
+    ref_appearance = [float(value) for value in reference[geometry_size:]]
+    candidate_appearance = [float(value) for value in candidate[geometry_size:]]
+    dot = sum(a * b for a, b in zip(ref_appearance, candidate_appearance))
+    ref_norm = math.sqrt(sum(a * a for a in ref_appearance)) or 1.0
+    candidate_norm = math.sqrt(sum(b * b for b in candidate_appearance)) or 1.0
+    appearance_score = max(0.0, min(1.0, (dot / (ref_norm * candidate_norm) + 1.0) / 2.0))
+    return geometry_score * 0.4 + appearance_score * 0.6
+
+
+@app.post("/api/proctoring/hire/identity-reference")
+async def hire_identity_reference(req: HireIdentityReferenceRequest):
+    observations = [_hire_face_observation(frame) for frame in req.frames]
+    challenge = req.challenge.upper()
+    if challenge not in {"TURN_LEFT", "TURN_RIGHT", "BLINK"}:
+        raise HTTPException(status_code=422, detail="Unsupported liveness challenge")
+    live = True
+    if req.requireLiveness:
+        yaw_values = [item["yaw"] for item in observations]
+        eye_values = [item["eyeOpen"] for item in observations]
+        if challenge in {"TURN_LEFT", "TURN_RIGHT"}:
+            movement = yaw_values[-1] - yaw_values[0]
+            # Raw (non-CSS-mirrored) webcam coordinates move right when the
+            # participant turns to their own left, and vice versa.
+            expected = 1 if challenge == "TURN_LEFT" else -1
+            live = movement * expected > 0.07
+        else:
+            live = max(eye_values) > 0.01 and min(eye_values) < max(eye_values) * 0.65
+    if not live:
+        return {"success": False, "livenessPassed": False, "challenge": challenge, "message": "Liveness movement was not detected. Please retry."}
+    # Use the three most frontal observations so challenge movement does not
+    # become part of the identity template. Median aggregation reduces noise.
+    reference_observations = sorted(observations, key=lambda item: abs(item["yaw"]))[:3]
+    signature = [round(sorted(item["signature"][i] for item in reference_observations)[len(reference_observations) // 2], 5) for i in range(len(reference_observations[0]["signature"]))]
+    return {"success": True, "livenessPassed": True, "challenge": challenge, "signature": signature}
+
+
+@app.post("/api/proctoring/hire/identity-verify")
+async def hire_identity_verify(req: HireIdentityVerifyRequest):
+    observation = _hire_face_observation(req.frame)
+    similarity = _hire_similarity(req.referenceSignature, observation["signature"])
+    return {"success": True, "matched": similarity >= 0.72, "similarity": round(similarity, 4), "confidence": round(similarity, 4)}
+
+
 @app.post("/api/proctoring/yolo/analyze-frame")
 async def analyze_yolo_frame(req: YOLOAnalyzeFrameRequest):
     """

@@ -374,45 +374,50 @@ const aiService = {
 
     console.log(`[GENERATION_REQUEST] id=${requestId} count=${count} difficulty=${diffUpper} languages=[${langs.join(', ')}]`);
 
-    // 1. Prefer hosted AI Service if reachable (where Gemini/Groq are configured)
-    try {
-      console.log(`[aiService] Delegating coding problem generation to AI service at ${AI_SERVICE_URL}`);
-      const response = await axios.post(`${AI_SERVICE_URL}/generate-coding-problems`, {
-        prompt: cleanPrompt,
-        numProblems: count,
-        difficulty: diffUpper,
-        languages: langs.join(','),
-      }, {
-        timeout: AI_TIMEOUT,
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      if (response.data && Array.isArray(response.data.problems) && response.data.problems.length > 0) {
-        const rawProblems = response.data.problems.map((p) => {
-          const langSols = { ...(p.languageSolutions || {}) };
-          if (Array.isArray(p.languages)) {
-            for (const item of p.languages) {
-              if (item && item.language) langSols[item.language] = item;
-            }
-          }
-          return {
-            ...p,
-            languageSolutions: langSols,
-          };
+    // 1. For small batches (1-2 problems), try hosted AI Service with a fast timeout (15s).
+    // For larger batches (>=3), prefer direct provider generation which produces all problems in ~10s in a single prompt.
+    if (count <= 2) {
+      try {
+        console.log(`[aiService] Delegating coding problem generation to AI service at ${AI_SERVICE_URL}`);
+        const response = await axios.post(`${AI_SERVICE_URL}/generate-coding-problems`, {
+          prompt: cleanPrompt,
+          numProblems: count,
+          difficulty: diffUpper,
+          languages: langs.join(','),
+        }, {
+          timeout: 15000,
+          headers: { 'Content-Type': 'application/json' },
         });
-        const normalized = await this._normalizeAIProblems(rawProblems.slice(0, count), langs, cleanPrompt, diffUpper, requestId);
-        if (normalized.problems && normalized.problems.length >= count) {
-          console.log(`[aiService] AI service returned ${normalized.problems.length} validated coding problems`);
-          return normalized;
+
+        if (response.data && Array.isArray(response.data.problems) && response.data.problems.length > 0) {
+          const rawProblems = response.data.problems.map((p) => {
+            const langSols = { ...(p.languageSolutions || {}) };
+            if (Array.isArray(p.languages)) {
+              for (const item of p.languages) {
+                if (item && item.language) langSols[item.language] = item;
+              }
+            }
+            return {
+              ...p,
+              languageSolutions: langSols,
+            };
+          });
+          const normalized = await this._normalizeAIProblems(rawProblems.slice(0, count), langs, cleanPrompt, diffUpper, requestId);
+          if (normalized.problems && normalized.problems.length > 0) {
+            console.log(`[aiService] AI service returned ${normalized.problems.length} validated coding problems`);
+            return normalized;
+          }
         }
+      } catch (aiServiceErr) {
+        console.warn(`[aiService] AI microservice call failed (${aiServiceErr.message}), falling back to direct provider generation...`);
       }
-    } catch (aiServiceErr) {
-      console.warn(`[aiService] AI microservice call failed (${aiServiceErr.message}), falling back to direct provider generation...`);
+    } else {
+      console.log(`[aiService] Batch count=${count} >= 3: Using direct AI provider generation for speed and reliability.`);
     }
 
-    // 2. Fallback: Direct generation via local aiProvider if keys are configured
+    // 2. Direct generation via local aiProvider (Gemini / Groq fallback)
     let feedback = '';
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 2; attempt++) {
       try {
         return await this._callGeminiDirectCodingGeneration(
           cleanPrompt, count, diffUpper, langs, null,
@@ -509,8 +514,8 @@ MANDATORY REQUIREMENTS:
     if (rawProblems.length === 0) throw new Error('No problems returned in AI response JSON');
 
     const normalized = await this._normalizeAIProblems(rawProblems.slice(0, count), langs, cleanPrompt, difficulty, requestId);
-    if (normalized.problems.length < count) {
-      throw new Error(`AI generated only ${normalized.problems.length} valid problems, but ${count} were requested.`);
+    if (!normalized.problems || normalized.problems.length === 0) {
+      throw new Error(`AI generated problems could not be validated.`);
     }
 
     return normalized;

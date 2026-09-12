@@ -10,7 +10,7 @@ import {
   Video, Calendar, Clock, User, Plus, Search, Filter,
   Eye, Pencil, CalendarClock, Play, XCircle, Trash2,
   FileText, X, Loader2, ChevronLeft, ChevronRight as ChevronRightIcon,
-  MoreVertical,
+  MoreVertical, CheckCircle,
 } from 'lucide-react'
 import { useToast } from '../../components/Toast'
 import interviewService from '../../services/interviewService'
@@ -70,7 +70,7 @@ const EMPTY_EDIT_FORM = {
   recordInterview: false,
 }
 
-export default function InterviewDashboard({ user }) {
+export default function InterviewDashboard({ user, initialMode }) {
   const navigate = useNavigate()
   const location = useLocation()
   const { success, error: showError } = useToast()
@@ -108,17 +108,20 @@ export default function InterviewDashboard({ user }) {
   const [interviewers, setInterviewers] = useState([])
   const [editForm, setEditForm] = useState(EMPTY_EDIT_FORM)
   const limit = 15
+  const sourceQuery = initialMode === 'GROUP_DISCUSSION' ? '?from=hire-gd' : (initialMode === 'INTERVIEW' ? '?from=hire-interviews' : '')
+  const schedulePath = initialMode ? `/interview/schedule?mode=${initialMode}&from=${initialMode === 'GROUP_DISCUSSION' ? 'hire-gd' : 'hire-interviews'}` : '/interview/schedule'
 
   const fetchData = useCallback(async (page = 1) => {
     try {
       setLoading(true)
       const params = { page, limit }
+      if (initialMode) { params.mode = initialMode; params.context = 'HIRE' }
       if (statusFilter) params.status = statusFilter
       if (typeFilter) params.type = typeFilter
       if (search) params.search = search
       const [listRes, statsRes] = await Promise.all([
         interviewService.list(params),
-        interviewService.getStats(),
+        interviewService.getStats(initialMode ? { mode: initialMode, context: 'HIRE' } : {}),
       ])
       setInterviews(listRes.interviews || [])
       setPagination(listRes.pagination || { total: 0, page: 1, pages: 1 })
@@ -128,7 +131,7 @@ export default function InterviewDashboard({ user }) {
     } finally {
       setLoading(false)
     }
-  }, [statusFilter, typeFilter, search, showError])
+  }, [statusFilter, typeFilter, search, showError, initialMode])
 
   useEffect(() => { fetchData() }, [fetchData])
 
@@ -312,7 +315,7 @@ export default function InterviewDashboard({ user }) {
   const handleStart = (interview) => {
     setMenuOpen(null)
     setActiveMenuIv(null)
-    navigate(`/interview/${interview.id}/room`)
+    navigate(`/interview/${interview.id}/room${sourceQuery}`)
   }
 
   const handleCancel = async (interview) => {
@@ -504,7 +507,9 @@ export default function InterviewDashboard({ user }) {
     { label: 'Scheduled', value: stats.scheduled, icon: Calendar, color: '#16A34A' },
     { label: 'In Progress', value: stats.inProgress, icon: Play, color: '#F59E0B' },
     { label: 'Completed', value: stats.completed, icon: FileText, color: '#0D9488' },
-    { label: 'Cancelled', value: stats.cancelled, icon: XCircle, color: '#dc2626' },
+    initialMode === 'GROUP_DISCUSSION'
+      ? { label: 'Fully Evaluated', value: stats.evaluated, icon: CheckCircle, color: '#16A34A' }
+      : { label: 'Cancelled', value: stats.cancelled, icon: XCircle, color: '#dc2626' },
   ]
 
   const statusTabs = [
@@ -512,6 +517,7 @@ export default function InterviewDashboard({ user }) {
     { key: 'SCHEDULED', label: 'Scheduled' },
     { key: 'IN_PROGRESS', label: 'In Progress' },
     { key: 'COMPLETED', label: 'Completed' },
+    { key: 'EVALUATED', label: 'Fully evaluated' },
     { key: 'CANCELLED', label: 'Cancelled' },
   ]
 
@@ -525,15 +531,17 @@ export default function InterviewDashboard({ user }) {
           <Video size={26} color="#16A34A" />
         </div>
         <div>
-          <h2 className="reg-admin-title">Interviews</h2>
+          <h2 className="reg-admin-title">{initialMode === 'GROUP_DISCUSSION' ? 'Group Discussions (GD)' : initialMode ? '1-to-1 Interviews' : 'Interviews & Group Discussions'}</h2>
           <p className="reg-admin-subtitle">
-            {canSchedule ? 'Schedule and manage candidate interview sessions' : 'Your assigned interviews'}
+            {initialMode === 'GROUP_DISCUSSION'
+              ? 'Schedule six candidates with one HR moderator and review individual evaluations.'
+              : (canSchedule ? 'Schedule and manage candidate interview sessions' : 'Your assigned interviews')}
           </p>
         </div>
         <div style={{ flex: 1 }} />
         {canSchedule && (
-          <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => navigate('/interview/schedule')}>
-            <Plus size={16} /> Schedule Interview
+          <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => navigate(schedulePath)}>
+            <Plus size={16} /> {initialMode === 'GROUP_DISCUSSION' ? 'Create GD Session' : 'Schedule Interview'}
           </button>
         )}
       </div>
@@ -661,11 +669,11 @@ export default function InterviewDashboard({ user }) {
         /* Empty */
         <div className="reg-admin-empty">
           <Video size={40} />
-          <h3>No Interviews Found</h3>
-          <p>No interviews match your current filter.</p>
+          <h3>{initialMode === 'GROUP_DISCUSSION' ? 'No Group Discussions Found' : 'No Interviews Found'}</h3>
+          <p>No sessions match your current filter.</p>
           {canSchedule && (
-            <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => navigate('/interview/schedule')}>
-              <Plus size={15} /> Schedule Interview
+            <button className="reg-admin-btn reg-admin-btn--primary" onClick={() => navigate(schedulePath)}>
+              <Plus size={15} /> {initialMode === 'GROUP_DISCUSSION' ? 'Create GD Session' : 'Schedule Interview'}
             </button>
           )}
         </div>
@@ -839,8 +847,8 @@ export default function InterviewDashboard({ user }) {
                   <Play size={14} color="#16A34A" /> {canManage(activeMenuIv) ? 'Start Interview' : 'Join Interview'}
                 </button>
               )}
-              {(activeMenuIv.status === 'COMPLETED' || activeMenuIv.status === 'IN_PROGRESS') && (
-                <button className="reg-admin-action-menu-item" onClick={() => { setMenuOpen(null); setActiveMenuIv(null); navigate(`/interview/${activeMenuIv.id}`); }}>
+              {['COMPLETED','EVALUATED','IN_PROGRESS'].includes(activeMenuIv.status) && (
+                <button className="reg-admin-action-menu-item" onClick={() => { setMenuOpen(null); setActiveMenuIv(null); navigate(`/interview/${activeMenuIv.id}${sourceQuery}`); }}>
                   <FileText size={14} color="#0D9488" /> View Results / Report
                 </button>
               )}
@@ -966,20 +974,20 @@ export default function InterviewDashboard({ user }) {
                     onClick={() => {
                       const id = detailInterview.id
                       setDetailInterview(null)
-                      navigate(`/interview/${id}/room`)
+                      navigate(`/interview/${id}/room${sourceQuery}`)
                     }}
                   >
                     <Play size={15} /> Join Interview
                   </button>
                 )}
-                {detailInterview.status === 'COMPLETED' && (
+                {['COMPLETED','EVALUATED'].includes(detailInterview.status) && (
                   <button
                     className="reg-admin-btn reg-admin-btn--primary"
                     style={{ background: '#0D9488', borderColor: '#0D9488' }}
                     onClick={() => {
                       const id = detailInterview.id
                       setDetailInterview(null)
-                      navigate(`/interview/${id}`)
+                      navigate(`/interview/${id}${sourceQuery}`)
                     }}
                   >
                     <FileText size={15} /> View Evaluation & Results

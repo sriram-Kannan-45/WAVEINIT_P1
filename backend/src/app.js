@@ -64,6 +64,7 @@ const reportRoutes = require('./routes/reportRoutes');
 const recordingRoutes = require('./routes/recordingRoutes');
 const codingAssessmentRoutes = require('./routes/codingAssessmentRoutes');
 const interviewRoutes = require('./routes/interviewRoutes');
+const hiringRoutes = require('./routes/hiringRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
 const leaderboardRoutes = require('./routes/leaderboardRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
@@ -242,6 +243,7 @@ app.use('/api/recordings', recordingRoutes);
 app.use('/api/coding', codingAssessmentRoutes);
 app.use('/api/assessment-verification', require('./routes/assessmentVerificationRoutes'));
 app.use('/api/interviews', interviewRoutes);
+app.use('/api/hire', hiringRoutes);
 app.use('/api/user/me', require('./routes/privacyRoutes'));
 app.use('/api/privacy', require('./routes/privacyRoutes'));
 
@@ -783,6 +785,18 @@ const startServer = async () => {
       logger.info('interview module tables ready');
     } catch (e) {
       logger.error('Could not sync interview module tables', { error: e.message });
+    }
+
+    // Hiring workflow tables. The underlying content/attempt engines are the
+    // existing AIQuiz and CodingAssessment modules.
+    try {
+      const { HiringAssessment, HiringCandidate, HiringAssignment } = require('./models');
+      await HiringAssessment.sync();
+      await HiringCandidate.sync();
+      await HiringAssignment.sync();
+      logger.info('hiring module tables ready');
+    } catch (e) {
+      logger.error('Could not sync hiring module tables', { error: e.message });
     }
 
     // Add course-centric indexes that were intentionally omitted from the

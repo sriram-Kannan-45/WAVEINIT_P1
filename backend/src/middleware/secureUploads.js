@@ -5,7 +5,7 @@
  * - Genuinely public assets ('avatars', 'banner', 'profile', 'trainer') pass through
  *   to static serving.
  * - Sensitive categories ('resume', 'certificates', 'screenshots', 'monitor-screenshots',
- *   'monitoring-videos', 'interviews', 'bulk-import', 'registrations', 'ai-docs', 'notes', 'materials')
+ *   'monitoring-videos', 'hire-proctoring', 'interviews', 'bulk-import', 'registrations', 'ai-docs', 'notes', 'materials')
  *   are diverted to `serveSecureFile` in fileController.js for authentication, object-level
  *   authorization, and anti-cache headers.
  */

@@ -20,6 +20,7 @@ import {
     TrendingUp,
     BarChart2,
     ShieldCheck,
+    Code,
     X
 } from 'lucide-react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
@@ -60,9 +61,11 @@ const navGroups = {
       ],
     },
     {
-      title: 'INTERVIEWS',
+      title: 'HIRE',
       items: [
-        { key: 'interviews', label: 'Interviews', icon: Video },
+        { key: 'hire-assessments', label: 'Quiz + Coding Test', icon: FileText },
+        { key: 'hire-interviews', label: '1-to-1 Interview', icon: Video },
+        { key: 'hire-gd', label: 'Group Discussion (GD)', icon: Users },
       ],
     },
     {
@@ -137,9 +140,10 @@ const navGroups = {
       ],
     },
     {
-      title: 'INTERVIEWS',
+      title: 'HIRING & RECRUITMENT',
       items: [
-        { key: 'interviews', label: 'Interviews', icon: Video },
+        { key: 'hiring-assessments', label: 'Hiring Assessments', icon: Code },
+        { key: 'interviews', label: 'Interviews & GD', icon: Video },
       ],
     },
     {
@@ -156,6 +160,7 @@ const pageDescriptions = {
   trainings: 'Manage all training programs',
   trainers: 'Manage trainer accounts and assignments',
   participants: 'View and manage learner accounts',
+  'hiring-assessments': 'Complete your assigned recruitment and screening assessments',
   courses: 'Manage your training courses',
   attendance: 'Track class participation and attendance rates',
   feedback: 'Course ratings and student sentiment',
@@ -166,6 +171,9 @@ const pageDescriptions = {
   achievements: 'Your badges and accomplishments',
   certificates: 'Download your completion certificates',
   interviews: 'Schedule and manage interviews',
+  'hire-assessments': 'Manage hiring assessments with Quiz and Coding challenges',
+  'hire-interviews': 'Schedule and evaluate 1-to-1 candidate interviews',
+  'hire-gd': 'Manage Group Discussion (GD) sessions with candidates and moderator',
   analytics: 'Detailed learner performance metrics and pass rates',
   reports: 'Organization-wide reports and statistics',
 }
@@ -288,7 +296,8 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
                 {group.items.map((item) => {
                   const isProfileRoute = location.pathname === '/my-profile' || location.pathname === '/trainer/profile'
                   const isInterviewRoute = location.pathname.startsWith('/interview')
-                  const currentActive = isProfileRoute ? 'profile' : (isInterviewRoute ? 'interviews' : activeTab)
+                  const hireInterviewTab = searchParams.get('from') === 'hire-gd' || searchParams.get('mode') === 'GROUP_DISCUSSION' ? 'hire-gd' : 'hire-interviews'
+                  const currentActive = isProfileRoute ? 'profile' : (isInterviewRoute ? (user?.role === 'ADMIN' ? hireInterviewTab : 'interviews') : activeTab)
                   const isActive = currentActive === item.key
                   const Icon = item.icon
                   const isCourseItem = item.key === 'courses' || item.key === 'myEnrollments'

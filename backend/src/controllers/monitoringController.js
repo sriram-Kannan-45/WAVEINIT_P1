@@ -16,6 +16,20 @@ function fail(res, status, message) {
   return res.status(status).json({ success: false, error: message });
 }
 
+async function assertReportAccess(report, user) {
+  const session = report?.session || report;
+  const contextType = report?.contextType || session?.contextType;
+  const contextId = report?.contextId || session?.contextId;
+  const participantId = report?.participantId || session?.participantId;
+  if (!contextType || !contextId) return;
+  const resolved = await require('../services/hireProctoringPolicy').resolvePolicy(contextType, contextId, user?.id);
+  if (!resolved.isHire) return;
+  if (user?.role === 'ADMIN' || String(participantId) === String(user?.id)) return;
+  const error = new Error('Only an administrator or the owning candidate may access this Hire proctoring report');
+  error.status = 403;
+  throw error;
+}
+
 class MonitoringController {
   /**
    * POST /api/monitoring/sessions/start
@@ -452,9 +466,10 @@ class MonitoringController {
     try {
       const sessionId = req.params.id;
       const report = await monitoringService.getReport({ sessionId });
+      await assertReportAccess(report, req.user);
       return ok(res, report);
     } catch (err) {
-      return fail(res, 404, err.message);
+      return fail(res, err.status || 404, err.message);
     }
   }
 
@@ -467,9 +482,10 @@ class MonitoringController {
       if(String(req.query.contextType).toUpperCase()==='INTERVIEW')return fail(res,400,'Use the interview report or a candidate monitoring session ID');
       const attemptId = req.params.attemptId;
       const report = await monitoringService.getReport({ attemptId, contextType: req.query.contextType || 'QUIZ', contextId: req.query.contextId || null });
+      await assertReportAccess(report, req.user);
       return ok(res, report);
     } catch (err) {
-      return fail(res, 404, err.message);
+      return fail(res, err.status || 404, err.message);
     }
   }
   async getReportsList(req, res) {
@@ -485,6 +501,7 @@ class MonitoringController {
       });
       const visible=[];
       for(const report of data.sessions||[]) {
+        try { await assertReportAccess(report, req.user); } catch (_) { continue; }
         if(report.contextType!=='INTERVIEW'){visible.push(report);continue;}
         try{const service=require('../services/interviewLifecycleService');const interview=await service.access(report.contextId,req.user);if(String(report.participantId)===String(req.user.id)||service.isManager(interview,req.user))visible.push(report)}catch(_){}
       }
@@ -542,6 +559,7 @@ class MonitoringController {
     try {
       const sessionId = req.params.id;
       const report = await monitoringService.getReport({ sessionId });
+      await assertReportAccess(report, req.user);
       if (!report) return fail(res, 404, 'Monitoring session report not found');
 
       const events = (report.timeline && report.timeline.length > 0) ? report.timeline : (report.events || []);
@@ -590,6 +608,8 @@ class MonitoringController {
     try {
       const contextId = req.params.contextId;
       const contextType = (req.query.contextType || 'QUIZ').toUpperCase();
+      const hire = await require('../services/hireProctoringPolicy').resolvePolicy(contextType, contextId, req.user?.id);
+      if (hire.isHire && req.user?.role !== 'ADMIN') return fail(res, 403, 'Only an administrator can export Hire proctoring reports');
       const { QuizAttempt, CodingAttempt, CodingResult, AIQuiz, CodingAssessment, User } = require('../models');
 
       let assessmentTitle = 'Assessment';

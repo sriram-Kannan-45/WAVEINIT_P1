@@ -3,7 +3,7 @@
  * Post-interview evaluation form — matches admin portal design system.
  */
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ClipboardCheck, Star, CheckCircle, XCircle, Clock } from 'lucide-react'
 import GroupDiscussionEvaluation from '../../components/interview/GroupDiscussionEvaluation'
@@ -31,7 +31,11 @@ const DECISION_OPTIONS = [
 export default function InterviewEvaluation({ user }) {
   const { id: interviewId } = useParams()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const source = searchParams.get('from')
   const [interview, setInterview] = useState(null)
+  const hireTab = interview?.context === 'HIRE' ? (interview.mode === 'GROUP_DISCUSSION' ? 'hire-gd' : 'hire-interviews') : source
+  const backLink = user?.role === 'ADMIN' && ['hire-gd','hire-interviews'].includes(hireTab) ? `/admin?tab=${hireTab}` : '/interviews'
   const [feedbacks, setFeedbacks] = useState([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -118,12 +122,12 @@ export default function InterviewEvaluation({ user }) {
         icon={ClipboardCheck}
         title="Interview not found"
         description="The interview you're looking for doesn't exist or you don't have access."
-        action={<Button variant="primary" onClick={() => navigate('/interviews')}>Back to Interviews</Button>}
+        action={<Button variant="primary" onClick={() => navigate(backLink)}>Back to Interviews</Button>}
       />
     )
   }
 
-  if(interview.mode==='GROUP_DISCUSSION') return <GroupDiscussionEvaluation interviewId={interviewId}/>
+  if(interview.mode==='GROUP_DISCUSSION') return <GroupDiscussionEvaluation interviewId={interviewId} backLink={backLink}/>
 
   const userRole = (user?.role || '').toUpperCase()
   const isInterviewer = userRole === 'TRAINER' || userRole === 'ADMIN' || userRole === 'SUPERADMIN'
@@ -138,7 +142,7 @@ export default function InterviewEvaluation({ user }) {
       <PageHeader
         title="Interview Evaluation"
         subtitle={interview.title || `Interview #${interviewId}`}
-        backLink="/interviews"
+        backLink={backLink}
       />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: spacing[5], maxWidth: 720 }}>

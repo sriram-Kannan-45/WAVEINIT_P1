@@ -274,6 +274,7 @@ function ParticipantCodingAttemptInner({ user }) {
   let attemptId = searchParams.get('attemptId')
   let sessionToken = searchParams.get('sessionToken')
   let monitoringSessionId = searchParams.get('monitoringSessionId')
+  const [hirePolicy, setHirePolicy] = useState(() => { try { return JSON.parse(sessionStorage.getItem(`hire_proctor_policy_${attemptId}`) || 'null') } catch { return null } })
 
   if (assessmentId && attemptId) {
     // Persist/resolve credentials under a key namespaced by user + attemptId.
@@ -511,6 +512,10 @@ function ParticipantCodingAttemptInner({ user }) {
         }
 
         const a = data.assessment
+        if (data.hireProctoring) {
+          setHirePolicy(data.hireProctoring)
+          sessionStorage.setItem(`hire_proctor_policy_${attemptId}`, JSON.stringify(data.hireProctoring))
+        }
         const problemList = a.problems || []
         setAssessment(a)
         setProblems(problemList)
@@ -2001,7 +2006,7 @@ function ParticipantCodingAttemptInner({ user }) {
               </button>
             )}
 
-            <div className="coding-monitoring-panel">
+            {hirePolicy?.enabled !== false && <div className="coding-monitoring-panel">
               <UnifiedMonitoringWidget
                 placement="inline"
                 contextType="CODING"
@@ -2010,14 +2015,15 @@ function ParticipantCodingAttemptInner({ user }) {
                 sessionId={resolvedMonitoringSessionId}
                 participantId={user?.id}
                 userToken={user?.token}
-                mobileEnabled={true}
+                mobileEnabled={hirePolicy ? !!hirePolicy.mobileRoomScan : true}
+                hirePolicy={hirePolicy}
                 preCalibrated={true}
                 prePaired={true}
                 isTestActive={consented && !submitted}
                 testStartedAt={testStartedAt}
                 configuredDurationSeconds={(assessment?.timeLimit || 60) * 60}
               />
-            </div>
+            </div>}
           </aside>
         </div>
       </div>

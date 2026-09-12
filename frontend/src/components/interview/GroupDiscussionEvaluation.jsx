@@ -25,16 +25,16 @@ function CandidateEvaluation({ participant, criteria, editable, onSave }) {
   </CardBody></Card>
 }
 
-export default function GroupDiscussionEvaluation({interviewId}) {
+export default function GroupDiscussionEvaluation({interviewId, backLink='/interviews'}) {
   const [report,setReport]=useState(null),[error,setError]=useState('')
   useEffect(()=>{let active=true;interviewService.report(interviewId).then(data=>{if(active)setReport(data)}).catch(e=>{if(active)setError(e.message)});return()=>{active=false}},[interviewId])
   const save=async(userId,form)=>{await interviewService.evaluateParticipant(interviewId,userId,form);setReport(await interviewService.report(interviewId))}
   const download=async()=>{try{const response=await fetch(`${API_BASE}/interviews/${interviewId}/report.xlsx`,{headers:getAuthHeaders()});if(!response.ok)throw new Error('Could not download the report.');const url=URL.createObjectURL(await response.blob());const link=document.createElement('a');link.href=url;link.download=`discussion-${interviewId}-report.xlsx`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}catch(e){setError(e.message)}}
-  return <div><PageHeader title="Group Discussion results" subtitle={report?.interview.title} backLink="/interviews"/>
+  return <div><PageHeader title="Group Discussion results" subtitle={report?.interview.title} backLink={backLink}/>
     {error&&<p role="alert" style={{color:'#b91c1c'}}>{error}</p>}
     {!report&&!error?<Spinner text="Loading results…"/>:report&&<div style={{display:'grid',gap:20,maxWidth:1000}}>
-      <Card><CardBody><p>{report.interview.status} · Session duration: {Math.round((report.session?.durationSeconds||0)/60)} minutes · {report.participants.length} candidate results</p><p>{report.interview.description}</p><Button onClick={download}>Download Excel report</Button>{report.canEvaluate&&report.interview.status!=='COMPLETED'&&<p>End the discussion to evaluate and publish individual results.</p>}</CardBody></Card>
-      {report.participants.map(p=><CandidateEvaluation key={`${p.userId}:${p.evaluation?.decidedAt||'pending'}`} participant={p} criteria={report.criteria} editable={report.canEvaluate&&report.interview.status==='COMPLETED'} onSave={save}/>)}
+      <Card><CardBody><p>{report.interview.status} · Session duration: {Math.round((report.session?.durationSeconds||0)/60)} minutes · {report.participants.length} candidate results</p><p>{report.interview.description}</p><Button onClick={download}>Download Excel report</Button>{report.canEvaluate&&!['COMPLETED','EVALUATED'].includes(report.interview.status)&&<p>End the discussion to evaluate and publish individual results.</p>}</CardBody></Card>
+      {report.participants.map(p=><CandidateEvaluation key={`${p.userId}:${p.evaluation?.decidedAt||'pending'}`} participant={p} criteria={report.criteria} editable={report.canEvaluate&&['COMPLETED','EVALUATED'].includes(report.interview.status)} onSave={save}/>)}
     </div>}
   </div>
 }

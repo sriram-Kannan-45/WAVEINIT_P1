@@ -36,6 +36,7 @@ class InterviewLifecycleService {
   isManager(interview,user) {
     if(!user) return false;
     const role = (user.role || '').toUpperCase();
+    if(interview.context==='HIRE') return role==='ADMIN' || role==='SUPERADMIN' || (role==='TRAINER' && same(interview.interviewer_id,user.id));
     return role==='ADMIN' || role==='SUPERADMIN' || (['TRAINER','ADMIN','INTERVIEWER'].includes(role) && (same(interview.interviewer_id,user.id)||same(interview.created_by,user.id)));
   }
   async member(interview,userId, options={}) {
@@ -167,10 +168,14 @@ class InterviewLifecycleService {
   }
   async saveEvaluation(interviewId,userId,actor,input) {
     const interview=await this.access(interviewId,actor,true);
-    if(interview.mode!=='GROUP_DISCUSSION' || interview.status!=='COMPLETED') fail('Complete the Group Discussion before evaluating candidates.');
+    if(interview.mode!=='GROUP_DISCUSSION' || !['COMPLETED','EVALUATED'].includes(interview.status)) fail('Complete the Group Discussion before evaluating candidates.');
     const member=await this.member(interview,userId); if(!member) fail('Candidate not found',404);
     const result=evaluate(interview.evaluation_criteria,input,actor.id);
-    await member.update({evaluation:result}); return result;
+    await member.update({evaluation:result});
+    const members=await InterviewParticipant.findAll({where:{interview_id:interview.id},attributes:['evaluation']});
+    const complete=interview.context==='HIRE'&&members.length===6&&members.every(row=>row.evaluation&&typeof row.evaluation==='object'&&row.evaluation.scores);
+    if(complete) await interview.update({status:'EVALUATED'});
+    return result;
   }
   async report(interviewId,user) {
     const interview=await this.access(interviewId,user);

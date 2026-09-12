@@ -87,8 +87,14 @@ function createAIProvider({gemini = geminiContent, groq = groqContent, log = log
       const remaining = deadline - Date.now();
       const identity = {provider, ...(credential ? {credential} : {})};
       if (remaining <= 0) { failures.push({...identity, reason: 'TIMEOUT'}); continue; }
-      // Both Gemini attempts share 40% of the deadline, leaving time for Groq.
-      const budget = provider === 'gemini' ? Math.min(remaining, 20000, Math.max(1, Math.floor(timeout * 0.4 / geminiAttempts.length))) : remaining;
+      // Gemini attempts share deadline, giving sufficient time for complex generation before Groq fallback.
+      const isCoding = options.feature === 'coding_generation';
+      const maxGeminiPerKey = isCoding ? 25000 : 20000;
+      const minGeminiPerKey = isCoding ? 18000 : 1;
+      const geminiShare = isCoding ? 0.5 : 0.4;
+      const budget = provider === 'gemini'
+        ? Math.min(remaining, maxGeminiPerKey, Math.max(minGeminiPerKey, Math.floor(timeout * geminiShare / geminiAttempts.length)))
+        : remaining;
       try {
         log.info('[AIProvider] Attempt', {requestId, ...identity, feature: options.feature || 'quiz'});
         const result = validateResponse(await call({...options, ...(provider === 'gemini' ? {apiKey} : {}), timeout: budget, maxOutputTokens: options.maxOutputTokens || 1200}), options);

@@ -45,6 +45,13 @@ const AIQuiz = sequelize.define('AIQuiz', {
     allowNull: true,
     field: 'training_id'
   },
+  context: {
+    type: DataTypes.STRING(16),
+    allowNull: false,
+    defaultValue: 'TRAINING',
+    validate: { isIn: [['TRAINING', 'HIRE']] },
+    comment: 'Business workflow using this shared quiz engine.'
+  },
   title: {
     type: DataTypes.STRING,
     allowNull: false

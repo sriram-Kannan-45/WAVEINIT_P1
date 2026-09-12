@@ -52,6 +52,9 @@ function ParticipantQuizAttemptPageInner({ user }) {
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState(null)
   const [quizData, setQuizData] = useState(null)
+  const [hirePolicy, setHirePolicy] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem(`hire_proctor_policy_${attemptId}`) || 'null') } catch { return null }
+  })
   const [verifSessionInfo] = useState(() => {
     try {
       const cached = sessionStorage.getItem(`assessment_verif_QUIZ_${quizId}_${attemptId}`)
@@ -100,6 +103,10 @@ function ParticipantQuizAttemptPageInner({ user }) {
 
         if (data.attempt?.monitoringSessionId) {
           setResolvedMonitoringSessionId(data.attempt.monitoringSessionId)
+        }
+        if (data.hireProctoring) {
+          setHirePolicy(data.hireProctoring)
+          sessionStorage.setItem(`hire_proctor_policy_${attemptId}`, JSON.stringify(data.hireProctoring))
         }
 
         setQuizData({
@@ -294,6 +301,7 @@ function ParticipantQuizAttemptPageInner({ user }) {
         monitoringSessionId={resolvedMonitoringSessionId || verifSessionInfo?.sessionId}
         monitoringParticipant={user}
         testStartedAt={testStartedAt}
+        hirePolicy={hirePolicy}
         onSubmit={handleSubmit}
         onRecordingStop={handleRecordingStop}
       />

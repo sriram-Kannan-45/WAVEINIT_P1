@@ -14,7 +14,7 @@
  * unmount).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AlertCircle, Clapperboard, Loader2 } from 'lucide-react'
 import ActiveRoom from '../../components/interview/room/ActiveRoom'
 import ConsentScreen from '../../components/interview/room/ConsentScreen'
@@ -62,6 +62,8 @@ function FullScreenLoader({ message = 'Loading interview...' }) {
 function InterviewRoomInner({ user }) {
   const { id: interviewId } = useParams()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const source = searchParams.get('from')
   const { socket, isConnected } = useSocket()
 
   const isInterviewer = user?.role === 'TRAINER' || user?.role === 'ADMIN'
@@ -74,6 +76,8 @@ function InterviewRoomInner({ user }) {
 
   // Local state
   const [interviewData, setInterviewData] = useState(null)
+  const hireTab = interviewData?.context === 'HIRE' ? (interviewData.mode === 'GROUP_DISCUSSION' ? 'hire-gd' : 'hire-interviews') : source
+  const returnPath = user?.role === 'ADMIN' && ['hire-gd','hire-interviews'].includes(hireTab) ? `/admin?tab=${hireTab}` : '/interviews'
   const [sessionId, setSessionId] = useState(null)
   const [monitoringSessionId,setMonitoringSessionId]=useState(null)
   const [mobileFrames,setMobileFrames]=useState({})
@@ -753,8 +757,8 @@ function InterviewRoomInner({ user }) {
       return
     }
     cleanupResources()
-    navigate('/interviews')
-  }, [interviewId, cleanupResources, navigate, socket, confirm])
+    navigate(returnPath)
+  }, [interviewId, cleanupResources, navigate, socket, confirm, returnPath])
 
   const handleLeaveInterview = useCallback(async () => {
     if (leavingRef.current) return
@@ -766,16 +770,16 @@ function InterviewRoomInner({ user }) {
     })
     if (!ok) return
     cleanupResources()
-    navigate('/interviews')
-  }, [cleanupResources, navigate, confirm])
+    navigate(returnPath)
+  }, [cleanupResources, navigate, confirm, returnPath])
 
   // When the interviewer ends the interview, clean up and leave after a beat.
   useEffect(() => {
     if (!ended) return
     cleanupResources()
-    const timer = setTimeout(() => navigate('/interviews'), 2500)
+    const timer = setTimeout(() => navigate(returnPath), 2500)
     return () => clearTimeout(timer)
-  }, [ended, cleanupResources, navigate])
+  }, [ended, cleanupResources, navigate, returnPath])
 
   // Stop media + close peer connections when the component unmounts.
   useEffect(() => {
@@ -900,7 +904,7 @@ function InterviewRoomInner({ user }) {
               Try Again
             </button>
             <button
-              onClick={() => navigate('/interviews')}
+              onClick={() => navigate(returnPath)}
               className="reg-admin-btn reg-admin-btn--secondary"
             >
               Back to Interviews
@@ -933,12 +937,12 @@ function InterviewRoomInner({ user }) {
           setPhase(PHASE.ACTIVE)
           setFlowStep('ready')
         }}
-        onExit={() => navigate('/interviews')}
+        onExit={() => navigate(returnPath)}
       />
     )
   }
 
-  if (phase===PHASE.CONSENT) return <ConsentScreen interviewId={interviewId} onConsent={handleAcceptConsent} onDecline={()=>navigate('/interviews')} isBusy={isBusy} error={error}/>
+  if (phase===PHASE.CONSENT) return <ConsentScreen interviewId={interviewId} onConsent={handleAcceptConsent} onDecline={()=>navigate(returnPath)} isBusy={isBusy} error={error}/>
 
   // ── STEP 1: Ready Check (Pre-Join) ───────────────────────────────────────
   if (flowStep === 'ready') {

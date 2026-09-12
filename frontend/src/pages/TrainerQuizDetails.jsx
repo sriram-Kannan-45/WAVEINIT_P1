@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft, Settings, Users, BarChart3, Trophy, FileText,
   Plus, Pencil, Trash2, Save, X, Send, Loader2, AlertTriangle, Eye, Star,
   Search, Clock, HelpCircle, CheckCircle2, AlertCircle, RefreshCw, Monitor, Ban, XCircle,
-  Shield, ShieldCheck, ShieldAlert, Download, Award, Calendar,
+  Shield, ShieldCheck, ShieldAlert, Download, Award, Calendar, Sparkles,
 } from 'lucide-react'
 import { API, API_BASE } from '../api/api'
 import { useToast } from '../components/Toast'
@@ -65,6 +65,9 @@ const addMoreBtn = {
 export default function TrainerQuizDetails({ user, onLogout }) {
   const { quizId } = useParams()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const fromHire = searchParams.get('from') === 'hire'
+  const backPath = fromHire ? '/admin?tab=hire-assessments' : '/trainer'
   const toast = useToast()
   const confirm = useConfirm()
   const auth = useCallback(() => ({
@@ -119,12 +122,12 @@ export default function TrainerQuizDetails({ user, onLogout }) {
     })
     if (!ok) return
     try {
-      const r = await fetch(API.TRAINER_COURSES.QUIZ(quiz?.courseId || 0, quizId), {
+      const r = await fetch(`${API_BASE}/quizzes/${quizId}`, {
         method: 'DELETE', headers: auth()
       })
       if (!r.ok) throw new Error('Delete failed')
       toast.success('Quiz deleted successfully')
-      navigate('/trainer')
+      navigate(backPath)
     } catch (e) {
       toast.error(e.message)
     }
@@ -176,8 +179,8 @@ export default function TrainerQuizDetails({ user, onLogout }) {
   return (
     <div className="reg-admin">
       <div className="reg-admin-header">
-        <button className="reg-admin-btn reg-admin-btn--secondary" style={{ cursor: 'pointer' }} onClick={() => navigate('/trainer')}>
-          <ArrowLeft size={14} /> Back to Courses
+        <button className="reg-admin-btn reg-admin-btn--secondary" style={{ cursor: 'pointer' }} onClick={() => navigate(backPath)}>
+          <ArrowLeft size={14} /> {fromHire ? 'Back to Hire' : 'Back to Courses'}
         </button>
         <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16A34A' }}>
           <FileText size={20} color="#16A34A" />
@@ -232,7 +235,7 @@ export default function TrainerQuizDetails({ user, onLogout }) {
 
       <div key={activeTab}>
         {activeTab === 'general' && (
-          <GeneralTab quiz={quiz} onPublish={handlePublish} onDelete={handleDelete} publishing={publishing} onRefresh={fetchQuiz} auth={auth} />
+          <GeneralTab quiz={quiz} onPublish={handlePublish} onDelete={fromHire ? null : handleDelete} publishing={publishing} onRefresh={fetchQuiz} auth={auth} />
         )}
         {activeTab === 'questions' && (
           <QuestionsTab quiz={quiz} onRefresh={fetchQuiz} auth={auth} toast={toast} />
@@ -309,9 +312,11 @@ function GeneralTab({ quiz, onPublish, onDelete, publishing, onRefresh, auth }) 
             <CheckCircle2 size={14} /> Published Successfully
           </span>
         )}
-        <button className="reg-admin-btn reg-admin-btn--danger" style={{ cursor: 'pointer' }} onClick={onDelete}>
-          <Trash2 size={14} /> Delete Quiz
-        </button>
+        {onDelete && (
+          <button className="reg-admin-btn reg-admin-btn--danger" style={{ cursor: 'pointer' }} onClick={onDelete}>
+            <Trash2 size={14} /> Delete Quiz
+          </button>
+        )}
       </div>
 
       {editing ? (
@@ -360,6 +365,9 @@ function QuestionsTab({ quiz, onRefresh, auth, toast }) {
   const [editQ, setEditQ] = useState(null)
   const [preview, setPreview] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [showGenerate, setShowGenerate] = useState(false)
+  const [generating, setGenerating] = useState(false)
+  const [generation, setGeneration] = useState({ prompt: '', questionCount: 10, difficulty: 'MIXED' })
 
   const loadQuestions = async () => {
     try {
@@ -406,6 +414,23 @@ function QuestionsTab({ quiz, onRefresh, auth, toast }) {
     finally { setSaving(false) }
   }
 
+  const handleGenerate = async (event) => {
+    event.preventDefault()
+    setGenerating(true)
+    try {
+      const response = await fetch(`${API_BASE}/quizzes/${quiz.id}/generate-questions`, {
+        method: 'POST', headers: auth(), body: JSON.stringify(generation),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Generation failed')
+      toast.success(`${data.count || generation.questionCount} questions generated with the shared AI quiz service`)
+      setShowGenerate(false)
+      await loadQuestions()
+      onRefresh?.()
+    } catch (error) { toast.error(error.message) }
+    finally { setGenerating(false) }
+  }
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -416,11 +441,22 @@ function QuestionsTab({ quiz, onRefresh, auth, toast }) {
               <Eye size={14} /> Preview Quiz
             </button>
           )}
+          {questions.length === 0 && (
+            <button className="reg-admin-btn reg-admin-btn--secondary" style={{ cursor: 'pointer' }} onClick={() => setShowGenerate(value => !value)}>
+              <Sparkles size={14} /> Generate with AI
+            </button>
+          )}
           <button className="reg-admin-btn reg-admin-btn--primary" style={{ cursor: 'pointer' }} onClick={() => { setEditQ(null); setShowForm(true) }}>
             <Plus size={14} /> Add Question
           </button>
         </div>
       </div>
+
+      {showGenerate && <form onSubmit={handleGenerate} className="reg-admin-section" style={{ padding: 16, marginBottom: 16, display: 'grid', gap: 12 }}>
+        <label className="reg-admin-field"><span>Topics and skills</span><textarea rows="3" required value={generation.prompt} onChange={event => setGeneration({ ...generation, prompt: event.target.value })} placeholder="Describe what candidates should be assessed on…" /></label>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}><label className="reg-admin-field"><span>Questions</span><input type="number" min="1" max="100" value={generation.questionCount} onChange={event => setGeneration({ ...generation, questionCount: Number(event.target.value) })} /></label><label className="reg-admin-field"><span>Difficulty</span><select value={generation.difficulty} onChange={event => setGeneration({ ...generation, difficulty: event.target.value })}><option value="MIXED">Mixed</option><option value="EASY">Easy</option><option value="MEDIUM">Medium</option><option value="HARD">Hard</option></select></label></div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button type="button" className="reg-admin-btn reg-admin-btn--secondary" onClick={() => setShowGenerate(false)}>Cancel</button><button className="reg-admin-btn reg-admin-btn--primary" disabled={generating}>{generating && <Loader2 size={14} className="bulk-spin" />} Generate questions</button></div>
+      </form>}
 
       {(showForm || editQ) && (
         <QuestionForm

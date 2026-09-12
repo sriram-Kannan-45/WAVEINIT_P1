@@ -21,17 +21,20 @@ const lifecycle = require('../services/interviewLifecycleService');
 
 const INTERVIEW_TYPES = ['TECHNICAL', 'HR', 'MANAGERIAL', 'CUSTOM'];
 const MEETING_TYPES = ['ONLINE', 'IN_PERSON', 'HYBRID', 'IN_PLATFORM'];
-const ALLOWED_STATUSES = ['SCHEDULED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'];
+const ALLOWED_STATUSES = ['SCHEDULED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'EVALUATED'];
 
 /**
  * Valid status transitions for the interview lifecycle.
- * Terminal statuses (COMPLETED / CANCELLED) cannot transition further.
+ * Terminal statuses (COMPLETED / CANCELLED) cannot transition further,
+ * EXCEPT Group Discussions: COMPLETED → EVALUATED once every group
+ * participant has been individually evaluated.
  */
 const STATUS_TRANSITIONS = {
   SCHEDULED: ['IN_PROGRESS', 'COMPLETED', 'CANCELLED'],
   IN_PROGRESS: ['COMPLETED', 'CANCELLED'],
-  COMPLETED: [],
+  COMPLETED: ['EVALUATED'],
   CANCELLED: [],
+  EVALUATED: [],
 };
 
 function isValidDate(value) {
@@ -90,10 +93,15 @@ class InterviewController {
       } = req.body;
 
       const mode=req.body.mode||'INTERVIEW';
+      const context=String(req.body.context || 'TRAINING').toUpperCase();
+      if(!['TRAINING','HIRE'].includes(context)) return res.status(400).json({error:'Invalid interview context'});
+      if(context==='HIRE' && req.user.role!=='ADMIN') return res.status(403).json({error:'Only an administrator can schedule hiring sessions.'});
       if(!['INTERVIEW','GROUP_DISCUSSION'].includes(mode)) return res.status(400).json({error:'Invalid session mode'});
       if(mode==='GROUP_DISCUSSION'&&!Array.isArray(req.body.candidateIds)) return res.status(400).json({error:'candidateIds must be an array'});
-      const ids=mode==='GROUP_DISCUSSION'?[...new Set((req.body.candidateIds||[]).map(Number))]:[Number(candidateId)];
-      if(ids.some(id=>!Number.isSafeInteger(id)||id<=0)||ids.length<(mode==='GROUP_DISCUSSION'?2:1)||ids.length>6) return res.status(400).json({error:'Choose 2–6 distinct candidates for Group Discussion, or one for an interview.'});
+      const ids=mode==='GROUP_DISCUSSION'?(req.body.candidateIds||[]).map(Number):[Number(candidateId)];
+      const invalidCount=mode==='GROUP_DISCUSSION' ? (context==='HIRE' ? ids.length!==6 : ids.length<2 || ids.length>6) : ids.length!==1;
+      if(ids.some(id=>!Number.isSafeInteger(id)||id<=0)||new Set(ids).size!==ids.length||invalidCount) return res.status(400).json({error:context==='HIRE'?'Hire GD requires exactly 6 distinct candidates. An interview requires one candidate.':'Choose 2–6 distinct candidates for Group Discussion, or one for an interview.'});
+      if (!Number.isSafeInteger(Number(interviewerId)) || Number(interviewerId)<=0 || Array.isArray(interviewerId)) return res.status(400).json({error:'Select exactly one interviewer/moderator.'});
       candidateId=ids[0];
       const evaluationCriteria=mode==='GROUP_DISCUSSION'?lifecycle.normalizeCriteria(req.body.evaluationCriteria):null;
       if(mode==='GROUP_DISCUSSION' && meetingType && meetingType!=='IN_PLATFORM') return res.status(400).json({error:'Group Discussion uses the in-platform room.'});
@@ -128,6 +136,9 @@ class InterviewController {
       }
 
       const eligible=await User.count({where:{id:{[Op.in]:ids},role:'PARTICIPANT',isDeleted:false,status:'APPROVED'}});
+      if (context==='HIRE' && mode==='GROUP_DISCUSSION' && (interviewer.role!=='TRAINER' || interviewer.status!=='APPROVED')) {
+        return res.status(400).json({error:'Hire GD requires exactly one approved trainer as HR/Moderator.'});
+      }
       if(eligible!==ids.length) return res.status(400).json({error:'All candidates must be approved participants.'});
       const start = new Date(scheduledAt);
       const end = new Date(start.getTime() + dur * 60 * 1000);
@@ -143,7 +154,7 @@ class InterviewController {
 
       const interview = await sequelize.transaction(async transaction=>{
         const created=await Interview.create({
-        mode, evaluation_criteria:evaluationCriteria,
+        mode, context, evaluation_criteria:evaluationCriteria,
         candidate_id: candidateId,
         interviewer_id: interviewerId,
         created_by: req.user.id,
@@ -196,8 +207,9 @@ class InterviewController {
    */
   async listInterviews(req, res) {
     try {
-      const { status, type, search, interviewerId, candidateId, page = 1, limit = 20 } = req.query;
+      const { status, type, mode, search, interviewerId, candidateId, page = 1, limit = 20 } = req.query;
       const where = {};
+      if (['TRAINING','HIRE'].includes(String(req.query.context || '').toUpperCase())) where.context=String(req.query.context).toUpperCase();
       const userRole = (req.user.role || '').toUpperCase();
 
       const roleScope = [];
@@ -208,16 +220,23 @@ class InterviewController {
         roleScope.push({ interviewer_id: req.user.id }, { created_by:req.user.id }, { candidate_id: req.user.id });
       }
 
-      if (status) where.status = status;
-      if (type) where.type = type;
-      if (interviewerId) where.interviewer_id = interviewerId;
-      if (candidateId) where.candidate_id = candidateId;
+      const validStatuses = ['SCHEDULED', 'CONFIRMED', 'STARTED', 'IN_PROGRESS', 'COMPLETED', 'EVALUATED', 'CANCELLED', 'NO_SHOW', 'RESCHEDULED'];
+      const validModes = ['INTERVIEW', 'GROUP_DISCUSSION'];
+      if (status && status !== 'ALL' && status !== 'undefined' && validStatuses.includes(String(status).toUpperCase())) {
+        where.status = String(status).toUpperCase();
+      }
+      if (type && type !== 'ALL' && type !== 'undefined') where.type = type;
+      if (mode && mode !== 'ALL' && mode !== 'undefined' && validModes.includes(String(mode).toUpperCase())) {
+        where.mode = String(mode).toUpperCase();
+      }
+      if (interviewerId && interviewerId !== 'undefined') where.interviewer_id = interviewerId;
+      if (candidateId && candidateId !== 'undefined') where.candidate_id = candidateId;
 
       // Search across candidate name/email/phone, interviewer name/email,
       // interview title and interview type.
       const searchScope = [];
-      if (search) {
-        const term = `%${search}%`;
+      if (search && String(search).trim() && String(search).trim() !== 'undefined') {
+        const term = `%${String(search).trim()}%`;
         searchScope.push(
           { title: { [Op.like]: term } },
           { type: { [Op.like]: term } },
@@ -248,6 +267,7 @@ class InterviewController {
           { model: User, as: 'interviewer', attributes: ['id', 'name', 'email', 'phone'] },
           { model: InterviewSession, as: 'sessions', attributes: ['id', 'status', 'started_at', 'ended_at'] },
           { model: InterviewResult, as: 'result', attributes: ['id', 'decision', 'decided_at', 'is_published'] },
+          { model: InterviewParticipant, as: 'participants', attributes: ['id', 'user_id', 'status', 'joined_at', 'evaluation'] },
         ],
         order: [['scheduled_at', 'DESC']],
         limit: parseInt(limit, 10),
@@ -257,7 +277,17 @@ class InterviewController {
       });
 
       res.json({
-        interviews:interviews.map(row=>{const data=row.toJSON();if(userRole==='PARTICIPANT'&&!data.result?.is_published)delete data.result;return data;}),
+        interviews:interviews.map(row=>{
+          const data=row.toJSON();
+          if(userRole==='PARTICIPANT') {
+            if(!data.result?.is_published) delete data.result;
+            data.participants=(data.participants||[]).map(p=>{
+              if(String(p.user_id)!==String(req.user.id)||!p.evaluation?.isPublished) delete p.evaluation;
+              return p;
+            });
+          }
+          return data;
+        }),
         pagination: {
           total: count,
           page: parseInt(page, 10),
@@ -284,13 +314,14 @@ class InterviewController {
           { model: InterviewSession, as: 'sessions' },
           { model: InterviewResult, as: 'result' },
           { model: InterviewFeedback, as: 'feedbacks' },
-          {model:InterviewParticipant,as:'participants',attributes:['id','user_id','status','joined_at'],include:[{model:User,as:'user',attributes:['id','name']}]},
+          {model:InterviewParticipant,as:'participants',attributes:['id','user_id','status','joined_at','evaluation'],include:[{model:User,as:'user',attributes:['id','name']}]},
         ],
       });
 
       if (!interview) return res.status(404).json({ error: 'Interview not found' });
 
       // Access check
+      await lifecycle.access(interview.id, req.user);
       const userId = req.user.id;
       const role = req.user.role;
       if (role === 'PARTICIPANT' && !(await lifecycle.member(interview,userId))) {
@@ -301,6 +332,10 @@ class InterviewController {
       if (role === 'PARTICIPANT') {
         // Participants must not see raw internal feedback notes
         delete interviewData.feedbacks;
+        interviewData.participants=(interviewData.participants||[]).map(p=>{
+          if(String(p.user_id)!==String(userId)||!p.evaluation?.isPublished) delete p.evaluation;
+          return p;
+        });
         // Participants only see result if published
         if (interviewData.result && !interviewData.result.is_published) {
           delete interviewData.result;
@@ -310,7 +345,7 @@ class InterviewController {
       res.json({ interview: interviewData });
     } catch (error) {
       logger.error('Error getting interview', { error: error.message });
-      res.status(500).json({ error: 'Failed to get interview' });
+      res.status(error.status || 500).json({ error: error.status ? error.message : 'Failed to get interview' });
     }
   }
 
@@ -1092,6 +1127,11 @@ class InterviewController {
       const where = {};
       const userRole = req.user.role;
 
+      if (['INTERVIEW', 'GROUP_DISCUSSION'].includes(String(req.query.mode || '').toUpperCase())) {
+        where.mode = String(req.query.mode).toUpperCase();
+      }
+      if (['TRAINING','HIRE'].includes(String(req.query.context || '').toUpperCase())) where.context=String(req.query.context).toUpperCase();
+
       if (userRole === 'PARTICIPANT') {
         const memberships=await InterviewParticipant.findAll({where:{user_id:req.user.id},attributes:['interview_id']});
         where[Op.or]=[{candidate_id:req.user.id},{id:{[Op.in]:memberships.map(p=>p.interview_id)}}];
@@ -1107,11 +1147,12 @@ class InterviewController {
       const todayEnd = new Date();
       todayEnd.setHours(23, 59, 59, 999);
 
-      const [total, scheduled, inProgress, completed, cancelled, today] = await Promise.all([
+      const [total, scheduled, inProgress, completed, evaluated, cancelled, today] = await Promise.all([
         Interview.count({ where }),
         Interview.count({ where: { ...where, status: 'SCHEDULED' } }),
         Interview.count({ where: { ...where, status: 'IN_PROGRESS' } }),
         Interview.count({ where: { ...where, status: 'COMPLETED' } }),
+        Interview.count({ where: { ...where, status: 'EVALUATED' } }),
         Interview.count({ where: { ...where, status: 'CANCELLED' } }),
         Interview.count({
           where: {
@@ -1121,7 +1162,7 @@ class InterviewController {
         }),
       ]);
 
-      res.json({ total, scheduled, inProgress, completed, cancelled, today });
+      res.json({ total, scheduled, inProgress, completed, evaluated, cancelled, today });
     } catch (error) {
       logger.error('Error fetching interview stats', { error: error.message });
       res.status(500).json({ error: 'Failed to fetch stats' });
@@ -1289,6 +1330,24 @@ class InterviewController {
         return res.status(400).json({
           error: `Cannot change interview from ${interview.status} to ${nextStatus}. Allowed transitions: ${allowedNext.length ? allowedNext.join(', ') : 'none'}`,
         });
+      }
+
+      if (nextStatus === 'EVALUATED') {
+        if (interview.mode !== 'GROUP_DISCUSSION') {
+          return res.status(400).json({ error: 'Only Group Discussions can be marked EVALUATED.' });
+        }
+        const participants = await InterviewParticipant.findAll({ where: { interview_id: interview.id } });
+        if (!participants.length) {
+          return res.status(400).json({ error: 'Group Discussion has no participants to evaluate.' });
+        }
+        const unevaluated = participants.filter((p) => !(p.evaluation && typeof p.evaluation === 'object' && (p.evaluation.scores || p.evaluation.rating !== undefined || p.evaluation.feedback)));
+        if (unevaluated.length > 0) {
+          return res.status(400).json({
+            error: `Cannot mark EVALUATED yet: ${unevaluated.length} of ${participants.length} participants are still missing evaluations.`,
+            unevaluatedCount: unevaluated.length,
+            totalCount: participants.length,
+          });
+        }
       }
 
       if(nextStatus==='IN_PROGRESS') {
