@@ -7,6 +7,7 @@ import {
   TrendingUp, AlertCircle, BarChart3, Star, Crown, ShieldAlert
 } from 'lucide-react'
 import { API } from '../api/api'
+import '../styles/trainer-my-trainings.css'
 import { getAuthHeaders, fetchWithTimeout } from '../api/request'
 import UserAvatar, { getTwoLetterInitials } from '../components/common/UserAvatar'
 import { useToast } from '../components/Toast'

@@ -8,6 +8,7 @@ import {
   Download, ExternalLink, Camera, Globe, ArrowLeft, Trash2, Pencil, AlertCircle, Link as LinkIcon
 } from 'lucide-react';
 import profileService from '../../services/profileService';
+import '../../styles/trainer-my-trainings.css';
 import { assetUrl } from '../../api/api';
 import ProfileSkeleton from '../../components/profile/ProfileSkeleton';
 import LearningActivityHeatmap from '../../components/profile/LearningActivityHeatmap';

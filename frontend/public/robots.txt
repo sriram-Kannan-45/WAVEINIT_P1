@@ -1,2 +1,24 @@
 User-agent: *
-Disallow: /
+Allow: /
+Disallow: /admin
+Disallow: /trainer
+Disallow: /participant
+Disallow: /trainings
+Disallow: /quizzes
+Disallow: /exam
+Disallow: /test
+Disallow: /coding
+Disallow: /interview
+Disallow: /interviews
+Disallow: /my-profile
+Disallow: /mobile-join
+Disallow: /assessment
+
+Allow: /login
+Allow: /register
+Allow: /apply
+Allow: /forgot-password
+Allow: /verify-certificate
+Allow: /privacy
+
+Sitemap: https://www.waveinitlms.online/sitemap.xml

@@ -20,6 +20,7 @@ import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 
 import '../../styles/design-tokens.css';
+import '../../styles/ai-quizzes.css';
 
 import { useQuizzes } from './hooks/useQuizzes';
 import { useSocketEvent } from '../../hooks/useSocket';

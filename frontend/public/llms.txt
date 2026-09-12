@@ -1,0 +1,32 @@
+# WAVEINIT LMS
+
+> WAVEINIT LMS is a role-based online learning platform (participants, trainers, and admins) delivering courses, quizzes, exams, coding assessments, interviews, certificates, and live collaboration tools.
+
+- Site: https://www.waveinitlms.online
+- Tech: React 18 (Vite SPA), Express + MongoDB backend, socket.io for live notifications, Azure/Vercel hosting.
+
+## Public pages
+
+- https://www.waveinitlms.online/ — landing / login page
+- https://www.waveinitlms.online/register — participant sign-up (role selection)
+- https://www.waveinitlms.online/forgot-password — password reset request
+- https://www.waveinitlms.online/verify-certificate — validate a course certificate by its unique ID
+- https://www.waveinitlms.online/privacy-policy — privacy policy
+
+## Roles
+
+- **Participant**: enrolls in courses, completes lessons (videos/content), takes quizzes, exams, and coding assessments, receives certificates, attends scheduled 1:1 video interviews, and completes attendance for live sessions.
+- **Trainer**: creates and manages courses and lessons, hosts proctored quizzes/exams, reviews participant recordings and proctoring sessions, schedules and conducts interviews, views leaderboards and feedback.
+- **Admin**: manages the platform – users, courses, dashboards, statistics.
+
+## Key user flows
+
+1. Authenticate → role-based dashboard.
+2. Participant browses available courses, enrolls, progresses through lessons.
+3. Assessments are proctored (webcam/QR verification) for integrity.
+4. Successful courses/exams earn certificates verifiable via `/verify-certificate`.
+5. Interviews are video-based; trainers evaluate candidates afterward.
+
+## Not found / intentional exclusions
+
+Routes under `/trainer`, `/admin`, `/my-*`, `/interviews`, `/exam`, `/quizzes`, `/attempt`, `/results`, and `/recordings` require authentication and are excluded from indexing.

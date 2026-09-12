@@ -3,7 +3,7 @@ import { Suspense, lazy, useEffect, useState } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate, useParams, useLocation, useSearchParams } from 'react-router-dom'
 import ErrorBoundary from './components/ErrorBoundary'
 import Layout from './components/Layout'
-import NotificationsPanel from './components/student/shell/NotificationsPanel'
+const NotificationsPanel = lazyRetry(() => import('./components/student/shell/NotificationsPanel'))
 import { ToastProvider } from './components/Toast'
 import { AlertModalProvider } from './components/ui/AlertModal'
 import { AppThemeProvider } from './contexts/AppThemeContext'
