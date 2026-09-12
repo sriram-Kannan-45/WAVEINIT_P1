@@ -515,7 +515,7 @@ router.post('/participant/start/:quizId',
         const enrollmentCheck = await Enrollment.findOne({
           where: {
             participantId: req.user.id,
-            status: 'ENROLLED',
+            status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] },
             [Op.or]: [
               ...(quiz.courseId ? [{ courseId: quiz.courseId }] : []),
               ...(quiz.trainingId ? [{ trainingId: quiz.trainingId }] : []),
@@ -1021,7 +1021,7 @@ router.get('/participant/quizzes',
       // If no assignments exist yet (quiz was published without per-participant
       // assignments), find quizzes via the participant's enrolled courses.
       const enrollments = await Enrollment.findAll({
-        where: { participantId, status: 'ENROLLED' },
+        where: { participantId, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } },
         attributes: ['courseId', 'trainingId']
       });
       const enrolledCourseIds = [...new Set(enrollments.map(e => e.courseId).filter(Boolean))];
@@ -1421,7 +1421,7 @@ async function ensureQuizAssignment(quizId, trainingId) {
   }
   const { Enrollment } = require('../models');
   const enrollments = await Enrollment.findAll({
-    where: { trainingId, status: 'ENROLLED' }
+    where: { trainingId, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } }
   });
   if (enrollments.length === 0) {
     console.log(`[quizAssignment] No enrolled participants for training #${trainingId}`);

@@ -477,11 +477,27 @@ function MyCoursesList({ user, onOpen }) {
                       {/* STATUS COLUMN */}
                       <td className="tmt-td">
                         <div className="tmt-status-cell">
-                          <span className={`tmt-status-badge tmt-status-badge--${(course.status || 'PUBLISHED').toLowerCase()}`}>
-                            {course.status || 'PUBLISHED'}
-                          </span>
+                          {course.isPending || ['PENDING_TRAINER_APPROVAL', 'PENDING'].includes(course.enrollmentStatus) ? (
+                            <span className="tmt-status-badge" style={{ background: '#FEF3C7', color: '#B45309', border: '1px solid #FDE68A', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                              <Clock size={11} /> Pending Approval
+                            </span>
+                          ) : course.isRejected || course.enrollmentStatus === 'REJECTED' ? (
+                            <span className="tmt-status-badge" style={{ background: '#FEE2E2', color: '#B91C1C', border: '1px solid #FECACA', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                              <AlertCircle size={11} /> Rejected
+                            </span>
+                          ) : (
+                            <span className={`tmt-status-badge tmt-status-badge--${(course.status || 'PUBLISHED').toLowerCase()}`}>
+                              {course.status || 'PUBLISHED'}
+                            </span>
+                          )}
                           <span className="tmt-status-sub">
-                            {course.status === 'DRAFT' ? 'In progress' : course.status === 'ARCHIVED' ? 'Completed courses' : 'Courses live'}
+                            {course.isPending || ['PENDING_TRAINER_APPROVAL', 'PENDING'].includes(course.enrollmentStatus)
+                              ? 'Waiting for trainer'
+                              : course.isRejected || course.enrollmentStatus === 'REJECTED'
+                                ? 'Enrollment rejected'
+                                : course.status === 'DRAFT'
+                                  ? 'In progress'
+                                  : 'Courses live'}
                           </span>
                         </div>
                       </td>
@@ -674,16 +690,28 @@ function CourseView({ user, courseId, onBack, onOpenLesson }) {
     }
   }, [qTab, tab])
 
+  const [lockInfo, setLockInfo] = useState(null)
+
   useEffect(() => {
     let aborted = false
     ;(async () => {
       try {
         setLoading(true)
+        setLockInfo(null)
         const r = await fetch(API.PARTICIPANT_COURSES.OVERVIEW(courseId), { headers: auth(user.token) })
         const d = await r.json()
         if (!aborted) {
-          if (d.success) setOverview(d)
-          else showError(d.error || 'Failed to load course')
+          if (d.success) {
+            setOverview(d)
+          } else {
+            if (d.code === 'PENDING_TRAINER_APPROVAL' || d.error?.toLowerCase().includes('pending trainer approval')) {
+              setLockInfo({ type: 'PENDING', message: d.error })
+            } else if (d.code === 'ENROLLMENT_REJECTED' || d.error?.toLowerCase().includes('rejected')) {
+              setLockInfo({ type: 'REJECTED', message: d.error })
+            } else {
+              showError(d.error || 'Failed to load course')
+            }
+          }
         }
       } catch (e) { if (!aborted) showError(e.message) }
       finally { if (!aborted) setLoading(false) }
@@ -705,6 +733,76 @@ function CourseView({ user, courseId, onBack, onOpenLesson }) {
     )
   }
   if (!overview) {
+    if (lockInfo?.type === 'PENDING') {
+      return (
+        <div className="wl-detail-page" style={{ padding: '40px 20px', textAlign: 'center' }}>
+          <div style={{ maxWidth: 480, margin: '40px auto', background: '#fff', border: '1px solid #FDE68A', borderRadius: 16, padding: '36px 24px', boxShadow: '0 4px 16px rgba(245, 158, 11, 0.08)' }}>
+            <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#FEF3C7', color: '#D97706', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+              <Clock size={28} />
+            </div>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', marginBottom: 8 }}>Enrollment Pending Trainer Approval</h2>
+            <p style={{ fontSize: 13, color: '#64748b', lineHeight: 1.5, marginBottom: 20 }}>
+              {lockInfo.message || 'Your enrollment request has been submitted and is currently awaiting review by the course instructor. Full access to lessons, quizzes, and resources will be unlocked once approved.'}
+            </p>
+            <button
+              type="button"
+              onClick={onBack}
+              style={{
+                padding: '10px 24px',
+                background: '#16a34a',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 8,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
+              <ArrowLeft size={15} /> Return to My Courses
+            </button>
+          </div>
+        </div>
+      )
+    }
+
+    if (lockInfo?.type === 'REJECTED') {
+      return (
+        <div className="wl-detail-page" style={{ padding: '40px 20px', textAlign: 'center' }}>
+          <div style={{ maxWidth: 480, margin: '40px auto', background: '#fff', border: '1px solid #FECACA', borderRadius: 16, padding: '36px 24px', boxShadow: '0 4px 16px rgba(239, 68, 68, 0.08)' }}>
+            <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#FEE2E2', color: '#DC2626', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+              <AlertCircle size={28} />
+            </div>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', marginBottom: 8 }}>Enrollment Request Rejected</h2>
+            <p style={{ fontSize: 13, color: '#64748b', lineHeight: 1.5, marginBottom: 20 }}>
+              {lockInfo.message || 'The instructor has rejected your enrollment request for this course.'}
+            </p>
+            <button
+              type="button"
+              onClick={onBack}
+              style={{
+                padding: '10px 24px',
+                background: '#16a34a',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 8,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
+              <ArrowLeft size={15} /> Return to My Courses
+            </button>
+          </div>
+        </div>
+      )
+    }
+
     return (
       <div className="wl-detail-page" style={{ padding: '40px 20px', textAlign: 'center' }}>
         <div style={{ maxWidth: 460, margin: '40px auto', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 16, padding: '36px 24px', boxShadow: '0 4px 16px rgba(0,0,0,0.05)' }}>
@@ -2608,17 +2706,45 @@ function ExploreCatalog({ user, onEnrollSuccess }) {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#6B7280', fontSize: 11.5, marginTop: 8, marginBottom: 12 }}>
                       <User size={12} /> <span style={{ fontWeight: 600 }}>{c.trainerName || 'TBA'}</span>
                     </div>
-                    <button
-                      disabled={enrollingId === c.courseId}
-                      onClick={() => handleEnroll(c.courseId)}
-                      className="wl-btn-primary"
-                      style={{
-                        width: '100%', height: 40,
-                        opacity: enrollingId === c.courseId ? 0.7 : 1,
-                      }}
-                    >
-                      Request Enrollment
-                    </button>
+                    {c.isPending || c.enrollmentStatus === 'PENDING_TRAINER_APPROVAL' ? (
+                      <button
+                        disabled
+                        className="wl-btn-secondary"
+                        style={{
+                          width: '100%', height: 40,
+                          background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A',
+                          cursor: 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                          fontWeight: 600, fontSize: 13, borderRadius: 8
+                        }}
+                      >
+                        <Clock size={14} /> Pending Trainer Approval
+                      </button>
+                    ) : c.isApproved || c.isEnrolled ? (
+                      <button
+                        disabled
+                        className="wl-btn-secondary"
+                        style={{
+                          width: '100%', height: 40,
+                          background: '#DCFCE7', color: '#166534', border: '1px solid #BBF7D0',
+                          cursor: 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                          fontWeight: 600, fontSize: 13, borderRadius: 8
+                        }}
+                      >
+                        <CheckCircle2 size={14} /> Enrolled & Approved
+                      </button>
+                    ) : (
+                      <button
+                        disabled={enrollingId === c.courseId}
+                        onClick={() => handleEnroll(c.courseId)}
+                        className="wl-btn-primary"
+                        style={{
+                          width: '100%', height: 40,
+                          opacity: enrollingId === c.courseId ? 0.7 : 1,
+                        }}
+                      >
+                        {c.isRejected ? 'Re-apply for Training' : 'Request Enrollment'}
+                      </button>
+                    )}
                   </div>
                 </motion.div>
               )

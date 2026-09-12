@@ -72,7 +72,7 @@ router.get(
 
       const trainingIds = trainings.map(t => t.id);
       const counts = trainingIds.length > 0 ? await Enrollment.findAll({
-        where: { trainingId: { [Op.in]: trainingIds }, status: 'ENROLLED' },
+        where: { trainingId: { [Op.in]: trainingIds }, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } },
         attributes: ['trainingId', [Enrollment.sequelize.fn('COUNT', '*'), 'cnt']],
         group: ['trainingId'],
         raw: true,
@@ -169,17 +169,18 @@ router.get(
 
       const pendingEnrollments = await Enrollment.findAll({
         where: {
-          status: 'PENDING',
+          status: { [Op.in]: ['PENDING_TRAINER_APPROVAL', 'PENDING'] },
           [Op.or]: enrollmentOrConditions
         },
         include: [
           { model: User, as: 'participant', attributes: ['id', 'name', 'email', 'phone'] },
           { model: Course, as: 'course', attributes: ['id', 'title'] },
           { model: Training, as: 'training', attributes: ['id', 'title'] }
-        ]
+        ],
+        order: [['enrolled_at', 'DESC']]
       });
 
-      res.json({ success: true, pendingRequests: pendingEnrollments });
+      res.json({ success: true, pendingRequests: pendingEnrollments, requests: pendingEnrollments, count: pendingEnrollments.length });
     } catch (error) {
       console.error('Trainer pending requests error:', error.message);
       res.status(500).json({ error: 'Server error fetching pending requests' });
@@ -191,7 +192,7 @@ router.get(
 router.post(
   '/enrollment-requests/:id/approve',
   authenticateToken,
-  roleMiddleware('TRAINER'),
+  roleMiddleware('TRAINER', 'ADMIN'),
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -202,11 +203,11 @@ router.post(
         ]
       });
       if (!enrollment) return res.status(404).json({ error: 'Enrollment request not found' });
-      if (enrollment.status !== 'PENDING') {
+      if (!['PENDING_TRAINER_APPROVAL', 'PENDING'].includes((enrollment.status || '').toUpperCase())) {
         return res.status(400).json({ error: 'Enrollment request is not pending' });
       }
 
-      enrollment.status = 'ENROLLED';
+      enrollment.status = 'APPROVED';
       await enrollment.save();
 
       const io = req.app.get('io');
@@ -215,14 +216,14 @@ router.post(
 
       await NotificationService.createNotification({
         userId: enrollment.participantId,
-        message: `Your enrollment request for "${title}" has been approved!`,
+        message: `Your enrollment request for "${title}" has been approved! You now have full course access.`,
         type: 'APPROVAL',
         actionUrl: `/participant`,
         relatedEntityId: enrollment.id,
         relatedEntityType: 'Enrollment'
-      }, io);
+      }, io).catch(() => {});
 
-      res.json({ success: true, message: 'Enrollment request approved' });
+      res.json({ success: true, message: 'Enrollment request approved successfully' });
     } catch (error) {
       console.error('Approve request error:', error.message);
       res.status(500).json({ error: 'Server error approving request' });
@@ -234,7 +235,7 @@ router.post(
 router.post(
   '/enrollment-requests/:id/reject',
   authenticateToken,
-  roleMiddleware('TRAINER'),
+  roleMiddleware('TRAINER', 'ADMIN'),
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -245,11 +246,11 @@ router.post(
         ]
       });
       if (!enrollment) return res.status(404).json({ error: 'Enrollment request not found' });
-      if (enrollment.status !== 'PENDING') {
+      if (!['PENDING_TRAINER_APPROVAL', 'PENDING'].includes((enrollment.status || '').toUpperCase())) {
         return res.status(400).json({ error: 'Enrollment request is not pending' });
       }
 
-      enrollment.status = 'CANCELLED';
+      enrollment.status = 'REJECTED';
       await enrollment.save();
 
       const io = req.app.get('io');
@@ -263,7 +264,7 @@ router.post(
         actionUrl: `/participant`,
         relatedEntityId: enrollment.id,
         relatedEntityType: 'Enrollment'
-      }, io);
+      }, io).catch(() => {});
 
       res.json({ success: true, message: 'Enrollment request rejected' });
     } catch (error) {

@@ -24,6 +24,8 @@ export const interviewService = {
 
   delete: (id) => api.delete(`${INTERVIEW_BASE}/${id}`),
 
+  bulkDelete: (ids, force = false) => api.post(`${INTERVIEW_BASE}/bulk-delete`, { ids, force }),
+
   join: (id) => api.post(`${INTERVIEW_BASE}/${id}/join`),
 
   recordConsent: (id) => api.post(`${INTERVIEW_BASE}/${id}/consent`),

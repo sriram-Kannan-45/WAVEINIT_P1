@@ -41,11 +41,11 @@ const Enrollment = sequelize.define('Enrollment', {
     field: 'training_id'
   },
   status: {
-    // COMPLETED retained for legacy callers; canonical progress lives in
-    // progress_percent. New flows only set ENROLLED / CANCELLED.
-    type: DataTypes.ENUM('PENDING', 'ENROLLED', 'COMPLETED', 'CANCELLED'),
+    // New workflow: 'PENDING_TRAINER_APPROVAL', 'APPROVED', 'REJECTED'
+    // Backward compatibility: 'PENDING', 'ENROLLED', 'COMPLETED', 'CANCELLED'
+    type: DataTypes.STRING(50),
     allowNull: false,
-    defaultValue: 'PENDING'
+    defaultValue: 'PENDING_TRAINER_APPROVAL'
   },
   progressPercent: {
     type: DataTypes.DECIMAL(5, 2),

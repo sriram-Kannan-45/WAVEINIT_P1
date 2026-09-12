@@ -535,6 +535,8 @@ export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
             user={user}
             courseId={courseId}
             onClose={() => { setViewingQuizId(null); fetchAll() }}
+            onEditQuiz={(q) => openEdit(q)}
+            onDeleteQuiz={(q) => remove(q)}
           />
         )}
       </AnimatePresence>
@@ -645,8 +647,400 @@ export default function CourseQuizzesTab({ user, courseId, onCountChange }) {
 /* ─────────────────────────────────────────────────────────────────────────────
    LARGE POPUP / OVERLAY MODAL: QUIZ DETAIL MODAL
    ───────────────────────────────────────────────────────────────────────────── */
-function QuizDetailModal({ quizId, user, courseId, onClose }) {
+// ── QUESTION PREVIEW MODAL ──────────────────────────────────────────────────
+function QuestionPreviewModal({ question, questionIndex, onClose }) {
+  if (!question) return null
+  const options = Array.isArray(question.options)
+    ? question.options
+    : (typeof question.options === 'object' && question.options ? Object.values(question.options) : [])
+  const correct = question.correctAnswer || ''
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0,
+        background: 'rgba(15, 23, 42, 0.65)',
+        backdropFilter: 'blur(4px)',
+        WebkitBackdropFilter: 'blur(4px)',
+        zIndex: 1000005,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 20, boxSizing: 'border-box'
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: '#FFFFFF',
+          borderRadius: 16,
+          width: '100%',
+          maxWidth: 600,
+          maxHeight: '90vh',
+          boxShadow: '0 25px 60px -15px rgba(0,0,0,0.3)',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          fontFamily: "'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+        }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div style={{
+          padding: '16px 20px', borderBottom: '1px solid #F1F5F9',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{
+              width: 32, height: 32, borderRadius: 8, background: '#EAF8F0',
+              color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontWeight: 700, fontSize: 13
+            }}>
+              #{questionIndex != null ? questionIndex + 1 : 1}
+            </span>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: '#0F172A' }}>Question Preview</div>
+              <div style={{ fontSize: 11, color: '#64748B' }}>{question.questionType || 'MCQ'} • {question.marks || 1} mark(s)</div>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              width: 30, height: 30, borderRadius: 8, border: '1px solid #E2E8F0',
+              background: '#F8FAFC', cursor: 'pointer', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', color: '#64748B'
+            }}
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        <div style={{ padding: '20px 24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+              Question Text
+            </div>
+            <div style={{ fontSize: 14.5, fontWeight: 600, color: '#0F172A', lineHeight: 1.5 }}>
+              {question.questionText || question.question}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+              Options ({options.length})
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {options.map((opt, i) => {
+                const isCorrect = String(opt).trim() === String(correct).trim()
+                const label = String.fromCharCode(65 + i)
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      padding: '10px 14px',
+                      borderRadius: 10,
+                      border: isCorrect ? '1.5px solid #16A34A' : '1px solid #E2E8F0',
+                      background: isCorrect ? '#F0FDF4' : '#FFFFFF',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 12
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{
+                        width: 24, height: 24, borderRadius: 6,
+                        background: isCorrect ? '#16A34A' : '#F1F5F9',
+                        color: isCorrect ? '#FFFFFF' : '#64748B',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 12, fontWeight: 700
+                      }}>
+                        {label}
+                      </span>
+                      <span style={{ fontSize: 13, color: isCorrect ? '#14532D' : '#334155', fontWeight: isCorrect ? 600 : 400 }}>
+                        {opt}
+                      </span>
+                    </div>
+                    {isCorrect && (
+                      <span style={{
+                        fontSize: 11, fontWeight: 700, color: '#16A34A',
+                        display: 'flex', alignItems: 'center', gap: 4, background: '#DCFCE7',
+                        padding: '2px 8px', borderRadius: 999
+                      }}>
+                        <Check size={12} strokeWidth={3} /> Correct Answer
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {question.explanation && (
+            <div style={{ background: '#F8FAFC', padding: 12, borderRadius: 10, border: '1px solid #F1F5F9' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#64748B', marginBottom: 4 }}>Explanation</div>
+              <div style={{ fontSize: 12.5, color: '#334155', lineHeight: 1.4 }}>{question.explanation}</div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 16, paddingTop: 4 }}>
+            <div>
+              <span style={{ fontSize: 11, color: '#94A3B8' }}>Difficulty: </span>
+              <span style={{
+                padding: '2px 8px', borderRadius: 6, fontSize: 11, fontWeight: 700,
+                background: question.difficulty === 'EASY' ? '#EAF8F0' : question.difficulty === 'HARD' ? '#FEF2F2' : '#FEF3C7',
+                color: question.difficulty === 'EASY' ? '#16A34A' : question.difficulty === 'HARD' ? '#DC2626' : '#D97706',
+              }}>
+                {question.difficulty || 'MEDIUM'}
+              </span>
+            </div>
+            <div>
+              <span style={{ fontSize: 11, color: '#94A3B8' }}>Marks: </span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#0F172A' }}>{question.marks || 1}</span>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ padding: '12px 20px', borderTop: '1px solid #F1F5F9', display: 'flex', justifyContent: 'flex-end', background: '#F8FAFC' }}>
+          <button onClick={onClose} style={btnSecondary}>Close</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── QUESTION EDIT / ADD MODAL ────────────────────────────────────────────────
+function QuestionEditModal({ question, onSave, onClose, saving }) {
+  const isEdit = !!question
+  const [questionText, setQuestionText] = useState(question?.questionText || question?.question || '')
+  const [questionType, setQuestionType] = useState(question?.questionType || 'MCQ')
+  const [difficulty, setDifficulty] = useState(question?.difficulty || 'MEDIUM')
+  const [marks, setMarks] = useState(question?.marks || 1)
+  const [explanation, setExplanation] = useState(question?.explanation || '')
+
+  const initialOptions = () => {
+    let raw = question?.options
+    if (Array.isArray(raw)) {
+      const arr = [...raw]
+      while (arr.length < 4) arr.push('')
+      return arr.slice(0, 4)
+    }
+    return ['', '', '', '']
+  }
+
+  const [options, setOptions] = useState(initialOptions)
+  const [correctIndex, setCorrectIndex] = useState(() => {
+    const correct = question?.correctAnswer || ''
+    const opts = initialOptions()
+    const idx = opts.findIndex(o => String(o).trim() === String(correct).trim())
+    return idx >= 0 ? idx : 0
+  })
+
+  const [errorMsg, setErrorMsg] = useState('')
+
+  const handleOptionChange = (idx, val) => {
+    const next = [...options]
+    next[idx] = val
+    setOptions(next)
+  }
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!questionText.trim()) {
+      setErrorMsg('Please enter the question text')
+      return
+    }
+    if (options.some(o => !String(o).trim())) {
+      setErrorMsg('Please fill in all 4 options')
+      return
+    }
+    const correctAnswer = options[correctIndex]
+    if (!correctAnswer || !String(correctAnswer).trim()) {
+      setErrorMsg('Please select a valid correct answer')
+      return
+    }
+    setErrorMsg('')
+    onSave({
+      questionText: questionText.trim(),
+      questionType,
+      difficulty,
+      marks: parseInt(marks, 10) || 1,
+      options,
+      correctAnswer: String(correctAnswer).trim(),
+      explanation: explanation.trim()
+    })
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0,
+        background: 'rgba(15, 23, 42, 0.65)',
+        backdropFilter: 'blur(4px)',
+        WebkitBackdropFilter: 'blur(4px)',
+        zIndex: 1000005,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 20, boxSizing: 'border-box'
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: '#FFFFFF',
+          borderRadius: 16,
+          width: '100%',
+          maxWidth: 620,
+          maxHeight: '90vh',
+          boxShadow: '0 25px 60px -15px rgba(0,0,0,0.3)',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          fontFamily: "'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+        }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div style={{
+          padding: '16px 20px', borderBottom: '1px solid #F1F5F9',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+        }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#0F172A' }}>
+            {isEdit ? 'Edit Question' : 'Add New Question'}
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              width: 30, height: 30, borderRadius: 8, border: '1px solid #E2E8F0',
+              background: '#F8FAFC', cursor: 'pointer', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', color: '#64748B'
+            }}
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          <div style={{ padding: '20px 24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {errorMsg && (
+              <div style={{
+                padding: '10px 14px', borderRadius: 8, background: '#FEF2F2',
+                border: '1px solid #FECACA', color: '#DC2626', fontSize: 12.5, fontWeight: 600
+              }}>
+                {errorMsg}
+              </div>
+            )}
+
+            <div>
+              <label style={lblStyle}>Question Text <span style={{ color: '#DC2626' }}>*</span></label>
+              <textarea
+                value={questionText}
+                onChange={e => setQuestionText(e.target.value)}
+                placeholder="Enter the question text…"
+                rows={3}
+                style={{ ...inputStyle, resize: 'vertical' }}
+                required
+              />
+            </div>
+
+            <div>
+              <label style={lblStyle}>Options &amp; Correct Answer (Select the radio button for correct option) <span style={{ color: '#DC2626' }}>*</span></label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {options.map((opt, i) => {
+                  const label = String.fromCharCode(65 + i)
+                  const isSelected = correctIndex === i
+                  return (
+                    <div
+                      key={i}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '6px 10px', borderRadius: 8,
+                        background: isSelected ? '#F0FDF4' : '#F8FAFC',
+                        border: isSelected ? '1.5px solid #16A34A' : '1px solid #E2E8F0'
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="correctAnswerOption"
+                        checked={isSelected}
+                        onChange={() => setCorrectIndex(i)}
+                        style={{ cursor: 'pointer', accentColor: '#16A34A', width: 16, height: 16 }}
+                      />
+                      <span style={{ fontSize: 12, fontWeight: 700, color: isSelected ? '#16A34A' : '#64748B', width: 18 }}>
+                        {label}.
+                      </span>
+                      <input
+                        type="text"
+                        value={opt}
+                        onChange={e => handleOptionChange(i, e.target.value)}
+                        placeholder={`Option ${label}`}
+                        style={{ ...inputStyle, flex: 1, padding: '6px 10px', fontSize: 13 }}
+                        required
+                      />
+                      {isSelected && (
+                        <span style={{ fontSize: 11, fontWeight: 700, color: '#16A34A', whiteSpace: 'nowrap' }}>
+                          ✓ Correct
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <label style={lblStyle}>Difficulty</label>
+                <select value={difficulty} onChange={e => setDifficulty(e.target.value)} style={inputStyle}>
+                  <option value="EASY">Easy</option>
+                  <option value="MEDIUM">Medium</option>
+                  <option value="HARD">Hard</option>
+                </select>
+              </div>
+              <div>
+                <label style={lblStyle}>Marks</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={marks}
+                  onChange={e => setMarks(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  style={inputStyle}
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <label style={lblStyle}>Explanation (Optional)</label>
+              <textarea
+                value={explanation}
+                onChange={e => setExplanation(e.target.value)}
+                placeholder="Explain why this answer is correct…"
+                rows={2}
+                style={{ ...inputStyle, resize: 'vertical' }}
+              />
+            </div>
+          </div>
+
+          <div style={{ padding: '12px 20px', borderTop: '1px solid #F1F5F9', display: 'flex', justifyContent: 'flex-end', gap: 10, background: '#F8FAFC' }}>
+            <button type="button" onClick={onClose} disabled={saving} style={btnSecondary}>Cancel</button>
+            <button
+              type="submit"
+              disabled={saving}
+              style={{ ...btnPrimary, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+              {saving ? 'Saving…' : (isEdit ? 'Save Changes' : 'Add Question')}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   LARGE POPUP / OVERLAY MODAL: QUIZ DETAIL MODAL
+   ───────────────────────────────────────────────────────────────────────────── */
+function QuizDetailModal({ quizId, user, courseId, onClose, onEditQuiz, onDeleteQuiz }) {
   const toast = useToast()
+  const confirm = useConfirm()
   const auth = () => ({ Authorization: `Bearer ${user?.token}`, 'Content-Type': 'application/json' })
 
   const [quiz, setQuiz] = useState(null)
@@ -659,6 +1053,19 @@ function QuizDetailModal({ quizId, user, courseId, onClose }) {
   const [leaderboard, setLeaderboard] = useState([])
   const [selectedProctorAttempt, setSelectedProctorAttempt] = useState(null)
 
+  // Question Form & Preview states
+  const [previewingQuestion, setPreviewingQuestion] = useState(null)
+  const [editingQuestion, setEditingQuestion] = useState(null)
+  const [isAddingQuestion, setIsAddingQuestion] = useState(false)
+  const [savingQuestion, setSavingQuestion] = useState(false)
+  const [deletingQuestionId, setDeletingQuestionId] = useState(null)
+
+  // Settings tab states
+  const [settingsTimeLimit, setSettingsTimeLimit] = useState(30)
+  const [settingsMaxAttempts, setSettingsMaxAttempts] = useState(1)
+  const [settingsPassingMarks, setSettingsPassingMarks] = useState(50)
+  const [savingSettings, setSavingSettings] = useState(false)
+
   const fetchQuizDetails = useCallback(async () => {
     setLoading(true)
     try {
@@ -667,6 +1074,9 @@ function QuizDetailModal({ quizId, user, courseId, onClose }) {
       if (d.quiz) {
         setQuiz(d.quiz)
         setQuestions(d.quiz.questions || [])
+        setSettingsTimeLimit(d.quiz.timeLimit || 30)
+        setSettingsMaxAttempts(d.quiz.maxAttempts || 1)
+        setSettingsPassingMarks(d.quiz.passingPercentage || d.quiz.passingMarks || 50)
       } else {
         toast.error('Quiz details not found')
       }
@@ -678,6 +1088,147 @@ function QuizDetailModal({ quizId, user, courseId, onClose }) {
   }, [quizId])
 
   useEffect(() => { fetchQuizDetails() }, [fetchQuizDetails])
+
+  const handleDeleteQuestion = async (qId) => {
+    const ok = await confirm({
+      title: 'Delete Question',
+      message: 'Are you sure you want to delete this question? This action cannot be undone.',
+      type: 'danger',
+      confirmText: 'Delete Question',
+    })
+    if (!ok) return
+    setDeletingQuestionId(qId)
+    try {
+      const r = await fetch(API.TRAINER_COURSES.QUIZ_QUESTION(qId), {
+        method: 'DELETE',
+        headers: auth(),
+      })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok || d.success === false) throw new Error(d.error || 'Failed to delete question')
+      toast.success('Question deleted successfully')
+      fetchQuizDetails()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setDeletingQuestionId(null)
+    }
+  }
+
+  const handleSaveQuestion = async (formData) => {
+    setSavingQuestion(true)
+    try {
+      const isEdit = !!editingQuestion
+      const url = isEdit
+        ? API.TRAINER_COURSES.QUIZ_QUESTION(editingQuestion.id)
+        : API.TRAINER_COURSES.QUIZ_QUESTIONS(quizId)
+      const r = await fetch(url, {
+        method: isEdit ? 'PUT' : 'POST',
+        headers: auth(),
+        body: JSON.stringify({
+          questionText: formData.questionText,
+          questionType: formData.questionType || 'MCQ',
+          options: formData.options,
+          correctAnswer: formData.correctAnswer,
+          explanation: formData.explanation || '',
+          difficulty: formData.difficulty || 'MEDIUM',
+          marks: Number(formData.marks) || 1,
+        }),
+      })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok || d.success === false) throw new Error(d.error || 'Failed to save question')
+      toast.success(isEdit ? 'Question updated successfully' : 'Question added successfully')
+      setEditingQuestion(null)
+      setIsAddingQuestion(false)
+      fetchQuizDetails()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setSavingQuestion(false)
+    }
+  }
+
+  const handleCloseQuiz = async () => {
+    const ok = await confirm({
+      title: 'Close Quiz',
+      message: 'Are you sure you want to close this quiz? Participants will no longer be able to take it and any in-progress attempts will be auto-submitted.',
+      type: 'warning',
+      confirmText: 'Yes, Close Quiz',
+    })
+    if (!ok) return
+    try {
+      const r = await fetch(`${API_BASE}/quizzes/${quizId}/close`, {
+        method: 'POST',
+        headers: auth(),
+      })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok || d.success === false) throw new Error(d.error || 'Failed to close quiz')
+      toast.success('Quiz closed successfully')
+      fetchQuizDetails()
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  const handlePublishQuiz = async () => {
+    try {
+      const r = await fetch(API.TRAINER_COURSES.PUBLISH_QUIZ_NOW(quizId), {
+        method: 'POST',
+        headers: auth(),
+      })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok || d.success === false) throw new Error(d.error || 'Failed to publish quiz')
+      toast.success('Quiz published successfully')
+      fetchQuizDetails()
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  const handleDeleteQuiz = async () => {
+    const ok = await confirm({
+      title: 'Delete Quiz',
+      message: `Are you sure you want to delete "${quiz?.title || 'this quiz'}" permanently? This cannot be undone.`,
+      type: 'danger',
+      confirmText: 'Delete Permanently',
+    })
+    if (!ok) return
+    try {
+      const r = await fetch(API.TRAINER_COURSES.QUIZ(courseId, quizId), {
+        method: 'DELETE',
+        headers: auth(),
+      })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok || d.success === false) throw new Error(d.error || 'Failed to delete quiz')
+      toast.success('Quiz deleted successfully')
+      onClose()
+      onDeleteQuiz?.(quiz)
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  const handleSaveSettings = async () => {
+    setSavingSettings(true)
+    try {
+      const r = await fetch(API.TRAINER_COURSES.QUIZ(courseId, quizId), {
+        method: 'PUT',
+        headers: auth(),
+        body: JSON.stringify({
+          timeLimit: Number(settingsTimeLimit) || 30,
+          maxAttempts: Number(settingsMaxAttempts) || 1,
+          passingPercentage: Number(settingsPassingMarks) || 50,
+        }),
+      })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok || d.success === false) throw new Error(d.error || 'Failed to update settings')
+      toast.success('Quiz settings saved successfully')
+      fetchQuizDetails()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setSavingSettings(false)
+    }
+  }
 
   // Fetch tab-specific data on tab switch
   useEffect(() => {
@@ -925,7 +1476,10 @@ function QuizDetailModal({ quizId, user, courseId, onClose }) {
               {/* ── Action Buttons Row ── */}
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 <button
-                  onClick={() => openEdit(quiz)}
+                  onClick={() => {
+                    onClose()
+                    onEditQuiz?.(quiz)
+                  }}
                   style={{
                     display: 'inline-flex', alignItems: 'center', gap: 6,
                     padding: '7px 15px', borderRadius: 8, background: '#FFFFFF',
@@ -936,20 +1490,36 @@ function QuizDetailModal({ quizId, user, courseId, onClose }) {
                   <Pencil size={13} /> Edit
                 </button>
 
-                <button
-                  onClick={() => toast.info('Quiz closed')}
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 6,
-                    padding: '7px 15px', borderRadius: 8, background: '#EA580C',
-                    border: 'none', fontSize: 12.5, fontWeight: 600,
-                    color: '#FFFFFF', cursor: 'pointer', boxShadow: '0 1px 2px rgba(234, 88, 12, 0.2)'
-                  }}
-                >
-                  <X size={13} /> Close Quiz
-                </button>
+                {quiz.status === 'DRAFT' && (
+                  <button
+                    onClick={handlePublishQuiz}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      padding: '7px 15px', borderRadius: 8, background: '#16A34A',
+                      border: 'none', fontSize: 12.5, fontWeight: 600,
+                      color: '#FFFFFF', cursor: 'pointer', boxShadow: '0 1px 2px rgba(22, 163, 74, 0.2)'
+                    }}
+                  >
+                    <Send size={13} /> Publish Quiz
+                  </button>
+                )}
+
+                {quiz.status !== 'CLOSED' && (
+                  <button
+                    onClick={handleCloseQuiz}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      padding: '7px 15px', borderRadius: 8, background: '#EA580C',
+                      border: 'none', fontSize: 12.5, fontWeight: 600,
+                      color: '#FFFFFF', cursor: 'pointer', boxShadow: '0 1px 2px rgba(234, 88, 12, 0.2)'
+                    }}
+                  >
+                    <X size={13} /> Close Quiz
+                  </button>
+                )}
 
                 <button
-                  onClick={() => remove(quiz)}
+                  onClick={handleDeleteQuiz}
                   style={{
                     display: 'inline-flex', alignItems: 'center', gap: 6,
                     padding: '7px 15px', borderRadius: 8, background: '#DC2626',
@@ -1209,7 +1779,7 @@ function QuizDetailModal({ quizId, user, courseId, onClose }) {
                         {questions.length} Questions
                       </h3>
                       <button
-                        onClick={() => toast.info('Use Quiz Builder to edit full question set')}
+                        onClick={() => setIsAddingQuestion(true)}
                         style={{ ...btnPrimary, padding: '7px 16px', fontSize: 13 }}
                       >
                         <Plus size={13} style={{ marginRight: 4 }} /> Add Question
@@ -1248,9 +1818,28 @@ function QuizDetailModal({ quizId, user, courseId, onClose }) {
                               <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 600, color: '#0F172A', fontSize: 13 }}>{q.marks || 1}</td>
                               <td style={{ padding: '12px 16px', textAlign: 'center' }}>
                                 <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
-                                  <button className="cqt-action-btn"><Eye size={12} /></button>
-                                  <button className="cqt-action-btn cqt-action-btn--edit"><Pencil size={12} /></button>
-                                  <button className="cqt-action-btn cqt-action-btn--delete"><Trash2 size={12} /></button>
+                                  <button
+                                    onClick={() => setPreviewingQuestion({ question: q, index: i })}
+                                    className="cqt-action-btn"
+                                    title="Preview Question"
+                                  >
+                                    <Eye size={12} />
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingQuestion(q)}
+                                    className="cqt-action-btn cqt-action-btn--edit"
+                                    title="Edit Question"
+                                  >
+                                    <Pencil size={12} />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteQuestion(q.id)}
+                                    disabled={deletingQuestionId === q.id}
+                                    className="cqt-action-btn cqt-action-btn--delete"
+                                    title="Delete Question"
+                                  >
+                                    {deletingQuestionId === q.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                                  </button>
                                 </div>
                               </td>
                             </tr>
@@ -1466,15 +2055,46 @@ function QuizDetailModal({ quizId, user, courseId, onClose }) {
                     <div style={{ display: 'grid', gap: 14 }}>
                       <div>
                         <label style={lblStyle}>Time Limit (minutes)</label>
-                        <input style={inputStyle} type="number" defaultValue={quiz.timeLimit || 120} />
+                        <input
+                          style={inputStyle}
+                          type="number"
+                          min={1}
+                          max={360}
+                          value={settingsTimeLimit}
+                          onChange={e => setSettingsTimeLimit(parseInt(e.target.value, 10) || 1)}
+                        />
                       </div>
                       <div>
                         <label style={lblStyle}>Attempts Allowed</label>
-                        <input style={inputStyle} type="number" defaultValue={quiz.maxAttempts || 1} />
+                        <input
+                          style={inputStyle}
+                          type="number"
+                          min={1}
+                          max={10}
+                          value={settingsMaxAttempts}
+                          onChange={e => setSettingsMaxAttempts(parseInt(e.target.value, 10) || 1)}
+                        />
                       </div>
                       <div>
                         <label style={lblStyle}>Passing Marks (%)</label>
-                        <input style={inputStyle} type="number" defaultValue={50} />
+                        <input
+                          style={inputStyle}
+                          type="number"
+                          min={1}
+                          max={100}
+                          value={settingsPassingMarks}
+                          onChange={e => setSettingsPassingMarks(parseInt(e.target.value, 10) || 1)}
+                        />
+                      </div>
+                      <div style={{ paddingTop: 8 }}>
+                        <button
+                          onClick={handleSaveSettings}
+                          disabled={savingSettings}
+                          style={{ ...btnPrimary, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                        >
+                          {savingSettings ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                          {savingSettings ? 'Saving…' : 'Save Settings'}
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -1491,6 +2111,25 @@ function QuizDetailModal({ quizId, user, courseId, onClose }) {
           attemptId={selectedProctorAttempt}
           auth={auth}
           onClose={() => setSelectedProctorAttempt(null)}
+        />
+      )}
+
+      {/* Question Preview Modal */}
+      {previewingQuestion && (
+        <QuestionPreviewModal
+          question={previewingQuestion.question}
+          questionIndex={previewingQuestion.index}
+          onClose={() => setPreviewingQuestion(null)}
+        />
+      )}
+
+      {/* Question Add / Edit Modal */}
+      {(editingQuestion || isAddingQuestion) && (
+        <QuestionEditModal
+          question={editingQuestion}
+          saving={savingQuestion}
+          onSave={handleSaveQuestion}
+          onClose={() => { setEditingQuestion(null); setIsAddingQuestion(false) }}
         />
       )}
     </motion.div>,

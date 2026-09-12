@@ -80,7 +80,7 @@ async function attachCourseCounts(courses) {
       raw: true,
     }),
     Enrollment.findAll({
-      where: { courseId: { [Op.in]: ids }, status: 'ENROLLED' },
+      where: { courseId: { [Op.in]: ids }, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } },
       attributes: ['courseId', [Enrollment.sequelize.fn('COUNT', '*'), 'cnt']],
       group: ['courseId'],
       raw: true,
@@ -692,9 +692,25 @@ async function bulkDeletePrograms(req, res) {
       return res.status(400).json({ success: false, error: 'No valid program IDs provided.' });
     }
 
-    const programs = await Training.findAll({ where: { id: { [Op.in]: validIds } } });
+    const programs = await Training.findAll({
+      where: {
+        [Op.or]: [
+          { id: { [Op.in]: validIds } },
+          { id: { [Op.in]: ids.map(String) } }
+        ]
+      }
+    });
     if (programs.length === 0) {
-      return res.status(404).json({ success: false, error: 'No matching training programs found.' });
+      if (cacheService?.delByPrefix) {
+        cacheService.delByPrefix('trainings:');
+      }
+      return res.json({
+        success: true,
+        message: 'The selected training program(s) have already been removed.',
+        summary: { total: validIds.length, deleted: validIds.length, failed: 0 },
+        deletedIds: validIds,
+        failed: []
+      });
     }
 
     const failed = [];
@@ -709,7 +725,7 @@ async function bulkDeletePrograms(req, res) {
         let enrolledCount = 0;
         let quizAttemptsCount = 0;
         if (cIds.length > 0) {
-          enrolledCount = await Enrollment.count({ where: { courseId: { [Op.in]: cIds }, status: 'ENROLLED' } }).catch(() => 0);
+          enrolledCount = await Enrollment.count({ where: { courseId: { [Op.in]: cIds }, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } } }).catch(() => 0);
           const quizzes = await AIQuiz.findAll({ where: { courseId: { [Op.in]: cIds } }, attributes: ['id'] });
           const qIds = quizzes.map(q => q.id);
           if (qIds.length > 0) {
@@ -718,7 +734,7 @@ async function bulkDeletePrograms(req, res) {
           }
         }
 
-        const legacyEnrolled = await Enrollment.count({ where: { trainingId: pId, status: 'ENROLLED' } }).catch(() => 0);
+        const legacyEnrolled = await Enrollment.count({ where: { trainingId: pId, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } } }).catch(() => 0);
         const totalEnrolled = enrolledCount + legacyEnrolled;
 
         if (totalEnrolled > 0 || quizAttemptsCount > 0) {
@@ -804,6 +820,10 @@ async function bulkDeletePrograms(req, res) {
       }
     }
 
+    if (cacheService?.delByPrefix) {
+      cacheService.delByPrefix('trainings:');
+    }
+
     return res.json({
       success: true,
       message: `Successfully deleted ${eligibleIds.length} training program(s).${failed.length > 0 ? ` ${failed.length} program(s) were protected due to dependencies.` : ''}`,
@@ -831,9 +851,23 @@ async function bulkDeleteCourses(req, res) {
       return res.status(400).json({ success: false, error: 'No valid course IDs provided.' });
     }
 
-    const courses = await Course.findAll({ where: { id: { [Op.in]: validIds } } });
+    const courses = await Course.findAll({
+      where: {
+        [Op.or]: [
+          { id: { [Op.in]: validIds } },
+          { id: { [Op.in]: ids.map(String) } }
+        ]
+      }
+    });
     if (courses.length === 0) {
-      return res.status(404).json({ success: false, error: 'No matching courses found.' });
+      if (cacheService?.delByPrefix) cacheService.delByPrefix('courses:');
+      return res.json({
+        success: true,
+        message: 'The selected course(s) have already been removed.',
+        summary: { total: validIds.length, deleted: validIds.length, failed: 0 },
+        deletedIds: validIds,
+        failed: []
+      });
     }
 
     const failed = [];
@@ -842,7 +876,7 @@ async function bulkDeleteCourses(req, res) {
     for (const course of courses) {
       const cId = course.id;
       if (!force) {
-        const enrolledCount = await Enrollment.count({ where: { courseId: cId, status: 'ENROLLED' } }).catch(() => 0);
+        const enrolledCount = await Enrollment.count({ where: { courseId: cId, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } } }).catch(() => 0);
         const quizzes = await AIQuiz.findAll({ where: { courseId: cId }, attributes: ['id'] });
         const qIds = quizzes.map(q => q.id);
         let quizAttemptsCount = 0;
@@ -924,6 +958,9 @@ async function bulkDeleteCourses(req, res) {
     if (Enrollment) await Enrollment.destroy({ where: { courseId: { [Op.in]: eligibleIds } } }).catch(() => {});
     if (CourseTrainerAssignment) await CourseTrainerAssignment.destroy({ where: { courseId: { [Op.in]: eligibleIds } } }).catch(() => {});
     await Course.destroy({ where: { id: { [Op.in]: eligibleIds } } });
+    if (cacheService?.delByPrefix) {
+      cacheService.delByPrefix('courses:');
+    }
 
     return res.json({
       success: true,

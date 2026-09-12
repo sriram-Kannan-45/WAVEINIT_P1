@@ -19,6 +19,7 @@ import {
   formatDate, formatTime, formatDateTime,
 } from '../../utils/interviewPresentation'
 import { getTwoLetterInitials } from '../../components/common/UserAvatar'
+import BulkDeleteConfirmModal from '../../components/admin/BulkDeleteConfirmModal'
 
 // Allowed next statuses per current status (matches backend transition rules).
 const STATUS_OPTIONS = {
@@ -80,6 +81,16 @@ export default function InterviewDashboard({ user }) {
   const [statusFilter, setStatusFilter] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [pagination, setPagination] = useState({ total: 0, page: 1, pages: 1 })
+  const [selectedInterviewIds, setSelectedInterviewIds] = useState(new Set())
+  const [bulkDeleteModal, setBulkDeleteModal] = useState({
+    open: false,
+    itemType: 'interview',
+    title: '',
+    count: 0,
+    ids: [],
+    loading: false,
+    failedItems: null,
+  })
   const [detailInterview, setDetailInterview] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [confirmTarget, setConfirmTarget] = useState(null) // { interview, action: 'delete' | 'cancel' }
@@ -190,7 +201,7 @@ export default function InterviewDashboard({ user }) {
 
     const spaceBelow = window.innerHeight - rect.bottom
     const spaceAbove = rect.top
-    const estHeight = isManager ? 230 : 130
+    const estHeight = isManager ? 300 : 160
 
     // Comfortably flip upward if space below is limited and there is more room or enough room above
     const shouldFlip = (spaceBelow < estHeight + 16) && (spaceAbove > spaceBelow || spaceAbove >= estHeight)
@@ -315,6 +326,123 @@ export default function InterviewDashboard({ user }) {
       showError(err?.message || 'Failed to cancel interview')
     } finally {
       setActionLoading(false)
+    }
+  }
+
+  const handleToggleSelect = (id) => {
+    setSelectedInterviewIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const handleSelectAllCurrentPage = () => {
+    const currentIds = interviews.map(iv => iv.id)
+    const allSelected = currentIds.length > 0 && currentIds.every(id => selectedInterviewIds.has(id))
+    setSelectedInterviewIds(prev => {
+      const next = new Set(prev)
+      if (allSelected) {
+        currentIds.forEach(id => next.delete(id))
+      } else {
+        currentIds.forEach(id => next.add(id))
+      }
+      return next
+    })
+  }
+
+  const openBulkDelete = (ids) => {
+    if (!ids || ids.length === 0) return
+    setBulkDeleteModal({
+      open: true,
+      itemType: 'interview',
+      title: `Delete ${ids.length > 1 ? `${ids.length} Selected ` : ''}Interview${ids.length > 1 ? 's' : ''}?`,
+      count: ids.length,
+      ids,
+      loading: false,
+      failedItems: null,
+    })
+  }
+
+  const handleDeleteInterview = (id, title) => {
+    setBulkDeleteModal({
+      open: true,
+      itemType: 'interview',
+      count: 1,
+      ids: [id],
+      title: `Delete interview "${title || `#${id}`}"?`,
+      loading: false,
+      failedItems: null,
+    })
+  }
+
+  const handleExecuteBulkDelete = async (force = false, overrideIds = null) => {
+    const ids = (overrideIds && overrideIds.length > 0) ? overrideIds : bulkDeleteModal.ids
+    if (!ids || ids.length === 0) return
+
+    setBulkDeleteModal(prev => ({ ...prev, loading: true }))
+    try {
+      const res = await interviewService.bulkDelete(ids, force)
+      const d = res?.data || res
+
+      if (d.success) {
+        if (d.failed && d.failed.length > 0) {
+          success(`Deleted ${d.summary?.deleted || 0} interview(s). ${d.failed.length} interview(s) protected.`)
+          setBulkDeleteModal(prev => ({
+            ...prev,
+            loading: false,
+            failedItems: d.failed,
+            ids: d.failed.map(f => f.id),
+            count: d.failed.length,
+          }))
+        } else {
+          success(`Successfully ${force ? 'force deleted' : 'deleted'} ${d.summary?.deleted || ids.length} interview(s).`)
+          setBulkDeleteModal({
+            open: false,
+            itemType: 'interview',
+            title: '',
+            count: 0,
+            ids: [],
+            loading: false,
+            failedItems: null,
+          })
+        }
+        setSelectedInterviewIds(prev => {
+          const next = new Set(prev)
+          const deletedList = d.deletedIds || ids
+          deletedList.forEach(id => next.delete(id))
+          return next
+        })
+        await fetchData(pagination.page)
+      } else {
+        if (d.failed && d.failed.length > 0) {
+          setBulkDeleteModal(prev => ({
+            ...prev,
+            loading: false,
+            failedItems: d.failed,
+            ids: d.failed.map(f => f.id),
+            count: d.failed.length,
+          }))
+        } else {
+          showError(d.error || d.message || 'Failed to delete interviews')
+          setBulkDeleteModal(prev => ({ ...prev, loading: false }))
+        }
+      }
+    } catch (err) {
+      const d = err?.response?.data
+      if (d?.failed && d.failed.length > 0) {
+        setBulkDeleteModal(prev => ({
+          ...prev,
+          loading: false,
+          failedItems: d.failed,
+          ids: d.failed.map(f => f.id),
+          count: d.failed.length,
+        }))
+      } else {
+        showError(d?.error || err?.message || 'Server error bulk deleting interviews')
+        setBulkDeleteModal(prev => ({ ...prev, loading: false }))
+      }
     }
   }
 
@@ -468,6 +596,61 @@ export default function InterviewDashboard({ user }) {
         </div>
       </div>
 
+      {/* Bulk Action Bar */}
+      {isAdmin && selectedInterviewIds.size > 0 && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '10px 16px',
+          background: '#f0fdf4',
+          border: '1.5px solid #86efac',
+          borderRadius: '10px',
+          marginTop: '12px',
+          marginBottom: '14px',
+          animation: 'fadeIn 0.2s ease-in-out'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '24px',
+              height: '24px',
+              borderRadius: '50%',
+              background: '#16a34a',
+              color: '#fff',
+              fontSize: '12px',
+              fontWeight: 700
+            }}>
+              {selectedInterviewIds.size}
+            </span>
+            <span style={{ fontSize: '13px', fontWeight: 600, color: '#166534' }}>
+              {selectedInterviewIds.size} interview{selectedInterviewIds.size > 1 ? 's' : ''} selected
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              type="button"
+              className="reg-admin-btn reg-admin-btn--secondary"
+              onClick={() => setSelectedInterviewIds(new Set())}
+              style={{ padding: '6px 12px', fontSize: '12px', height: '32px' }}
+            >
+              Deselect All
+            </button>
+            <button
+              type="button"
+              className="reg-admin-btn reg-admin-btn--danger"
+              onClick={() => openBulkDelete(Array.from(selectedInterviewIds))}
+              style={{ padding: '6px 14px', fontSize: '12px', height: '32px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+            >
+              <Trash2 size={14} />
+              Bulk Delete ({selectedInterviewIds.size})
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Loading */}
       {loading ? (
         <div className="reg-admin-loading">
@@ -492,6 +675,24 @@ export default function InterviewDashboard({ user }) {
           <table className="reg-admin-table">
             <thead>
               <tr>
+                {isAdmin && (
+                  <th style={{ width: 44, textAlign: 'center', padding: '12px 8px' }}>
+                    <input
+                      type="checkbox"
+                      aria-label="Select all interviews on this page"
+                      checked={interviews.length > 0 && interviews.every(iv => selectedInterviewIds.has(iv.id))}
+                      ref={el => {
+                        if (el) {
+                          const someSelected = interviews.some(iv => selectedInterviewIds.has(iv.id))
+                          const allSelected = interviews.length > 0 && interviews.every(iv => selectedInterviewIds.has(iv.id))
+                          el.indeterminate = someSelected && !allSelected
+                        }
+                      }}
+                      onChange={handleSelectAllCurrentPage}
+                      style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#16a34a', verticalAlign: 'middle' }}
+                    />
+                  </th>
+                )}
                 <th>ID</th>
                 <th>Candidate</th>
                 <th>Interviewer</th>
@@ -499,9 +700,9 @@ export default function InterviewDashboard({ user }) {
                 <th>Date</th>
                 <th>Time</th>
                 <th>Duration</th>
-                <th>Status</th>
+                <th style={{ whiteSpace: 'nowrap', minWidth: 105 }}>Status</th>
                 <th>Meeting</th>
-                <th>Actions</th>
+                <th style={{ width: 50, textAlign: 'center' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -510,8 +711,20 @@ export default function InterviewDashboard({ user }) {
                 const tb = iv.mode==='GROUP_DISCUSSION'?{cls:'reg-admin-type--technical',label:'Group Discussion'}:TYPE_BADGE[iv.type] || TYPE_BADGE.TECHNICAL
                 const mb = MEETING_BADGE[iv.meeting_type] || MEETING_BADGE.ONLINE
                 const manage = canManage(iv)
+                const isChecked = selectedInterviewIds.has(iv.id)
                 return (
-                  <tr key={iv.id}>
+                  <tr key={iv.id} style={{ background: isChecked ? '#f0fdf4' : undefined }}>
+                    {isAdmin && (
+                      <td style={{ width: 44, textAlign: 'center', padding: '12px 8px' }}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select interview #${iv.id}`}
+                          checked={isChecked}
+                          onChange={() => handleToggleSelect(iv.id)}
+                          style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#16a34a', verticalAlign: 'middle' }}
+                        />
+                      </td>
+                    )}
                     <td>
                       <span className="reg-admin-app-id">#{iv.id}</span>
                     </td>
@@ -534,142 +747,37 @@ export default function InterviewDashboard({ user }) {
                     <td className="reg-admin-date">{formatDate(iv.scheduled_at)}</td>
                     <td className="reg-admin-date">{formatTime(iv.scheduled_at)}</td>
                     <td>{iv.duration_minutes} min</td>
-                    <td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
                       <span className="reg-admin-status" style={{
-                        background: sc.bg, color: sc.text, borderColor: sc.border,
+                        background: sc.bg, color: sc.text, borderColor: sc.border, whiteSpace: 'nowrap',
                       }}>{iv.status?.replace('_', ' ')}</span>
                     </td>
                     <td><span className={`reg-admin-meeting ${mb.cls}`}>{mb.label}</span></td>
-                    <td>
-                      {isAdmin ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <button
-                            style={ivActionBtn('#EFF6FF', '#BFDBFE', '#2563EB')}
-                            title="View Details"
-                            onClick={() => handleView(iv)}
-                          >
-                            <Eye size={15} color="#2563EB" strokeWidth={2.2} />
-                          </button>
-                          {(iv.status === 'SCHEDULED' || iv.status === 'IN_PROGRESS') && (
-                            <button
-                              style={ivActionBtn('#F0FDF4', '#BBF7D0', '#16A34A')}
-                              title="Start / Join Interview"
-                              onClick={() => handleStart(iv)}
-                            >
-                              <Play size={15} color="#16A34A" strokeWidth={2.2} />
-                            </button>
-                          )}
-                          {(iv.status === 'COMPLETED' || iv.status === 'IN_PROGRESS') && (
-                            <button
-                              style={ivActionBtn('#F0FDFA', '#99F6E4', '#0D9488')}
-                              title="View Evaluation & Results"
-                              onClick={() => navigate(`/interview/${iv.id}`)}
-                            >
-                              <FileText size={15} color="#0D9488" strokeWidth={2.2} />
-                            </button>
-                          )}
-                          <button
-                            style={ivActionBtn('#F0FDFA', '#99F6E4', '#0D9488')}
-                            disabled={iv.mode==='GROUP_DISCUSSION'} title={iv.mode==='GROUP_DISCUSSION'?'Group configuration is fixed after scheduling':'Edit Interview'}
-                            onClick={() => openEdit(iv)}
-                          >
-                            <Pencil size={15} color="#0D9488" strokeWidth={2.2} />
-                          </button>
-                          <button
-                            style={ivActionBtn('#F5F3FF', '#DDD6FE', '#7C3AED')}
-                            title="Change Status"
-                            onClick={() => { setChangeStatusTarget(iv); setNewStatus(''); }}
-                          >
-                            <Filter size={15} color="#7C3AED" strokeWidth={2.2} />
-                          </button>
-                          {iv.status === 'SCHEDULED' && (
-                            <button
-                              style={ivActionBtn('#FFFBEB', '#FDE68A', '#D97706')}
-                              title="Cancel Interview"
-                              onClick={() => setConfirmTarget({ interview: iv, action: 'cancel' })}
-                            >
-                              <CalendarClock size={15} color="#D97706" strokeWidth={2.2} />
-                            </button>
-                          )}
-                          <button
-                            style={ivActionBtn('#FEF2F2', '#FECACA', '#DC2626')}
-                            title="Delete Interview"
-                            onClick={() => setConfirmTarget({ interview: iv, action: 'delete' })}
-                          >
-                            <Trash2 size={15} color="#DC2626" strokeWidth={2.2} />
-                          </button>
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          {(iv.status === 'SCHEDULED' || iv.status === 'IN_PROGRESS') && (
-                            <button
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 5,
-                                padding: '4px 10px',
-                                fontSize: 12,
-                                fontWeight: 600,
-                                borderRadius: 6,
-                                border: '1px solid #86EFAC',
-                                background: '#F0FDF4',
-                                color: '#16A34A',
-                                cursor: 'pointer',
-                                transition: 'all 0.15s ease',
-                              }}
-                              title={manage ? "Start / Join Interview" : "Join Interview Room"}
-                              onClick={() => handleStart(iv)}
-                            >
-                              <Play size={13} color="#16A34A" strokeWidth={2.5} />
-                              <span>{manage ? 'Start' : 'Join'}</span>
-                            </button>
-                          )}
-
-                          {iv.status === 'COMPLETED' && (
-                            <button
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 5,
-                                padding: '4px 10px',
-                                fontSize: 12,
-                                fontWeight: 600,
-                                borderRadius: 6,
-                                border: '1px solid #99F6E4',
-                                background: '#F0FDFA',
-                                color: '#0D9488',
-                                cursor: 'pointer',
-                                transition: 'all 0.15s ease',
-                              }}
-                              title="View Interview Evaluation & Results"
-                              onClick={() => navigate(`/interview/${iv.id}`)}
-                            >
-                              <FileText size={13} color="#0D9488" strokeWidth={2.2} />
-                              <span>Results</span>
-                            </button>
-                          )}
-
-                          <button
-                            style={ivActionBtn('#EFF6FF', '#BFDBFE', '#2563EB')}
-                            title="View Details"
-                            onClick={() => handleView(iv)}
-                          >
-                            <Eye size={15} color="#2563EB" strokeWidth={2.2} />
-                          </button>
-
-                          <div className="reg-admin-actions">
-                            <button
-                              className="reg-admin-action"
-                              style={{ background: '#F8FAFC', color: '#334155', border: '1px solid #CBD5E1' }}
-                              title="More options"
-                              data-menu-btn={iv.id}
-                              onClick={(e) => openMenu(e, iv, manage)}
-                            >
-                              <MoreVertical size={16} color="#334155" strokeWidth={2.2} />
-                            </button>
-                          </div>
-                        </div>
-                      )}
+                    <td style={{ textAlign: 'center', width: 50 }}>
+                      <div className="reg-admin-actions" style={{ display: 'inline-flex', justifyContent: 'center' }}>
+                        <button
+                          className="reg-admin-action"
+                          style={{
+                            width: 32,
+                            height: 32,
+                            borderRadius: 8,
+                            border: '1px solid #CBD5E1',
+                            background: '#F8FAFC',
+                            color: '#334155',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: 'pointer',
+                            padding: 0,
+                            transition: 'all 0.15s ease',
+                          }}
+                          title="Actions"
+                          data-menu-btn={iv.id}
+                          onClick={(e) => openMenu(e, iv, manage)}
+                        >
+                          <MoreVertical size={16} color="#334155" strokeWidth={2.2} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 )
@@ -749,6 +857,22 @@ export default function InterviewDashboard({ user }) {
               {activeMenuIv.status === 'SCHEDULED' && canManage(activeMenuIv) && (
                 <button className="reg-admin-action-menu-item reg-admin-action-menu-item--danger" onClick={() => { setConfirmTarget({ interview: activeMenuIv, action: 'cancel' }); setMenuOpen(null); setActiveMenuIv(null); }}>
                   <CalendarClock size={14} color="#DC2626" /> Cancel Interview
+                </button>
+              )}
+              {isAdmin && (
+                <button
+                  className="reg-admin-action-menu-item reg-admin-action-menu-item--danger"
+                  onClick={() => {
+                    const targetIv = activeMenuIv;
+                    setMenuOpen(null);
+                    setActiveMenuIv(null);
+                    handleDeleteInterview(
+                      targetIv.id,
+                      targetIv.title || (targetIv.candidate?.name ? `${targetIv.candidate.name}'s Interview` : `Interview #${targetIv.id}`)
+                    );
+                  }}
+                >
+                  <Trash2 size={14} color="#DC2626" /> Delete Interview
                 </button>
               )}
             </motion.div>
@@ -1162,6 +1286,19 @@ export default function InterviewDashboard({ user }) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ── BULK DELETE CONFIRM MODAL ── */}
+      <BulkDeleteConfirmModal
+        open={bulkDeleteModal.open}
+        title={bulkDeleteModal.title}
+        itemType={bulkDeleteModal.itemType}
+        count={bulkDeleteModal.count}
+        loading={bulkDeleteModal.loading}
+        failedItems={bulkDeleteModal.failedItems}
+        onClose={() => setBulkDeleteModal({ open: false, itemType: 'interview', title: '', count: 0, ids: [], loading: false, failedItems: null })}
+        onConfirm={handleExecuteBulkDelete}
+        onClearFailed={() => setBulkDeleteModal(prev => ({ ...prev, failedItems: null }))}
+      />
     </motion.div>
   )
 }

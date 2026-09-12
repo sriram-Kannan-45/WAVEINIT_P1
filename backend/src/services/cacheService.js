@@ -48,6 +48,10 @@ class CacheService {
     this.cache.delete(key);
   }
 
+  delete(key) {
+    return this.del(key);
+  }
+
   delByPrefix(prefix) {
     for (const key of this.cache.keys()) {
       if (key.startsWith(prefix)) {

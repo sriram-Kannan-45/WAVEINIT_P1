@@ -264,12 +264,16 @@ function initials(name = '') {
 function StatusBadge({ status }) {
   const norm = (status || 'ENROLLED').toUpperCase()
   const map = {
-    ENROLLED:         { bg: '#EAF8F0', fg: '#16A34A', border: '#BBF7D0', label: 'Enrolled' },
-    COMPLETED:        { bg: '#DCFCE7', fg: '#15803D', border: '#86EFAC', label: 'Completed' },
-    IN_PROGRESS:      { bg: '#EFF6FF', fg: '#2563EB', border: '#BFDBFE', label: 'In Progress' },
-    NOT_STARTED:      { bg: '#F8FAFC', fg: '#64748B', border: '#E2E8F0', label: 'Not Started' },
-    DISQUALIFIED:     { bg: '#FEF2F2', fg: '#DC2626', border: '#FECACA', label: 'Disqualified' },
-    RESULT_PUBLISHED: { bg: '#F5F3FF', fg: '#7C3AED', border: '#DDD6FE', label: 'Result Published' },
+    APPROVED:                 { bg: '#EAF8F0', fg: '#16A34A', border: '#BBF7D0', label: 'Approved' },
+    ENROLLED:                 { bg: '#EAF8F0', fg: '#16A34A', border: '#BBF7D0', label: 'Enrolled' },
+    COMPLETED:                { bg: '#DCFCE7', fg: '#15803D', border: '#86EFAC', label: 'Completed' },
+    IN_PROGRESS:              { bg: '#EFF6FF', fg: '#2563EB', border: '#BFDBFE', label: 'In Progress' },
+    NOT_STARTED:              { bg: '#F8FAFC', fg: '#64748B', border: '#E2E8F0', label: 'Not Started' },
+    PENDING_TRAINER_APPROVAL: { bg: '#FEF3C7', fg: '#B45309', border: '#FDE68A', label: 'Pending Approval' },
+    PENDING:                  { bg: '#FEF3C7', fg: '#B45309', border: '#FDE68A', label: 'Pending Approval' },
+    REJECTED:                 { bg: '#FEF2F2', fg: '#DC2626', border: '#FECACA', label: 'Rejected' },
+    DISQUALIFIED:             { bg: '#FEF2F2', fg: '#DC2626', border: '#FECACA', label: 'Disqualified' },
+    RESULT_PUBLISHED:         { bg: '#F5F3FF', fg: '#7C3AED', border: '#DDD6FE', label: 'Result Published' },
   }
   const s = map[norm] || { bg: '#EAF8F0', fg: '#16A34A', border: '#BBF7D0', label: status || 'Enrolled' }
   return (
@@ -491,6 +495,42 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
     showSuccess('Participant list refreshed')
   }
 
+  const handleApproveParticipant = async (participantId) => {
+    try {
+      const res = await fetch(API.TRAINER_COURSES.APPROVE_PARTICIPANT(courseId, participantId), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${user.token}` }
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        showSuccess(data.message || 'Participant enrollment approved!')
+        loadParticipants()
+      } else {
+        showError(data.error || 'Failed to approve enrollment')
+      }
+    } catch (e) {
+      showError(e.message)
+    }
+  }
+
+  const handleRejectParticipant = async (participantId) => {
+    try {
+      const res = await fetch(API.TRAINER_COURSES.REJECT_PARTICIPANT(courseId, participantId), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${user.token}` }
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        showSuccess(data.message || 'Participant enrollment rejected')
+        loadParticipants()
+      } else {
+        showError(data.error || 'Failed to reject enrollment')
+      }
+    } catch (e) {
+      showError(e.message)
+    }
+  }
+
   const handleExport = () => {
     if (participants.length === 0) {
       showError('No participants to export')
@@ -627,6 +667,33 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
           </div>
         </div>
 
+        {participants.some(p => ['PENDING_TRAINER_APPROVAL', 'PENDING'].includes(p.status)) && (
+          <div style={{
+            margin: '0 20px 16px',
+            padding: '12px 16px',
+            background: '#FFFBEB',
+            border: '1px solid #FDE68A',
+            borderRadius: 10,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            flexWrap: 'wrap'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Clock size={18} color="#D97706" />
+              <div>
+                <span style={{ fontWeight: 700, fontSize: 13, color: '#92400E' }}>
+                  {participants.filter(p => ['PENDING_TRAINER_APPROVAL', 'PENDING'].includes(p.status)).length} Pending Enrollment Request(s)
+                </span>
+                <p style={{ margin: 0, fontSize: 12, color: '#B45309' }}>
+                  These participants are waiting for your approval to access the course content.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="cpt-table-wrap">
           <table className="cpt-table">
             <thead>
@@ -716,13 +783,35 @@ export default function CourseParticipantsTab({ courseId, user, course }) {
                       </span>
                     </td>
                     <td>
-                      <button
-                        className="cpt-btn-action"
-                        onClick={() => setDetail(p)}
-                        title="View details"
-                      >
-                        <Eye size={15} />
-                      </button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {['PENDING_TRAINER_APPROVAL', 'PENDING'].includes(p.status) && (
+                          <>
+                            <button
+                              className="cpt-btn-action"
+                              style={{ color: '#16A34A', background: '#DCFCE7', borderColor: '#BBF7D0' }}
+                              onClick={() => handleApproveParticipant(p.id || p.participantId || p.userId)}
+                              title="Approve Enrollment"
+                            >
+                              <Check size={14} />
+                            </button>
+                            <button
+                              className="cpt-btn-action"
+                              style={{ color: '#DC2626', background: '#FEE2E2', borderColor: '#FECACA' }}
+                              onClick={() => handleRejectParticipant(p.id || p.participantId || p.userId)}
+                              title="Reject Enrollment"
+                            >
+                              <X size={14} />
+                            </button>
+                          </>
+                        )}
+                        <button
+                          className="cpt-btn-action"
+                          onClick={() => setDetail(p)}
+                          title="View details"
+                        >
+                          <Eye size={15} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))

@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Calendar, User, Users, CheckCircle, XCircle, AlertCircle, Search, BookOpen } from 'lucide-react'
+import { Calendar, User, Users, CheckCircle, XCircle, AlertCircle, Search, BookOpen, Clock } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Button, Badge } from '../../ui'
 
@@ -15,14 +15,20 @@ export default function AvailableCourses({
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('all')
 
-  const isEnrolled = (id) => enrollments.some((e) => e.trainingId === id)
+  const getEnrollment = (id) =>
+    enrollments.find((e) => e.trainingId === id || e.training?.id === id || e.courseId === id)
 
   const filtered = useMemo(() => {
     return trainings.filter((t) => {
-      const enrolled = isEnrolled(t.id)
+      const enr = getEnrollment(t.id)
+      const isPending = Boolean(t.isPending) || (enr && ['PENDING_TRAINER_APPROVAL', 'PENDING'].includes(enr.status))
+      const isApproved = Boolean(t.isApproved) || (enr && ['APPROVED', 'ENROLLED', 'COMPLETED'].includes(enr.status)) || (!isPending && t.isEnrolled)
+      const isRejected = Boolean(t.isRejected) || (enr && enr.status === 'REJECTED')
       const full = t.isFull
-      if (filter === 'open' && (enrolled || full)) return false
-      if (filter === 'enrolled' && !enrolled) return false
+
+      if (filter === 'open' && (isApproved || isPending || full)) return false
+      if (filter === 'pending' && !isPending) return false
+      if (filter === 'enrolled' && !isApproved) return false
       if (search) {
         const q = search.toLowerCase()
         return (
@@ -44,7 +50,7 @@ export default function AvailableCourses({
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h2 className="reg-admin-title">Explore Trainings</h2>
-          <p className="reg-admin-subtitle">Discover trainings created by your instructors</p>
+          <p className="reg-admin-subtitle">Discover trainings created by your instructors and request enrollment</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <div style={{ position: 'relative', minWidth: 220 }}>
@@ -63,7 +69,8 @@ export default function AvailableCourses({
             {[
               { key: 'all', label: 'All' },
               { key: 'open', label: 'Open' },
-              { key: 'enrolled', label: 'Joined' },
+              { key: 'pending', label: 'Pending Approval' },
+              { key: 'enrolled', label: 'Enrolled' },
             ].map((f) => (
               <button
                 key={f.key}
@@ -127,7 +134,10 @@ export default function AvailableCourses({
       {filtered.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 'var(--space-6)' }}>
           {filtered.map((t, i) => {
-            const enrolled = isEnrolled(t.id)
+            const enr = getEnrollment(t.id)
+            const isPending = Boolean(t.isPending) || (enr && ['PENDING_TRAINER_APPROVAL', 'PENDING'].includes(enr.status))
+            const isApproved = Boolean(t.isApproved) || (enr && ['APPROVED', 'ENROLLED', 'COMPLETED'].includes(enr.status)) || (!isPending && t.isEnrolled)
+            const isRejected = Boolean(t.isRejected) || (enr && enr.status === 'REJECTED')
             const full = t.isFull
             const pct = t.capacity ? Math.round(((t.enrolledCount || 0) / t.capacity) * 100) : null
 
@@ -146,10 +156,22 @@ export default function AvailableCourses({
                     <div style={{ width: 44, height: 44, borderRadius: 'var(--radius-xl)', background: 'var(--brand-participant-bg)', color: 'var(--brand-participant)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <BookOpen size={20} />
                     </div>
-                    {enrolled && (
-                      <span className="badge badge--success"><CheckCircle size={11} /> Joined</span>
+                    {isPending && (
+                      <span className="badge badge--warning" style={{ background: '#FEF3C7', color: '#B45309', border: '1px solid #FDE68A', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <Clock size={11} /> Pending Approval
+                      </span>
                     )}
-                    {full && !enrolled && (
+                    {isApproved && (
+                      <span className="badge badge--success" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <CheckCircle size={11} /> Joined
+                      </span>
+                    )}
+                    {isRejected && (
+                      <span className="badge badge--error" style={{ background: '#FEE2E2', color: '#B91C1C', border: '1px solid #FECACA', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <XCircle size={11} /> Rejected
+                      </span>
+                    )}
+                    {full && !isApproved && !isPending && (
                       <span className="badge badge--error"><XCircle size={11} /> Full</span>
                     )}
                   </div>
@@ -198,17 +220,27 @@ export default function AvailableCourses({
                   )}
 
                   <div style={{ marginTop: 'auto' }}>
-                    {!enrolled && !full && (
+                    {!isApproved && !isPending && !full && (
                       <Button variant="primary" onClick={() => onEnroll?.(t.id)} disabled={loading} className="w-full">
-                        Join Training
+                        {isRejected ? 'Re-apply for Training' : 'Join Training'}
                       </Button>
                     )}
-                    {enrolled && (
-                      <Button variant="secondary" disabled className="w-full">
-                        <CheckCircle size={14} /> Already enrolled
+                    {isPending && (
+                      <Button
+                        variant="secondary"
+                        disabled
+                        className="w-full"
+                        style={{ background: '#FEF3C7', color: '#92400E', borderColor: '#FDE68A', cursor: 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                      >
+                        <Clock size={14} /> Pending Trainer Approval
                       </Button>
                     )}
-                    {full && !enrolled && (
+                    {isApproved && (
+                      <Button variant="secondary" disabled className="w-full" style={{ background: '#DCFCE7', color: '#166534', borderColor: '#BBF7D0' }}>
+                        <CheckCircle size={14} /> Enrolled & Approved
+                      </Button>
+                    )}
+                    {full && !isApproved && !isPending && (
                       <Button variant="secondary" disabled className="w-full">
                         <AlertCircle size={14} /> Training is full
                       </Button>

@@ -92,6 +92,10 @@ const createTraining = async (req, res) => {
 
     console.log('✅ Training saved:', training.id, '-', training.title);
 
+    if (cacheService?.delByPrefix) {
+      cacheService.delByPrefix('trainings:');
+    }
+
     res.status(201).json({
       id: training.id,
       title: training.title,
@@ -178,10 +182,11 @@ const getAllTrainings = async (req, res) => {
     const countMap = {};
     const enrolledSet = new Set();
 
+    const userEnrollmentMap = {};
     if (trainingIds.length > 0) {
       try {
         const counts = await Enrollment.findAll({
-          where: { trainingId: { [Op.in]: trainingIds }, status: 'ENROLLED' },
+          where: { trainingId: { [Op.in]: trainingIds }, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } },
           attributes: ['trainingId', [Training.sequelize.fn('COUNT', Training.sequelize.col('id')), 'count']],
           group: ['trainingId'],
           raw: true
@@ -192,11 +197,20 @@ const getAllTrainings = async (req, res) => {
 
         if (userId && userRole === 'PARTICIPANT') {
           const userEnrollments = await Enrollment.findAll({
-            where: { participantId: userId, trainingId: { [Op.in]: trainingIds }, status: 'ENROLLED' },
-            attributes: ['trainingId'],
+            where: {
+              participantId: userId,
+              trainingId: { [Op.in]: trainingIds },
+              status: { [Op.in]: ['APPROVED', 'ENROLLED', 'PENDING_TRAINER_APPROVAL', 'PENDING', 'REJECTED', 'COMPLETED'] }
+            },
+            attributes: ['trainingId', 'status'],
             raw: true
           });
-          userEnrollments.forEach(e => enrolledSet.add(e.trainingId));
+          userEnrollments.forEach(e => {
+            userEnrollmentMap[e.trainingId] = e.status;
+            if (['APPROVED', 'ENROLLED', 'COMPLETED'].includes(e.status)) {
+              enrolledSet.add(e.trainingId);
+            }
+          });
         }
       } catch (countErr) {
         console.error('Batch count error in getAllTrainings:', countErr.message);
@@ -214,7 +228,11 @@ const getAllTrainings = async (req, res) => {
 
     const formattedTrainings = trainings.map(t => {
       const enrolledCount = countMap[t.id] || 0;
+      const eStatus = userEnrollmentMap[t.id] || null;
       const isEnrolled = enrolledSet.has(t.id);
+      const isPending = ['PENDING_TRAINER_APPROVAL', 'PENDING'].includes(eStatus);
+      const isApproved = ['APPROVED', 'ENROLLED', 'COMPLETED'].includes(eStatus);
+      const isRejected = eStatus === 'REJECTED';
       const progress = progressMap.get(t.id) || {
         totalStructureItems: 0,
         completedStructureItems: 0,
@@ -242,6 +260,10 @@ const getAllTrainings = async (req, res) => {
         enrolledCount,
         availableSeats: t.capacity ? (t.capacity - enrolledCount) : null,
         isEnrolled,
+        enrollmentStatus: eStatus,
+        isApproved,
+        isPending,
+        isRejected,
         isFull: t.capacity ? enrolledCount >= t.capacity : false,
         sequentialLearning: t.sequentialLearning || false,
         totalStructureItems: progress.totalStructureItems,
@@ -442,6 +464,10 @@ const updateTraining = async (req, res) => {
     const trainerNames = assignedTrainers.length > 0 ? assignedTrainers.map(tr => tr.name).join(', ') : (updatedTraining.trainer ? updatedTraining.trainer.name : null);
     const resTrainerIds = assignedTrainers.length > 0 ? assignedTrainers.map(tr => tr.id) : (updatedTraining.trainerId ? [updatedTraining.trainerId] : []);
 
+    if (cacheService?.delByPrefix) {
+      cacheService.delByPrefix('trainings:');
+    }
+
     res.json({
       message: 'Training updated successfully',
       training: {
@@ -489,6 +515,7 @@ const deleteTraining = async (req, res) => {
       QuizCopyViolation,
       QuizResultsAudit,
       QuizRecording,
+      QuizAiHelp,
       AssessmentSession,
       ExamSession,
       Violation,
@@ -503,9 +530,14 @@ const deleteTraining = async (req, res) => {
       CodingAssessment,
       CodingProblem,
       CodingTestCase,
+      CodingProblemLanguage,
       CodingAttempt,
       CodingSubmission,
       CodingResult,
+      CodingAiHelp,
+      AttendanceRecord,
+      AttendanceSession,
+      MonitorAttempt,
     } = require('../models');
 
     const training = await Training.findByPk(id);
@@ -525,188 +557,214 @@ const deleteTraining = async (req, res) => {
       }
     }
 
-    // Find corresponding Course
-    const course = await Course.findOne({ where: { trainingProgramId: id } });
-    if (course) {
-      // 1. CourseTrainerAssignment
-      await CourseTrainerAssignment.destroy({ where: { courseId: course.id } });
+    // Find corresponding Course(s)
+    const courses = await Course.findAll({ where: { trainingProgramId: id }, attributes: ['id'] });
+    const courseIds = courses.map(c => c.id);
 
-      // 2. Certificate
-      await Certificate.destroy({ where: { courseId: course.id } });
+    // 1. Quizzes (both course-scoped and training-scoped)
+    const quizWhere = [];
+    if (courseIds.length > 0) quizWhere.push({ courseId: { [Op.in]: courseIds } });
+    quizWhere.push({ trainingId: id });
 
-      // 3. Enrollment (course-scoped)
-      await Enrollment.destroy({ where: { courseId: course.id } });
+    const quizzes = await AIQuiz.findAll({ where: { [Op.or]: quizWhere }, attributes: ['id'] });
+    const quizIds = quizzes.map(q => q.id);
 
-      // 4. Lessons & their child models
-      const lessons = await Lesson.findAll({ where: { courseId: course.id } });
-      const lessonIds = lessons.map(l => l.id);
-      if (lessonIds.length > 0) {
-        // LessonMaterial
-        await LessonMaterial.destroy({ where: { lessonId: lessonIds } });
+    if (quizIds.length > 0) {
+      const aiQuestions = await AIQuestion.findAll({ where: { quizId: { [Op.in]: quizIds } }, attributes: ['id'] });
+      const aiQuestionIds = aiQuestions.map(q => q.id);
 
-        // LessonQuiz & QuizProgress
-        const lessonQuizzes = await LessonQuiz.findAll({ where: { lessonId: lessonIds } });
-        const lessonQuizIds = lessonQuizzes.map(lq => lq.id);
-        if (lessonQuizIds.length > 0) {
-          await QuizProgress.destroy({ where: { lessonQuizId: lessonQuizIds } });
-          await LessonQuiz.destroy({ where: { id: lessonQuizIds } });
-        }
+      const attempts = await QuizAttempt.findAll({ where: { quizId: { [Op.in]: quizIds } }, attributes: ['id'] });
+      const attemptIds = attempts.map(a => a.id);
 
-        // LessonAssessment & AssessmentSubmission
-        const lessonAssessments = await LessonAssessment.findAll({ where: { lessonId: lessonIds } });
-        const assessmentIds = lessonAssessments.map(la => la.id);
-        if (assessmentIds.length > 0) {
-          await AssessmentSubmission.destroy({ where: { assessmentId: assessmentIds } });
-          await LessonAssessment.destroy({ where: { id: assessmentIds } });
-        }
-
-        // LessonProgress
-        await LessonProgress.destroy({ where: { lessonId: lessonIds } });
-
-        // ParticipantTracking
-        await ParticipantTracking.destroy({ where: { lessonId: lessonIds } });
-      }
-
-      // 5. AIQuiz & its attempts/questions/sessions/results
-      const quizzes = await AIQuiz.findAll({ where: { courseId: course.id } });
-      const quizIds = quizzes.map(q => q.id);
-      if (quizIds.length > 0) {
-        // AIQuestion & AIQuestionOption
-        const aiQuestions = await AIQuestion.findAll({ where: { quizId: quizIds } });
-        const aiQuestionIds = aiQuestions.map(q => q.id);
-        if (aiQuestionIds.length > 0) {
-          await AIQuestionOption.destroy({ where: { questionId: aiQuestionIds } });
-        }
-        await AIQuestion.destroy({ where: { quizId: quizIds } });
-
-        // QuizAssignment, QuizCopyViolation, QuizResultsAudit, QuizRecording
-        await QuizAssignment.destroy({ where: { quizId: quizIds } });
-        await QuizCopyViolation.destroy({ where: { quizId: quizIds } });
-        await QuizResultsAudit.destroy({ where: { quizId: quizIds } });
-        await QuizRecording.destroy({ where: { quizId: quizIds } });
-
-        // QuizAttempt & answers/results/sessions
-        const attempts = await QuizAttempt.findAll({ where: { quizId: quizIds } });
-        const attemptIds = attempts.map(a => a.id);
-        if (attemptIds.length > 0) {
-          await QuizAnswer.destroy({ where: { attemptId: attemptIds } });
-          await QuizResult.destroy({ where: { attemptId: attemptIds } });
-          await AssessmentSession.destroy({ where: { attemptId: attemptIds } });
-          await QuizCopyViolation.destroy({ where: { attemptId: attemptIds } });
-          
-          const examSessions = await ExamSession.findAll({ where: { attemptId: attemptIds } });
-          const sessionIds = examSessions.map(es => es.id);
-          if (sessionIds.length > 0) {
-            await Violation.destroy({ where: { sessionId: sessionIds } });
-            await ProctorActivity.destroy({ where: { sessionId: sessionIds } });
-            await Screenshot.destroy({ where: { sessionId: sessionIds } });
-            await ExamSession.destroy({ where: { id: sessionIds } });
+      if (QuizAiHelp) {
+        await QuizAiHelp.destroy({
+          where: {
+            [Op.or]: [
+              attemptIds.length > 0 ? { attemptId: { [Op.in]: attemptIds } } : null,
+              aiQuestionIds.length > 0 ? { questionId: { [Op.in]: aiQuestionIds } } : null,
+            ].filter(Boolean)
           }
-          await QuizAttempt.destroy({ where: { id: attemptIds } });
-        }
-
-        // Direct QuizResult, AssessmentSession, ExamSession
-        await QuizResult.destroy({ where: { quizId: quizIds } });
-        await AssessmentSession.destroy({ where: { quizId: quizIds } });
-        
-        const directExamSessions = await ExamSession.findAll({ where: { quizId: quizIds } });
-        const directSessionIds = directExamSessions.map(es => es.id);
-        if (directSessionIds.length > 0) {
-          await Violation.destroy({ where: { sessionId: directSessionIds } });
-          await ProctorActivity.destroy({ where: { sessionId: directSessionIds } });
-          await Screenshot.destroy({ where: { sessionId: directSessionIds } });
-          await ExamSession.destroy({ where: { id: directSessionIds } });
-        }
-
-        await AIQuiz.destroy({ where: { id: quizIds } });
+        });
       }
 
-      // 6. Lessons themselves
+      if (QuizAnswer) {
+        await QuizAnswer.destroy({
+          where: {
+            [Op.or]: [
+              attemptIds.length > 0 ? { attemptId: { [Op.in]: attemptIds } } : null,
+              aiQuestionIds.length > 0 ? { questionId: { [Op.in]: aiQuestionIds } } : null,
+            ].filter(Boolean)
+          }
+        });
+      }
+
+      if (aiQuestionIds.length > 0 && AIQuestionOption) {
+        await AIQuestionOption.destroy({ where: { questionId: { [Op.in]: aiQuestionIds } } });
+      }
+      if (aiQuestionIds.length > 0 && AIQuestion) {
+        await AIQuestion.destroy({ where: { id: { [Op.in]: aiQuestionIds } } });
+      }
+
+      if (attemptIds.length > 0) {
+        if (QuizCopyViolation) await QuizCopyViolation.destroy({ where: { attemptId: { [Op.in]: attemptIds } } });
+        if (QuizResult) await QuizResult.destroy({ where: { attemptId: { [Op.in]: attemptIds } } });
+        if (AssessmentSession) await AssessmentSession.destroy({ where: { attemptId: { [Op.in]: attemptIds } } });
+
+        if (ExamSession) {
+          const examSessions = await ExamSession.findAll({ where: { attemptId: { [Op.in]: attemptIds } }, attributes: ['id'] });
+          const sessionIds = examSessions.map(s => s.id);
+          if (sessionIds.length > 0) {
+            if (Violation) await Violation.destroy({ where: { sessionId: { [Op.in]: sessionIds } } });
+            if (ProctorActivity) await ProctorActivity.destroy({ where: { sessionId: { [Op.in]: sessionIds } } });
+            if (Screenshot) await Screenshot.destroy({ where: { sessionId: { [Op.in]: sessionIds } } });
+            await ExamSession.destroy({ where: { id: { [Op.in]: sessionIds } } });
+          }
+        }
+        await QuizAttempt.destroy({ where: { id: { [Op.in]: attemptIds } } });
+      }
+
+      if (QuizAssignment) await QuizAssignment.destroy({ where: { quizId: { [Op.in]: quizIds } } });
+      if (QuizCopyViolation) await QuizCopyViolation.destroy({ where: { quizId: { [Op.in]: quizIds } } });
+      if (QuizResultsAudit) await QuizResultsAudit.destroy({ where: { quizId: { [Op.in]: quizIds } } });
+      if (QuizRecording) await QuizRecording.destroy({ where: { quizId: { [Op.in]: quizIds } } });
+      if (QuizResult) await QuizResult.destroy({ where: { quizId: { [Op.in]: quizIds } } });
+      if (AssessmentSession) await AssessmentSession.destroy({ where: { quizId: { [Op.in]: quizIds } } });
+      if (MonitorAttempt) await MonitorAttempt.destroy({ where: { testId: { [Op.in]: quizIds } } });
+      if (Feedback) await Feedback.destroy({ where: { quizId: { [Op.in]: quizIds } } });
+      if (LessonQuiz) await LessonQuiz.destroy({ where: { quizId: { [Op.in]: quizIds } } });
+
+      await AIQuiz.destroy({ where: { id: { [Op.in]: quizIds } } });
+    }
+
+    // 2. Coding Assessments (both course and training scoped)
+    const caWhere = [];
+    if (courseIds.length > 0) caWhere.push({ courseId: { [Op.in]: courseIds } });
+    caWhere.push({ trainingId: id });
+
+    if (CodingAssessment) {
+      const caList = await CodingAssessment.findAll({ where: { [Op.or]: caWhere }, attributes: ['id'] });
+      const caIds = caList.map(c => c.id);
+
+      if (caIds.length > 0) {
+        const probs = await CodingProblem.findAll({ where: { assessmentId: { [Op.in]: caIds } }, attributes: ['id'] });
+        const probIds = probs.map(p => p.id);
+
+        const attempts = await CodingAttempt.findAll({ where: { assessmentId: { [Op.in]: caIds } }, attributes: ['id'] });
+        const attemptIds = attempts.map(a => a.id);
+
+        if (CodingAiHelp) {
+          await CodingAiHelp.destroy({
+            where: {
+              [Op.or]: [
+                attemptIds.length > 0 ? { attemptId: { [Op.in]: attemptIds } } : null,
+                probIds.length > 0 ? { problemId: { [Op.in]: probIds } } : null,
+              ].filter(Boolean)
+            }
+          });
+        }
+
+        if (CodingSubmission) {
+          await CodingSubmission.destroy({
+            where: {
+              [Op.or]: [
+                attemptIds.length > 0 ? { attemptId: { [Op.in]: attemptIds } } : null,
+                probIds.length > 0 ? { problemId: { [Op.in]: probIds } } : null,
+              ].filter(Boolean)
+            }
+          });
+        }
+
+        if (CodingResult) {
+          await CodingResult.destroy({
+            where: {
+              [Op.or]: [
+                { assessmentId: { [Op.in]: caIds } },
+                attemptIds.length > 0 ? { attemptId: { [Op.in]: attemptIds } } : null,
+              ].filter(Boolean)
+            }
+          });
+        }
+
+        if (attemptIds.length > 0) {
+          if (AssessmentSession) await AssessmentSession.destroy({ where: { codingAttemptId: { [Op.in]: attemptIds } } });
+          if (ExamSession) await ExamSession.destroy({ where: { codingAttemptId: { [Op.in]: attemptIds } } });
+          await CodingAttempt.destroy({ where: { id: { [Op.in]: attemptIds } } });
+        }
+
+        if (probIds.length > 0) {
+          if (CodingProblemLanguage) await CodingProblemLanguage.destroy({ where: { problemId: { [Op.in]: probIds } } });
+          if (CodingTestCase) await CodingTestCase.destroy({ where: { problemId: { [Op.in]: probIds } } });
+          await CodingProblem.destroy({ where: { id: { [Op.in]: probIds } } });
+        }
+
+        if (AssessmentSession) await AssessmentSession.destroy({ where: { assessmentId: { [Op.in]: caIds } } });
+        if (ExamSession) {
+          const caExamSessions = await ExamSession.findAll({ where: { assessmentId: { [Op.in]: caIds } }, attributes: ['id'] });
+          const caSessionIds = caExamSessions.map(es => es.id);
+          if (caSessionIds.length > 0) {
+            if (Violation) await Violation.destroy({ where: { sessionId: { [Op.in]: caSessionIds } } });
+            if (ProctorActivity) await ProctorActivity.destroy({ where: { sessionId: { [Op.in]: caSessionIds } } });
+            if (Screenshot) await Screenshot.destroy({ where: { sessionId: { [Op.in]: caSessionIds } } });
+            await ExamSession.destroy({ where: { id: { [Op.in]: caSessionIds } } });
+          }
+        }
+
+        await CodingAssessment.destroy({ where: { id: { [Op.in]: caIds } } });
+      }
+    }
+
+    // 3. Lessons & Course Children
+    if (courseIds.length > 0) {
+      if (CourseTrainerAssignment) await CourseTrainerAssignment.destroy({ where: { courseId: { [Op.in]: courseIds } } });
+      if (Certificate) await Certificate.destroy({ where: { courseId: { [Op.in]: courseIds } } });
+      if (Enrollment) await Enrollment.destroy({ where: { courseId: { [Op.in]: courseIds } } });
+      if (Feedback) await Feedback.destroy({ where: { courseId: { [Op.in]: courseIds } } });
+      if (AttendanceRecord) await AttendanceRecord.destroy({ where: { courseId: { [Op.in]: courseIds } } });
+      if (AttendanceSession) await AttendanceSession.destroy({ where: { courseId: { [Op.in]: courseIds } } });
+
+      const lessons = await Lesson.findAll({ where: { courseId: { [Op.in]: courseIds } }, attributes: ['id'] });
+      const lessonIds = lessons.map(l => l.id);
+
       if (lessonIds.length > 0) {
-        await Lesson.destroy({ where: { id: lessonIds } });
-      }
+        if (LessonMaterial) await LessonMaterial.destroy({ where: { lessonId: { [Op.in]: lessonIds } } });
+        if (QuizProgress) await QuizProgress.destroy({ where: { lessonQuizId: { [Op.in]: lessonIds } } });
+        if (LessonQuiz) await LessonQuiz.destroy({ where: { lessonId: { [Op.in]: lessonIds } } });
 
-      // 8. Finally, destroy the Course
-      await Course.destroy({ where: { id: course.id } });
-    }
-
-    // 9. Legacy / Training-scoped child models
-    await DiscussionPost.destroy({ where: { trainingId: id } });
-    await Feedback.destroy({ where: { trainingId: id } });
-    await Enrollment.destroy({ where: { trainingId: id } });
-    await LiveSession.destroy({ where: { trainingId: id } });
-    await Note.destroy({ where: { trainingId: id } });
-    await AIDocument.destroy({ where: { trainingId: id } });
-    await TrainingTrainerAssignment.destroy({ where: { trainingId: id } });
-    await Certificate.destroy({ where: { trainingId: id } });
-    await ParticipantTracking.destroy({ where: { trainingId: id } });
-    await RegistrationApplication.destroy({ where: { trainingId: id } });
-
-    // 10. Legacy AIQuiz (trainingId-scoped, not course-scoped)
-    const legacyQuizzes = await AIQuiz.findAll({ where: { trainingId: id } });
-    const legacyQuizIds = legacyQuizzes.map(q => q.id);
-    if (legacyQuizIds.length > 0) {
-      const legacyAiQuestions = await AIQuestion.findAll({ where: { quizId: legacyQuizIds } });
-      const legacyAiQuestionIds = legacyAiQuestions.map(q => q.id);
-      if (legacyAiQuestionIds.length > 0) {
-        await AIQuestionOption.destroy({ where: { questionId: legacyAiQuestionIds } });
-      }
-      await AIQuestion.destroy({ where: { quizId: legacyQuizIds } });
-      await QuizAssignment.destroy({ where: { quizId: legacyQuizIds } });
-      await QuizCopyViolation.destroy({ where: { quizId: legacyQuizIds } });
-      await QuizResultsAudit.destroy({ where: { quizId: legacyQuizIds } });
-      await QuizRecording.destroy({ where: { quizId: legacyQuizIds } });
-      await AIQuiz.destroy({ where: { id: legacyQuizIds } });
-    }
-
-    // 11. Coding Assessments & their children
-    const codingAssessments = await CodingAssessment.findAll({ where: { trainingId: id } });
-    const codingAssessmentIds = codingAssessments.map(ca => ca.id);
-    if (codingAssessmentIds.length > 0) {
-      // CodingProblem → CodingTestCase, CodingSubmission
-      const codingProblems = await CodingProblem.findAll({ where: { assessmentId: codingAssessmentIds } });
-      const codingProblemIds = codingProblems.map(cp => cp.id);
-      if (codingProblemIds.length > 0) {
-        await CodingTestCase.destroy({ where: { problemId: codingProblemIds } });
-        await CodingSubmission.destroy({ where: { problemId: codingProblemIds } });
-      }
-      await CodingProblem.destroy({ where: { assessmentId: codingAssessmentIds } });
-
-      // CodingAttempt → CodingSubmission, CodingResult, AssessmentSession, ExamSession
-      const codingAttempts = await CodingAttempt.findAll({ where: { assessmentId: codingAssessmentIds } });
-      const codingAttemptIds = codingAttempts.map(ca => ca.id);
-      if (codingAttemptIds.length > 0) {
-        await CodingSubmission.destroy({ where: { attemptId: codingAttemptIds } });
-        await CodingResult.destroy({ where: { attemptId: codingAttemptIds } });
-        await AssessmentSession.destroy({ where: { codingAttemptId: codingAttemptIds } });
-        
-        const codingExamSessions = await ExamSession.findAll({ where: { codingAttemptId: codingAttemptIds } });
-        const codingSessionIds = codingExamSessions.map(es => es.id);
-        if (codingSessionIds.length > 0) {
-          await Violation.destroy({ where: { sessionId: codingSessionIds } });
-          await ProctorActivity.destroy({ where: { sessionId: codingSessionIds } });
-          await Screenshot.destroy({ where: { sessionId: codingSessionIds } });
-          await ExamSession.destroy({ where: { id: codingSessionIds } });
+        if (LessonAssessment) {
+          const assessments = await LessonAssessment.findAll({ where: { lessonId: { [Op.in]: lessonIds } }, attributes: ['id'] });
+          const assessmentIds = assessments.map(a => a.id);
+          if (assessmentIds.length > 0) {
+            if (AssessmentSubmission) await AssessmentSubmission.destroy({ where: { assessmentId: { [Op.in]: assessmentIds } } });
+            await LessonAssessment.destroy({ where: { id: { [Op.in]: assessmentIds } } });
+          }
         }
-        await CodingAttempt.destroy({ where: { id: codingAttemptIds } });
+        if (LessonProgress) await LessonProgress.destroy({ where: { lessonId: { [Op.in]: lessonIds } } });
+        if (ParticipantTracking) await ParticipantTracking.destroy({ where: { lessonId: { [Op.in]: lessonIds } } });
+
+        await Lesson.destroy({ where: { id: { [Op.in]: lessonIds } } });
       }
 
-      // Clean up ExamSession/AssessmentSession by assessmentId directly
-      await AssessmentSession.destroy({ where: { assessmentId: codingAssessmentIds } });
-      const caExamSessions = await ExamSession.findAll({ where: { assessmentId: codingAssessmentIds } });
-      const caSessionIds = caExamSessions.map(es => es.id);
-      if (caSessionIds.length > 0) {
-        await Violation.destroy({ where: { sessionId: caSessionIds } });
-        await ProctorActivity.destroy({ where: { sessionId: caSessionIds } });
-        await Screenshot.destroy({ where: { sessionId: caSessionIds } });
-        await ExamSession.destroy({ where: { id: caSessionIds } });
-      }
-
-      await CodingAssessment.destroy({ where: { id: codingAssessmentIds } });
+      await Course.destroy({ where: { id: { [Op.in]: courseIds } } });
     }
 
-    // 12. Destroy the training itself
+    // 4. Direct Training Children
+    if (DiscussionPost) await DiscussionPost.destroy({ where: { trainingId: id } });
+    if (Feedback) await Feedback.destroy({ where: { trainingId: id } });
+    if (Enrollment) await Enrollment.destroy({ where: { trainingId: id } });
+    if (LiveSession) await LiveSession.destroy({ where: { trainingId: id } });
+    if (Note) await Note.destroy({ where: { trainingId: id } });
+    if (AIDocument) await AIDocument.destroy({ where: { trainingId: id } });
+    if (TrainingTrainerAssignment) await TrainingTrainerAssignment.destroy({ where: { trainingId: id } });
+    if (Certificate) await Certificate.destroy({ where: { trainingId: id } });
+    if (ParticipantTracking) await ParticipantTracking.destroy({ where: { trainingId: id } });
+    if (RegistrationApplication) await RegistrationApplication.destroy({ where: { trainingId: id } });
+
+    // 5. Finally, destroy training
     await Training.destroy({ where: { id } });
+
+    if (cacheService?.delByPrefix) {
+      cacheService.delByPrefix('trainings:');
+    }
 
     res.json({ message: 'Training deleted successfully' });
   } catch (error) {

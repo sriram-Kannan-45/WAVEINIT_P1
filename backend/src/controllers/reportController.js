@@ -39,8 +39,8 @@ const getAdminReport = async (req, res) => {
       User.count({ where: { role: 'PARTICIPANT', isDeleted: false } }),
       Training.count(),
       Lesson.count(),
-      Enrollment.aggregate('progressPercent', 'AVG', { where: { status: 'ENROLLED' } }),
-      Enrollment.count({ distinct: true, col: 'participant_id', where: { status: 'ENROLLED' } }),
+      Enrollment.aggregate('progressPercent', 'AVG', { where: { status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } } }),
+      Enrollment.count({ distinct: true, col: 'participant_id', where: { status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } } }),
       Feedback.findAll({
         attributes: [
           [sequelize.col('training->trainer.id'), 'trainerId'],
@@ -162,7 +162,7 @@ const getTrainerReport = async (req, res) => {
     // 1. Participant Progress
     const enrollments = await Enrollment.findAll({
       where: {
-        status: 'ENROLLED',
+        status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] },
         [Op.or]: [
           { trainingId: { [Op.in]: trainingIds } },
           { courseId: { [Op.in]: courseIds } }
@@ -417,7 +417,7 @@ const getParticipantReport = async (req, res) => {
     // 1, 2, 3, 4. Fetch all top-level sets in parallel
     const [enrollments, certificates, quizResults, assessmentHistory] = await Promise.all([
       Enrollment.findAll({
-        where: { participantId, status: 'ENROLLED' },
+        where: { participantId, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } },
         include: [
           { model: Course, as: 'course', attributes: ['id', 'title'] },
           { model: Training, as: 'training', attributes: ['id', 'title'] }

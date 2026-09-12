@@ -101,6 +101,7 @@ async function bootstrapCourseSchema(logger = console) {
   // Only `training_programs` exists, or neither — sync will handle creation.
   await ensureTrainerAdminColumns(logger);
   await ensureCodingAttemptColumns(logger);
+  await ensureEnrollmentStatusColumn(logger);
   return { noop: true };
 }
 
@@ -141,6 +142,26 @@ async function ensureCodingAttemptColumns(logger = console) {
     }
   } catch (err) {
     logger.error(`[course-schema] Error ensuring coding_attempts columns: ${err.message}`);
+  }
+}
+
+async function ensureEnrollmentStatusColumn(logger = console) {
+  try {
+    const dialect = sequelize.getDialect();
+    if (dialect === 'mysql') {
+      if (!(await tableExists('enrollments'))) return;
+      if (!(await columnExists('enrollments', 'status'))) return;
+      await sequelize.query(
+        "ALTER TABLE `enrollments` MODIFY COLUMN `status` VARCHAR(50) NOT NULL DEFAULT 'PENDING_TRAINER_APPROVAL'"
+      );
+      logger.info('[course-schema] enrollments.status updated to VARCHAR(50) with default PENDING_TRAINER_APPROVAL');
+    } else if (dialect === 'postgres') {
+      await sequelize.query(
+        "ALTER TABLE enrollments ALTER COLUMN status TYPE VARCHAR(50), ALTER COLUMN status SET DEFAULT 'PENDING_TRAINER_APPROVAL'"
+      ).catch(() => {});
+    }
+  } catch (err) {
+    logger.warn(`[course-schema] Note on enrollments.status schema update: ${err.message}`);
   }
 }
 
@@ -345,6 +366,7 @@ async function bootstrapCourseIndexes(logger = console) {
     await addIndexIfMissing('lesson_progress', 'idx_lesson_progress_part_status', ['participant_id', 'status'], {}, logger);
     await addIndexIfMissing('feedbacks', 'idx_feedbacks_training_part', ['training_id', 'participant_id'], {}, logger);
     await addIndexIfMissing('feedbacks', 'idx_feedbacks_training', ['training_id'], {}, logger);
+    await ensureEnrollmentStatusColumn(logger);
   } catch (e) {
     logger.warn(`[course-schema] index bootstrap warning: ${e.message}`);
   }
@@ -411,5 +433,25 @@ async function syncMissingCourses(logger = console) {
   }
 }
 
-module.exports = { bootstrapCourseSchema, bootstrapCourseIndexes, relaxLegacyTrainingIdColumns, syncMissingCourses };
+async function ensureEnrollmentStatusColumn(logger = console) {
+  try {
+    const dialect = sequelize.getDialect();
+    if (dialect === 'postgres') {
+      await sequelize.query(`ALTER TABLE enrollments ALTER COLUMN status TYPE VARCHAR(50) USING status::text;`).catch(() => {});
+      await sequelize.query(`ALTER TABLE enrollments ALTER COLUMN status SET DEFAULT 'PENDING_TRAINER_APPROVAL';`).catch(() => {});
+    } else if (dialect === 'mysql') {
+      await sequelize.query(`ALTER TABLE enrollments MODIFY COLUMN status VARCHAR(50) NOT NULL DEFAULT 'PENDING_TRAINER_APPROVAL';`).catch(() => {});
+    }
+  } catch (err) {
+    logger.warn('[course-schema] ensureEnrollmentStatusColumn warning: ' + err.message);
+  }
+}
+
+module.exports = {
+  bootstrapCourseSchema,
+  bootstrapCourseIndexes,
+  relaxLegacyTrainingIdColumns,
+  syncMissingCourses,
+  ensureEnrollmentStatusColumn
+};
 

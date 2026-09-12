@@ -8,9 +8,10 @@ const logger = require('../utils/logger');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+const { Op } = require('sequelize');
 const assignedParticipantIds = async (trainingId) => {
   const rows = await Enrollment.findAll({
-    where: { trainingId, status: 'ENROLLED' },
+    where: { trainingId, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } },
     attributes: ['participantId']
   });
   return rows.map(r => r.participantId);
@@ -214,7 +215,7 @@ const publishAssessment = async (req, res) => {
 const getParticipantLessons = async (req, res) => {
   try {
     const enrollments = await Enrollment.findAll({
-      where: { participantId: req.user.id, status: 'ENROLLED' },
+      where: { participantId: req.user.id, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } },
     });
     const trainingIds = [...new Set(enrollments.map(e => e.trainingId).filter(Boolean))];
     const courseIds = [...new Set(enrollments.map(e => e.courseId).filter(Boolean))];

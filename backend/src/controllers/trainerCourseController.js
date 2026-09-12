@@ -158,7 +158,7 @@ async function loadOwnedLesson(req, res, lessonId) {
 // Participant IDs assigned to a course = enrolled in it.
 async function courseParticipantIds(courseId) {
   const rows = await Enrollment.findAll({
-    where: { courseId, status: 'ENROLLED' },
+    where: { courseId, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } },
     attributes: ['participantId'],
   });
   return rows.map(r => r.participantId);
@@ -270,7 +270,7 @@ async function listMyCourses(req, res) {
     const [lessons, quizzes, enrolled, coding] = await Promise.all([
       Lesson.findAll({ where: { courseId: ids }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }),
       AIQuiz.findAll({ where: { courseId: ids }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }),
-      Enrollment.findAll({ where: { courseId: ids, status: 'ENROLLED' }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }),
+      Enrollment.findAll({ where: { courseId: ids, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }),
       CodingAssessment.findAll({ where: { courseId: ids }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }),
     ]);
     const lc = Object.fromEntries(lessons.map(r => [String(r.courseId), Number(r.cnt)]));
@@ -380,7 +380,7 @@ async function getCourseDetail(req, res) {
       AIQuiz.count({ where: courseWhere }),
       Enrollment.count({
         where: {
-          status: 'ENROLLED',
+          status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] },
           ...(course.trainingProgramId
             ? { [Op.or]: [{ courseId: course.id }, { trainingId: course.trainingProgramId }] }
             : { courseId: course.id })
@@ -1338,7 +1338,7 @@ async function listParticipants(req, res) {
 
     const enrollmentWhere = {
       courseId: course.id,
-      status: status && status !== 'ALL' ? status : { [Op.in]: ['ENROLLED', 'PENDING'] }
+      status: status && status !== 'ALL' ? status : { [Op.in]: ['APPROVED', 'ENROLLED', 'PENDING_TRAINER_APPROVAL', 'PENDING', 'COMPLETED', 'REJECTED'] }
     };
 
     const enrollments = await Enrollment.findAll({
@@ -1510,19 +1510,23 @@ async function approveParticipant(req, res) {
 
     const userId = parseInt(req.params.userId, 10);
     const enrollment = await Enrollment.findOne({
-      where: { courseId: course.id, participantId: userId, status: 'PENDING' },
+      where: {
+        courseId: course.id,
+        participantId: userId,
+        status: { [Op.in]: ['PENDING_TRAINER_APPROVAL', 'PENDING'] }
+      },
     });
     if (!enrollment) {
       return res.status(404).json({ error: 'Pending enrollment request not found' });
     }
 
-    await enrollment.update({ status: 'ENROLLED' });
+    await enrollment.update({ status: 'APPROVED' });
 
     // Send notification to participant
     NotificationService.createNotification({
       userId: userId,
-      message: `Your enrollment in course "${course.title}" has been approved!`,
-      type: 'OTHER',
+      message: `Your enrollment in course "${course.title}" has been approved! You now have full course access.`,
+      type: 'APPROVAL',
       actionUrl: `/participant/courses/${course.id}`,
       relatedEntityId: course.id,
       relatedEntityType: 'Course',
@@ -1543,19 +1547,23 @@ async function rejectParticipant(req, res) {
 
     const userId = parseInt(req.params.userId, 10);
     const enrollment = await Enrollment.findOne({
-      where: { courseId: course.id, participantId: userId, status: 'PENDING' },
+      where: {
+        courseId: course.id,
+        participantId: userId,
+        status: { [Op.in]: ['PENDING_TRAINER_APPROVAL', 'PENDING'] }
+      },
     });
     if (!enrollment) {
       return res.status(404).json({ error: 'Pending enrollment request not found' });
     }
 
-    await enrollment.update({ status: 'CANCELLED' });
+    await enrollment.update({ status: 'REJECTED' });
 
     // Send notification to participant
     NotificationService.createNotification({
       userId: userId,
       message: `Your enrollment request for "${course.title}" was rejected.`,
-      type: 'OTHER',
+      type: 'APPROVAL',
       actionUrl: `/participant/courses/explore`,
       relatedEntityId: course.id,
       relatedEntityType: 'Course',
@@ -1585,7 +1593,7 @@ async function courseAnalytics(req, res) {
     if (!course) return;
 
     const enrollments = await Enrollment.findAll({
-      where: { courseId: course.id, status: 'ENROLLED' },
+      where: { courseId: course.id, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } },
       attributes: ['participantId', 'progressPercent'],
     });
     const totalEnrolled = enrollments.length;

@@ -1382,14 +1382,13 @@ exports.publish = async (req, res) => {
     const endTime = req.body.endTime ? new Date(req.body.endTime) : (assessment.endTime ? new Date(assessment.endTime) : null);
     const timezone = req.body.timezone || assessment.timezone || 'Asia/Kolkata';
 
-    if (!endTime) {
-      return fail(res, 400, 'End Date/Time is mandatory to publish an assessment');
-    }
-    if (endTime <= now) {
-      return fail(res, 400, 'End time must be in the future');
-    }
-    if (startTime && startTime >= endTime) {
-      return fail(res, 400, 'Start time must be before end time');
+    if (endTime) {
+      if (endTime <= now) {
+        return fail(res, 400, 'End time must be in the future');
+      }
+      if (startTime && startTime >= endTime) {
+        return fail(res, 400, 'Start time must be before end time');
+      }
     }
 
     const totalMarks = problems.reduce((s, p) => s + (p.marks || 10), 0);

@@ -59,6 +59,10 @@ router.get('/candidates', roleMiddleware('ADMIN', 'TRAINER'), interviewControlle
 router.get('/interviewers', roleMiddleware('ADMIN', 'TRAINER'), interviewController.getInterviewers);
 router.get('/stats', interviewController.getInterviewStats);
 
+// Bulk Delete (MUST be before /:id to avoid param capture)
+router.post('/bulk-delete', roleMiddleware('ADMIN'), interviewController.bulkDeleteInterviews);
+router.delete('/bulk-delete', roleMiddleware('ADMIN'), interviewController.bulkDeleteInterviews);
+
 // CRUD
 router.post('/create', roleMiddleware('ADMIN', 'TRAINER'), interviewController.createInterview);
 router.get('/', interviewController.listInterviews);

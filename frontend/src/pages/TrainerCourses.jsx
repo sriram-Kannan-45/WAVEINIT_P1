@@ -987,6 +987,7 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
     ids: [],
     loading: false,
     failedItems: null,
+    title: '',
   })
   const auth = useCallback(() => ({ Authorization: `Bearer ${user.token}` }), [user.token])
 
@@ -1039,8 +1040,9 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
     })
   }
 
-  const handleExecuteBulkDelete = async () => {
-    const { ids } = bulkDeleteModal
+  const handleExecuteBulkDelete = async (force = false, overrideIds = null) => {
+    const { ids: modalIds } = bulkDeleteModal
+    const ids = (overrideIds && overrideIds.length > 0) ? overrideIds : modalIds
     if (!ids || ids.length === 0) return
     setBulkDeleteModal(prev => ({ ...prev, loading: true }))
 
@@ -1048,14 +1050,14 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
       let r = await fetch(API.TRAINER_COURSES.BULK_DELETE_LESSONS(courseId), {
         method: 'DELETE',
         headers: { ...auth(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ ids, force: !!force }),
       })
 
       if (r.status === 404 || r.status === 405) {
         r = await fetch(API.TRAINER_COURSES.BULK_DELETE_LESSONS(courseId), {
           method: 'POST',
           headers: { ...auth(), 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids }),
+          body: JSON.stringify({ ids, force: !!force }),
         })
       }
 
@@ -1089,9 +1091,9 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
         }
       }
 
-      success(`${ids.length} structure item${ids.length > 1 ? 's' : ''} deleted successfully`)
+      success(`${ids.length} structure item${ids.length > 1 ? 's' : ''} ${force ? 'force ' : ''}deleted successfully`)
       setSelectedLessons(new Set())
-      setBulkDeleteModal({ open: false, count: 0, ids: [], loading: false, failedItems: null })
+      setBulkDeleteModal({ open: false, count: 0, ids: [], loading: false, failedItems: null, title: '' })
       await fetchLessons()
       onCountChange?.()
     } catch (err) {
@@ -1157,24 +1159,15 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
     } catch (e) { showError(e.message) }
   }
 
-  const remove = async (l) => {
-    const ok = await confirm({
-      title: 'Delete Lesson',
-      message: `Are you sure you want to delete lesson "${l.title}"? This cannot be undone.`,
-      type: 'danger',
-      confirmText: 'Delete Lesson',
+  const remove = (l) => {
+    setBulkDeleteModal({
+      open: true,
+      title: `Delete lesson "${l.title}"?`,
+      count: 1,
+      ids: [l.id],
+      loading: false,
+      failedItems: null,
     })
-    if (!ok) return
-    try {
-      const r = await fetch(API.TRAINER_COURSES.LESSON(courseId, l.id), {
-        method: 'DELETE', headers: auth(),
-      })
-      const d = await r.json()
-      if (!r.ok || d.success === false) { showError(d.error || 'Delete failed'); return }
-      success('Lesson deleted')
-      await fetchLessons()
-      onCountChange?.()
-    } catch (e) { showError(e.message) }
   }
 
   const taxonomyPills = [
@@ -1538,11 +1531,12 @@ function LessonsTab({ user, courseId, onCountChange, setParentTab }) {
 
       <BulkDeleteConfirmModal
         open={bulkDeleteModal.open}
+        title={bulkDeleteModal.title}
         itemType="structure item"
         count={bulkDeleteModal.count}
         loading={bulkDeleteModal.loading}
         failedItems={bulkDeleteModal.failedItems}
-        onClose={() => setBulkDeleteModal({ open: false, count: 0, ids: [], loading: false, failedItems: null })}
+        onClose={() => setBulkDeleteModal({ open: false, count: 0, ids: [], loading: false, failedItems: null, title: '' })}
         onConfirm={handleExecuteBulkDelete}
         onClearFailed={() => setBulkDeleteModal(prev => ({ ...prev, failedItems: null }))}
       />

@@ -96,40 +96,80 @@ async function loadEnrolledCourse(req, res, courseId) {
     return null;
   }
 
+  // Admins and Trainers can preview course content
+  if (req.user.role === 'ADMIN' || req.user.role === 'TRAINER') {
+    let dummyEnrollment = await Enrollment.findOne({
+      where: {
+        participantId: req.user.id,
+        [Op.or]: [
+          { courseId: course.id },
+          ...(course.trainingProgramId ? [{ trainingId: course.trainingProgramId }] : []),
+        ],
+      },
+    });
+    if (!dummyEnrollment) {
+      dummyEnrollment = {
+        id: 0,
+        courseId: course.id,
+        trainingId: course.trainingProgramId,
+        participantId: req.user.id,
+        status: 'APPROVED',
+        progressPercent: 100,
+      };
+    }
+    return { course, enrollment: dummyEnrollment };
+  }
+
   // Check enrollment by courseId OR trainingProgramId / trainingId
-  let enrollment = await Enrollment.findOne({
+  const enrollment = await Enrollment.findOne({
     where: {
       participantId: req.user.id,
-      status: { [Op.in]: ['ENROLLED', 'COMPLETED', 'PENDING'] },
       [Op.or]: [
         { courseId: course.id },
         ...(course.trainingProgramId ? [{ trainingId: course.trainingProgramId }] : []),
       ],
     },
+    order: [['id', 'DESC']]
   });
 
   if (!enrollment) {
-    // If user is a logged-in participant or has active access to published course, bridge enrollment
-    if (course.status === 'PUBLISHED' || req.user.role === 'PARTICIPANT' || req.user.role === 'TRAINER' || req.user.role === 'ADMIN') {
-      try {
-        [enrollment] = await Enrollment.findOrCreate({
-          where: { courseId: course.id, participantId: req.user.id },
-          defaults: {
-            courseId: course.id,
-            trainingId: course.trainingProgramId || null,
-            participantId: req.user.id,
-            status: 'ENROLLED',
-            progressPercent: 0,
-          },
-        });
-      } catch (_) {}
-    }
-  }
-
-  if (!enrollment) {
-    res.status(403).json({ error: 'You are not enrolled in this course' });
+    res.status(403).json({
+      error: 'You are not enrolled in this course. Please enroll to access course materials.',
+      code: 'NOT_ENROLLED'
+    });
     return null;
   }
+
+  const enrollmentStatus = (enrollment.status || '').toUpperCase();
+
+  if (enrollmentStatus === 'PENDING_TRAINER_APPROVAL' || enrollmentStatus === 'PENDING') {
+    res.status(403).json({
+      error: 'Enrollment pending trainer approval. Course content is locked until your instructor approves your request.',
+      status: 'PENDING_TRAINER_APPROVAL',
+      isPending: true,
+      code: 'PENDING_TRAINER_APPROVAL'
+    });
+    return null;
+  }
+
+  if (enrollmentStatus === 'REJECTED' || enrollmentStatus === 'CANCELLED') {
+    res.status(403).json({
+      error: 'Your enrollment request for this course was not approved or has been cancelled.',
+      status: enrollmentStatus,
+      isRejected: true,
+      code: 'ENROLLMENT_REJECTED'
+    });
+    return null;
+  }
+
+  if (!['APPROVED', 'ENROLLED', 'COMPLETED'].includes(enrollmentStatus)) {
+    res.status(403).json({
+      error: 'You do not have active access to this course.',
+      code: 'ACCESS_DENIED'
+    });
+    return null;
+  }
+
   return { course, enrollment };
 }
 
@@ -230,7 +270,7 @@ async function recomputeCourseProgress(courseId, participantId) {
   const percent = (completed / lessons.length) * 100;
   await Enrollment.update(
     { progressPercent: percent },
-    { where: { courseId, participantId, status: 'ENROLLED' } }
+    { where: { courseId, participantId, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } } }
   );
 
   if (percent === 100) {
@@ -317,6 +357,14 @@ async function checkAndGenerateCertificate(courseId, participantId) {
 // POST /api/participant/enroll  { courseId } / { trainingId }
 async function enroll(req, res) {
   try {
+    const participantId = req.user.id;
+    const user = await User.findByPk(participantId);
+    if (!user || user.status !== 'APPROVED') {
+      return res.status(403).json({
+        error: 'Your account must be approved by an administrator before enrolling in courses.'
+      });
+    }
+
     const courseId = parseInt(req.body.courseId, 10);
     if (!courseId) {
       const trainingId = parseInt(req.body.trainingId, 10);
@@ -332,64 +380,86 @@ async function enroll(req, res) {
       return res.status(403).json({ error: 'Course is not open for enrollment' });
     }
 
-    const [enrollment, created] = await Enrollment.findOrCreate({
-      where: { courseId, participantId: req.user.id },
-      defaults: { courseId, participantId: req.user.id, status: 'ENROLLED', progressPercent: 0 },
+    let existingEnrollment = await Enrollment.findOne({
+      where: {
+        courseId,
+        participantId
+      },
+      order: [['id', 'DESC']]
     });
-    const shouldNotify = created || enrollment.status === 'CANCELLED';
-    if (!created && enrollment.status === 'CANCELLED') {
-      await enrollment.update({ status: 'ENROLLED', progressPercent: 0 });
-    }
 
-    if (shouldNotify) {
-      const io = req.app.get('io');
-      const user = await User.findByPk(req.user.id);
-      const { CourseTrainerAssignment } = require('../models');
-      const assignments = await CourseTrainerAssignment.findAll({ where: { courseId } });
-      const trainerIds = new Set(assignments.map(a => a.trainerId));
-      if (course.trainerId) trainerIds.add(course.trainerId);
-
-      const NotificationService = require('../services/notificationService');
-      
-      // Notify Trainers
-      for (const tId of trainerIds) {
-        await NotificationService.createNotification({
-          userId: tId,
-          message: `${user?.name || 'A participant'} has enrolled in course: ${course.title}`,
-          type: 'ENROLLMENT',
-          actionUrl: `/trainer`,
-          relatedEntityId: enrollment.id,
-          relatedEntityType: 'Enrollment'
-        }, io);
+    if (existingEnrollment) {
+      const currentStatus = (existingEnrollment.status || '').toUpperCase();
+      if (['APPROVED', 'ENROLLED', 'COMPLETED'].includes(currentStatus)) {
+        return res.status(409).json({ error: 'You are already enrolled in this course.' });
       }
-
-      // Notify Participant
-      await NotificationService.createNotification({
-        userId: req.user.id,
-        message: `You have been enrolled in course: ${course.title}.`,
-        type: 'ENROLLMENT',
-        actionUrl: `/participant`,
-        relatedEntityId: enrollment.id,
-        relatedEntityType: 'Enrollment'
-      }, io);
+      if (['PENDING_TRAINER_APPROVAL', 'PENDING'].includes(currentStatus)) {
+        return res.status(409).json({ error: 'Your enrollment request is already pending trainer approval.' });
+      }
+      // If REJECTED or CANCELLED, allow re-requesting
+      existingEnrollment.status = 'PENDING_TRAINER_APPROVAL';
+      existingEnrollment.progressPercent = 0;
+      await existingEnrollment.save();
+    } else {
+      existingEnrollment = await Enrollment.create({
+        courseId,
+        trainingId: course.trainingProgramId || null,
+        participantId,
+        status: 'PENDING_TRAINER_APPROVAL',
+        progressPercent: 0
+      });
     }
 
-    cacheService.delete(`participant:courses:${req.user.id}`);
+    const io = req.app.get('io');
+    const { CourseTrainerAssignment, TrainingTrainerAssignment } = require('../models');
+    const assignments = await CourseTrainerAssignment.findAll({ where: { courseId } });
+    const trainerIds = new Set(assignments.map(a => a.trainerId));
+    if (course.trainerId) trainerIds.add(course.trainerId);
+    if (course.trainingProgramId) {
+      const trAssigns = await TrainingTrainerAssignment.findAll({ where: { trainingId: course.trainingProgramId } });
+      trAssigns.forEach(a => trainerIds.add(a.trainerId));
+    }
 
-    res.status(created ? 201 : 200).json({
+    const NotificationService = require('../services/notificationService');
+
+    // Notify Trainers of pending enrollment request
+    for (const tId of trainerIds) {
+      await NotificationService.createNotification({
+        userId: tId,
+        message: `${user?.name || 'A participant'} has requested enrollment in "${course.title}". Please review and approve.`,
+        type: 'ENROLLMENT',
+        actionUrl: `/trainer`,
+        relatedEntityId: existingEnrollment.id,
+        relatedEntityType: 'Enrollment'
+      }, io).catch(() => {});
+    }
+
+    // Notify Participant that request is pending
+    await NotificationService.createNotification({
+      userId: participantId,
+      message: `Your enrollment request for "${course.title}" has been submitted and is pending trainer approval.`,
+      type: 'ENROLLMENT',
+      actionUrl: `/participant`,
+      relatedEntityId: existingEnrollment.id,
+      relatedEntityType: 'Enrollment'
+    }, io).catch(() => {});
+
+    cacheService.delete(`participant:courses:${participantId}`);
+
+    return res.status(201).json({
       success: true,
-      message: created ? 'Enrolled successfully' : (enrollment.status === 'ENROLLED' ? 'Already enrolled' : 'Enrolled successfully'),
+      message: 'Enrollment request submitted! Pending trainer approval.',
       enrollment: {
-        id: enrollment.id,
-        courseId: enrollment.courseId,
-        status: enrollment.status,
-        progressPercent: Number(enrollment.progressPercent || 0),
-        enrolledAt: enrollment.enrolled_at || enrollment.createdAt,
+        id: existingEnrollment.id,
+        courseId: existingEnrollment.courseId,
+        status: existingEnrollment.status,
+        progressPercent: Number(existingEnrollment.progressPercent || 0),
+        enrolledAt: existingEnrollment.enrolled_at || existingEnrollment.createdAt,
       },
     });
   } catch (e) {
     console.error('enroll:', e.message);
-    res.status(500).json({ error: 'Failed to enroll' });
+    res.status(500).json({ error: 'Failed to submit enrollment request' });
   }
 }
 
@@ -399,15 +469,23 @@ async function unenroll(req, res) {
     const id = parseInt(req.params.courseId, 10);
     cacheService.delete(`participant:courses:${req.user.id}`);
     const courseEnrollment = await Enrollment.findOne({
-      where: { courseId: id, participantId: req.user.id, status: 'ENROLLED' },
+      where: {
+        courseId: id,
+        participantId: req.user.id,
+        status: { [Op.in]: ['APPROVED', 'ENROLLED', 'PENDING_TRAINER_APPROVAL', 'PENDING'] }
+      },
     });
     if (courseEnrollment) {
       await courseEnrollment.update({ status: 'CANCELLED' });
-      return res.json({ success: true, message: 'Unenrolled successfully' });
+      return res.json({ success: true, message: 'Enrollment cancelled successfully' });
     }
 
     const trainingEnrollment = await Enrollment.findOne({
-      where: { trainingId: id, participantId: req.user.id, status: 'ENROLLED' },
+      where: {
+        trainingId: id,
+        participantId: req.user.id,
+        status: { [Op.in]: ['APPROVED', 'ENROLLED', 'PENDING_TRAINER_APPROVAL', 'PENDING'] }
+      },
     });
     if (trainingEnrollment) {
       const enrollmentController = require('./enrollmentController');
@@ -438,7 +516,7 @@ async function listMyCourses(req, res) {
     const enrollments = await Enrollment.findAll({
       where: {
         participantId: req.user.id,
-        status: { [Op.in]: ['ENROLLED', 'PENDING', 'COMPLETED'] }
+        status: { [Op.in]: ['APPROVED', 'ENROLLED', 'PENDING_TRAINER_APPROVAL', 'PENDING', 'COMPLETED', 'REJECTED'] }
       },
       include: [
         {
@@ -520,7 +598,7 @@ async function listMyCourses(req, res) {
       const [lessons, quizzes, enrolled, coding] = await Promise.all([
         Lesson.findAll({ where: { courseId: courseIds }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }).catch(() => []),
         AIQuiz.findAll({ where: { courseId: courseIds }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }).catch(() => []),
-        Enrollment.findAll({ where: { courseId: courseIds, status: 'ENROLLED' }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }).catch(() => []),
+        Enrollment.findAll({ where: { courseId: courseIds, status: { [Op.in]: ['APPROVED', 'ENROLLED'] } }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }).catch(() => []),
         CodingAssessment.findAll({ where: { courseId: courseIds }, attributes: ['courseId', [sequelize.fn('COUNT', '*'), 'cnt']], group: ['courseId'], raw: true }).catch(() => []),
       ]);
       lc = Object.fromEntries(lessons.map(r => [String(r.courseId || r.course_id), Number(r.cnt || 0)]));
@@ -536,23 +614,29 @@ async function listMyCourses(req, res) {
     const pagedEntries = isPaginated ? courseEntries.slice(offset, offset + limit) : courseEntries;
     const paginationMeta = formatPaginationMeta(total, page, limit);
 
-    const outCourses = pagedEntries.map(({ course, enrollment }) => ({
-      id: course.id,
-      courseId: course.id,
-      title: course.title,
-      description: course.description,
-      thumbnailUrl: course.thumbnailUrl,
-      status: course.status,
-      programTitle: course.program?.title || null,
-      trainerName: course.trainer?.name || course.program?.trainer?.name || null,
-      lessonCount: lc[String(course.id)] || 0,
-      quizCount: qc[String(course.id)] || 0,
-      enrolledCount: ec[String(course.id)] || 0,
-      codingCount: cc[String(course.id)] || 0,
-      progressPercent: Number(enrollment.progressPercent || 0),
-      enrolledAt: enrollment.enrolled_at || enrollment.createdAt,
-      enrollmentStatus: enrollment.status,
-    }));
+    const outCourses = pagedEntries.map(({ course, enrollment }) => {
+      const eStatus = (enrollment.status || '').toUpperCase();
+      return {
+        id: course.id,
+        courseId: course.id,
+        title: course.title,
+        description: course.description,
+        thumbnailUrl: course.thumbnailUrl,
+        status: course.status,
+        programTitle: course.program?.title || null,
+        trainerName: course.trainer?.name || course.program?.trainer?.name || null,
+        lessonCount: lc[String(course.id)] || 0,
+        quizCount: qc[String(course.id)] || 0,
+        enrolledCount: ec[String(course.id)] || 0,
+        codingCount: cc[String(course.id)] || 0,
+        progressPercent: Number(enrollment.progressPercent || 0),
+        enrolledAt: enrollment.enrolled_at || enrollment.createdAt,
+        enrollmentStatus: enrollment.status,
+        isApproved: ['APPROVED', 'ENROLLED', 'COMPLETED'].includes(eStatus),
+        isPending: ['PENDING_TRAINER_APPROVAL', 'PENDING'].includes(eStatus),
+        isRejected: ['REJECTED', 'CANCELLED'].includes(eStatus),
+      };
+    });
 
     const result = {
       success: true,
@@ -574,24 +658,24 @@ async function listMyCourses(req, res) {
   }
 }
 
-// GET /api/participant/courses/explore — PUBLISHED courses the participant is NOT enrolled in
+// GET /api/participant/courses/explore — PUBLISHED courses with enrollment status
 async function explore(req, res) {
   try {
     const { page, limit, offset } = parsePagination(req.query, 10, 100);
     const isPaginated = !!(req.query.page || req.query.limit || req.query.offset !== undefined);
 
-    const myEnrolled = await Enrollment.findAll({
-      where: {
-        participantId: req.user.id,
-        status: { [Op.in]: ['ENROLLED', 'PENDING', 'COMPLETED'] }
-      },
-      attributes: ['courseId'],
+    const myEnrollments = await Enrollment.findAll({
+      where: { participantId: req.user.id },
+      attributes: ['courseId', 'trainingId', 'status'],
     });
-    const myIds = myEnrolled.map(e => e.courseId).filter(Boolean);
+
+    const enrollmentMap = new Map();
+    for (const e of myEnrollments) {
+      if (e.courseId) enrollmentMap.set(String(e.courseId), e.status);
+      if (e.trainingId) enrollmentMap.set(`tr_${e.trainingId}`, e.status);
+    }
 
     const where = { status: 'PUBLISHED' };
-    if (myIds.length) where.id = { [Op.notIn]: myIds };
-
     const total = await Course.count({ where });
 
     let findOptions = {
@@ -611,14 +695,24 @@ async function explore(req, res) {
     const courses = await Course.findAll(findOptions);
     const paginationMeta = formatPaginationMeta(total, page, limit);
 
-    const outCourses = courses.map(c => ({
-      courseId: c.id,
-      title: c.title,
-      description: c.description,
-      thumbnailUrl: c.thumbnailUrl,
-      programTitle: c.program?.title || null,
-      trainerName: c.trainer?.name || null,
-    }));
+    const outCourses = courses.map(c => {
+      const eStatus = enrollmentMap.get(String(c.id)) || (c.trainingProgramId ? enrollmentMap.get(`tr_${c.trainingProgramId}`) : null) || null;
+      const normalizedStatus = (eStatus || '').toUpperCase();
+      return {
+        courseId: c.id,
+        id: c.id,
+        title: c.title,
+        description: c.description,
+        thumbnailUrl: c.thumbnailUrl,
+        programTitle: c.program?.title || null,
+        trainerName: c.trainer?.name || null,
+        enrollmentStatus: eStatus,
+        isApproved: ['APPROVED', 'ENROLLED', 'COMPLETED'].includes(normalizedStatus),
+        isPending: ['PENDING_TRAINER_APPROVAL', 'PENDING'].includes(normalizedStatus),
+        isRejected: ['REJECTED'].includes(normalizedStatus),
+        isEnrolled: ['APPROVED', 'ENROLLED', 'COMPLETED'].includes(normalizedStatus),
+      };
+    });
 
     res.json({
       success: true,
@@ -666,7 +760,7 @@ async function getCourseOverview(req, res) {
       }),
       Enrollment.count({
         where: {
-          status: 'ENROLLED',
+          status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] },
           ...(course.trainingProgramId
             ? { [Op.or]: [{ courseId: course.id }, { trainingId: course.trainingProgramId }] }
             : { courseId: course.id })
@@ -1665,7 +1759,7 @@ async function loadAccessibleAssessment(req, res, assessmentId) {
     return null;
   }
   const enrollment = await Enrollment.findOne({
-    where: { courseId: assessment.lesson.courseId, participantId: req.user.id, status: 'ENROLLED' },
+    where: { courseId: assessment.lesson.courseId, participantId: req.user.id, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } },
   });
   if (!enrollment) { res.status(403).json({ error: 'You are not enrolled in this course' }); return null; }
   return { assessment, lesson: assessment.lesson };
@@ -1748,6 +1842,7 @@ async function getAssessmentResult(req, res) {
 }
 
 module.exports = {
+  loadEnrolledCourse,
   // Enrollment
   enroll,
   unenroll,

@@ -53,6 +53,9 @@ async function verifyTrainerAccess(req, res, quiz) {
       where: { courseId: quiz.courseId, trainerId }
     });
     if (courseAssigned) return true;
+    const { Course } = require('../models');
+    const course = await Course.findByPk(quiz.courseId);
+    if (course && (course.trainerId === trainerId || course.createdBy === trainerId)) return true;
   }
 
   if (quiz.trainingId) {
@@ -105,15 +108,14 @@ router.post('/:id/publish', roleMiddleware('TRAINER', 'ADMIN'), async (req, res)
     const endTime = req.body.endTime ? new Date(req.body.endTime) : (quiz.endTime ? new Date(quiz.endTime) : null);
     const timezone = req.body.timezone || quiz.timezone || 'Asia/Kolkata';
 
-    // End time is mandatory before publishing
-    if (!endTime) {
-      return res.status(400).json({ error: 'End Date/Time is mandatory to publish an assessment' });
-    }
-    if (endTime <= now) {
-      return res.status(400).json({ error: 'End time must be in the future' });
-    }
-    if (startTime && startTime >= endTime) {
-      return res.status(400).json({ error: 'Start time must be before end time' });
+    // End time is optional. If provided, validate that it is in the future and after start time.
+    if (endTime) {
+      if (endTime <= now) {
+        return res.status(400).json({ error: 'End time must be in the future' });
+      }
+      if (startTime && startTime >= endTime) {
+        return res.status(400).json({ error: 'Start time must be before end time' });
+      }
     }
 
     const updateData = {
@@ -141,10 +143,10 @@ router.post('/:id/publish', roleMiddleware('TRAINER', 'ADMIN'), async (req, res)
     let participantIds = [];
     const effectiveTrainingId = trainingId || quiz.trainingId;
     if (quiz.courseId) {
-      const enrollments = await Enrollment.findAll({ where: { courseId: quiz.courseId, status: 'ENROLLED' } });
+      const enrollments = await Enrollment.findAll({ where: { courseId: quiz.courseId, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } } });
       participantIds = enrollments.map(e => e.participantId);
     } else if (effectiveTrainingId) {
-      const enrollments = await Enrollment.findAll({ where: { trainingId: effectiveTrainingId, status: 'ENROLLED' } });
+      const enrollments = await Enrollment.findAll({ where: { trainingId: effectiveTrainingId, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } } });
       participantIds = enrollments.map(e => e.participantId);
     }
 
@@ -290,7 +292,7 @@ router.post('/:id/send', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) =>
 
     const enrollments = await Enrollment.findAll({
       where: {
-        status: 'ENROLLED',
+        status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] },
         [Op.or]: enrollmentOrConditions
       }
     });
@@ -1235,7 +1237,7 @@ router.get('/:id/participants', roleMiddleware('TRAINER', 'ADMIN'), async (req, 
     if (quiz.trainingId) enrollmentWhere.push({ trainingId: quiz.trainingId });
 
     const enrollments = enrollmentWhere.length > 0
-      ? await Enrollment.findAll({ where: { [Op.or]: enrollmentWhere, status: 'ENROLLED' } })
+      ? await Enrollment.findAll({ where: { [Op.or]: enrollmentWhere, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } } })
       : [];
 
     const participantIds = [...new Set([

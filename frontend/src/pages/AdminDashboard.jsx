@@ -141,6 +141,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
   const [bulkDeleteModal, setBulkDeleteModal] = useState({
     open: false,
     itemType: '',
+    title: '',
     count: 0,
     ids: [],
     loading: false,
@@ -330,7 +331,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
     }
   }
 
-  const fetchTrainings = async (page = trainingPage, limit = trainingLimit, search = trainingSearch, status = trainingStatusFilter) => {
+  const fetchTrainings = async (page = trainingPage, limit = trainingLimit, search = trainingSearch, status = trainingStatusFilter, fresh = true) => {
     setTrainingsLoading(true)
     try {
       const params = new URLSearchParams()
@@ -338,6 +339,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       params.append('limit', limit)
       if (search && search.trim()) params.append('search', search.trim())
       if (status && status !== 'ALL') params.append('status', status)
+      if (fresh) params.append('fresh', 'true')
 
       const r = await fetchWithTimeout(`${API_BASE}/trainings?${params.toString()}`, { headers: auth() }, 10000)
       const d = await r.json().catch(() => ({}))
@@ -489,8 +491,9 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
     })
   }
 
-  const handleExecuteBulkDelete = async () => {
-    const { itemType, ids } = bulkDeleteModal
+  const handleExecuteBulkDelete = async (force = false, overrideIds = null) => {
+    const { itemType, ids: modalIds } = bulkDeleteModal
+    const ids = (overrideIds && overrideIds.length > 0) ? overrideIds : modalIds
     if (!ids || ids.length === 0) return
 
     setBulkDeleteModal(prev => ({ ...prev, loading: true }))
@@ -505,17 +508,17 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       const r = await fetch(endpoint, {
         method: 'POST',
         headers: auth(),
-        body: JSON.stringify({ ids, force: false })
+        body: JSON.stringify({ ids, force: !!force })
       })
 
       const d = await r.json().catch(() => ({}))
 
       if (d.success) {
         if (d.failed && d.failed.length > 0) {
-          success(`Deleted ${d.summary?.deleted || 0} ${itemType}(s).`)
-          setBulkDeleteModal(prev => ({ ...prev, loading: false, failedItems: d.failed }))
+          success(`Deleted ${d.summary?.deleted || 0} ${itemType}(s). ${d.failed.length} item(s) protected.`)
+          setBulkDeleteModal(prev => ({ ...prev, loading: false, failedItems: d.failed, ids: d.failed.map(f => f.id), count: d.failed.length }))
         } else {
-          success(`Successfully deleted ${d.summary?.deleted || ids.length} ${itemType}(s).`)
+          success(`Successfully ${force ? 'force deleted' : 'deleted'} ${d.summary?.deleted || ids.length} ${itemType}(s).`)
           setBulkDeleteModal({ open: false, itemType: '', count: 0, ids: [], loading: false, failedItems: null })
         }
 
@@ -527,7 +530,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
           fetchTrainers(trainerPage, trainerLimit, trainerSearch)
         } else if (itemType === 'training') {
           setSelectedTrainingIds(new Set())
-          fetchTrainings(trainingPage, trainingLimit, trainingSearch, trainingStatusFilter)
+          fetchTrainings(trainingPage, trainingLimit, trainingSearch, trainingStatusFilter, true)
         } else if (itemType === 'program') {
           setSelectedProgramIds(new Set())
           fetchPrograms(programPage, programLimit, programSearch)
@@ -723,11 +726,27 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
   }
 
   const handleDeleteTraining = async (id, title) => {
-    setConfirmModal({ action: 'delete-training', id, title: `Delete training "${title}"?`, subtitle: 'This will remove all associated enrollments and feedback.' })
+    setBulkDeleteModal({
+      open: true,
+      itemType: 'training',
+      count: 1,
+      ids: [id],
+      title: `Delete training "${title}"?`,
+      loading: false,
+      failedItems: null,
+    })
   }
 
   const handleDeleteParticipant = async (id, name) => {
-    setConfirmModal({ action: 'delete-participant', id, title: `Delete participant "${name}"?`, subtitle: 'All their enrollments and feedback will also be removed.' })
+    setBulkDeleteModal({
+      open: true,
+      itemType: 'participant',
+      count: 1,
+      ids: [id],
+      title: `Delete participant "${name}"?`,
+      loading: false,
+      failedItems: null,
+    })
   }
 
   const handleApproveParticipant = async (id) => {
@@ -769,15 +788,39 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
   }
 
   const handleDeleteTrainer = (id, name) => {
-    setConfirmModal({ action: 'delete-trainer', id, title: 'Delete Trainer?', subtitle: 'This action cannot be undone.', confirmText: 'Delete' })
+    setBulkDeleteModal({
+      open: true,
+      itemType: 'trainer',
+      count: 1,
+      ids: [id],
+      title: `Delete trainer "${name}"?`,
+      loading: false,
+      failedItems: null,
+    })
   }
 
   const handleDeleteProgram = async (id, name) => {
-    setConfirmModal({ action: 'delete-program', id, title: `Delete program "${name}"?` })
+    setBulkDeleteModal({
+      open: true,
+      itemType: 'program',
+      count: 1,
+      ids: [id],
+      title: `Delete program "${name}"?`,
+      loading: false,
+      failedItems: null,
+    })
   }
 
   const handleDeleteCourse = async (id, name) => {
-    setConfirmModal({ action: 'delete-course', id, title: `Delete course "${name}"?` })
+    setBulkDeleteModal({
+      open: true,
+      itemType: 'course',
+      count: 1,
+      ids: [id],
+      title: `Delete course "${name}"?`,
+      loading: false,
+      failedItems: null,
+    })
   }
 
   const openEdit = (t) => {
@@ -1021,9 +1064,9 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                 )}
               </div>
             ) : (() => {
-              const displayTrainings = trainings.length > trainingLimit
-                ? trainings.slice((trainingPage - 1) * trainingLimit, trainingPage * trainingLimit)
-                : trainings;
+              const displayTrainings = filtered.length > trainingLimit
+                ? filtered.slice((trainingPage - 1) * trainingLimit, trainingPage * trainingLimit)
+                : filtered;
               return (
                 <div className="reg-admin-table-wrap">
                   <table className="reg-admin-table">
@@ -1511,7 +1554,7 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
                       </th>
                       <th>Participant</th>
                       <th>Status</th>
-                      <th>Enrolled</th>
+                      <th>Joined Date</th>
                       <th>Progress</th>
                       <th>Quiz</th>
                       <th style={{ minWidth: 190, textAlign: 'left' }}>Actions</th>
@@ -2658,11 +2701,12 @@ function AdminDashboard({ user, onLogout, activeTab, onTabChange }) {
       {/* ── BULK DELETE CONFIRM MODAL ── */}
       <BulkDeleteConfirmModal
         open={bulkDeleteModal.open}
+        title={bulkDeleteModal.title}
         itemType={bulkDeleteModal.itemType}
         count={bulkDeleteModal.count}
         loading={bulkDeleteModal.loading}
         failedItems={bulkDeleteModal.failedItems}
-        onClose={() => setBulkDeleteModal({ open: false, itemType: '', count: 0, ids: [], loading: false, failedItems: null })}
+        onClose={() => setBulkDeleteModal({ open: false, itemType: '', title: '', count: 0, ids: [], loading: false, failedItems: null })}
         onConfirm={handleExecuteBulkDelete}
         onClearFailed={() => setBulkDeleteModal(prev => ({ ...prev, failedItems: null }))}
       />

@@ -210,6 +210,8 @@ export const API = {
     PARTICIPANTS:  (courseId)          => `${API_BASE}/trainer/courses/${courseId}/participants`,
     PARTICIPANT:   (courseId, userId)  => `${API_BASE}/trainer/courses/${courseId}/participants/${userId}`,
     AVAILABLE_PARTICIPANTS: (courseId) => `${API_BASE}/trainer/courses/${courseId}/available-participants`,
+    APPROVE_PARTICIPANT: (courseId, userId) => `${API_BASE}/trainer/courses/${courseId}/participants/${userId}/approve`,
+    REJECT_PARTICIPANT:  (courseId, userId) => `${API_BASE}/trainer/courses/${courseId}/participants/${userId}/reject`,
 
     ANALYTICS:     (courseId)          => `${API_BASE}/trainer/courses/${courseId}/analytics`,
 
@@ -218,6 +220,12 @@ export const API = {
     SUBMISSIONS:   (assessmentId)      => `${API_BASE}/trainer/assessments/${assessmentId}/submissions`,
     GRADE:         (submissionId)      => `${API_BASE}/trainer/submissions/${submissionId}/grade`,
     PUBLISH_SUB:   (submissionId)      => `${API_BASE}/trainer/submissions/${submissionId}/publish`,
+  },
+
+  TRAINER_ENROLLMENT_REQUESTS: {
+    LIST:    `${API_BASE}/trainer/enrollment-requests`,
+    APPROVE: (id) => `${API_BASE}/trainer/enrollment-requests/${id}/approve`,
+    REJECT:  (id) => `${API_BASE}/trainer/enrollment-requests/${id}/reject`,
   },
 
   PARTICIPANT_COURSES: {

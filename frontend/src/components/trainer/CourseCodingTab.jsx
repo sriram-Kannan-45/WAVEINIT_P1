@@ -570,13 +570,14 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
     e.preventDefault()
     if (!promptText.trim()) { showError('Please enter a topic or prompt'); return }
     if (languages.length === 0) { showError('Please select at least one language'); return }
-    if (!endTime) { showError('End Date/Time is mandatory'); return }
-    const endD = new Date(endTime)
-    if (isNaN(endD.getTime())) { showError('Please enter a valid End Date/Time'); return }
-    if (startTime) {
-      const startD = new Date(startTime)
-      if (!isNaN(startD.getTime()) && endD <= startD) {
-        showError('End Date/Time must be strictly after Start Date/Time'); return
+    if (endTime) {
+      const endD = new Date(endTime)
+      if (isNaN(endD.getTime())) { showError('Please enter a valid End Date/Time'); return }
+      if (startTime) {
+        const startD = new Date(startTime)
+        if (!isNaN(startD.getTime()) && endD <= startD) {
+          showError('End Date/Time must be strictly after Start Date/Time'); return
+        }
       }
     }
     setGenError('')
@@ -799,16 +800,15 @@ function AICodingWizard({ user, courseId, onClose, onGenerated }) {
                     </div>
                   </div>
                   <div>
-                    <label style={{ ...lblStyle, marginTop: 0 }}>End Date & Time <span style={{ color: colors.danger[600] }}>*</span></label>
+                    <label style={{ ...lblStyle, marginTop: 0 }}>End Date & Time (Optional)</label>
                     <input
                       type="datetime-local"
                       value={endTime}
                       onChange={(e) => setEndTime(e.target.value)}
                       style={inputStyle}
-                      required
                     />
                     <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 2 }}>
-                      Mandatory end cutoff
+                      Optional cutoff time
                     </div>
                   </div>
                 </div>

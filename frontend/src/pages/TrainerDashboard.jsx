@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Calendar, Users, Star, FileText, CheckCircle, Clock, MessageSquare,
   TrendingUp, BookOpen, Award, ArrowRight, Activity, Video, Plus, Code, Layers, Sparkles, Coffee,
-  Search
+  Search, Check, X
 } from 'lucide-react'
 import interviewService from '../services/interviewService'
 import { LineAreaChart } from '../components/ui/ChartWrappers'
@@ -259,10 +259,65 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
     }
   }
 
+  const [enrollmentRequests, setEnrollmentRequests] = useState([])
+  const [requestsLoading, setRequestsLoading] = useState(false)
+
+  const fetchEnrollmentRequests = async () => {
+    try {
+      setRequestsLoading(true)
+      const r = await fetchWithTimeout(`${API}/trainer/enrollment-requests`, { headers: auth() }, 10000)
+      const d = await r.json().catch(() => ({}))
+      if (d.success) setEnrollmentRequests(d.requests || [])
+    } catch (e) {
+      console.error('fetchEnrollmentRequests error:', e.message)
+    } finally {
+      setRequestsLoading(false)
+    }
+  }
+
+  const handleApproveEnrollment = async (id) => {
+    try {
+      const res = await fetch(`${API}/trainer/enrollment-requests/${id}/approve`, {
+        method: 'POST',
+        headers: auth(),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (res.ok && d.success) {
+        showSuccess(d.message || 'Participant enrollment approved!')
+        fetchEnrollmentRequests()
+        fetchTrainings()
+      } else {
+        showError(d.error || 'Failed to approve enrollment')
+      }
+    } catch (e) {
+      showError(e.message)
+    }
+  }
+
+  const handleRejectEnrollment = async (id) => {
+    try {
+      const res = await fetch(`${API}/trainer/enrollment-requests/${id}/reject`, {
+        method: 'POST',
+        headers: auth(),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (res.ok && d.success) {
+        showSuccess(d.message || 'Participant enrollment rejected')
+        fetchEnrollmentRequests()
+        fetchTrainings()
+      } else {
+        showError(d.error || 'Failed to reject enrollment')
+      }
+    } catch (e) {
+      showError(e.message)
+    }
+  }
+
   useEffect(() => {
     fetchTrainings()
     fetchFeedbacks()
     fetchInterviews()
+    fetchEnrollmentRequests()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -337,15 +392,15 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
               </div>
             </div>
 
-            {/* Card 3: Drafts */}
+            {/* Card 3: Pending Requests */}
             <div className="tdb-stat-card">
               <div className="tdb-stat-icon-wrap tdb-stat-icon-wrap--amber">
-                <FileText size={18} strokeWidth={2} />
+                <Clock size={18} strokeWidth={2} />
               </div>
               <div className="tdb-stat-text-wrap">
-                <span className="tdb-stat-label">Drafts</span>
-                <div className="tdb-stat-value">0</div>
-                <span className="tdb-stat-sub">In progress</span>
+                <span className="tdb-stat-label">Pending Requests</span>
+                <div className="tdb-stat-value">{enrollmentRequests.length}</div>
+                <span className="tdb-stat-sub">Awaiting approval</span>
               </div>
             </div>
 
@@ -422,8 +477,101 @@ function TrainerDashboard({ user, onLogout, activeTab, onTabChange }) {
               </div>
             </div>
 
-            {/* RIGHT COLUMN: Stacked Cards (Recent Trainings + Upcoming Sessions) */}
+            {/* RIGHT COLUMN: Stacked Cards (Pending Requests + Recent Trainings + Upcoming Sessions) */}
             <div className="tdb-right-col">
+              {/* Card 0: Pending Requests (if any) */}
+              {enrollmentRequests.length > 0 && (
+                <div className="tdb-card" style={{ border: '1px solid #FDE68A', background: '#FFFEF7' }}>
+                  <div className="tdb-card-header">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#FEF3C7', color: '#B45309', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Clock size={15} />
+                      </div>
+                      <div>
+                        <h2 className="tdb-card-title" style={{ margin: 0 }}>Enrollment Requests</h2>
+                        <span style={{ fontSize: 11, color: '#92400E', fontWeight: 600 }}>{enrollmentRequests.length} pending review</span>
+                      </div>
+                    </div>
+                    <button
+                      className="tdb-link-btn"
+                      onClick={() => onTabChange?.('courses')}
+                    >
+                      Manage →
+                    </button>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '0 4px 12px' }}>
+                    {enrollmentRequests.slice(0, 3).map((req) => (
+                      <div
+                        key={req.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '10px 12px',
+                          background: '#FFFFFF',
+                          border: '1px solid #F1F5F9',
+                          borderRadius: 10,
+                          gap: 12
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                          <UserAvatar name={req.participant?.name} size={32} fontSize={11} />
+                          <div style={{ minWidth: 0 }}>
+                            <h4 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {req.participant?.name || 'Participant'}
+                            </h4>
+                            <p style={{ margin: '2px 0 0', fontSize: 11.5, color: '#64748B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {req.training?.title || req.course?.title || 'Training Program'}
+                            </p>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                          <button
+                            onClick={() => handleApproveEnrollment(req.id)}
+                            style={{
+                              padding: '5px 10px',
+                              background: '#16A34A',
+                              color: '#FFFFFF',
+                              border: 'none',
+                              borderRadius: 6,
+                              fontSize: 11.5,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4
+                            }}
+                            title="Approve Enrollment"
+                          >
+                            <Check size={12} /> Approve
+                          </button>
+                          <button
+                            onClick={() => handleRejectEnrollment(req.id)}
+                            style={{
+                              padding: '5px 10px',
+                              background: '#FEE2E2',
+                              color: '#DC2626',
+                              border: '1px solid #FECACA',
+                              borderRadius: 6,
+                              fontSize: 11.5,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4
+                            }}
+                            title="Reject Enrollment"
+                          >
+                            <X size={12} /> Reject
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Card 1: Recent Trainings */}
               <div className="tdb-card" style={{ flex: 1.1 }}>
                 <div className="tdb-card-header">

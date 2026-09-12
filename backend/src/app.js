@@ -191,6 +191,10 @@ app.use('/api/feed', feedRoutes);
 app.use('/api/live', liveRoutes);
 app.use('/api/ai-quiz', aiQuizRoutes);
 app.use('/api/quizzes', quizzesRoutes);
+app.use('/api/questions', (req, res, next) => {
+  req.url = '/questions' + req.url;
+  quizzesRoutes(req, res, next);
+});
 
 // Registration workflow routes
 const registrationRoutes = require('./routes/registrationRoutes');

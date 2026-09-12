@@ -77,6 +77,19 @@ export default function MyEnrollments({ enrollments = [], loading = false, onCan
                         {e.trainingTitle}
                       </h3>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-1)', flexWrap: 'wrap' }}>
+                        {['PENDING_TRAINER_APPROVAL', 'PENDING'].includes(e.status) ? (
+                          <span className="badge badge--warning" style={{ background: '#FEF3C7', color: '#B45309', border: '1px solid #FDE68A', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <Clock size={11} /> Pending Trainer Approval
+                          </span>
+                        ) : e.status === 'REJECTED' ? (
+                          <span className="badge badge--error" style={{ background: '#FEE2E2', color: '#B91C1C', border: '1px solid #FECACA', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <X size={11} /> Rejected
+                          </span>
+                        ) : (
+                          <span className="badge badge--success" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <CheckCircle size={11} /> Approved
+                          </span>
+                        )}
                         <span className={`badge badge--${status.variant}`}>{status.label}</span>
                         <span style={{ fontSize: 12, color: 'var(--neutral-400)' }}>Joined {fmtDate(e.enrolledAt)}</span>
                       </div>

@@ -72,7 +72,7 @@ const getDashboardSummary = async (req, res) => {
       User.count({ where: { role: 'TRAINER', isDeleted: false, status: 'APPROVED' } }),
       Training.count(),
       Training.count({ where: { endDate: { [Op.lt]: now } } }),
-      Enrollment.count({ where: { status: 'ENROLLED' } }),
+      Enrollment.count({ where: { status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } } }),
       AIQuiz ? AIQuiz.count().catch(() => 0) : Promise.resolve(0),
       CodingAssessment ? CodingAssessment.count().catch(() => 0) : Promise.resolve(0),
       Interview ? Interview.count().catch(() => 0) : Promise.resolve(0),
@@ -110,7 +110,7 @@ const getDashboardSummary = async (req, res) => {
     let enrollmentCountMap = {};
     if (topTrainingIds.length > 0) {
       const counts = await Enrollment.findAll({
-        where: { trainingId: { [Op.in]: topTrainingIds }, status: 'ENROLLED' },
+        where: { trainingId: { [Op.in]: topTrainingIds }, status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } },
         attributes: ['trainingId', [sequelize.fn('COUNT', sequelize.col('id')), 'count']],
         group: ['trainingId'],
         raw: true

@@ -1419,6 +1419,167 @@ class InterviewController {
       res.status(500).json({ error: 'Failed to delete interview' });
     }
   }
+
+  /**
+   * Bulk delete interviews. Only ADMIN can bulk delete.
+   * Supports Safe Mode (blocks COMPLETED/IN_PROGRESS interviews) and Force Mode (cascades everything).
+   */
+  async bulkDeleteInterviews(req, res) {
+    try {
+      if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ success: false, error: 'Only admins can delete interviews' });
+      }
+
+      const { ids, force = false } = req.body;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ success: false, error: 'Please provide an array of interview IDs to delete.' });
+      }
+
+      const validIds = ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id) && id > 0);
+      if (validIds.length === 0) {
+        return res.status(400).json({ success: false, error: 'No valid interview IDs provided.' });
+      }
+
+      const interviews = await Interview.findAll({
+        where: { id: { [Op.in]: validIds } },
+      });
+
+      if (interviews.length === 0) {
+        return res.json({
+          success: true,
+          message: 'The selected interview(s) have already been removed.',
+          summary: { total: validIds.length, deleted: validIds.length, failed: 0 },
+          deletedIds: validIds,
+          failed: [],
+        });
+      }
+
+      const failed = [];
+      const eligibleIds = [];
+
+      for (const iv of interviews) {
+        if (!force) {
+          const reasons = [];
+          if (iv.status === 'COMPLETED') {
+            reasons.push('Interview session is completed');
+          } else if (iv.status === 'IN_PROGRESS') {
+            reasons.push('Interview is currently in progress with active participants');
+          }
+
+          // Check if any sessions have recordings, results, or feedback
+          const sessions = await InterviewSession.findAll({
+            where: { interview_id: iv.id },
+            attributes: ['id'],
+          }).catch(() => []);
+          const sIds = sessions.map(s => s.id);
+
+          const [recordingsCount, feedbackCount, resultsCount] = await Promise.all([
+            sIds.length > 0 && InterviewRecording ? InterviewRecording.count({ where: { session_id: { [Op.in]: sIds } } }).catch(() => 0) : 0,
+            InterviewFeedback ? InterviewFeedback.count({
+              where: {
+                [Op.or]: [{ interview_id: iv.id }, ...(sIds.length ? [{ session_id: { [Op.in]: sIds } }] : [])],
+              },
+            }).catch(() => 0) : 0,
+            InterviewResult ? InterviewResult.count({
+              where: {
+                [Op.or]: [{ interview_id: iv.id }, ...(sIds.length ? [{ session_id: { [Op.in]: sIds } }] : [])],
+              },
+            }).catch(() => 0) : 0,
+          ]);
+
+          if (recordingsCount > 0) reasons.push(`${recordingsCount} session video recording(s)`);
+          if (feedbackCount > 0) reasons.push(`${feedbackCount} candidate evaluation(s)`);
+          if (resultsCount > 0) reasons.push('official decision result recorded');
+
+          if (reasons.length > 0) {
+            failed.push({
+              id: iv.id,
+              name: iv.title || `Interview #${iv.id}`,
+              reason: `Interview has protected content: ${reasons.join('; ')}. Use Force Delete to override.`,
+            });
+            continue;
+          }
+        }
+        eligibleIds.push(iv.id);
+      }
+
+      // If in Safe Mode and none are eligible
+      if (eligibleIds.length === 0) {
+        return res.json({
+          success: false,
+          message: 'None of the selected interviews could be deleted in Safe Mode due to active dependencies.',
+          error: 'None of the selected interviews could be deleted in Safe Mode due to active dependencies.',
+          summary: { total: validIds.length, deleted: 0, failed: failed.length },
+          deletedIds: [],
+          failed,
+        });
+      }
+
+      const t = await sequelize.transaction();
+      try {
+        // 1. Find all session IDs for eligible interviews
+        const sessions = await InterviewSession.findAll({
+          where: { interview_id: { [Op.in]: eligibleIds } },
+          attributes: ['id'],
+          transaction: t,
+        });
+        const sessionIds = sessions.map(s => s.id);
+
+        // 2. Cascade session-level children
+        if (sessionIds.length > 0) {
+          if (InterviewDevice) await InterviewDevice.destroy({ where: { session_id: { [Op.in]: sessionIds } }, transaction: t });
+          if (InterviewRecording) await InterviewRecording.destroy({ where: { session_id: { [Op.in]: sessionIds } }, transaction: t });
+          if (InterviewLog) await InterviewLog.destroy({ where: { session_id: { [Op.in]: sessionIds } }, transaction: t });
+          if (InterviewAlert) await InterviewAlert.destroy({ where: { session_id: { [Op.in]: sessionIds } }, transaction: t });
+        }
+
+        // 3. Child tables that reference interview_id or session_id
+        const interviewOrSessionWhere = sessionIds.length > 0
+          ? { [Op.or]: [{ interview_id: { [Op.in]: eligibleIds } }, { session_id: { [Op.in]: sessionIds } }] }
+          : { interview_id: { [Op.in]: eligibleIds } };
+
+        if (InterviewResult) await InterviewResult.destroy({ where: interviewOrSessionWhere, transaction: t });
+        if (InterviewFeedback) await InterviewFeedback.destroy({ where: interviewOrSessionWhere, transaction: t });
+        if (InterviewNotes) await InterviewNotes.destroy({ where: interviewOrSessionWhere, transaction: t });
+        if (InterviewParticipant) await InterviewParticipant.destroy({ where: { interview_id: { [Op.in]: eligibleIds } }, transaction: t });
+
+        // 4. Delete sessions
+        if (InterviewSession) await InterviewSession.destroy({ where: { interview_id: { [Op.in]: eligibleIds } }, transaction: t });
+
+        // 5. Delete interviews
+        await Interview.destroy({ where: { id: { [Op.in]: eligibleIds } }, transaction: t });
+
+        await t.commit();
+
+        logger.info('[bulkDeleteInterviews] Successfully deleted interviews', {
+          deletedCount: eligibleIds.length,
+          requestedBy: req.user.id,
+        });
+
+        return res.json({
+          success: true,
+          message: `Successfully deleted ${eligibleIds.length} interview(s).${failed.length > 0 ? ` ${failed.length} interview(s) protected.` : ''}`,
+          summary: {
+            total: validIds.length,
+            deleted: eligibleIds.length,
+            failed: failed.length,
+          },
+          deletedIds: eligibleIds,
+          failed,
+        });
+      } catch (dbErr) {
+        await t.rollback();
+        logger.error('[bulkDeleteInterviews] Transaction error during bulk delete', {
+          error: dbErr.message,
+          stack: dbErr.stack,
+        });
+        return res.status(500).json({ success: false, error: 'Database transaction error during interview bulk delete.' });
+      }
+    } catch (error) {
+      logger.error('[bulkDeleteInterviews] Unexpected error', { error: error.message });
+      return res.status(500).json({ success: false, error: 'Failed to bulk delete interviews.' });
+    }
+  }
 }
 
 module.exports = new InterviewController();
