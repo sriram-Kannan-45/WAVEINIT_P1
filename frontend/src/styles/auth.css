@@ -788,6 +788,9 @@ body:has(.auth-page) {
   .auth-classroom-empower-wrap {
     max-width: 440px;
     margin: 14px auto;
+    aspect-ratio: 800 / 722;
+    max-height: 395px;
+    align-self: stretch;
   }
 
   .auth-layout--right {
