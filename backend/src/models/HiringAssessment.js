@@ -1,5 +1,6 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/db');
+const { HIRING_ASSESSMENT_STATUSES } = require('../constants/hiringStatuses');
 
 const HiringAssessment = sequelize.define('HiringAssessment', {
   id: {
@@ -15,7 +16,7 @@ const HiringAssessment = sequelize.define('HiringAssessment', {
     type: DataTypes.STRING(16),
     allowNull: false,
     defaultValue: 'QUIZ',
-    validate: { isIn: [['QUIZ', 'CODING']] },
+    validate: { isIn: [['QUIZ', 'CODING', 'COMBINED']] },
     comment: 'Selects the existing shared assessment engine used by this hiring workflow.',
   },
   quiz_id: {
@@ -87,9 +88,34 @@ const HiringAssessment = sequelize.define('HiringAssessment', {
     comment: 'Hire-only policy layered on the shared monitoring, QR and report engines.',
   },
   status: {
-    type: DataTypes.ENUM('DRAFT', 'PUBLISHED', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'EVALUATED', 'EXPIRED'),
+    type: DataTypes.ENUM(...HIRING_ASSESSMENT_STATUSES),
     allowNull: false,
     defaultValue: 'DRAFT',
+  },
+  hiring_role: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+    comment: 'Recruitment role, e.g. Software Engineer.',
+  },
+  job_position: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+    comment: 'Open job position this assessment screens for.',
+  },
+  required_skills: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    comment: 'Skills the candidate is expected to demonstrate.',
+  },
+  experience_level: {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+    comment: 'Entry / Mid / Senior expected candidate level.',
+  },
+  recruitment_stage: {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+    comment: 'Screening / Technical / Final hiring stage.',
   },
   total_marks: {
     type: DataTypes.DECIMAL(10, 2),

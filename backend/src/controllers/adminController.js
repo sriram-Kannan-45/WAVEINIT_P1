@@ -1440,22 +1440,56 @@ const getTrainingStats = async (req, res) => {
       order: [['id', 'DESC']]
     });
 
-    const result = await Promise.all(trainings.map(async t => {
-      const enrolledCount = await Enrollment.count({ where: { trainingId: t.id, status: { [require('sequelize').Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } } });
-      const feedbackCount = await Feedback.count({ where: { trainingId: t.id } });
-      const feedbacks = await Feedback.findAll({ where: { trainingId: t.id }, attributes: ['trainerRating', 'subjectRating'] });
-      const avgTrainer = feedbacks.length > 0 ? (feedbacks.reduce((s, f) => s + f.trainerRating, 0) / feedbacks.length).toFixed(1) : null;
-      const avgSubject = feedbacks.length > 0 ? (feedbacks.reduce((s, f) => s + f.subjectRating, 0) / feedbacks.length).toFixed(1) : null;
-      const now = new Date();
+    const trainingIds = trainings.map(t => t.id);
+    if (trainingIds.length === 0) {
+      return res.json({ trainings: [] });
+    }
+
+    // Batch the per-training aggregates into two grouped queries instead of
+    // 2×N+1 sequential queries (the old implementation ran count/count/findAll
+    // for every training, one round trip each).
+    const [enrolledRows, feedbackRows] = await Promise.all([
+      Enrollment.findAll({
+        attributes: [
+          'trainingId',
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+        ],
+        where: { trainingId: { [require('sequelize').Op.in]: trainingIds }, status: { [require('sequelize').Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] } },
+        group: [sequelize.literal('training_id')],
+        raw: true
+      }),
+      Feedback.findAll({
+        attributes: [
+          'trainingId',
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+          [sequelize.fn('AVG', sequelize.col('trainer_rating')), 'avgTrainer'],
+          [sequelize.fn('AVG', sequelize.col('subject_rating')), 'avgSubject']
+        ],
+        where: { trainingId: { [require('sequelize').Op.in]: trainingIds } },
+        group: [sequelize.literal('training_id')],
+        raw: true
+      })
+    ]);
+
+    const enrolledMap = new Map(enrolledRows.map(r => [String(r.trainingId), Number(r.count)]));
+    const feedbackMap = new Map(feedbackRows.map(r => [String(r.trainingId), r]));
+    const now = new Date();
+
+    const result = trainings.map(t => {
+      const f = feedbackMap.get(String(t.id));
+      const feedbackCount = f ? Number(f.count) : 0;
+      const avgTrainer = feedbackCount > 0 ? Number(f.avgTrainer).toFixed(1) : null;
+      const avgSubject = feedbackCount > 0 ? Number(f.avgSubject).toFixed(1) : null;
       const start = new Date(t.startDate);
       const end = new Date(t.endDate);
       const status = now < start ? 'Upcoming' : now > end ? 'Completed' : 'Ongoing';
       return {
         id: t.id, title: t.title, trainerName: t.trainer?.name || 'Unassigned',
         startDate: t.startDate, endDate: t.endDate, capacity: t.capacity,
-        enrolledCount, feedbackCount, avgTrainerRating: avgTrainer, avgSubjectRating: avgSubject, status
+        enrolledCount: enrolledMap.get(String(t.id)) || 0,
+        feedbackCount, avgTrainerRating: avgTrainer, avgSubjectRating: avgSubject, status
       };
-    }));
+    });
 
     res.json({ trainings: result });
   } catch (error) {
@@ -1513,6 +1547,30 @@ const approveParticipant = async (req, res) => {
         { where: { userId: participant.id, status: 'PENDING' } }
       );
     } catch (e) { logger.warn('Sync application on approve failed:', { error: e.message }); }
+
+    // Keep pending hiring candidates (if any) in sync.
+    try {
+      const { HiringCandidate, HiringAssessment } = require('../models');
+      const hiringService = require('../services/hiringService');
+      const email = hiringService.normalizeEmail(participant.email);
+      if (email) {
+        const candidates = await HiringCandidate.findAll({
+          where: { email },
+          include: [{ model: HiringAssessment, as: 'assessment' }]
+        });
+        for (const candidate of candidates) {
+          await candidate.update({
+            registration_status: 'REGISTERED',
+            user_id: participant.id,
+            last_rechecked_at: new Date()
+          });
+          if (candidate.assignment_status !== 'ASSIGNED' && candidate.assessment) {
+            await hiringService.assignCandidate(candidate.assessment, candidate);
+            await hiringService.recomputeAssessmentStatus(candidate.assessment.id);
+          }
+        }
+      }
+    } catch (e) { logger.warn('Sync hiring candidate on approve failed:', { error: e.message }); }
 
     const io = req.app.get('io');
 

@@ -1,5 +1,4 @@
 const express = require('express');
-const { body } = require('express-validator');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -12,6 +11,15 @@ const authenticateToken = require('../middleware/auth');
 const roleMiddleware = require('../middleware/roles');
 const { User, TrainerProfile } = require('../models');
 const logger = require('../utils/logger');
+const {
+  validateAdminCreateUser,
+  validateBulkDeleteIds,
+  validateTrainingCreate,
+  validateTrainingUpdate,
+  validateIdParam,
+  handleValidation,
+  body,
+} = require('../security/inputValidator');
 
 const router = express.Router();
 
@@ -20,10 +28,7 @@ router.post(
   '/create-trainer',
   authenticateToken,
   roleMiddleware('ADMIN'),
-  [
-    body('name').notEmpty().withMessage('Name is required'),
-    body('email').isEmail().withMessage('Valid email is required')
-  ],
+  validateAdminCreateUser,
   (req, res) => authController.createTrainer(req, res)
 );
 
@@ -112,6 +117,7 @@ router.post(
   '/trainers/bulk-delete',
   authenticateToken,
   roleMiddleware('ADMIN'),
+  validateBulkDeleteIds,
   (req, res) => adminController.bulkDeleteTrainers(req, res)
 );
 
@@ -120,6 +126,7 @@ router.post(
   '/participants/bulk-delete',
   authenticateToken,
   roleMiddleware('ADMIN'),
+  validateBulkDeleteIds,
   (req, res) => adminController.bulkDeleteParticipants(req, res)
 );
 
@@ -128,6 +135,7 @@ router.post(
   '/trainings/bulk-delete',
   authenticateToken,
   roleMiddleware('ADMIN'),
+  validateBulkDeleteIds,
   (req, res) => adminController.bulkDeleteTrainings(req, res)
 );
 
@@ -194,10 +202,7 @@ router.post(
   '/trainings',
   authenticateToken,
   roleMiddleware('ADMIN'),
-  [
-    body('title').notEmpty().withMessage('Title is required'),
-    body('trainerId').notEmpty().withMessage('Trainer ID is required')
-  ],
+  validateTrainingCreate,
   (req, res) => trainingController.createTraining(req, res)
 );
 
@@ -206,6 +211,7 @@ router.put(
   '/trainings/:id',
   authenticateToken,
   roleMiddleware('ADMIN'),
+  validateTrainingUpdate,
   (req, res) => adminController.updateTraining(req, res)
 );
 
@@ -214,6 +220,7 @@ router.delete(
   '/trainings/:id',
   authenticateToken,
   roleMiddleware('ADMIN'),
+  validateIdParam,
   (req, res) => adminController.deleteTraining(req, res)
 );
 
@@ -246,6 +253,7 @@ router.post(
   '/participants',
   authenticateToken,
   roleMiddleware('ADMIN'),
+  validateAdminCreateUser,
   (req, res) => adminController.createParticipant(req, res)
 );
 
@@ -468,6 +476,7 @@ const adminAuth = [authenticateToken, roleMiddleware('ADMIN')];
 
 router.post(  '/training-programs',                       adminAuth, [
   body('title').notEmpty().withMessage('Title is required'),
+  handleValidation,
 ], (req, res) => adminCourseController.createProgram(req, res));
 
 router.get(   '/training-programs',                       adminAuth, (req, res) =>
@@ -488,6 +497,7 @@ router.post(  '/training-programs/bulk-delete',           adminAuth, (req, res) 
 router.post(  '/training-programs/:id/courses',           adminAuth, [
   body('title').notEmpty().withMessage('Title is required'),
   body('trainerId').notEmpty().withMessage('trainerId is required'),
+  handleValidation,
 ], (req, res) => adminCourseController.createCourse(req, res));
 
 router.get(   '/courses',                                 adminAuth, (req, res) =>

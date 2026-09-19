@@ -93,8 +93,8 @@ class AIQuizService {
   /**
    * Saves the questions and their choices.
    */
-  async saveQuestions(quizId, questions = [], { transaction = null, difficulty = 'MIXED' } = {}) {
-    if (!transaction) return sequelize.transaction(transaction => this.saveQuestions(quizId, questions, { transaction, difficulty }));
+  async saveQuestions(quizId, questions = [], { transaction = null, difficulty = 'MIXED', orderOffset = 0 } = {}) {
+    if (!transaction) return sequelize.transaction(transaction => this.saveQuestions(quizId, questions, { transaction, difficulty, orderOffset }));
     require('./promptQuizGenerator').assertVerifiedQuestions(questions);
     questions = require('./quizGenerationContract').validateQuestions(questions, {difficulty});
     for (let i = 0; i < questions.length; i++) {
@@ -112,7 +112,7 @@ class AIQuizService {
         bloomsLevel: q.bloomsLevel || null,
         difficulty: q.difficulty,
         marks: q.marks,
-        order: i,
+        order: orderOffset + i,
       }, { transaction });
 
       if (Array.isArray(q.options) && q.options.length > 0) {
@@ -381,6 +381,20 @@ class AIQuizService {
     });
 
     return { totalScore, maxScore, percentage: maxScore > 0 ? (totalScore / maxScore) * 100 : 0 };
+  }
+/**
+   * Canonical question-count sync. Counts actual AIQuestion records, sums
+   * marks, and writes the authoritative stats onto the quiz row so header
+   * counts and any downstream consumer never drift out of sync.
+   */
+  async syncQuizQuestionStats(quizId, { transaction: t } = {}) {
+    const count = await AIQuestion.count({ where: { quizId } });
+    const totalMarks = (await AIQuestion.sum('marks', { where: { quizId } })) || 0;
+    await AIQuiz.update(
+      { numQuestions: count, questionCount: count, totalMarks },
+      { where: { id: quizId }, ...(t ? { transaction: t } : {}) },
+    );
+    return { count, totalMarks };
   }
 }
 

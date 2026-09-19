@@ -10,6 +10,7 @@ const bcrypt = require('bcryptjs');
 const { User } = require('./models');
 const { sequelize, connectDB } = require('./config/db');
 const logger = require('./utils/logger');
+const { perfMiddleware, perfStatsReport, resetPerfStats } = require('./utils/perf');
 
 // Catch any unhandled promise rejections or exceptions to prevent silent process crashes
 process.on('unhandledRejection', (reason, promise) => {
@@ -143,6 +144,9 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// Performance instrumentation (dev-only, or PERF_LOGGING=true in production)
+app.use(perfMiddleware);
 
 // Secure uploads: genuine public assets (avatars, banners, profiles) are served statically;
 // sensitive private user files (resumes, certificates, recordings, screenshots) require authentication & authorization.
@@ -280,30 +284,69 @@ const { testMail } = require('./controllers/forgotPasswordController');
 const roleMiddlewareApp = require('./middleware/roles');
 app.get('/api/test-mail', authenticateToken, roleMiddlewareApp('ADMIN'), testMail);
 
+// Cache DB/AI health probes so load-balancer / orchestrator polls (typically
+// every 5–15s across many instances) do not each trigger a fresh DB handshake
+// and an AI round-trip. Probe results are cached in-process for a short window.
+const healthCache = { dbAt: 0, dbOk: false, aiAt: 0, aiOk: 'never-checked' };
+async function getCachedDbHealth() {
+  const now = Date.now();
+  if (now - healthCache.dbAt < 20000) return healthCache.dbOk;
+  let ok = false;
+  try {
+    if (sequelize) {
+      await sequelize.authenticate();
+      ok = true;
+    }
+  } catch (_) { ok = false; }
+  healthCache.dbAt = now;
+  healthCache.dbOk = ok;
+  return ok;
+}
+async function getCachedAiHealth() {
+  const now = Date.now();
+  if (now - healthCache.aiAt < 30000) return healthCache.aiOk;
+  let status = 'unknown';
+  try {
+    const aiSvc = require('./services/aiService');
+    const result = await aiSvc.checkHealth();
+    status = result.available ? 'ready' : 'unavailable';
+  } catch (_) { status = 'not-configured'; }
+  healthCache.aiAt = now;
+  healthCache.aiOk = status;
+  return status;
+}
+
+// Dev-only latency report (avg / P50 / P95 / P99 / error rate per endpoint).
+// Only reachable with an ADMIN token and only when instrumentation is active.
+app.get('/api/debug/perf', [
+  (req, res, next) => {
+    if (process.env.NODE_ENV === 'production' && process.env.PERF_LOGGING !== 'true') {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    next();
+  },
+  authenticateToken,
+  roleMiddlewareApp('ADMIN'),
+], (req, res) => {
+  if (req.query.reset === '1') resetPerfStats();
+  const rows = perfStatsReport();
+  const summary = rows.reduce((acc, r) => {
+    acc.requests += r.requests;
+    acc.avgMs += r.avgMs * r.requests;
+    return acc;
+  }, { requests: 0, avgMs: 0 });
+  summary.avgMs = summary.requests ? Math.round(summary.avgMs / summary.requests) : 0;
+  res.json({ enabled: true, sampledSince: 'process start', summary, endpoints: rows.slice(0, 50) });
+});
+
 // Health check (supports root, /health, and /api/health for Load Balancers & cluster probes).
 // Enriched with instance identity, shared-lock provider and AI-service status so
 // operators can confirm scale-out readiness from any instance.
 app.get(['/', '/health', '/api/health'], async (req, res) => {
   const { isRedisReady, getLockProvider } = require('./config/redis');
 
-  let dbStatus = 'connected';
-  try {
-    if (sequelize) {
-      await sequelize.authenticate();
-      dbStatus = 'connected';
-    }
-  } catch (e) {
-    dbStatus = 'disconnected';
-  }
-
-  let aiService = 'unknown';
-  try {
-    const aiSvc = require('./services/aiService');
-    const result = await aiSvc.checkHealth();
-    aiService = result.available ? 'ready' : 'unavailable';
-  } catch (_) {
-    aiService = 'not-configured';
-  }
+  const dbStatus = (await getCachedDbHealth()) ? 'connected' : 'disconnected';
+  const aiService = await getCachedAiHealth();
 
   const isHealthy = dbStatus === 'connected';
 
@@ -328,24 +371,8 @@ app.get(['/', '/health', '/api/health'], async (req, res) => {
 // routing traffic to an instance. 200 only when the DB is reachable.
 app.get(['/ready', '/api/ready'], async (req, res) => {
   const { isRedisReady, getLockProvider } = require('./config/redis');
-  let dbStatus = 'connected';
-  try {
-    if (sequelize) {
-      await sequelize.authenticate();
-      dbStatus = 'connected';
-    }
-  } catch (e) {
-    dbStatus = 'disconnected';
-  }
-
-  let aiService = 'unknown';
-  try {
-    const aiSvc = require('./services/aiService');
-    const result = await aiSvc.checkHealth();
-    aiService = result.available ? 'ready' : 'unavailable';
-  } catch (_) {
-    aiService = 'not-configured';
-  }
+  const dbStatus = (await getCachedDbHealth()) ? 'connected' : 'disconnected';
+  const aiService = await getCachedAiHealth();
 
   const ready = dbStatus === 'connected';
   res.status(ready ? 200 : 503).json({

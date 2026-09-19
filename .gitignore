@@ -28,6 +28,7 @@ npm-debug.log*
 *.sql
 *.sql.gz
 backup-*
+*.csv
 
 # Environment
 .env

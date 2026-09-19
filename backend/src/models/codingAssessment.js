@@ -97,6 +97,14 @@ const CodingAssessment = sequelize.define('CodingAssessment', {
     defaultValue: 1,
     field: 'max_attempts'
   },
+  passingPercentage: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 50,
+    field: 'passing_percentage',
+    comment: 'Minimum percentage required to pass this assessment.',
+    validate: { min: 0, max: 100 }
+  },
   showResultImmediately: {
     type: DataTypes.BOOLEAN,
     allowNull: false,

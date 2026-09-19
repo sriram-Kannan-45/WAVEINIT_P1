@@ -1,5 +1,6 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/db');
+const { HIRING_CANDIDATE_STATUSES } = require('../constants/hiringStatuses');
 
 const HiringCandidate = sequelize.define('HiringCandidate', {
   id: {
@@ -41,7 +42,7 @@ const HiringCandidate = sequelize.define('HiringCandidate', {
     defaultValue: 'NOT_ASSIGNED',
   },
   status: {
-    type: DataTypes.ENUM('PENDING', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'EVALUATED', 'EXPIRED'),
+    type: DataTypes.ENUM(...HIRING_CANDIDATE_STATUSES),
     allowNull: false,
     defaultValue: 'PENDING',
   },

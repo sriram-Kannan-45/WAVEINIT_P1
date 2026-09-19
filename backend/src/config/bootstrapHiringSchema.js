@@ -14,6 +14,9 @@ const {
   HiringAssessment, HiringCandidate, HiringAssignment, AIQuiz, AIQuestion,
   CodingAssessment, CodingProblem, CodingProblemLanguage, CodingTestCase,
 } = require('../models');
+const {
+  HIRING_ASSIGNMENT_STATUSES, HIRING_CANDIDATE_STATUSES,
+} = require('../constants/hiringStatuses');
 const logger = require('../utils/logger');
 
 async function addColumnIfMissing(queryInterface, table, name, definition) {
@@ -130,16 +133,47 @@ async function migrateLegacyDrafts(queryInterface) {
 
 async function ensureHiringSchema() {
   try {
+    const queryInterface = sequelize.getQueryInterface();
+    const dialect = sequelize.getDialect();
+
+    // PostgreSQL enums cannot be updated by sync() once the table exists.
+    // Ensure the canonical status values exist before the models sync, so the
+    // ORM enum and the database enum stay identical. The values come from the
+    // single source of truth (hiringStatuses) so newly added statuses
+    // self-register on boot and the two can never drift again.
+    if (dialect === 'postgres') {
+      const enumTypes = [
+        ['enum_hiring_assignments_status', HIRING_ASSIGNMENT_STATUSES],
+        ['enum_hiring_candidates_status', HIRING_CANDIDATE_STATUSES],
+      ];
+      for (const [typeName, values] of enumTypes) {
+        for (const value of values) {
+          await sequelize.query(
+            `ALTER TYPE "${typeName}" ADD VALUE IF NOT EXISTS '${value}'`,
+          ).catch((error) => {
+            if (!String(error.message || '').includes('already exists')) {
+              logger.warn(`Could not extend enum ${typeName} with ${value}`, { error: error.message });
+            }
+          });
+        }
+      }
+    }
+
     await HiringAssessment.sync();
     await HiringCandidate.sync();
     await HiringAssignment.sync();
-    const queryInterface = sequelize.getQueryInterface();
 
     await addColumnIfMissing(queryInterface, 'ai_quizzes', 'context', {
       type: DataTypes.STRING(16), allowNull: false, defaultValue: 'TRAINING',
     });
     await addColumnIfMissing(queryInterface, 'coding_assessments', 'context', {
       type: DataTypes.STRING(16), allowNull: false, defaultValue: 'TRAINING',
+    });
+    await addColumnIfMissing(queryInterface, 'ai_quizzes', 'passing_percentage', {
+      type: DataTypes.INTEGER, allowNull: false, defaultValue: 50,
+    });
+    await addColumnIfMissing(queryInterface, 'coding_assessments', 'passing_percentage', {
+      type: DataTypes.INTEGER, allowNull: false, defaultValue: 50,
     });
     await addColumnIfMissing(queryInterface, 'hiring_assessments', 'assessment_type', {
       type: DataTypes.STRING(16), allowNull: false, defaultValue: 'QUIZ',
@@ -152,6 +186,21 @@ async function ensureHiringSchema() {
     });
     await addColumnIfMissing(queryInterface, 'hiring_assignments', 'quiz_assignment_id', {
       type: DataTypes.BIGINT, allowNull: true,
+    });
+    await addColumnIfMissing(queryInterface, 'hiring_assessments', 'hiring_role', {
+      type: DataTypes.STRING(255), allowNull: true,
+    });
+    await addColumnIfMissing(queryInterface, 'hiring_assessments', 'job_position', {
+      type: DataTypes.STRING(255), allowNull: true,
+    });
+    await addColumnIfMissing(queryInterface, 'hiring_assessments', 'required_skills', {
+      type: DataTypes.JSON, allowNull: true,
+    });
+    await addColumnIfMissing(queryInterface, 'hiring_assessments', 'experience_level', {
+      type: DataTypes.STRING(64), allowNull: true,
+    });
+    await addColumnIfMissing(queryInterface, 'hiring_assessments', 'recruitment_stage', {
+      type: DataTypes.STRING(64), allowNull: true,
     });
     await addColumnIfMissing(queryInterface, 'hiring_assessments', 'proctoring_config', {
       type: DataTypes.JSON,

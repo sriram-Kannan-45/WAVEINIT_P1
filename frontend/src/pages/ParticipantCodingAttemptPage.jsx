@@ -2015,7 +2015,7 @@ function ParticipantCodingAttemptInner({ user }) {
                 sessionId={resolvedMonitoringSessionId}
                 participantId={user?.id}
                 userToken={user?.token}
-                mobileEnabled={hirePolicy ? !!hirePolicy.mobileRoomScan : true}
+                mobileEnabled={hirePolicy ? !!(hirePolicy.mobileRoomScan || hirePolicy.roomScan360Enabled) : true}
                 hirePolicy={hirePolicy}
                 preCalibrated={true}
                 prePaired={true}

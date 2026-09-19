@@ -12,6 +12,11 @@ const roleMiddleware = require('../middleware/roles');
 const { Interview, InterviewSession, InterviewDevice } = require('../models');
 const tokenService = require('../services/interviewTokenService');
 const logger = require('../utils/logger');
+const {
+  validateScheduleInterview,
+  validateInterviewEvaluation,
+  validateBulkDeleteIds,
+} = require('../security/inputValidator');
 
 // Multer for interview recording chunks (kept in memory, written by service).
 const chunkUpload = multer({
@@ -60,18 +65,18 @@ router.get('/interviewers', roleMiddleware('ADMIN', 'TRAINER'), interviewControl
 router.get('/stats', interviewController.getInterviewStats);
 
 // Bulk Delete (MUST be before /:id to avoid param capture)
-router.post('/bulk-delete', roleMiddleware('ADMIN'), interviewController.bulkDeleteInterviews);
-router.delete('/bulk-delete', roleMiddleware('ADMIN'), interviewController.bulkDeleteInterviews);
+router.post('/bulk-delete', roleMiddleware('ADMIN'), validateBulkDeleteIds, interviewController.bulkDeleteInterviews);
+router.delete('/bulk-delete', roleMiddleware('ADMIN'), validateBulkDeleteIds, interviewController.bulkDeleteInterviews);
 
 // CRUD
-router.post('/create', roleMiddleware('ADMIN', 'TRAINER'), interviewController.createInterview);
+router.post('/create', roleMiddleware('ADMIN', 'TRAINER'), validateScheduleInterview, interviewController.createInterview);
 router.get('/', interviewController.listInterviews);
 router.get('/:id', interviewController.getInterview);
 router.get('/:id/report', async (req,res) => {
   try { res.json(await require('../services/interviewLifecycleService').report(req.params.id,req.user)); }
   catch(error) { res.status(error.status||500).json({error: error.status ? error.message : 'Server error fetching interview report'}); }
 });
-router.post('/:id/participants/:candidateId/evaluation', roleMiddleware('ADMIN','TRAINER'), async (req,res) => {
+router.post('/:id/participants/:candidateId/evaluation', roleMiddleware('ADMIN','TRAINER'), validateInterviewEvaluation, async (req,res) => {
   try { res.json({success:true,evaluation:await require('../services/interviewLifecycleService').saveEvaluation(req.params.id,req.params.candidateId,req.user,req.body)}); }
   catch(error) { res.status(error.status||500).json({error: error.status ? error.message : 'Server error saving evaluation'}); }
 });

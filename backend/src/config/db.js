@@ -1105,3 +1105,9 @@ const connectDB = async () => {
 };
 
 module.exports = { sequelize, connectDB, resolveDatabaseSsl };
+
+// Development-only DB query timing. No-op in production unless PERF_LOGGING=true.
+if (process.env.NODE_ENV !== 'production' || process.env.PERF_LOGGING === 'true') {
+  const { installDbHook } = require('../utils/perf');
+  installDbHook(sequelize);
+}

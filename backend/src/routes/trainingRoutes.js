@@ -4,6 +4,11 @@ const trainingLeaderboardController = require('../controllers/trainingLeaderboar
 const authenticateToken = require('../middleware/auth');
 const optionalAuth = require('../middleware/optionalAuth');
 const roleMiddleware = require('../middleware/roles');
+const {
+  validateTrainingCreate,
+  validateTrainingUpdate,
+  validateIdParam,
+} = require('../security/inputValidator');
 
 const router = express.Router();
 
@@ -11,25 +16,25 @@ const router = express.Router();
 router.get('/', optionalAuth, (req, res) => trainingController.getAllTrainings(req, res));
 
 // GET /api/trainings/:id/leaderboard - Authenticated (strictly training-scoped)
-router.get('/:id/leaderboard', authenticateToken, (req, res) => trainingLeaderboardController.getTrainingLeaderboard(req, res));
+router.get('/:id/leaderboard', authenticateToken, validateIdParam, (req, res) => trainingLeaderboardController.getTrainingLeaderboard(req, res));
 
 // GET /api/trainings/:id - Public
-router.get('/:id', (req, res) => trainingController.getTrainingById(req, res));
+router.get('/:id', validateIdParam, (req, res) => trainingController.getTrainingById(req, res));
 
 // GET /api/trainings/:id/progress - Dynamic structure completion metrics
-router.get('/:id/progress', optionalAuth, (req, res) => trainingController.getTrainingProgress(req, res));
+router.get('/:id/progress', optionalAuth, validateIdParam, (req, res) => trainingController.getTrainingProgress(req, res));
 
 // POST /api/trainings - Admin only (create training)
-router.post('/', authenticateToken, roleMiddleware('ADMIN'), (req, res) => trainingController.createTraining(req, res));
+router.post('/', authenticateToken, roleMiddleware('ADMIN'), validateTrainingCreate, (req, res) => trainingController.createTraining(req, res));
 
 // PUT /api/trainings/:id - Admin only
-router.put('/:id', authenticateToken, roleMiddleware('ADMIN'), (req, res) => trainingController.updateTraining(req, res));
+router.put('/:id', authenticateToken, roleMiddleware('ADMIN'), validateTrainingUpdate, (req, res) => trainingController.updateTraining(req, res));
 
 // DELETE /api/trainings/:id - Admin only
-router.delete('/:id', authenticateToken, roleMiddleware('ADMIN'), (req, res) => trainingController.deleteTraining(req, res));
+router.delete('/:id', authenticateToken, roleMiddleware('ADMIN'), validateIdParam, (req, res) => trainingController.deleteTraining(req, res));
 
 // GET /api/trainings/:id/quizzes (also handles /api/training/:id/quizzes)
-router.get('/:id/quizzes', authenticateToken, async (req, res) => {
+router.get('/:id/quizzes', authenticateToken, validateIdParam, async (req, res) => {
   try {
     const trainingId = req.params.id;
     const { AIQuiz, Course, Training } = require('../models');

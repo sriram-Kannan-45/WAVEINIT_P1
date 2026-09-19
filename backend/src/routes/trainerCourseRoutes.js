@@ -12,6 +12,15 @@ const authenticateToken = require('../middleware/auth');
 const roleMiddleware = require('../middleware/roles');
 const { uploadAny } = require('../middleware/uploadMaterial');
 const { uploadAIQuizMaterial } = require('../middleware/uploadAIQuizMaterial');
+const {
+  validateCourseCreate,
+  validateCourseUpdate,
+  validateLessonCreate,
+  validateLessonUpdate,
+  validateQuizCreate,
+  validateQuizUpdate,
+  validateBulkDeleteIds,
+} = require('../security/inputValidator');
 
 const router = express.Router();
 router.use(authenticateToken);
@@ -22,21 +31,21 @@ const trainerOrAdmin = roleMiddleware('TRAINER', 'ADMIN');
 
 // ── Courses ────────────────────────────────────────────────────────────────
 router.get(  '/programs',                         trainerOrAdmin, c.listAllPrograms);
-router.post( '/courses',                          trainerOrAdmin, c.createCourse);
+router.post( '/courses',                          trainerOrAdmin, validateCourseCreate, c.createCourse);
 router.get(  '/courses',                          trainerOrAdmin, c.listMyCourses);
 router.get(  '/courses/:courseId',                trainerOrAdmin, c.getCourseDetail);
 router.get(  '/courses/:courseId/progress',       trainerOrAdmin, c.getCourseProgress);
-router.put(  '/courses/:courseId',                trainerOrAdmin, c.updateOwnCourse);
+router.put(  '/courses/:courseId',                trainerOrAdmin, validateCourseUpdate, c.updateOwnCourse);
 
 // ── Lessons (NB: /reorder and /bulk-delete must come before the :lessonId routes so Express
 //                doesn't capture 'reorder' or 'bulk-delete' as the lesson id) ─────────────
 router.put(   '/courses/:courseId/lessons/reorder',           trainerOrAdmin, c.reorderLessons);
-router.delete('/courses/:courseId/lessons/bulk-delete',       trainerOrAdmin, c.bulkDeleteLessons);
-router.post(  '/courses/:courseId/lessons/bulk-delete',       trainerOrAdmin, c.bulkDeleteLessons);
-router.post(  '/courses/:courseId/lessons',                   trainerOrAdmin, c.createLesson);
+router.delete('/courses/:courseId/lessons/bulk-delete',       trainerOrAdmin, validateBulkDeleteIds, c.bulkDeleteLessons);
+router.post(  '/courses/:courseId/lessons/bulk-delete',       trainerOrAdmin, validateBulkDeleteIds, c.bulkDeleteLessons);
+router.post(  '/courses/:courseId/lessons',                   trainerOrAdmin, validateLessonCreate, c.createLesson);
 router.get(   '/courses/:courseId/lessons',                   trainerOrAdmin, c.listLessons);
 router.get(   '/courses/:courseId/lessons/:lessonId',         trainerOrAdmin, c.getLesson);
-router.put(   '/courses/:courseId/lessons/:lessonId',         trainerOrAdmin, c.updateLesson);
+router.put(   '/courses/:courseId/lessons/:lessonId',         trainerOrAdmin, validateLessonUpdate, c.updateLesson);
 router.patch( '/courses/:courseId/lessons/:lessonId/status',  trainerOrAdmin, c.updateLessonStatus);
 router.delete('/courses/:courseId/lessons/:lessonId',         trainerOrAdmin, c.deleteLesson);
 
@@ -58,12 +67,12 @@ router.put(  '/lessons/:lessonId/materials/:id',             trainerOrAdmin, c.u
 router.delete('/lessons/:lessonId/materials/:id',            trainerOrAdmin, c.deleteMaterial);
 
 // ── Quizzes (course-scoped) ────────────────────────────────────────────────
-router.post(  '/courses/:courseId/quiz/manual',               trainerOrAdmin, c.createManualQuiz);
-router.delete('/courses/:courseId/quizzes/bulk-delete',      trainerOrAdmin, c.bulkDeleteCourseQuizzes);
-router.post(  '/courses/:courseId/quizzes/bulk-delete',      trainerOrAdmin, c.bulkDeleteCourseQuizzes);
+router.post(  '/courses/:courseId/quiz/manual',               trainerOrAdmin, validateQuizCreate, c.createManualQuiz);
+router.delete('/courses/:courseId/quizzes/bulk-delete',      trainerOrAdmin, validateBulkDeleteIds, c.bulkDeleteCourseQuizzes);
+router.post(  '/courses/:courseId/quizzes/bulk-delete',      trainerOrAdmin, validateBulkDeleteIds, c.bulkDeleteCourseQuizzes);
 router.get(   '/courses/:courseId/quizzes',                   trainerOrAdmin, c.listCourseQuizzes);
 router.get(   '/courses/:courseId/quizzes/:quizId',           trainerOrAdmin, c.getCourseQuiz);
-router.put(   '/courses/:courseId/quizzes/:quizId',           trainerOrAdmin, c.updateCourseQuiz);
+router.put(   '/courses/:courseId/quizzes/:quizId',           trainerOrAdmin, validateQuizUpdate, c.updateCourseQuiz);
 router.delete('/courses/:courseId/quizzes/:quizId',          trainerOrAdmin, c.deleteCourseQuiz);
 router.post(  '/courses/:courseId/quizzes/:quizId/publish',   trainerOrAdmin, c.publishQuizResults);
 router.get(   '/courses/:courseId/quizzes/:quizId/dashboard', trainerOrAdmin, c.quizDashboard);

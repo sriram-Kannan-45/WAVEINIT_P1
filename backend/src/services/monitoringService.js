@@ -355,7 +355,7 @@ class MonitoringEngineService {
     const normalizedContext = String(contextType).toUpperCase();
     const hire = await require('./hireProctoringPolicy').resolvePolicy(normalizedContext, contextId, participantId);
     if (hire.isHire && !hire.assigned) throw new Error('Participant is not assigned to this hiring assessment');
-    const effectiveMobileEnabled = hire.isHire ? Boolean(hire.policy.enabled && hire.policy.mobileRoomScan) : !!mobileEnabled;
+    const effectiveMobileEnabled = hire.isHire ? Boolean(hire.policy.enabled && (hire.policy.mobileRoomScan || hire.policy.roomScan360Enabled)) : !!mobileEnabled;
     const sessionId = `ms_${normalizedContext.toLowerCase()}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
 
     // Check if an active session already exists for this attempt/context

@@ -173,7 +173,7 @@ class InterviewLifecycleService {
     const result=evaluate(interview.evaluation_criteria,input,actor.id);
     await member.update({evaluation:result});
     const members=await InterviewParticipant.findAll({where:{interview_id:interview.id},attributes:['evaluation']});
-    const complete=interview.context==='HIRE'&&members.length===6&&members.every(row=>row.evaluation&&typeof row.evaluation==='object'&&row.evaluation.scores);
+    const complete=members.length>0&&members.every(row=>row.evaluation&&typeof row.evaluation==='object'&&row.evaluation.scores);
     if(complete) await interview.update({status:'EVALUATED'});
     return result;
   }

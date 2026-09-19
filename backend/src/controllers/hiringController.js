@@ -60,42 +60,72 @@ async function loadWorkflow(id) {
 
 async function workflowMetrics(workflow) {
   const isCoding = workflow.assessment_type === 'CODING';
-  const engine = isCoding ? workflow.codingAssessment : workflow.quiz;
-  const engineId = isCoding ? workflow.coding_assessment_id : workflow.quiz_id;
-  const [candidateCount, registeredCount, pendingCount, assignments, attempts, contentCount] = await Promise.all([
+  const isCombined = workflow.assessment_type === 'COMBINED';
+  const engine = isCoding ? workflow.codingAssessment : (workflow.quiz || workflow.codingAssessment);
+  const quizId = workflow.quiz_id;
+  const codingId = workflow.coding_assessment_id;
+
+  const [
+    candidateCount,
+    registeredCount,
+    pendingCount,
+    assignments,
+    quizAttempts,
+    codingAttempts,
+    quizQuestionCount,
+    codingProblemCount,
+  ] = await Promise.all([
     HiringCandidate.count({ where: { assessment_id: workflow.id } }),
     HiringCandidate.count({ where: { assessment_id: workflow.id, registration_status: 'REGISTERED' } }),
     HiringCandidate.count({ where: { assessment_id: workflow.id, registration_status: { [Op.ne]: 'REGISTERED' } } }),
     HiringAssignment.findAll({ where: { assessment_id: workflow.id }, attributes: ['status'] }),
-    engineId
-      ? (isCoding
-        ? CodingAttempt.findAll({ where: { assessmentId: engineId }, attributes: ['status'] })
-        : QuizAttempt.findAll({ where: { quizId: engineId }, attributes: ['status'] }))
-      : [],
-    engineId
-      ? (isCoding ? CodingProblem.count({ where: { assessmentId: engineId } }) : AIQuestion.count({ where: { quizId: engineId } }))
-      : 0,
+    quizId ? QuizAttempt.findAll({ where: { quizId }, attributes: ['status'] }) : [],
+    codingId ? CodingAttempt.findAll({ where: { assessmentId: codingId }, attributes: ['status'] }) : [],
+    quizId ? AIQuestion.count({ where: { quizId } }) : 0,
+    codingId ? CodingProblem.count({ where: { assessmentId: codingId } }) : 0,
   ]);
+
+  const attempts = isCoding ? codingAttempts : (isCombined ? [...quizAttempts, ...codingAttempts] : quizAttempts);
   const inProgress = attempts.filter((a) => String(a.status).toUpperCase() === 'IN_PROGRESS').length;
   const completed = attempts.filter((a) => ['SUBMITTED', 'AUTO_SUBMITTED', 'EVALUATED'].includes(String(a.status).toUpperCase())).length;
+
+  const totalContent = isCombined
+    ? (quizQuestionCount + codingProblemCount)
+    : (isCoding ? codingProblemCount : quizQuestionCount);
+
   return {
     engine_status: engine?.status || 'DRAFT',
-    content_count: contentCount,
+    content_count: totalContent,
     candidate_count: candidateCount,
     registered_count: registeredCount,
     pending_candidates: pendingCount,
     assigned_count: assignments.length,
     in_progress_count: inProgress,
     completed_count: completed,
+    quiz_metrics: {
+      exists: Boolean(quizId && workflow.quiz),
+      id: quizId || null,
+      title: workflow.quiz?.title || null,
+      status: workflow.quiz?.status || (quizId ? 'DRAFT' : 'NOT_CREATED'),
+      question_count: quizQuestionCount,
+    },
+    coding_metrics: {
+      exists: Boolean(codingId && workflow.codingAssessment),
+      id: codingId || null,
+      title: workflow.codingAssessment?.title || null,
+      status: workflow.codingAssessment?.status || (codingId ? 'DRAFT' : 'NOT_CREATED'),
+      problem_count: codingProblemCount,
+    },
   };
 }
 
 function responseWorkflow(workflow, metrics = {}) {
   const json = workflow.toJSON ? workflow.toJSON() : workflow;
-  const engine = json.assessment_type === 'CODING' ? json.codingAssessment : json.quiz;
+  const engine = json.assessment_type === 'CODING' ? json.codingAssessment : (json.quiz || json.codingAssessment);
   const engineStatus = mapEngineStatus(metrics.engine_status || engine?.status);
   return {
     ...json,
+    id: Number(json.id),
     title: engine?.title || json.title,
     description: engine?.description ?? json.description,
     duration_minutes: engine?.timeLimit ?? engine?.time_limit ?? json.duration_minutes,
@@ -106,8 +136,14 @@ function responseWorkflow(workflow, metrics = {}) {
       : (metrics.assigned_count > 0 && metrics.completed_count >= metrics.assigned_count
         ? 'COMPLETED'
         : (metrics.assigned_count > 0 ? 'ASSIGNED' : engineStatus))),
-    engine_id: json.assessment_type === 'CODING' ? json.coding_assessment_id : json.quiz_id,
+    engine_id: json.assessment_type === 'CODING'
+      ? (json.coding_assessment_id ? Number(json.coding_assessment_id) : null)
+      : (json.quiz_id ? Number(json.quiz_id) : (json.coding_assessment_id ? Number(json.coding_assessment_id) : null)),
+    quiz_id: json.quiz_id ? Number(json.quiz_id) : null,
+    coding_assessment_id: json.coding_assessment_id ? Number(json.coding_assessment_id) : null,
     proctoring_config: normalizePolicy(json.proctoring_config || {}),
+    quiz: json.quiz || null,
+    codingAssessment: json.codingAssessment || null,
     ...metrics,
   };
 }
@@ -115,8 +151,8 @@ function responseWorkflow(workflow, metrics = {}) {
 async function createAssessment(req, res) {
   try {
     const assessmentType = typeOf(req.body);
-    if (!['QUIZ', 'CODING'].includes(assessmentType)) {
-      return res.status(422).json({ error: 'Assessment type must be QUIZ or CODING.' });
+    if (!['QUIZ', 'CODING', 'COMBINED'].includes(assessmentType)) {
+      return res.status(422).json({ error: 'Assessment type must be QUIZ, CODING, or COMBINED.' });
     }
     const title = String(req.body.title || '').trim();
     if (!title) return res.status(422).json({ error: 'Title is required.' });
@@ -125,7 +161,7 @@ async function createAssessment(req, res) {
     const workflow = await sequelize.transaction(async (transaction) => {
       let quiz = null;
       let coding = null;
-      if (assessmentType === 'QUIZ') {
+      if (assessmentType === 'QUIZ' || assessmentType === 'COMBINED') {
         quiz = await AIQuiz.create({
           title,
           description: req.body.description || null,
@@ -145,7 +181,8 @@ async function createAssessment(req, res) {
           endTime: req.body.endDate || req.body.end_date || null,
           timezone: req.body.timezone || 'Asia/Kolkata',
         }, { transaction });
-      } else {
+      }
+      if (assessmentType === 'CODING' || assessmentType === 'COMBINED') {
         coding = await CodingAssessment.create({
           title,
           description: req.body.description || null,
@@ -177,6 +214,13 @@ async function createAssessment(req, res) {
         end_date: req.body.endDate || req.body.end_date || null,
         timezone: req.body.timezone || 'Asia/Kolkata',
         status: 'DRAFT',
+        hiring_role: req.body.hiringRole || req.body.hiring_role || null,
+        job_position: req.body.jobPosition || req.body.job_position || null,
+        required_skills: Array.isArray(req.body.requiredSkills)
+          ? req.body.requiredSkills
+          : req.body.required_skills || null,
+        experience_level: req.body.experienceLevel || req.body.experience_level || null,
+        recruitment_stage: req.body.recruitmentStage || req.body.recruitment_stage || null,
         proctoring_config: normalizePolicy(req.body.proctoringConfig || { enabled: req.body.proctoringEnabled !== false }),
         created_by: req.user.id,
       }, { transaction });
@@ -218,7 +262,9 @@ async function listAssessments(req, res) {
 
 async function getAssessment(req, res) {
   try {
-    const workflow = await loadWorkflow(parseId(req.params.id));
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Invalid assessment ID.' });
+    const workflow = await loadWorkflow(id);
     if (!workflow) return res.status(404).json({ error: 'Hiring assessment not found.' });
     res.json({ assessment: responseWorkflow(workflow, await workflowMetrics(workflow)) });
   } catch (error) {
@@ -230,19 +276,47 @@ async function updateAssessment(req, res) {
   try {
     const workflow = await loadWorkflow(parseId(req.params.id));
     if (!workflow) return res.status(404).json({ error: 'Hiring assessment not found.' });
-    const engine = workflow.assessment_type === 'CODING' ? workflow.codingAssessment : workflow.quiz;
+    const engine = workflow.assessment_type === 'CODING' ? workflow.codingAssessment : (workflow.quiz || workflow.codingAssessment);
     if (!engine) return res.status(409).json({ error: 'The shared assessment content is missing.' });
     const title = req.body.title !== undefined ? String(req.body.title).trim() : engine.title;
     const duration = Number(req.body.durationMinutes || req.body.duration_minutes) || engine.timeLimit;
+    const passingScore = Number(req.body.passingScore ?? req.body.passing_score ?? workflow.passing_score) || 0;
     await sequelize.transaction(async (transaction) => {
-      await engine.update({ title, description: req.body.description ?? engine.description, timeLimit: duration }, { transaction });
+      const enginePatch = {
+        title,
+        description: req.body.description ?? engine.description,
+        timeLimit: duration,
+      };
+      // Passing percentage lives on the shared engine so participant pass/fail
+      // computation and the Hire workflow stay synchronized.
+      if (req.body.passingScore !== undefined || req.body.passing_score !== undefined) {
+        enginePatch.passingPercentage = Math.max(0, Math.min(100, passingScore));
+      }
+      if (workflow.assessment_type !== 'CODING' && req.body.shuffleQuestions !== undefined) {
+        enginePatch.shuffleQuestions = Boolean(req.body.shuffleQuestions);
+      }
+      if (req.body.maxAttempts !== undefined) enginePatch.maxAttempts = Math.max(1, Math.min(10, Number(req.body.maxAttempts) || 1));
+      if (req.body.allowRetake !== undefined) enginePatch.allowMultipleAttempts = Boolean(req.body.allowRetake);
+
+      if (workflow.quiz) {
+        await workflow.quiz.update(enginePatch, { transaction });
+      }
+      if (workflow.codingAssessment) {
+        await workflow.codingAssessment.update(enginePatch, { transaction });
+      }
+
       await workflow.update({
         title,
         description: req.body.description ?? workflow.description,
         instructions: req.body.instructions ?? workflow.instructions,
         duration_minutes: duration,
-        passing_score: req.body.passingScore ?? req.body.passing_score ?? workflow.passing_score,
+        passing_score: passingScore || workflow.passing_score,
         end_date: req.body.endDate ?? req.body.end_date ?? workflow.end_date,
+        hiring_role: req.body.hiringRole ?? req.body.hiring_role ?? workflow.hiring_role,
+        job_position: req.body.jobPosition ?? req.body.job_position ?? workflow.job_position,
+        required_skills: req.body.requiredSkills ?? req.body.required_skills ?? workflow.required_skills,
+        experience_level: req.body.experienceLevel ?? req.body.experience_level ?? workflow.experience_level,
+        recruitment_stage: req.body.recruitmentStage ?? req.body.recruitment_stage ?? workflow.recruitment_stage,
         ...(req.body.proctoringConfig ? { proctoring_config: normalizePolicy(req.body.proctoringConfig) } : {}),
       }, { transaction });
     });
@@ -256,16 +330,123 @@ async function updateAssessment(req, res) {
 async function deleteAssessment(req, res) {
   try {
     const workflow = await loadWorkflow(parseId(req.params.id));
-    if (!workflow) return res.status(404).json({ error: 'Hiring assessment not found.' });
+    if (!workflow) return res.status(404).json({ success: false, error: 'Hiring assessment not found.' });
+    const force = Boolean(req.body?.force || req.query?.force === 'true');
     const assignmentCount = await HiringAssignment.count({ where: { assessment_id: workflow.id } });
-    if (assignmentCount) return res.status(409).json({ error: 'Archive the shared assessment after preserving assigned candidate history.' });
-    const engine = workflow.assessment_type === 'CODING' ? workflow.codingAssessment : workflow.quiz;
-    if (engine) await engine.update({ status: 'ARCHIVED' });
-    await HiringCandidate.destroy({ where: { assessment_id: workflow.id } });
-    await workflow.destroy();
-    res.json({ success: true });
+    if (assignmentCount && !force) {
+      return res.status(409).json({
+        success: false,
+        error: `${assignmentCount} candidate(s) are currently assigned to this assessment. Use Force Delete to override.`,
+        failed: [{
+          id: workflow.id,
+          name: workflow.title,
+          reason: `${assignmentCount} candidate(s) are currently assigned to this assessment.`
+        }]
+      });
+    }
+
+    await sequelize.transaction(async (transaction) => {
+      if (force && assignmentCount) {
+        await HiringAssignment.destroy({ where: { assessment_id: workflow.id }, transaction });
+      }
+      if (workflow.quiz) await workflow.quiz.update({ status: 'ARCHIVED' }, { transaction });
+      if (workflow.codingAssessment) await workflow.codingAssessment.update({ status: 'ARCHIVED' }, { transaction });
+      await HiringCandidate.destroy({ where: { assessment_id: workflow.id }, transaction });
+      await workflow.destroy({ transaction });
+    });
+
+    res.json({ success: true, message: 'Assessment deleted successfully' });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to remove hiring workflow.' });
+    logger.error('Delete hiring workflow failed', { error: error.message });
+    res.status(500).json({ success: false, error: 'Failed to remove hiring workflow.' });
+  }
+}
+
+async function bulkDeleteAssessments(req, res) {
+  try {
+    const { ids, force = false } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, error: 'Please provide an array of assessment IDs to delete.' });
+    }
+    const validIds = ids.map(id => parseId(id)).filter(id => Boolean(id));
+    if (validIds.length === 0) {
+      return res.status(400).json({ success: false, error: 'No valid assessment IDs provided.' });
+    }
+
+    const workflows = await HiringAssessment.findAll({
+      where: { id: { [Op.in]: validIds } },
+      include: [
+        { model: AIQuiz, as: 'quiz', required: false },
+        { model: CodingAssessment, as: 'codingAssessment', required: false },
+      ],
+    });
+
+    if (workflows.length === 0) {
+      return res.json({
+        success: true,
+        message: 'The selected assessment(s) have already been removed.',
+        summary: { total: validIds.length, deleted: validIds.length, failed: 0 },
+        deletedIds: validIds,
+        failed: [],
+      });
+    }
+
+    const failed = [];
+    const eligibleWorkflows = [];
+
+    for (const workflow of workflows) {
+      if (!force) {
+        const assignmentCount = await HiringAssignment.count({ where: { assessment_id: workflow.id } });
+        if (assignmentCount > 0) {
+          failed.push({
+            id: workflow.id,
+            name: workflow.title || `Assessment #${workflow.id}`,
+            reason: `${assignmentCount} candidate(s) are currently assigned. Use Force Delete to override.`,
+          });
+          continue;
+        }
+      }
+      eligibleWorkflows.push(workflow);
+    }
+
+    if (failed.length > 0 && eligibleWorkflows.length === 0) {
+      return res.json({
+        success: true,
+        message: 'All selected assessments have active candidate assignments.',
+        summary: { total: workflows.length, deleted: 0, failed: failed.length },
+        deletedIds: [],
+        failed,
+      });
+    }
+
+    const deletedIds = [];
+    await sequelize.transaction(async (transaction) => {
+      for (const workflow of eligibleWorkflows) {
+        if (force) {
+          await HiringAssignment.destroy({ where: { assessment_id: workflow.id }, transaction });
+        }
+        if (workflow.quiz) {
+          await workflow.quiz.update({ status: 'ARCHIVED' }, { transaction });
+        }
+        if (workflow.codingAssessment) {
+          await workflow.codingAssessment.update({ status: 'ARCHIVED' }, { transaction });
+        }
+        await HiringCandidate.destroy({ where: { assessment_id: workflow.id }, transaction });
+        await workflow.destroy({ transaction });
+        deletedIds.push(workflow.id);
+      }
+    });
+
+    return res.json({
+      success: true,
+      message: `Successfully deleted ${deletedIds.length} assessment${deletedIds.length === 1 ? '' : 's'}.${failed.length > 0 ? ` ${failed.length} item(s) protected.` : ''}`,
+      summary: { total: workflows.length, deleted: deletedIds.length, failed: failed.length },
+      deletedIds,
+      failed,
+    });
+  } catch (error) {
+    logger.error('Bulk delete hiring assessments failed', { error: error.message });
+    return res.status(500).json({ success: false, error: 'Failed to bulk delete hiring assessments.' });
   }
 }
 
@@ -275,6 +456,37 @@ async function delegateEngineAction(req, res, action) {
   try {
     const workflow = await loadWorkflow(parseId(req.params.id));
     if (!workflow) return res.status(404).json({ error: 'Hiring assessment not found.' });
+
+    if (workflow.assessment_type === 'COMBINED') {
+      if (!workflow.quiz_id && !workflow.coding_assessment_id) {
+        return res.status(409).json({ error: 'Assessment content is unavailable.' });
+      }
+      const quizHandler = require('../routes/quizzesRoutes')[action === 'publish' ? 'publishQuiz' : 'closeQuiz'];
+      const codingHandler = require('./codingAssessmentController')[action];
+
+      if (workflow.quiz_id) {
+        let quizErr = null;
+        const mockQuizRes = {
+          statusCode: 200,
+          status(c) { this.statusCode = c; return this; },
+          json(data) { if (this.statusCode >= 400) quizErr = data; return this; },
+          send(data) { return this; },
+        };
+        const quizReq = Object.assign(Object.create(req), { params: { ...req.params, id: workflow.quiz_id }, body: req.body || {} });
+        await quizHandler(quizReq, mockQuizRes);
+        if (quizErr) {
+          return res.status(mockQuizRes.statusCode || 400).json(quizErr);
+        }
+      }
+
+      if (workflow.coding_assessment_id) {
+        const codingReq = Object.assign(Object.create(req), { params: { ...req.params, id: workflow.coding_assessment_id }, body: req.body || {} });
+        return await codingHandler(codingReq, res);
+      }
+
+      return res.json({ success: true, message: `Assessment ${action}ed successfully.` });
+    }
+
     const coding = workflow.assessment_type === 'CODING';
     const id = coding ? workflow.coding_assessment_id : workflow.quiz_id;
     if (!id) return res.status(409).json({ error: 'Assessment content is unavailable.' });
@@ -298,9 +510,9 @@ async function uploadCandidatesCsv(req, res) {
     if (!req.file) return res.status(400).json({ error: 'CSV file is required.' });
     const lines = req.file.buffer.toString('utf8').replace(/^\uFEFF/, '').split(/\r?\n/).filter((line) => line.trim());
     if (lines.length < 2) return res.status(422).json({ error: 'CSV needs a header and at least one candidate.' });
-    const headers = parseCsvRow(lines[0]).map((h) => h.toLowerCase());
-    const emailIndex = headers.findIndex((h) => ['email', 'email id', 'email_id'].includes(h));
-    const nameIndex = headers.findIndex((h) => ['name', 'full name', 'full_name'].includes(h));
+    const headers = parseCsvRow(lines[0]).map((h) => h.toLowerCase().trim());
+    const emailIndex = headers.findIndex((h) => ['email', 'email id', 'email_id', 'candidate email', 'candidate_email', 'mail'].includes(h));
+    const nameIndex = headers.findIndex((h) => ['name', 'full name', 'full_name', 'candidate name', 'candidate_name'].includes(h));
     if (emailIndex < 0) return res.status(422).json({ error: 'CSV must contain an Email column.' });
     const seen = new Set();
     const summary = { totalRecords: lines.length - 1, validEmails: 0, invalidEmails: 0, duplicatesInCsv: 0, alreadyAssigned: 0, registeredAndAssigned: 0, unregistered: 0 };
@@ -338,6 +550,7 @@ async function uploadCandidatesCsv(req, res) {
 async function listCandidates(req, res) {
   try {
     const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Invalid assessment ID.' });
     const where = { assessment_id: id };
     if (req.query.registration_status) where.registration_status = req.query.registration_status;
     const candidates = await HiringCandidate.findAll({ where, order: [['created_at', 'DESC']] });
@@ -412,21 +625,81 @@ async function removeCandidate(req, res) {
   } catch (error) { res.status(error.status || 500).json({ error: error.message || 'Failed to remove candidate.' }); }
 }
 
+async function revokeCandidate(req, res) {
+  try {
+    const workflow = await HiringAssessment.findByPk(parseId(req.params.id));
+    const candidate = workflow && await HiringCandidate.findOne({ where: { id: parseId(req.params.cid), assessment_id: workflow.id } });
+    if (!candidate) return res.status(404).json({ error: 'Candidate not found.' });
+    await hiringService.revokeCandidate(workflow, candidate);
+    await hiringService.recomputeAssessmentStatus(workflow.id);
+    res.json({ success: true, revoked: true });
+  } catch (error) { res.status(error.status || 500).json({ error: error.message || 'Failed to revoke candidate assignment.' }); }
+}
+
+async function reassignCandidate(req, res) {
+  try {
+    const workflow = await HiringAssessment.findByPk(parseId(req.params.id));
+    const candidate = workflow && await HiringCandidate.findOne({ where: { id: parseId(req.params.cid), assessment_id: workflow.id } });
+    if (!candidate) return res.status(404).json({ error: 'Candidate not found.' });
+    await hiringService.reassignCandidate(workflow, candidate);
+    await hiringService.recomputeAssessmentStatus(workflow.id);
+    res.json({ success: true, reassigned: true });
+  } catch (error) { res.status(error.status || 500).json({ error: error.message || 'Failed to reassign candidate.' }); }
+}
+
+async function resetCandidateAttempt(req, res) {
+  try {
+    const workflow = await HiringAssessment.findByPk(parseId(req.params.id));
+    const candidate = workflow && await HiringCandidate.findOne({ where: { id: parseId(req.params.cid), assessment_id: workflow.id } });
+    if (!candidate) return res.status(404).json({ error: 'Candidate not found.' });
+    await hiringService.resetCandidateAttempt(workflow, candidate);
+    await hiringService.recomputeAssessmentStatus(workflow.id);
+    res.json({ success: true, reset: true });
+  } catch (error) { res.status(error.status || 500).json({ error: error.message || 'Failed to reset candidate attempt.' }); }
+}
+
+async function extendCandidateTime(req, res) {
+  try {
+    const workflow = await HiringAssessment.findByPk(parseId(req.params.id));
+    const candidate = workflow && await HiringCandidate.findOne({ where: { id: parseId(req.params.cid), assessment_id: workflow.id } });
+    if (!candidate) return res.status(404).json({ error: 'Candidate not found.' });
+    const minutes = Number(req.body.minutes || 15);
+    const result = await hiringService.extendCandidateTime(workflow, candidate, minutes);
+    res.json({ success: true, ...result });
+  } catch (error) { res.status(error.status || 500).json({ error: error.message || 'Failed to extend candidate time.' }); }
+}
+
 async function getReport(req, res) {
   try {
     const workflow = await loadWorkflow(parseId(req.params.id));
     if (!workflow) return res.status(404).json({ error: 'Hiring assessment not found.' });
     await hiringService.recomputeAssessmentStatus(workflow.id);
     const isCoding = workflow.assessment_type === 'CODING';
-    const engineId = isCoding ? workflow.coding_assessment_id : workflow.quiz_id;
-    const results = engineId
-      ? await (isCoding ? CodingResult : QuizResult).findAll({
-        where: isCoding ? { assessmentId: engineId } : { quizId: engineId },
-        attributes: ['participantId', 'percentage', 'rank'],
-      })
-      : [];
-    const Attempt = isCoding ? CodingAttempt : QuizAttempt;
-    const attempts = engineId ? await Attempt.findAll({ where: isCoding ? { assessmentId: engineId } : { quizId: engineId }, attributes: ['id', 'participantId', 'monitoringSessionId', 'status'] }) : [];
+    const isCombined = workflow.assessment_type === 'COMBINED';
+
+    let results = [];
+    let attempts = [];
+
+    if (isCombined) {
+      const [quizResults, codingResults, quizAttempts, codingAttempts] = await Promise.all([
+        workflow.quiz_id ? QuizResult.findAll({ where: { quizId: workflow.quiz_id }, attributes: ['participantId', 'percentage', 'rank'] }) : [],
+        workflow.coding_assessment_id ? CodingResult.findAll({ where: { assessmentId: workflow.coding_assessment_id }, attributes: ['participantId', 'percentage', 'rank'] }) : [],
+        workflow.quiz_id ? QuizAttempt.findAll({ where: { quizId: workflow.quiz_id }, attributes: ['id', 'participantId', 'monitoringSessionId', 'status'] }) : [],
+        workflow.coding_assessment_id ? CodingAttempt.findAll({ where: { assessmentId: workflow.coding_assessment_id }, attributes: ['id', 'participantId', 'monitoringSessionId', 'status'] }) : [],
+      ]);
+      results = [...quizResults, ...codingResults];
+      attempts = [...quizAttempts, ...codingAttempts];
+    } else {
+      const engineId = isCoding ? workflow.coding_assessment_id : workflow.quiz_id;
+      if (engineId) {
+        const ResultModel = isCoding ? CodingResult : QuizResult;
+        const AttemptModel = isCoding ? CodingAttempt : QuizAttempt;
+        const whereClause = isCoding ? { assessmentId: engineId } : { quizId: engineId };
+        results = await ResultModel.findAll({ where: whereClause, attributes: ['participantId', 'percentage', 'rank'] });
+        attempts = await AttemptModel.findAll({ where: whereClause, attributes: ['id', 'participantId', 'monitoringSessionId', 'status'] });
+      }
+    }
+
     const monitoring = [];
     for (const attempt of attempts) {
       if (!attempt.monitoringSessionId) continue;
@@ -478,12 +751,161 @@ async function myAssessments(req, res) {
   }
 }
 
+async function ensureQuiz(req, res) {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(422).json({ error: 'Valid assessment ID is required.' });
+
+    const result = await sequelize.transaction(async (transaction) => {
+      const workflow = await HiringAssessment.findByPk(id, {
+        include: [{ model: AIQuiz, as: 'quiz', required: false }],
+        transaction,
+        ...(transaction?.LOCK?.UPDATE ? { lock: transaction.LOCK.UPDATE } : {}),
+      });
+      if (!workflow) return { notFound: true };
+
+      if (workflow.quiz_id) {
+        let existingQuiz = workflow.quiz;
+        if (!existingQuiz) {
+          existingQuiz = await AIQuiz.findByPk(workflow.quiz_id, { transaction });
+        }
+        if (existingQuiz) {
+          return { quiz: existingQuiz, alreadyExisted: true, workflow };
+        }
+      }
+
+      const duration = workflow.duration_minutes || 60;
+      const quiz = await AIQuiz.create({
+        title: workflow.title || 'Hiring Quiz Assessment',
+        description: workflow.description || null,
+        trainerId: req.user.id,
+        createdBy: req.user.id,
+        context: 'HIRE',
+        timeLimit: duration,
+        difficulty: 'MIXED',
+        status: 'DRAFT',
+        resultStatus: 'HIDDEN',
+        showResultImmediately: workflow.show_result_immediately !== false,
+        shuffleQuestions: workflow.shuffle_questions !== false,
+        allowMultipleAttempts: Boolean(workflow.allow_retake),
+        maxAttempts: Number(workflow.max_attempts) || 1,
+        proctoringEnabled: Boolean(workflow.proctoring_config?.enabled ?? true),
+        timezone: workflow.timezone || 'Asia/Kolkata',
+      }, { transaction });
+
+      const newType = workflow.assessment_type === 'CODING' ? 'COMBINED' : workflow.assessment_type;
+      await workflow.update({ quiz_id: quiz.id, assessment_type: newType }, { transaction });
+
+      return { quiz, alreadyExisted: false, workflow };
+    });
+
+    if (result.notFound) return res.status(404).json({ error: 'Hiring assessment not found.' });
+
+    let reloaded = null;
+    let metrics = null;
+    try {
+      reloaded = (await loadWorkflow(id)) || result.workflow;
+      if (reloaded) {
+        metrics = await workflowMetrics(reloaded);
+      }
+    } catch {
+      /* ignore metric calculation errors in mock/test environments */
+    }
+
+    res.json({
+      success: true,
+      quizId: result.quiz?.id,
+      quiz: result.quiz,
+      alreadyExisted: result.alreadyExisted,
+      created: !result.alreadyExisted,
+      assessment: reloaded ? responseWorkflow(reloaded, metrics) : null,
+    });
+  } catch (error) {
+    logger.error('Ensure hiring quiz failed', { error: error.message });
+    res.status(500).json({ error: 'Failed to ensure hiring quiz.' });
+  }
+}
+
+async function ensureCoding(req, res) {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(422).json({ error: 'Valid assessment ID is required.' });
+
+    const result = await sequelize.transaction(async (transaction) => {
+      const workflow = await HiringAssessment.findByPk(id, {
+        include: [{ model: CodingAssessment, as: 'codingAssessment', required: false }],
+        transaction,
+        ...(transaction?.LOCK?.UPDATE ? { lock: transaction.LOCK.UPDATE } : {}),
+      });
+      if (!workflow) return { notFound: true };
+
+      if (workflow.coding_assessment_id) {
+        let existingCoding = workflow.codingAssessment;
+        if (!existingCoding) {
+          existingCoding = await CodingAssessment.findByPk(workflow.coding_assessment_id, { transaction });
+        }
+        if (existingCoding) {
+          return { codingAssessment: existingCoding, alreadyExisted: true, workflow };
+        }
+      }
+
+      const duration = workflow.duration_minutes || 60;
+      const coding = await CodingAssessment.create({
+        title: workflow.title || 'Hiring Coding Assessment',
+        description: workflow.description || null,
+        trainerId: req.user.id,
+        context: 'HIRE',
+        timeLimit: duration,
+        difficulty: 'MIXED',
+        status: 'DRAFT',
+        resultStatus: 'HIDDEN',
+        showResultImmediately: workflow.show_result_immediately !== false,
+        allowMultipleAttempts: Boolean(workflow.allow_retake),
+        maxAttempts: Number(workflow.max_attempts) || 1,
+        proctoringEnabled: Boolean(workflow.proctoring_config?.enabled ?? true),
+        timezone: workflow.timezone || 'Asia/Kolkata',
+      }, { transaction });
+
+      const newType = workflow.assessment_type === 'QUIZ' ? 'COMBINED' : workflow.assessment_type;
+      await workflow.update({ coding_assessment_id: coding.id, assessment_type: newType }, { transaction });
+
+      return { codingAssessment: coding, alreadyExisted: false, workflow };
+    });
+
+    if (result.notFound) return res.status(404).json({ error: 'Hiring assessment not found.' });
+
+    let reloaded = null;
+    let metrics = null;
+    try {
+      reloaded = (await loadWorkflow(id)) || result.workflow;
+      if (reloaded) {
+        metrics = await workflowMetrics(reloaded);
+      }
+    } catch {
+      /* ignore metric calculation errors in mock/test environments */
+    }
+
+    res.json({
+      success: true,
+      assessmentId: result.codingAssessment?.id,
+      codingAssessment: result.codingAssessment,
+      alreadyExisted: result.alreadyExisted,
+      created: !result.alreadyExisted,
+      assessment: reloaded ? responseWorkflow(reloaded, metrics) : null,
+    });
+  } catch (error) {
+    logger.error('Ensure hiring coding failed', { error: error.message });
+    res.status(500).json({ error: 'Failed to ensure hiring coding assessment.' });
+  }
+}
+
 module.exports = {
   createAssessment,
   listAssessments,
   getAssessment,
   updateAssessment,
   deleteAssessment,
+  bulkDeleteAssessments,
   publishAssessment,
   closeAssessment,
   uploadCandidatesCsv,
@@ -493,6 +915,13 @@ module.exports = {
   assignCandidates,
   toggleAssignCandidate,
   removeCandidate,
+  revokeCandidate,
+  reassignCandidate,
+  resetCandidateAttempt,
+  extendCandidateTime,
   getReport,
   myAssessments,
+  ensureQuiz,
+  ensureCoding,
 };
+

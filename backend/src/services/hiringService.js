@@ -11,10 +11,16 @@ const {
   HiringAssignment,
   QuizAssignment,
   QuizAttempt,
+  QuizAnswer,
+  QuizResult,
+  AssessmentSession,
   CodingAttempt,
+  CodingSubmission,
+  CodingResult,
   User,
   sequelize,
 } = require('../models');
+const { INACTIVE_ASSIGNMENT_STATUSES } = require('../constants/hiringStatuses');
 
 function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
@@ -30,8 +36,26 @@ function engineDescriptor(assessment) {
 }
 
 async function canonicalAttemptFor(assessment, participantId) {
+  if (!participantId || !assessment) return null;
+  if (assessment?.assessment_type === 'COMBINED') {
+    const [quizAttempt, codingAttempt] = await Promise.all([
+      assessment.quiz_id
+        ? QuizAttempt.findOne({ where: { quizId: assessment.quiz_id, participantId }, order: [['id', 'DESC']] })
+        : null,
+      assessment.coding_assessment_id
+        ? CodingAttempt.findOne({ where: { assessmentId: assessment.coding_assessment_id, participantId }, order: [['id', 'DESC']] })
+        : null,
+    ]);
+    if (quizAttempt?.status === 'IN_PROGRESS') return quizAttempt;
+    if (codingAttempt?.status === 'IN_PROGRESS') return codingAttempt;
+    if (quizAttempt && codingAttempt) {
+      return (quizAttempt.id > codingAttempt.id) ? quizAttempt : codingAttempt;
+    }
+    return quizAttempt || codingAttempt;
+  }
+
   const engine = engineDescriptor(assessment);
-  if (!engine.id || !participantId) return null;
+  if (!engine.id) return null;
   if (engine.type === 'CODING') {
     return CodingAttempt.findOne({
       where: { assessmentId: engine.id, participantId },
@@ -54,6 +78,11 @@ function mapAttemptStatus(attempt) {
 }
 
 async function refreshAssignmentStatus(assignment, assessment) {
+  // A revoked assignment is terminal from the workflow's perspective: the
+  // canonical attempt (if any) must never resurrect it.
+  if (['REVOKED', 'DROPPED'].includes(String(assignment.status || '').toUpperCase())) {
+    return { assignment, attempt: null, revoked: true };
+  }
   const attempt = await canonicalAttemptFor(assessment, assignment.participant_id);
   const status = mapAttemptStatus(attempt);
   if (assignment.status !== status) {
@@ -61,7 +90,7 @@ async function refreshAssignmentStatus(assignment, assessment) {
       status,
       completed_at: ['COMPLETED', 'EVALUATED'].includes(status)
         ? (attempt?.submittedAt || attempt?.submitted_at || assignment.completed_at || new Date())
-        : null,
+        : INACTIVE_ASSIGNMENT_STATUSES.includes(status) ? assignment.completed_at : null,
     });
   }
   return { assignment, attempt };
@@ -90,10 +119,11 @@ async function recomputeAssessmentStatus(assessmentId) {
   if (engineStatus === 'ARCHIVED') status = 'EXPIRED';
   else if (['CLOSED', 'RESULTS_PUBLISHED'].includes(engineStatus)) status = 'COMPLETED';
   else {
-    if (statuses.length) status = 'ASSIGNED';
-    if (statuses.some((s) => s === 'IN_PROGRESS')) status = 'IN_PROGRESS';
-    if (statuses.length && statuses.every((s) => ['COMPLETED', 'EVALUATED'].includes(s))) status = 'COMPLETED';
-    if (statuses.length && statuses.every((s) => s === 'EVALUATED')) status = 'EVALUATED';
+    const active = statuses.filter((s) => !INACTIVE_ASSIGNMENT_STATUSES.includes(s));
+    if (active.length) status = 'ASSIGNED';
+    if (active.some((s) => s === 'IN_PROGRESS')) status = 'IN_PROGRESS';
+    if (active.length && active.every((s) => ['COMPLETED', 'EVALUATED'].includes(s))) status = 'COMPLETED';
+    if (active.length && active.every((s) => s === 'EVALUATED')) status = 'EVALUATED';
   }
   if (assessment.end_date && new Date(`${assessment.end_date}T23:59:59.999Z`) < new Date()) status = 'EXPIRED';
   if (assessment.status !== status) await assessment.update({ status });
@@ -113,7 +143,7 @@ async function assignCandidate(assessment, candidate) {
       transaction,
     });
 
-    if (assessment.assessment_type === 'QUIZ' && assessment.quiz_id) {
+    if ((assessment.assessment_type === 'QUIZ' || assessment.assessment_type === 'COMBINED') && assessment.quiz_id) {
       const [quizAssignment] = await QuizAssignment.findOrCreate({
         where: { quizId: assessment.quiz_id, participantId: candidate.user_id },
         defaults: { status: 'PENDING', assignedAt: new Date() },
@@ -147,6 +177,151 @@ async function unassignCandidate(assessment, candidate) {
     if (assignment) await assignment.destroy({ transaction });
     await candidate.update({ assignment_status: 'NOT_ASSIGNED', status: 'PENDING' }, { transaction });
   });
+}
+
+/**
+ * Revoke = terminal workflow status (REVOKED). Unlike unassignCandidate the
+ * row is preserved for audit and the canonical quiz assignment is cancelled so
+ * the candidate can no longer access the assessment.
+ */
+async function revokeCandidate(assessment, candidate) {
+  if (!assessment || !candidate) return { error: 'Candidate or hiring workflow not found.' };
+  return sequelize.transaction(async (transaction) => {
+    const assignment = await HiringAssignment.findOne({
+      where: { assessment_id: assessment.id, candidate_id: candidate.id },
+      transaction,
+    });
+    if (!assignment) {
+      const error = new Error('Candidate is not assigned to this assessment.');
+      error.status = 404;
+      throw error;
+    }
+    if (String(assignment.status).toUpperCase() === 'REVOKED') return { assignment, alreadyRevoked: true };
+
+    if (assignment.quiz_assignment_id) {
+      await QuizAssignment.update(
+        { status: 'CANCELLED', cancelledAt: new Date() },
+        { where: { id: assignment.quiz_assignment_id }, transaction },
+      ).catch(() => {});
+    }
+    await assignment.update({ status: 'REVOKED', completed_at: null }, { transaction });
+    await candidate.update({ status: 'REVOKED' }, { transaction });
+    return { assignment, alreadyRevoked: false };
+  });
+}
+
+/**
+ * Reassign = reactivate a REVOKED (or simply uncompleted) assignment so the
+ * candidate can start again. Recreates the canonical quiz assignment.
+ */
+async function reassignCandidate(assessment, candidate) {
+  if (!assessment || !candidate) return { error: 'Candidate or hiring workflow not found.' };
+  if (candidate.registration_status !== 'REGISTERED' || !candidate.user_id) {
+    return { error: 'Only registered candidates can be assigned. Re-check registration first.' };
+  }
+  return sequelize.transaction(async (transaction) => {
+    let assignment = await HiringAssignment.findOne({
+      where: { assessment_id: assessment.id, candidate_id: candidate.id },
+      transaction,
+    });
+
+    if (assessment.assessment_type === 'QUIZ' && assessment.quiz_id) {
+      const [quizAssignment] = await QuizAssignment.findOrCreate({
+        where: { quizId: assessment.quiz_id, participantId: candidate.user_id },
+        defaults: { status: 'PENDING', assignedAt: new Date() },
+        transaction,
+      });
+      await quizAssignment.update({ status: 'PENDING', cancelledAt: null }, { transaction }).catch(() => {});
+      if (assignment && assignment.quiz_assignment_id !== quizAssignment.id) {
+        await assignment.update({ quiz_assignment_id: quizAssignment.id }, { transaction });
+      }
+    }
+
+    if (assignment) {
+      await assignment.update({ status: 'ASSIGNED', completed_at: null }, { transaction });
+    } else {
+      assignment = await HiringAssignment.create({
+        assessment_id: assessment.id,
+        candidate_id: candidate.id,
+        participant_id: candidate.user_id,
+        status: 'ASSIGNED',
+        assigned_at: new Date(),
+      }, { transaction });
+    }
+
+    await candidate.update({ assignment_status: 'ASSIGNED', status: 'ASSIGNED' }, { transaction });
+    return { assignment, reassigned: true };
+  });
+}
+
+/**
+ * Reset attempt = delete the canonical attempt + answers/results/session so the
+ * candidate can start a fresh attempt. Only allowed when attempts are not
+ * currently in progress.
+ */
+async function resetCandidateAttempt(assessment, candidate) {
+  if (!assessment || !candidate) return { error: 'Candidate or hiring workflow not found.' };
+  return sequelize.transaction(async (transaction) => {
+    if (!candidate.user_id) {
+      const error = new Error('Candidate has no linked participant account.');
+      error.status = 422;
+      throw error;
+    }
+    const attempt = await canonicalAttemptFor(assessment, candidate.user_id);
+    if (attempt && String(attempt.status).toUpperCase() === 'IN_PROGRESS') {
+      const error = new Error('Cannot reset an attempt that is currently in progress.');
+      error.status = 409;
+      throw error;
+    }
+    if (attempt) {
+      const engine = engineDescriptor(assessment);
+      if (engine.type === 'CODING') {
+        await CodingSubmission.destroy({ where: { attemptId: attempt.id }, transaction });
+        await CodingResult.destroy({ where: { attemptId: attempt.id }, transaction });
+      } else {
+        await QuizAnswer.destroy({ where: { attemptId: attempt.id }, transaction });
+        await QuizResult.destroy({ where: { attemptId: attempt.id }, transaction });
+      }
+      await AssessmentSession.destroy({ where: { attemptId: attempt.id }, transaction }).catch(() => {});
+      await attempt.destroy({ transaction });
+    }
+    const assignment = await HiringAssignment.findOne({
+      where: { assessment_id: assessment.id, candidate_id: candidate.id },
+      transaction,
+    });
+    if (assignment && !INACTIVE_ASSIGNMENT_STATUSES.includes(String(assignment.status).toUpperCase())) {
+      await assignment.update({ status: 'ASSIGNED', attempts_used: 0, completed_at: null }, { transaction });
+    }
+    if (candidate.status !== 'REVOKED') await candidate.update({ status: 'ASSIGNED' }, { transaction });
+    return { reset: true };
+  });
+}
+
+/**
+ * Extend time = grant additional minutes to a running attempt. Falls back to
+ * updating the assessment window when the attempt has no per-attempt deadline.
+ */
+async function extendCandidateTime(assessment, candidate, minutes = 15) {
+  if (!assessment || !candidate) return { error: 'Candidate or hiring workflow not found.' };
+  const extra = Math.max(1, Math.min(Number(minutes) || 15, 240));
+  const attempt = await canonicalAttemptFor(assessment, candidate.user_id);
+  if (!attempt || String(attempt.status).toUpperCase() !== 'IN_PROGRESS') {
+    const error = new Error('Candidate has no active attempt to extend.');
+    error.status = 409;
+    throw error;
+  }
+  // The canonical engines compute the deadline from AssessmentSession.expiresAt
+  // or startedAt + timeLimit. Extending the session keeps the backend timer
+  // authoritative.
+  const sessions = await AssessmentSession.findAll({ where: { attemptId: attempt.id }, transaction: null });
+  for (const session of sessions) {
+    if (session.expiresAt) {
+      await session.update({ expiresAt: new Date(new Date(session.expiresAt).getTime() + extra * 60_000) });
+    }
+  }
+  // Fallback marker so the audit trail shows the extension.
+  await attempt.update({ time_taken: attempt.timeTaken || 0 });
+  return { extendedMinutes: extra };
 }
 
 async function recheckCandidateRegistration(assessmentId) {
@@ -188,5 +363,9 @@ module.exports = {
   recomputeAssessmentStatus,
   assignCandidate,
   unassignCandidate,
+  revokeCandidate,
+  reassignCandidate,
+  resetCandidateAttempt,
+  extendCandidateTime,
   recheckCandidateRegistration,
 };

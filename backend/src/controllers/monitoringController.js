@@ -16,6 +16,31 @@ function fail(res, status, message) {
   return res.status(status).json({ success: false, error: message });
 }
 
+/**
+ * Object-level ownership guard for monitoring sessions.
+ * Participants may only start/pause/resume/end or otherwise mutate sessions
+ * that belong to them. Admins and trainers retain their existing review rights.
+ * Returns true when the request may continue; responds with 403/404 otherwise.
+ */
+async function guardSessionOwner(req, res) {
+  const role = String(req.user?.role || '');
+  if (role === 'ADMIN' || role === 'TRAINER') return true;
+  if (role !== 'PARTICIPANT') {
+    fail(res, 403, 'You are not allowed to control this monitoring session');
+    return false;
+  }
+  const session = await monitoringService.getSession(req.params.id).catch(() => null);
+  if (!session) {
+    fail(res, 404, 'Monitoring session not found');
+    return false;
+  }
+  if (String(session.participantId) !== String(req.user.id)) {
+    fail(res, 403, 'This monitoring session belongs to another candidate');
+    return false;
+  }
+  return true;
+}
+
 async function assertReportAccess(report, user) {
   const session = report?.session || report;
   const contextType = report?.contextType || session?.contextType;
@@ -142,6 +167,7 @@ class MonitoringController {
    */
   async startTestTimer(req, res) {
     try {
+      if (!(await guardSessionOwner(req, res))) return;
       const sessionId = req.params.id;
       const { attemptId, testStartedAt, configuredDurationSeconds } = req.body;
       const session = await monitoringService.startTestSession({
@@ -163,6 +189,7 @@ class MonitoringController {
    */
   async pauseTestTimer(req, res) {
     try {
+      if (!(await guardSessionOwner(req, res))) return;
       const sessionId = req.params.id;
       const { pausedAt, reason, activeDurationSeconds } = req.body;
       const session = await monitoringService.pauseTestSession({
@@ -184,6 +211,7 @@ class MonitoringController {
    */
   async resumeTestTimer(req, res) {
     try {
+      if (!(await guardSessionOwner(req, res))) return;
       const sessionId = req.params.id;
       const { resumedAt, reason } = req.body;
       const session = await monitoringService.resumeTestSession({
@@ -204,6 +232,7 @@ class MonitoringController {
    */
   async syncTestDuration(req, res) {
     try {
+      if (!(await guardSessionOwner(req, res))) return;
       const sessionId = req.params.id;
       const { activeDurationSeconds, activeSegments } = req.body;
       const result = await monitoringService.syncTestDuration({
@@ -224,6 +253,7 @@ class MonitoringController {
    */
   async validateLaptop(req, res) {
     try {
+      if (!(await guardSessionOwner(req, res))) return;
       const participantId = req.user?.id;
       const sessionId = req.params.id;
       const { frame } = req.body;
@@ -253,6 +283,7 @@ class MonitoringController {
    */
   async getMobilePairingQR(req, res) {
     try {
+      if (!(await guardSessionOwner(req, res))) return;
       const participantId = req.user?.id;
       const sessionId = req.params.id;
 
@@ -326,6 +357,7 @@ class MonitoringController {
    */
   async uploadVideo(req, res) {
     try {
+      if (!(await guardSessionOwner(req, res))) return;
       const sessionId = req.params.id;
       if (!req.file) {
         return fail(res, 400, 'No video file uploaded');
@@ -426,6 +458,7 @@ class MonitoringController {
    */
   async getStatus(req, res) {
     try {
+      if (!(await guardSessionOwner(req, res))) return;
       const sessionId = req.params.id;
       const status = await monitoringService.getStatus(sessionId);
       return ok(res, status);
@@ -440,6 +473,7 @@ class MonitoringController {
    */
   async endSession(req, res) {
     try {
+      if (!(await guardSessionOwner(req, res))) return;
       const participantId = req.user?.id;
       const sessionId = req.params.id;
       const { actualTestDurationSeconds, activeSegments } = req.body || {};
@@ -494,7 +528,7 @@ class MonitoringController {
       const data = await monitoringService.getReportsList({
         contextType,
         contextId,
-        participantId,
+        participantId: req.user?.role === 'PARTICIPANT' ? req.user.id : participantId,
         riskLevel,
         limit,
         offset,
@@ -697,6 +731,7 @@ class MonitoringController {
    */
   async registerSegment(req, res) {
     try {
+      if (!(await guardSessionOwner(req, res))) return;
       const sessionId = req.params.id;
       const participantId = req.user?.id;
       const { segmentSequence = 1, startedAt, durationSec = 0 } = req.body || {};
@@ -721,6 +756,7 @@ class MonitoringController {
    */
   async finalizeSegment(req, res) {
     try {
+      if (!(await guardSessionOwner(req, res))) return;
       const sessionId = req.params.id;
       const segmentKey = req.params.segmentKey;
       const { endedAt, durationSec } = req.body || {};
@@ -746,6 +782,7 @@ class MonitoringController {
    */
   async uploadSegment(req, res) {
     try {
+      if (!(await guardSessionOwner(req, res))) return;
       const sessionId = req.params.id;
       const segmentKey = req.params.segmentKey;
       if (!req.file) return fail(res, 400, 'No video file uploaded');
@@ -795,6 +832,7 @@ class MonitoringController {
    */
   async listSegments(req, res) {
     try {
+      if (!(await guardSessionOwner(req, res))) return;
       const sessionId = req.params.id;
       const videoService = require('../services/monitoringVideoService');
       const segments = await videoService.listSegments(sessionId);
@@ -811,6 +849,7 @@ class MonitoringController {
    */
   async getPipelineStatus(req, res) {
     try {
+      if (!(await guardSessionOwner(req, res))) return;
       const sessionId = req.params.id;
       const { MonitoringSession } = require('../models');
       const videoService = require('../services/monitoringVideoService');

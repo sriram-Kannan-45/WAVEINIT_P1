@@ -132,8 +132,9 @@ function AssessmentMobileJoinContent() {
   const [socketConnected, setSocketConnected] = useState(false);
   const [peerConnected, setPeerConnected] = useState(false);
   const [desktopReceiving, setDesktopReceiving] = useState(false);
-  const [transportError, setTransportError] = useState(null);
+const [transportError, setTransportError] = useState(null);
   const [compositionWarning, setCompositionWarning] = useState(null);
+  const [roomState, setRoomState] = useState(null);
   const lastDesktopReceiptRef = useRef(0);
   const retryJoinRef = useRef(null);
   const cameraLinked = socketConnected && (peerConnected || desktopReceiving);
@@ -285,6 +286,7 @@ function AssessmentMobileJoinContent() {
         console.log('[MOBILE-P2P] Connection state:', pc.connectionState);
         if (pc.connectionState === 'connected') {
           setPeerConnected(true);
+          setTransportError(null);
         } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
           setPeerConnected(false);
         }
@@ -347,6 +349,7 @@ function AssessmentMobileJoinContent() {
     setCameraActive(false);
     setPeerConnected(false);
     setSocketConnected(false);
+    setRoomState(null);
     setPhase(PHASE.COMPLETED);
   }, []);
 
@@ -397,9 +400,10 @@ function AssessmentMobileJoinContent() {
     canvas.height = 480;
     const ctx = canvas.getContext('2d');
 
-    frameIntervalRef.current = setInterval(() => {
+frameIntervalRef.current = setInterval(() => {
+      const p2pLive = !!pcRef.current && pcRef.current.connectionState === 'connected';
       const video = videoRef.current;
-      if (!framePendingRef.current && joinedRef.current && video && video.videoWidth > 0 && video.videoHeight > 0 && socketRef.current?.connected) {
+      if (!framePendingRef.current && !p2pLive && joinedRef.current && video && video.videoWidth > 0 && video.videoHeight > 0 && socketRef.current?.connected) {
         try {
           canvas.width = Math.min(640, video.videoWidth);
           canvas.height = Math.round(video.videoHeight * canvas.width / video.videoWidth);
@@ -412,7 +416,10 @@ function AssessmentMobileJoinContent() {
             participantId: info.participantId,
           }, (err, ack) => {
             framePendingRef.current = false;
-            if (err || !ack?.ok) setTransportError(ack?.error || 'Camera upload interrupted. Reconnecting to the laptop…');
+            if (err || !ack?.ok) {
+              const stillLive = !!pcRef.current && (pcRef.current.connectionState === 'connected' || pcRef.current.connectionState === 'connecting');
+              if (!stillLive) setTransportError(ack?.error || 'Camera upload interrupted. Reconnecting to the laptop…');
+            }
           });
         } catch (e) {}
       }
@@ -487,9 +494,13 @@ function AssessmentMobileJoinContent() {
       setDesktopReceiving(true);
       setTransportError(null);
     });
-    socket.on('assessment_verif:yolo_detection', data => {
+socket.on('assessment_verif:yolo_detection', data => {
       const status = mobileCameraStatus({ connected: true, evidence: data?.success ? data.mobileEvidence : null });
       setCompositionWarning(status.kind === 'reposition' ? `${status.title}. ${status.message}` : null);
+    });
+    socket.on('assessment_verif:room_state', data => {
+      if (!data || typeof data.state !== 'object') return;
+      setRoomState({ ...data.state });
     });
     const receiptTimer = setInterval(() => {
       if (Date.now() - lastDesktopReceiptRef.current > 5000) setDesktopReceiving(false);
@@ -1155,6 +1166,35 @@ function AssessmentMobileJoinContent() {
         <Shield size={14} color="#16A34A" strokeWidth={2.2} />
         <span><strong>WAVE INIT Secure Proctoring</strong> &bull; Real-time Verification</span>
       </div>
+
+      {/* AI-Guided Room Verification Full-Screen Overlay (driven by the laptop) */}
+      {phase === PHASE.STREAMING && roomState && roomState.phase && !roomState.complete && (
+        <div className="wi-room-overlay">
+          <div className="wi-room-overlay-inner">
+            <div className="wi-room-overlay-shield">
+              <Shield size={26} strokeWidth={2.2} />
+            </div>
+            <div className="wi-room-overlay-title">ROOM VERIFICATION</div>
+            {roomState.phase === 'scan360' ? (
+              <div className="wi-room-overlay-step">360° Room Scan — turn slowly in a full circle</div>
+            ) : roomState.step ? (
+              <div className="wi-room-overlay-step">Step {roomState.step.index + 1} of 6 — {roomState.step.label}</div>
+            ) : null}
+            {typeof roomState.coverage === 'number' && roomState.coverage > 0 && (
+              <div className="wi-room-overlay-coverage">
+                <div className="wi-room-overlay-coverage-bar">
+                  <div style={{ width: `${Math.min(100, roomState.coverage)}%` }} />
+                </div>
+                <span>Coverage {Math.round(roomState.coverage)}%</span>
+              </div>
+            )}
+            <div className="wi-room-overlay-status">
+              {roomState.aiStatus === 'ANALYZING' ? 'Analyzing…' : roomState.aiStatus === 'RETRY' ? 'Adjust the angle and continue' : roomState.aiStatus === 'SUCCESS' ? 'Captured' : 'Scanning'}
+            </div>
+            <p className="wi-room-overlay-hint">Follow the instructions shown on your laptop screen. Keep the phone steady.</p>
+          </div>
+        </div>
+      )}
 
       <MobileDebugPanel logs={logs} isOpen={showDebug} onToggle={() => setShowDebug(!showDebug)} />
     </div>

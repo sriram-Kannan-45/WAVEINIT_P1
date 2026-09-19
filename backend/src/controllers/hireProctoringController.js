@@ -20,6 +20,10 @@ async function getPolicy(req, res) {
         livenessPassed: value.livenessPassed === true,
         roomScanCompletedAt: value.roomScanCompletedAt || null,
         roomScanClear: value.roomScanClear === true,
+        sixCaptureStatus: value.sixCaptureStatus || null,
+        roomScanCoverage: Number(value.roomScanCoverage) || 0,
+        roomScan360Complete: value.roomScan360Complete === true,
+        roomObservations: value.roomObservations || [],
       };
     }
     res.json({ policy: resolved.policy, assessmentId: resolved.workflow.id, state });
@@ -39,8 +43,11 @@ async function updatePolicy(req, res) {
 async function getChallenge(req, res) {
   try {
     const { session } = await proctoringService.requireOwnedHireSession(req.params.sessionId, req.user);
-    if (!['CALIBRATING', 'READY'].includes(session.status)) return res.status(409).json({ error: 'Identity challenges are available only before the assessment starts.' });
-    if (session.metadata?.hireProctoring?.identityVerifiedAt) return res.status(409).json({ error: 'Identity has already been verified for this session.' });
+    // Allow challenge generation for any pre-verification status, including
+    // ACTIVE (which can occur when the quiz attempt starts before identity
+    // verification completes on the verification page).
+    const alreadyVerified = !!session.metadata?.hireProctoring?.identityVerifiedAt;
+    if (alreadyVerified) return res.status(409).json({ error: 'Identity has already been verified for this session.' });
     const values = ['TURN_LEFT', 'TURN_RIGHT', 'BLINK'];
     const challenge = values[crypto.randomInt(values.length)];
     const expiresAt = new Date(Date.now() + 2 * 60_000).toISOString();
@@ -69,4 +76,19 @@ async function inspectRoom(req, res) {
   catch (error) { fail(res, error); }
 }
 
-module.exports = { getPolicy, updatePolicy, getChallenge, captureIdentity, verifyIdentity, inspectRoom };
+async function roomStep(req, res) {
+  try { res.json(await proctoringService.analyzeRoomStep({ sessionId: req.params.sessionId, user: req.user, step: req.body.step, frame: req.body.frame })); }
+  catch (error) { fail(res, error); }
+}
+
+async function roomScan360(req, res) {
+  try { res.json(await proctoringService.analyzeRoomScan360({ sessionId: req.params.sessionId, user: req.user, frames: req.body.frames })); }
+  catch (error) { fail(res, error); }
+}
+
+async function roomState(req, res) {
+  try { res.json(await proctoringService.getRoomVerificationState({ sessionId: req.params.sessionId, user: req.user })); }
+  catch (error) { fail(res, error); }
+}
+
+module.exports = { getPolicy, updatePolicy, getChallenge, captureIdentity, verifyIdentity, inspectRoom, roomStep, roomScan360, roomState };

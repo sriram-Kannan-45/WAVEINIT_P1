@@ -13,6 +13,7 @@ const { uploadAIQuizMaterial } = require('../middleware/uploadAIQuizMaterial');
 const { gradeAnswer } = require('../utils/gradeAnswer');
 const { areResultsVisible } = require('../utils/quizStateMachine');
 const { grantQuizAssist, getQuizStatus } = require('../services/quizAiAssistantService');
+const { validateAiGenerateQuiz } = require('../security/inputValidator');
  
 const router = express.Router();
 
@@ -36,6 +37,7 @@ const router = express.Router();
   router.post('/generate-from-prompt',
     authenticateToken,
     roleMiddleware('TRAINER', 'ADMIN'),
+    validateAiGenerateQuiz,
     async (req, res) => {
       try {
         const { prompt, questionCount = 10, difficulty = 'MIXED', courseId, trainingId } = req.body;
@@ -233,9 +235,11 @@ router.get('/trainer/quizzes',
 );
 
 // PUT /api/ai-quiz/trainer/quiz/:id
+// Generic quiz settings endpoint. Works for both TRAINER-owned course quizzes
+// and ADMIN-owned HIRE quizzes (created with trainerId = admin id).
 router.put('/trainer/quiz/:id',
   authenticateToken,
-  roleMiddleware('TRAINER'),
+  roleMiddleware('TRAINER', 'ADMIN'),
   async (req, res) => {
     try {
       const quiz = await AIQuiz.findOne({
@@ -247,9 +251,10 @@ router.put('/trainer/quiz/:id',
         title, timeLimit, status,
         showResultImmediately, showCorrectAnswersOnResult, shuffleQuestions,
         allowMultipleAttempts, maxAttempts, difficulty, isMandatory,
-        copyProtectionEnabled, maxCopyWarnings, copyViolationActions,
+        copyProtectionEnabled, copyProtection, maxCopyWarnings, copyViolationActions,
         copyWarningMessage, copyDisqualifyAction,
-        proctoringLevel, gracePeriodMinutes, proctoringEnabled
+        proctoringLevel, gracePeriodMinutes, proctoringEnabled,
+        passingPercentage
       } = req.body;
       const update = {};
       if (title !== undefined) update.title = title;
@@ -262,7 +267,8 @@ router.put('/trainer/quiz/:id',
       if (maxAttempts !== undefined) update.maxAttempts = parseInt(maxAttempts);
       if (difficulty !== undefined) update.difficulty = normalizeQuizDifficulty(difficulty);
       if (isMandatory !== undefined) update.isMandatory = isMandatory;
-      if (copyProtectionEnabled !== undefined) update.copyProtectionEnabled = copyProtectionEnabled;
+      const copyProtectionValue = copyProtectionEnabled ?? copyProtection;
+      if (copyProtectionValue !== undefined) update.copyProtectionEnabled = copyProtectionValue;
       if (maxCopyWarnings !== undefined) update.maxCopyWarnings = parseInt(maxCopyWarnings);
       if (copyViolationActions !== undefined) update.copyViolationActions = copyViolationActions;
       if (copyWarningMessage !== undefined) update.copyWarningMessage = copyWarningMessage;
@@ -270,6 +276,16 @@ router.put('/trainer/quiz/:id',
       if (proctoringLevel !== undefined) update.proctoringLevel = proctoringLevel;
       if (gracePeriodMinutes !== undefined) update.gracePeriodMinutes = parseInt(gracePeriodMinutes);
       if (proctoringEnabled !== undefined) update.proctoringEnabled = proctoringEnabled;
+      if (passingPercentage !== undefined) {
+        const value = Math.max(0, Math.min(100, parseInt(passingPercentage) || 0));
+        update.passingPercentage = value;
+        // Keep the Hire workflow passing score in sync with the engine.
+        const { HiringAssessment } = require('../models');
+        await HiringAssessment.update(
+          { passing_score: value },
+          { where: { quiz_id: quiz.id, assessment_type: 'QUIZ' } },
+        ).catch(() => {});
+      }
 
       await quiz.update(update);
       res.json({ message: 'Quiz updated', quiz });
@@ -1153,7 +1169,7 @@ router.get('/participant/stats',
       const totalQuizzes = await QuizAttempt.count({
         where: {
           participantId: userId,
-          status: { [Op.in]: ['SUBMITTED', 'EVALUATED', 'COMPLETED', 'GRADED'] }
+          status: { [Op.in]: ['SUBMITTED', 'EVALUATED', 'AUTO_SUBMITTED'] }
         }
       });
 

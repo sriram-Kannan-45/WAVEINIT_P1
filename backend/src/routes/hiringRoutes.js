@@ -10,6 +10,12 @@ const hiringController = require('../controllers/hiringController');
 const authenticateToken = require('../middleware/auth');
 const roleMiddleware = require('../middleware/roles');
 const proctoringController = require('../controllers/hireProctoringController');
+const {
+  validateHireAssessmentCreate,
+  validateHireAssessmentUpdate,
+  validateAssignCandidates,
+  validateBulkDeleteIds,
+} = require('../security/inputValidator');
 
 const csvUpload = multer({
   storage: multer.memoryStorage(),
@@ -24,14 +30,18 @@ const csvUpload = multer({
 router.use(authenticateToken);
 
 // Admin: assessment CRUD (hiring assessments are admin-managed only)
-router.post('/assessments', roleMiddleware('ADMIN'), hiringController.createAssessment);
+router.post('/assessments', roleMiddleware('ADMIN'), validateHireAssessmentCreate, hiringController.createAssessment);
 router.get('/assessments', roleMiddleware('ADMIN'), hiringController.listAssessments);
+router.post('/assessments/bulk-delete', roleMiddleware('ADMIN'), validateBulkDeleteIds, hiringController.bulkDeleteAssessments);
+router.delete('/assessments/bulk-delete', roleMiddleware('ADMIN'), validateBulkDeleteIds, hiringController.bulkDeleteAssessments);
 router.get('/assessments/:id', roleMiddleware('ADMIN'), hiringController.getAssessment);
-router.put('/assessments/:id', roleMiddleware('ADMIN'), hiringController.updateAssessment);
+router.put('/assessments/:id', roleMiddleware('ADMIN'), validateHireAssessmentUpdate, hiringController.updateAssessment);
 router.delete('/assessments/:id', roleMiddleware('ADMIN'), hiringController.deleteAssessment);
 router.post('/assessments/:id/publish', roleMiddleware('ADMIN'), hiringController.publishAssessment);
 router.post('/assessments/:id/close', roleMiddleware('ADMIN'), hiringController.closeAssessment);
 router.get('/assessments/:id/report', roleMiddleware('ADMIN'), hiringController.getReport);
+router.post('/assessments/:id/quiz', roleMiddleware('ADMIN'), hiringController.ensureQuiz);
+router.post('/assessments/:id/coding', roleMiddleware('ADMIN'), hiringController.ensureCoding);
 router.put('/proctoring/policy/:type/:engineId', roleMiddleware('ADMIN'), proctoringController.updatePolicy);
 
 // Admin: candidates / CSV
@@ -39,8 +49,12 @@ router.post('/assessments/:id/candidates/upload', roleMiddleware('ADMIN'), csvUp
 router.get('/assessments/:id/candidates', roleMiddleware('ADMIN'), hiringController.listCandidates);
 router.post('/assessments/:id/candidates/recheck', roleMiddleware('ADMIN'), hiringController.recheckRegistration);
 router.get('/assessments/:id/candidates/unregistered/export', roleMiddleware('ADMIN'), hiringController.exportUnregistered);
-router.post('/assessments/:id/candidates/assign', roleMiddleware('ADMIN'), hiringController.assignCandidates);
+router.post('/assessments/:id/candidates/assign', roleMiddleware('ADMIN'), validateAssignCandidates, hiringController.assignCandidates);
 router.post('/assessments/:id/candidates/:cid/toggle-assign', roleMiddleware('ADMIN'), hiringController.toggleAssignCandidate);
+router.post('/assessments/:id/candidates/:cid/revoke', roleMiddleware('ADMIN'), hiringController.revokeCandidate);
+router.post('/assessments/:id/candidates/:cid/reassign', roleMiddleware('ADMIN'), hiringController.reassignCandidate);
+router.post('/assessments/:id/candidates/:cid/reset-attempt', roleMiddleware('ADMIN'), hiringController.resetCandidateAttempt);
+router.post('/assessments/:id/candidates/:cid/extend-time', roleMiddleware('ADMIN'), hiringController.extendCandidateTime);
 router.delete('/assessments/:id/candidates/:cid', roleMiddleware('ADMIN'), hiringController.removeCandidate);
 
 // Participant: hiring assignment discovery only. Attempts are intentionally
@@ -51,4 +65,8 @@ router.post('/proctoring/sessions/:sessionId/challenge', roleMiddleware('PARTICI
 router.post('/proctoring/sessions/:sessionId/identity/reference', roleMiddleware('PARTICIPANT'), proctoringController.captureIdentity);
 router.post('/proctoring/sessions/:sessionId/identity/verify', roleMiddleware('PARTICIPANT'), proctoringController.verifyIdentity);
 router.post('/proctoring/sessions/:sessionId/room-scan', roleMiddleware('PARTICIPANT'), proctoringController.inspectRoom);
+router.post('/proctoring/sessions/:sessionId/room-step', roleMiddleware('PARTICIPANT'), proctoringController.roomStep);
+router.post('/proctoring/sessions/:sessionId/room-scan-360', roleMiddleware('PARTICIPANT'), proctoringController.roomScan360);
+router.get('/proctoring/sessions/:sessionId/room-state', roleMiddleware('PARTICIPANT'), proctoringController.roomState);
+
 module.exports = router;

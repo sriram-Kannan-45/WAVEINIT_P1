@@ -76,10 +76,13 @@ class AssessmentVerificationService {
       if (policy.identityVerification && !state.identityVerifiedAt) {
         throw new Error('Complete identity and liveness verification before entering the assessment.');
       }
-      if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear !== true)) {
+if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear !== true)) {
         throw new Error('Complete a clear 360° room scan before entering the assessment.');
       }
-      if (!policy.mobileRoomScan) return monitor;
+      if (policy.roomScan360Enabled && !policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear !== true)) {
+        throw new Error('Complete the guided room verification before entering the assessment.');
+      }
+      if (!policy.mobileRoomScan && !policy.roomScan360Enabled) return monitor;
     }
 
     if (monitor.mobileEnabled && !monitor.metadata?.mobileAdmission) {

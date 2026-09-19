@@ -175,11 +175,46 @@ router.post('/chatbot/ask', participant, async (req, res) => {
       return res.status(400).json({ error: 'Message is required' });
     }
 
+    // ── Hire Assessment Context Detection ──────────────────────────────────
+    // If the candidate is currently inside an active Hire quiz or coding
+    // attempt, detect answer-seeking queries and block them server-side.
+    const clientContext = context || {};
+    const isHireAttemptActive = !!(
+      clientContext.isHireAssessment === true ||
+      String(clientContext.currentRoute || '').includes('/trainings/hire/')
+    );
+
+    if (isHireAttemptActive) {
+      const q = (message || '').toLowerCase().trim();
+      // Detect obvious answer-seeking patterns
+      const answerPatterns = [
+        'correct answer', 'right answer', 'give me the answer', 'what is the answer',
+        'which option', 'which choice', 'select option', 'pick option', 'choose option',
+        'tell me the answer', 'reveal answer', 'show answer', 'answer is',
+        'write the code', 'give me the code', 'complete the code', 'write solution',
+        'give solution', 'give me solution', 'solve this', 'fix this code for me',
+        'hidden test', 'test case', 'expected output', 'what does the evaluator',
+        'how to pass', 'pass the test',
+      ];
+      const isAnswerSeeking = answerPatterns.some(p => q.includes(p));
+
+      if (isAnswerSeeking) {
+        return res.json({
+          success: true,
+          intent: 'HIRE_ASSESSMENT_RESTRICTED',
+          reply: `I cannot provide answers, solutions, or hints for assessment questions during a Hire evaluation.\n\nThis assessment is being monitored. Please attempt the questions independently.\n\nI can help with general questions like:\n• How do I submit my answers?\n• How much time do I have left?\n• How does the assessment work?`,
+          actionButtons: [],
+          suggestions: ['How do I submit?', 'How does this assessment work?'],
+        });
+      }
+    }
+    // ── End Hire Context ───────────────────────────────────────────────────
+
     const result = await askParticipantChatbot({
       userId: req.user.id,
       message,
       history: Array.isArray(history) ? history : [],
-      clientContext: context || {},
+      clientContext: { ...clientContext, isHireAttemptActive },
     });
 
     return res.json({ success: true, ...result });

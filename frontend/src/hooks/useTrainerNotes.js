@@ -30,7 +30,7 @@ export function useTrainerNotes(user) {
 
   const auth = useCallback(
     () => ({ Authorization: `Bearer ${user?.token || ''}` }),
-    [user]
+    [user?.token]
   )
 
   /* ── Read ───────────────────────────────────────────────────────────── */
@@ -47,7 +47,7 @@ export function useTrainerNotes(user) {
     } finally {
       setLoading(false)
     }
-  }, [auth, user])
+  }, [auth, user?.token])
 
   useEffect(() => { refresh() }, [refresh])
 

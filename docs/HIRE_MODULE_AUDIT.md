@@ -86,3 +86,161 @@ editing, room exits, and evaluation links preserve the Hire return destination.
   verification remains pending; automated coverage is not a substitute for it.
 - The existing backend process uses `node src/app.js` (no hot reload); restart it
   to activate the server-side changes. The running service was not interrupted.
+
+## Bug-fix pass (2026-09-13)
+
+Five surgical backend fixes, verified by `backend/test/hire-audit-fixes.test.js`.
+No new modules, tables, APIs, or components; no data changes; all fixes reuse the
+existing engines and validation paths.
+
+1. **Interview deletion hardening** — `interviewController.deleteInterview` now
+   rejects hard deletion of `COMPLETED`, `EVALUATED`, or `IN_PROGRESS` interviews
+   (400). Previously only `COMPLETED` blocks existed, so evaluated Hire GDs could
+   be permanently destroyed. `SCHEDULED`/`CANCELLED` deletion is unchanged.
+2. **Unconditional GD auto-evaluation** — `interviewLifecycleService.saveEvaluation`
+   flips any group discussion to `EVALUATED` once every member (any count/context,
+   not only 6-member Hire GDs) has a scored evaluation. This matches the manual
+   status-guard in `updateInterviewStatus` and keeps evaluations editable
+   afterward. Fixes the stale `InterviewDashboard COMPLETED: []` gap.
+3. **`runCode` attempt ownership** — `codingAssessmentController.runCode` rejects
+   attempts whose `participantId` does not match the caller with 403 instead of
+   leaking another participant's run results and mutating their attempt data.
+4. **Hire quiz start gate** — `startQuizAttempt` enforces the Hire assignment via
+   `hireProctoringPolicy.resolvePolicy('QUIZ', ...)`; an unassigned candidate gets
+   a clean 403 (`Hiring assessment assignment required.`) instead of a 500.
+5. **Quiz retakes** — `startQuizAttempt` now honors `allowMultipleAttempts` and
+   `maxAttempts`: a completed attempt starts a fresh attempt when retakes are
+   allowed and the count is under the limit; otherwise the existing 400
+   (`You have already attempted this quiz.`) is preserved. The latest attempt
+   (`id DESC`) is selected, so resume targets the most recent session.
+
+### Verification (2026-09-13)
+
+- New suite `test/hire-audit-fixes.test.js`: 13 tests — deletion guard for all
+  three terminal/live statuses plus the allowed path; 3-member TRAINING GD
+  unlocks `EVALUATED` (partial scoring stays `COMPLETED`) and an already
+  `EVALUATED` GD remains editable/publishable; `runCode` 403 on foreign attempts
+  and 200 on owned attempts; Hire start 403 for unassigned and 200 for assigned;
+  retake-on (new attempt), retake-at-limit (400), and resume-latest (no create).
+- Targeted backend regression run: 60 passed across `hire-audit-fixes`,
+  `hire-workflow-regression`, `hiringArchitecture`, `interview-group-lifecycle`,
+  `hire-proctoring-layer`, and `quiz-start-regression`.
+- Frontend hire suite (`npm run test:hire`): 8 passed — Hire admin controls,
+  list/detail stability, retry behavior, scheduler mode locking unchanged.
+- No database or schema changes; restart `node src/app.js` to activate these
+  server-side fixes.
+
+## Hire AI proctoring audit (2026-09-13)
+
+Audit of the complete existing proctoring flow
+(Admin config → policy → participant verification → liveness → room scan →
+continuous monitoring → events/evidence → risk report → admin review).
+No rebuilds, no removals, no duplicate modules. Course/Training proctoring is
+unchanged (verified by `mobile-monitoring-flow`, `monitoring-eye-head-scoring`,
+`monitoring-assessment-parity`, `quiz-qr-reconnect-flow`, `mobile-camera-transport`,
+`interview-mobile-monitoring` staying green).
+
+### Issues found
+
+- **IDOR on the unified monitoring REST API (security).** `POST/GET
+  /api/monitoring/sessions/:id/{start-test,pause-test,resume-test,sync-duration,
+  laptop/validate,mobile/pair,video,end,segments/*}`, `GET /status` and the
+  segment listings never verified the caller owned the target session. Any
+  authenticated participant could start/pause/resume/end, upload evidence/video
+  onto, or read the segments of another participant's Quiz/Coding session (guessable
+  `ms_*` ids). Only `recordCalibration` and `recordEvent` had internal ownership
+  checks.
+- **Cross-participant report listing.** `GET /api/monitoring/reports` let any
+  participant list every course/assessment monitoring session when the Hire guard
+  (`assertReportAccess`) did not apply.
+
+### Issues fixed
+
+- Added `guardSessionOwner` object-level ownership check (controller-level) to
+  every unguarded monitoring mutation + participant-facing status/segment reads.
+  Enforced for `PARTICIPANT` (must own the session; 403 otherwise, 404 for
+  unknown ids); `ADMIN`/`TRAINER` keep their existing access. Does not apply to
+  the public mobile pairing/validation routes (token + service-level checks).
+- `getReportsList` now forces `participantId = req.user.id` for `PARTICIPANT`
+  requests, so a candidate only ever sees their own proctoring summaries.
+
+### Verified OK (no change needed)
+
+- Evidence serving is authorized: `/uploads/hire-proctoring/*` is intercepted by
+  `secureUploads` → `serveSecureFile` (participant must own the exact
+  `MonitoringSession`; trainer denied; admin allowed; path-traversal + anti-cache
+  headers). QR/session/participant binding, single-use tokens, reconnect
+  idempotency, and mobile-camera isolation are already enforced and tested.
+- AI proctoring ON/OFF is enforced at the backend, not just the UI:
+  `monitoringService._startSession` sets `laptopStatus: DISABLED` and disables
+  mobile for hire policies with `enabled=false`, and `hireWithoutMobile` skips
+  `verify-start`. Liveness/identity/room-scan are server-verified; a client
+  "success" state is never trusted.
+- Cost controls already present: recorded video off by default, YOLO relay
+  throttled (≥500 ms server coalescing + client fps), identity check ≥15 s
+  interval, two-consecutive-mismatch rule before evidence, room scan limited to
+  6–12 unique frames (duplicate-hash rejected), stable-phone → single +10 event
+  with sampled leases, idempotency keys dedupe duplicate writes.
+- Risk scoring uses the shared 5-part engine (`getReport`); escalation Low→
+  Medium→High→Critical consistent for both Quiz and Coding.
+
+### Files modified
+
+- `backend/src/controllers/monitoringController.js` — ownership guard +
+  participant report scoping.
+- `backend/test/monitoring-session-ownership.test.js` — new regression suite.
+
+### API changes
+
+None (no endpoints added/removed, no response shapes changed). Behaviour:
+foreign-session mutations now return `403`; unknown sessions `404`;
+participant report lists are self-scoped.
+
+### Database changes
+
+None.
+
+### Reused existing modules
+
+Everything (no duplication): unified `monitoringService`,
+`hireProctoringPolicy`/`hireProctoringService`, `assessmentVerificationService`,
+`monitoringVideoService`, secure evidence pipeline, `secureUploads`, socket
+`monitoringEvents`/`interviewEvents`, and the shared risk report/Excel engine.
+
+### Security fixes
+
+- Monitoring session IDOR closed (see above).
+- Participant report-list leak closed.
+
+### Performance/cost
+
+No new AI/TTS/DB costs; mitigates abuse only (a participant can no longer
+forcibly start/stop/end others' sessions, upload spurious evidence onto them,
+or scrape their segments).
+
+### Testing
+
+- New `monitoring-session-ownership.test.js`: 17 tests (per-endpoint 403 for
+  foreign sessions, own-session pass-through, admin/trainer access, unknown-id
+  404, participant reports self-scoping, existing service-level guards intact).
+- Targeted proctoring/hire run: 141 tests in 13 suites — all passing.
+- Full backend suite: 408 passed; only the two pre-existing DB-dependent
+  failures remain (`tests/trainerSearch.test.js`, `tests/trainerCourseBulkDelete.test.js`).
+- Frontend `npm run test:hire`: 8/8 passing.
+
+### Remaining issues
+
+- Quiz and Coding start separate monitoring sessions per attempt (one per
+  attempt, because each attempt owns its own score/timer keyed by
+  `attemptId`). Evidence continuity across the Quiz→Coding transition is
+  therefore via the shared `hireProctoring` metadata and the hire assessment
+  report rather than one shared session id; rework only if a single coalesced
+  session is a hard business requirement.
+- `monitoring-videos` participant authorization (`fileController`) currently
+  grants access to a video if the participant has *any* exam session. This
+  predates the Hire flow and lives in the Course proctoring module; left
+  untouched per the preservation rule.
+- Homepage/UI-level voice-cooldown is in-app (interval-based); an explicit
+  server-side TTS cooldown is unnecessary because warnings are client-generated
+  (no server TTS cost).
+- Restart `node src/app.js` on the running service to activate the guard.

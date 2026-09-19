@@ -18,6 +18,22 @@ import {
 import { participantChatbotService } from '../../services/participantChatbotService';
 import { executeParticipantAction } from '../../services/participantActionRegistry';
 import ParticipantQRScannerModal from './ParticipantQRScannerModal';
+import { hireVerificationStore } from '../../utils/hireVerificationStore';
+
+const HIRE_VERIF_SUGGESTIONS = {
+  'hire-verification': [
+    'Which step am I on and what do I do?',
+    'How do I move the phone for this step?',
+    'How does room verification work?',
+    'What happens after room verification?',
+  ],
+  'hire-verification-complete': [
+    'What happens after identity verification?',
+    'How do I start the assessment?',
+    'What are the assessment rules?',
+    'Show my hiring assessments',
+  ],
+};
 
 const DEFAULT_SUGGESTIONS = {
   profile: [
@@ -42,6 +58,12 @@ const DEFAULT_SUGGESTIONS = {
     'Scan QR',
     'Show my interviews',
     'Open my course',
+    'What should I do next?',
+  ],
+  'hiring-assessments': [
+    'How does camera verification work?',
+    'What are the assessment rules?',
+    'Show my hiring assessments',
     'What should I do next?',
   ],
   general: [
@@ -120,6 +142,9 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
   const inputRef = useRef(null);
 
   const currentRoute = location.pathname;
+  const [verifState, setVerifState] = useState(() => hireVerificationStore.get());
+
+  useEffect(() => hireVerificationStore.subscribe(setVerifState), []);
 
   // Measure button dimensions dynamically
   const getButtonSize = () => {
@@ -397,13 +422,20 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
   // Determine current active section for dynamic suggestion pills
   const activeContextType = useMemo(() => {
     if (currentRoute === '/my-profile' || activeTab === 'profile') return 'profile';
+    if ((activeTab === 'hiring-assessments' || activeTab === 'hiring' || currentRoute.includes('/trainings/hire') || currentRoute.includes('/hiring')) && currentRoute.includes('/verification')) {
+      return verifState.complete ? 'hire-verification-complete' : 'hire-verification';
+    }
+    if (activeTab === 'hiring-assessments' || activeTab === 'hiring' || currentRoute.includes('/trainings/hire') || currentRoute.includes('/hiring')) return 'hiring-assessments';
     if (activeTab === 'myCourses' || activeTab === 'myEnrollments' || currentRoute.includes('/courses')) return 'courses';
     if (activeTab === 'ai-quizzes' || activeTab === 'myQuizzes' || currentRoute.includes('/quizzes') || currentRoute.includes('/exam')) return 'quizzes';
     if (activeTab === 'interviews' || currentRoute.includes('/interview')) return 'interviews';
     return 'general';
-  }, [currentRoute, activeTab]);
+  }, [currentRoute, activeTab, verifState]);
 
   const suggestions = useMemo(() => {
+    if (activeContextType === 'hire-verification' || activeContextType === 'hire-verification-complete') {
+      return HIRE_VERIF_SUGGESTIONS[activeContextType];
+    }
     return DEFAULT_SUGGESTIONS[activeContextType] || DEFAULT_SUGGESTIONS.general;
   }, [activeContextType]);
 
@@ -486,12 +518,35 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
         content: m.content,
       }));
 
+      const isHireAssessment =
+        currentRoute.includes('/trainings/hire') ||
+        currentRoute.includes('/hiring') ||
+        activeTab === 'hiring-assessments' ||
+        activeTab === 'hiring';
+
+      const isHireAttemptActive = isHireAssessment && (
+        currentRoute.includes('/attempt') ||
+        currentRoute.includes('/verification')
+      );
+
+      const isHireVerificationActive = isHireAssessment && currentRoute.includes('/verification');
+
       const res = await participantChatbotService.askAssistant({
         message: textToSend,
         history: historyPayload,
         context: {
           currentRoute,
           currentTab: activeTab,
+          isHireAssessment,
+          isHireAttemptActive,
+          isHireVerificationActive,
+          roomScanInProgress: isHireVerificationActive && !verifState.complete,
+          roomScanPhase: verifState.phase || null,
+          roomScanStep: verifState.step ? verifState.step.label : null,
+          roomScanStepIndex: verifState.step ? verifState.step.index : null,
+          roomScanCoverage: verifState.coverage || 0,
+          roomScanComplete: verifState.complete === true,
+          roomScanAiStatus: verifState.aiStatus || null,
         },
       });
 

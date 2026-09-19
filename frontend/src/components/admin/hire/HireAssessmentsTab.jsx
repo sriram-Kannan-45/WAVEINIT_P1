@@ -1,16 +1,45 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft, BarChart3, CheckCircle2, Clock3, Code2, Download, Eye,
   FileQuestion, Loader2, Plus, RefreshCw, Search, Send, Upload, Users, X,
   ShieldCheck, Volume2, Trash2, Edit2, MoreVertical, ExternalLink,
-  AlertTriangle, Shield, Check, FileCode, CheckCircle, XCircle
+  AlertTriangle, Shield, Check, FileCode, CheckCircle, XCircle,
+  Ban, RotateCcw, Timer, UserCheck, HelpCircle
 } from 'lucide-react'
 import { API_BASE, BACKEND_ORIGIN } from '../../../api/api'
 import hiringService from '../../../services/hiringService'
 import { useToast } from '../../Toast'
+import BulkDeleteConfirmModal from '../BulkDeleteConfirmModal'
 
-const emptyForm = { title: '', assessmentType: 'QUIZ', description: '', durationMinutes: 60, passingScore: 60 }
+const emptyForm = { title: '', jobRole: '', assessmentType: 'QUIZ', description: '', durationMinutes: 60, passingScore: 60 }
+
+function MenuItem({ icon, label, onClick, disabled, danger }) {
+  return (
+    <button
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        width: '100%',
+        padding: '8px 14px',
+        background: 'none',
+        border: 'none',
+        fontSize: 13,
+        color: danger ? '#DC2626' : '#334155',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
+        textAlign: 'left',
+      }}
+      onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.background = '#F8FAFC' }}
+      onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {icon} {label}
+    </button>
+  )
+}
 
 const statusTone = {
   DRAFT:       { bg: '#F1F5F9', color: '#475569', border: '#CBD5E1', label: 'Draft' },
@@ -61,6 +90,7 @@ function Modal({ children, onClose, maxWidth = 580 }) {
 
 export default function HireAssessmentsTab({ user }) {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const toast = useToast()
   const uploadRef = useRef(null)
   const [items, setItems] = useState([])
@@ -69,11 +99,23 @@ export default function HireAssessmentsTab({ user }) {
   const [detailError, setDetailError] = useState('')
   const listRequest = useRef(0)
   const detailRequest = useRef(0)
+  const activeControllerRef = useRef(null)
+  const [retryCount, setRetryCount] = useState(0)
   const [search, setSearch] = useState('')
   const [type, setType] = useState('ALL')
   const [showCreate, setShowCreate] = useState(false)
   const [editItem, setEditItem] = useState(null)
-  const [deleteConfirm, setDeleteConfirm] = useState(null)
+  const [selectedAssessmentIds, setSelectedAssessmentIds] = useState(new Set())
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState(new Set())
+  const [bulkDeleteModal, setBulkDeleteModal] = useState({
+    open: false,
+    itemType: 'assessment',
+    title: '',
+    count: 0,
+    ids: [],
+    loading: false,
+    failedItems: null,
+  })
   const [candidateToDelete, setCandidateToDelete] = useState(null)
   const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
@@ -117,7 +159,12 @@ export default function HireAssessmentsTab({ user }) {
     return () => { clearTimeout(timer); listRequest.current += 1 }
   }, [load])
 
-  useEffect(() => () => { detailRequest.current += 1 }, [])
+  useEffect(() => () => {
+    detailRequest.current += 1
+    if (activeControllerRef.current) {
+      activeControllerRef.current.abort()
+    }
+  }, [])
 
   const stats = useMemo(() => ({
     total: items.length,
@@ -127,30 +174,127 @@ export default function HireAssessmentsTab({ user }) {
     pending: items.reduce((sum, item) => sum + Number(item.pending_candidates || 0), 0),
   }), [items])
 
-  const openDetail = async (item) => {
-    const request = ++detailRequest.current
-    setSelected(item)
-    setCandidates([])
-    setProctoringReview(null)
-    setReviewError('')
+  const openDetail = useCallback((item) => {
+    if (!item?.id) return
+    const id = Number(item.id)
+    if (!Number.isFinite(id) || id <= 0) return
+    setSelected(prev => (prev && Number(prev.id) === id ? prev : { ...item, id }))
     setDetailError('')
-    setDetailLoading(true)
-    try {
-      const [workflow, people] = await Promise.all([
-        hiringService.getAssessment(item.id),
-        hiringService.listCandidates(item.id),
-      ])
-      if (request === detailRequest.current) {
-        setSelected(workflow.assessment || item)
-        setPolicyDraft((workflow.assessment || item).proctoring_config || null)
-        setCandidates(people.candidates || [])
-      }
-    } catch (error) {
-      if (request === detailRequest.current) setDetailError(error.message || 'Could not load workflow')
-    } finally {
-      if (request === detailRequest.current) setDetailLoading(false)
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.set('selectedId', String(id))
+      next.delete('assessmentId')
+      return next
+    })
+    setRetryCount(c => c + 1)
+  }, [setSearchParams])
+
+  const handleBackToList = useCallback(() => {
+    detailRequest.current += 1
+    if (activeControllerRef.current) {
+      activeControllerRef.current.abort()
     }
-  }
+    setSelected(null)
+    setCandidates([])
+    setSelectedCandidateIds(new Set())
+    setDetailLoading(false)
+    setDetailError('')
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('selectedId')
+      next.delete('assessmentId')
+      return next
+    })
+  }, [setSearchParams])
+
+  // Single-source-of-truth workflow loader driven by searchParams
+  useEffect(() => {
+    const rawId = searchParams.get('selectedId') || searchParams.get('assessmentId')
+    if (!rawId) {
+      setSelected(null)
+      setCandidates([])
+      setDetailLoading(false)
+      setDetailError('')
+      return
+    }
+
+    const id = Number(rawId)
+    if (!Number.isFinite(id) || id <= 0) {
+      setDetailError('Invalid assessment ID specified in URL.')
+      setDetailLoading(false)
+      setSelected(null)
+      return
+    }
+
+    let isMounted = true
+    const request = ++detailRequest.current
+    const controller = new AbortController()
+    activeControllerRef.current = controller
+
+    const loadAssessment = async () => {
+      setDetailLoading(true)
+      setDetailError('')
+
+      try {
+        const [workflowRes, candidatesRes] = await Promise.allSettled([
+          hiringService.getAssessment(id, { signal: controller.signal }),
+          hiringService.listCandidates(id, {}, { signal: controller.signal })
+        ])
+
+        if (!isMounted || controller.signal.aborted || request !== detailRequest.current) {
+          return
+        }
+
+        if (workflowRes.status === 'rejected') {
+          const err = workflowRes.reason
+          if (err?.name === 'AbortError' || err?.message?.includes('aborted') || err?.message?.includes('cancelled')) {
+            return
+          }
+          throw err
+        }
+
+        const workflowData = workflowRes.value?.assessment
+        if (!workflowData) {
+          throw new Error('Hiring assessment not found.')
+        }
+
+        setSelected({
+          ...workflowData,
+          id: Number(workflowData.id),
+          quiz_id: workflowData.quiz_id ? Number(workflowData.quiz_id) : null,
+          coding_assessment_id: workflowData.coding_assessment_id ? Number(workflowData.coding_assessment_id) : null,
+        })
+        setPolicyDraft(workflowData.proctoring_config || null)
+
+        if (candidatesRes.status === 'fulfilled') {
+          setCandidates(candidatesRes.value?.candidates || [])
+        } else {
+          console.warn('[Hire Assessment] Candidates list non-fatal warning:', candidatesRes.reason)
+          setCandidates([])
+        }
+      } catch (err) {
+        if (!isMounted || controller.signal.aborted || request !== detailRequest.current) {
+          return
+        }
+        if (err?.name === 'AbortError' || err?.message?.includes('aborted') || err?.message?.includes('cancelled')) {
+          return
+        }
+        console.error('[Hire Assessment] Failed to load assessment workflow:', err)
+        setDetailError(err?.message || 'Unable to load this assessment.')
+      } finally {
+        if (isMounted && request === detailRequest.current) {
+          setDetailLoading(false)
+        }
+      }
+    }
+
+    loadAssessment()
+
+    return () => {
+      isMounted = false
+      controller.abort()
+    }
+  }, [searchParams, retryCount])
 
   const create = async (event) => {
     event.preventDefault()
@@ -174,6 +318,7 @@ export default function HireAssessmentsTab({ user }) {
     setEditItem({
       id: item.id,
       title: item.title || '',
+      jobRole: item.hiring_role || item.jobRole || '',
       description: item.description || '',
       durationMinutes: item.duration_minutes || 60,
       passingScore: item.passing_score || 60,
@@ -186,12 +331,16 @@ export default function HireAssessmentsTab({ user }) {
     if (!editItem.title.trim()) return toast.error('Title is required')
     setSaving(true)
     try {
-      await hiringService.updateAssessment(editItem.id, editItem)
+      await hiringService.updateAssessment(editItem.id, {
+        ...editItem,
+        hiringRole: editItem.jobRole,
+        jobRole: editItem.jobRole,
+      })
       toast.success('Assessment updated')
       setEditItem(null)
       await load()
-      if (selected && selected.id === editItem.id) {
-        await openDetail({ ...selected, ...editItem })
+      if (selected && Number(selected.id) === Number(editItem.id)) {
+        setRetryCount(c => c + 1)
       }
     } catch (error) {
       toast.error(error.message || 'Could not update assessment')
@@ -200,36 +349,223 @@ export default function HireAssessmentsTab({ user }) {
     }
   }
 
-  const executeDelete = async () => {
-    if (!deleteConfirm) return
-    setSaving(true)
+  const openBulkDelete = (ids, customTitle = '') => {
+    if (!ids || ids.length === 0) return
+    setActiveMenuId(null)
+    setBulkDeleteModal({
+      open: true,
+      itemType: 'assessment',
+      title: customTitle || (ids.length === 1 ? 'Delete Assessment?' : `Delete ${ids.length} Selected Assessments?`),
+      count: ids.length,
+      ids,
+      loading: false,
+      failedItems: null,
+    })
+  }
+
+  const handleExecuteBulkDelete = async (force = false, overrideIds = null) => {
+    const { ids: modalIds } = bulkDeleteModal
+    const ids = (overrideIds && overrideIds.length > 0) ? overrideIds : modalIds
+    if (!ids || ids.length === 0) return
+
+    setBulkDeleteModal(prev => ({ ...prev, loading: true }))
     try {
-      await hiringService.deleteAssessment(deleteConfirm.id)
-      toast.success('Assessment deleted successfully')
-      setDeleteConfirm(null)
-      if (selected?.id === deleteConfirm.id) {
-        setSelected(null)
+      const res = await hiringService.bulkDeleteAssessments(ids, force)
+      const data = res.data || res
+
+      if (data.success) {
+        if (data.failed && data.failed.length > 0) {
+          toast.warning(`Deleted ${data.summary?.deleted || 0} assessment(s). ${data.failed.length} item(s) protected.`)
+          setBulkDeleteModal(prev => ({
+            ...prev,
+            loading: false,
+            failedItems: data.failed,
+            ids: data.failed.map(f => f.id),
+            count: data.failed.length,
+          }))
+        } else {
+          toast.success(`Successfully ${force ? 'force deleted' : 'deleted'} ${data.summary?.deleted || ids.length} assessment(s).`)
+          setBulkDeleteModal({ open: false, itemType: 'assessment', title: '', count: 0, ids: [], loading: false, failedItems: null })
+        }
+        setSelectedAssessmentIds(new Set())
+        if (selected && ids.map(Number).includes(Number(selected.id))) {
+          handleBackToList()
+        }
+        await load()
+      } else {
+        if (data.failed && data.failed.length > 0) {
+          setBulkDeleteModal(prev => ({ ...prev, loading: false, failedItems: data.failed }))
+        } else {
+          toast.error(data.error || 'Failed to delete assessment(s)')
+          setBulkDeleteModal(prev => ({ ...prev, loading: false }))
+        }
       }
-      await load()
-    } catch (error) {
-      toast.error(error.message || 'Could not delete assessment')
-    } finally {
-      setSaving(false)
+    } catch (err) {
+      toast.error(err.message || 'Error deleting assessment(s)')
+      setBulkDeleteModal(prev => ({ ...prev, loading: false }))
     }
   }
 
+  const handleToggleSelectAssessment = (id) => {
+    setSelectedAssessmentIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const handleSelectAllAssessments = () => {
+    const currentIds = items.map(item => item.id)
+    const allSelected = currentIds.length > 0 && currentIds.every(id => selectedAssessmentIds.has(id))
+    setSelectedAssessmentIds(prev => {
+      const next = new Set(prev)
+      if (allSelected) {
+        currentIds.forEach(id => next.delete(id))
+      } else {
+        currentIds.forEach(id => next.add(id))
+      }
+      return next
+    })
+  }
+
+  const handleToggleSelectCandidate = (id) => {
+    setSelectedCandidateIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const handleSelectAllCandidates = () => {
+    const currentIds = filteredCandidates.map(c => c.id)
+    const allSelected = currentIds.length > 0 && currentIds.every(id => selectedCandidateIds.has(id))
+    setSelectedCandidateIds(prev => {
+      const next = new Set(prev)
+      if (allSelected) {
+        currentIds.forEach(id => next.delete(id))
+      } else {
+        currentIds.forEach(id => next.add(id))
+      }
+      return next
+    })
+  }
+
+  const handleBulkAssignCandidates = async () => {
+    const ids = Array.from(selectedCandidateIds)
+    if (!ids.length) return
+    setBusy('bulk-assign')
+    try {
+      await hiringService.assignCandidates(selected.id, ids)
+      toast.success(`Candidate assignments updated`)
+      setSelectedCandidateIds(new Set())
+      setRetryCount(c => c + 1)
+      await load()
+    } catch (err) {
+      toast.error(err.message || 'Could not assign candidates')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const handleBulkRemoveCandidates = async () => {
+    const ids = Array.from(selectedCandidateIds)
+    if (!ids.length) return
+    setBusy('bulk-remove-candidates')
+    try {
+      await Promise.all(ids.map(cid => hiringService.removeCandidate(selected.id, cid).catch(() => null)))
+      toast.success(`Removed ${ids.length} candidate(s)`)
+      setSelectedCandidateIds(new Set())
+      setRetryCount(c => c + 1)
+      await load()
+    } catch (err) {
+      toast.error(err.message || 'Could not remove candidates')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const handleOpenQuiz = async (item = selected, isCreate = false) => {
+    if (busy) return
+    const itemId = Number(item?.id)
+    let quizId = item?.quiz_id ? Number(item.quiz_id) : null
+    if (!quizId) {
+      setBusy('create-quiz')
+      try {
+        const res = await hiringService.ensureQuiz(itemId)
+        quizId = Number(res.quizId || res.quiz?.id)
+        toast.success('Quiz linked to Hire assessment')
+        if (selected && Number(selected.id) === itemId) {
+          setRetryCount(c => c + 1)
+        }
+        await load()
+      } catch (err) {
+        toast.error(err.message || 'Could not initialize quiz')
+        setBusy('')
+        return
+      } finally {
+        setBusy('')
+      }
+    }
+    if (!quizId) return toast.error('Quiz content is unavailable')
+    const actionQuery = isCreate ? '&tab=questions&action=create' : ''
+    navigate(`/trainer/quiz/${quizId}?from=hire&hireId=${itemId}&hireTitle=${encodeURIComponent(item.title || '')}${actionQuery}`)
+  }
+
+  const handleOpenCoding = async (item = selected, isCreate = false) => {
+    if (busy) return
+    const itemId = Number(item?.id)
+    let codingId = item?.coding_assessment_id ? Number(item.coding_assessment_id) : null
+    if (!codingId) {
+      setBusy('create-coding')
+      try {
+        const res = await hiringService.ensureCoding(itemId)
+        codingId = Number(res.assessmentId || res.codingAssessment?.id)
+        toast.success('Coding test linked to Hire assessment')
+        if (selected && Number(selected.id) === itemId) {
+          setRetryCount(c => c + 1)
+        }
+        await load()
+      } catch (err) {
+        toast.error(err.message || 'Could not initialize coding test')
+        setBusy('')
+        return
+      } finally {
+        setBusy('')
+      }
+    }
+    if (!codingId) return toast.error('Coding content is unavailable')
+    const actionQuery = isCreate ? '&tab=problems&action=create' : ''
+    navigate(`/trainer/coding/${codingId}?from=hire&hireId=${itemId}&hireTitle=${encodeURIComponent(item.title || '')}${actionQuery}`)
+  }
+
   const manageContent = (item = selected) => {
-    const id = item?.engine_id || (item?.assessment_type === 'CODING' ? item?.coding_assessment_id : item?.quiz_id)
+    const itemId = Number(item?.id)
+    const id = Number(item?.engine_id || (item?.assessment_type === 'CODING' ? item?.coding_assessment_id : item?.quiz_id))
     if (!id) return toast.error('Shared assessment content is unavailable')
-    navigate(item.assessment_type === 'CODING' ? `/trainer/coding/${id}?from=hire` : `/trainer/quiz/${id}?from=hire`)
+    navigate(item.assessment_type === 'CODING'
+      ? `/trainer/coding/${id}?from=hire&hireId=${itemId}&hireTitle=${encodeURIComponent(item.title || '')}`
+      : `/trainer/quiz/${id}?from=hire&hireId=${itemId}&hireTitle=${encodeURIComponent(item.title || '')}`)
   }
 
   const publish = async (target = selected) => {
+    // Guard: require at least one candidate before publishing
+    const candidateCount = Number(
+      target?.candidate_count ??
+      target?.assigned_count ??
+      target?.metrics?.candidate_count ??
+      0
+    )
+    if (candidateCount === 0) {
+      toast.error('Cannot publish: No candidates have been added or assigned. Please add participants before publishing.')
+      return
+    }
     setBusy('publish')
     try {
       await hiringService.publishAssessment(target.id)
       toast.success('Assessment published')
-      if (selected) await openDetail(selected)
+      if (selected) setRetryCount(c => c + 1)
       await load()
     } catch (error) {
       toast.error(error.message || 'Publish failed')
@@ -243,7 +579,7 @@ export default function HireAssessmentsTab({ user }) {
     try {
       await hiringService.closeAssessment(target.id)
       toast.success('Assessment closed')
-      if (selected) await openDetail(selected)
+      if (selected) setRetryCount(c => c + 1)
       await load()
     } catch (error) {
       toast.error(error.message || 'Close failed')
@@ -261,7 +597,7 @@ export default function HireAssessmentsTab({ user }) {
       const response = await hiringService.uploadCandidatesCsv(selected.id, formData)
       const summary = response.summary || {}
       toast.success(`${summary.registeredAndAssigned || 0} registered candidate(s) assigned; ${summary.unregistered || 0} pending`)
-      await openDetail(selected)
+      setRetryCount(c => c + 1)
       await load()
     } catch (error) {
       toast.error(error.message || 'CSV upload failed')
@@ -276,7 +612,7 @@ export default function HireAssessmentsTab({ user }) {
     try {
       const response = await hiringService.recheckRegistration(selected.id)
       toast.success(`${response.newlyAssigned || 0} newly registered candidate(s) assigned`)
-      await openDetail(selected)
+      setRetryCount(c => c + 1)
       await load()
     } catch (error) {
       toast.error(error.message || 'Registration check failed')
@@ -289,7 +625,7 @@ export default function HireAssessmentsTab({ user }) {
     setBusy(`candidate-${candidate.id}`)
     try {
       await hiringService.toggleAssignCandidate(selected.id, candidate.id)
-      await openDetail(selected)
+      setRetryCount(c => c + 1)
       await load()
     } catch (error) {
       toast.error(error.message || 'Could not update assignment')
@@ -305,10 +641,76 @@ export default function HireAssessmentsTab({ user }) {
       await hiringService.removeCandidate(selected.id, candidateToDelete.id)
       toast.success('Candidate removed')
       setCandidateToDelete(null)
-      await openDetail(selected)
+      setRetryCount(c => c + 1)
       await load()
     } catch (error) {
       toast.error(error.message || 'Could not remove candidate')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const revokeCandidate = async (candidate) => {
+    const go = window.confirm(
+      `Revoke the hiring assignment for ${candidate.full_name || candidate.email}? The candidate will immediately lose access to the assessment.`,
+    )
+    if (!go) return
+    setBusy(`revoke-${candidate.id}`)
+    try {
+      await hiringService.revokeCandidate(selected.id, candidate.id)
+      toast.success('Assignment revoked — candidate access removed')
+      setRetryCount(c => c + 1)
+      await load()
+    } catch (error) {
+      toast.error(error.message || 'Could not revoke assignment')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const reassignCandidate = async (candidate) => {
+    setBusy(`reassign-${candidate.id}`)
+    try {
+      await hiringService.reassignCandidate(selected.id, candidate.id)
+      toast.success('Candidate reassigned')
+      setRetryCount(c => c + 1)
+      await load()
+    } catch (error) {
+      toast.error(error.message || 'Could not reassign candidate')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const resetAttempt = async (candidate) => {
+    const go = window.confirm(
+      `Reset the attempt for ${candidate.full_name || candidate.email}? The previous attempt and its answers will be deleted so they can start fresh.`,
+    )
+    if (!go) return
+    setBusy(`reset-${candidate.id}`)
+    try {
+      await hiringService.resetCandidateAttempt(selected.id, candidate.id)
+      toast.success('Attempt reset — candidate can start fresh')
+      setRetryCount(c => c + 1)
+      await load()
+    } catch (error) {
+      toast.error(error.message || 'Could not reset attempt')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const extendTime = async (candidate) => {
+    const minutes = window.prompt(`Extra minutes to grant ${candidate.full_name || candidate.email}:`, '15')
+    if (!minutes) return
+    setBusy(`extend-${candidate.id}`)
+    try {
+      const result = await hiringService.extendCandidateTime(selected.id, candidate.id, Number(minutes))
+      toast.success(`Extended by ${result.extendedMinutes || minutes} minutes`)
+      setRetryCount(c => c + 1)
+      await load()
+    } catch (error) {
+      toast.error(error.message || 'Could not extend time')
     } finally {
       setBusy('')
     }
@@ -397,58 +799,192 @@ export default function HireAssessmentsTab({ user }) {
   // ==========================================
   // DETAIL VIEW
   // ==========================================
-  if (selected) {
-    return (
-      <div className="reg-admin">
-        {/* Detail Header */}
-        <div className="reg-admin-header" style={{ marginBottom: 20 }}>
-          <button
-            className="reg-admin-btn reg-admin-btn--secondary"
-            onClick={() => { detailRequest.current += 1; setSelected(null); setCandidates([]) }}
-            style={{ padding: '7px 12px' }}
-          >
-            <ArrowLeft size={15} /> Back
-          </button>
-          <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A' }}>
-            {selected.assessment_type === 'CODING' ? <Code2 size={22} color="#16A34A" /> : <FileCode size={22} color="#16A34A" />}
+  const urlSelectedId = searchParams.get('selectedId') || searchParams.get('assessmentId')
+
+  if (urlSelectedId || selected) {
+    // If error occurs and we don't have full assessment data to render
+    if (detailError && !selected?.title) {
+      return (
+        <div className="reg-admin">
+          <div className="reg-admin-header" style={{ marginBottom: 20 }}>
+            <button
+              className="reg-admin-btn reg-admin-btn--secondary"
+              onClick={handleBackToList}
+              style={{ padding: '7px 12px' }}
+            >
+              <ArrowLeft size={15} /> Back to Assessments
+            </button>
           </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <h1 className="reg-admin-title" style={{ fontSize: 22 }}>{selected.title}</h1>
-              <StatusBadge value={selected.status} />
+          <div role="alert" className="reg-admin-card" style={{ borderColor: '#FECACA', background: '#FEF2F2', padding: 24, borderRadius: 12, margin: '20px 0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#B91C1C', marginBottom: 8 }}>
+              <AlertTriangle size={20} />
+              <h4 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
+                {detailError.toLowerCase().includes('not found') ? 'Assessment Not Found' : 'Unable to Load Assessment'}
+              </h4>
             </div>
-            <p className="reg-admin-subtitle" style={{ marginTop: 4 }}>
-              Hire &bull; {selected.assessment_type === 'CODING' ? 'Coding assessment' : 'Quiz assessment'} &bull; {selected.duration_minutes || 60} mins &bull; {selected.passing_score || 60}% passing score
-            </p>
-          </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => startEdit(selected)}>
-              <Edit2 size={14} /> Edit
-            </button>
-            <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => manageContent()}>
-              <Eye size={14} /> Manage content & reports
-            </button>
-            {selected.engine_status === 'DRAFT' && (
-              <button className="reg-admin-btn reg-admin-btn--primary" disabled={busy === 'publish'} onClick={() => publish(selected)}>
-                {busy === 'publish' ? <Loader2 size={14} className="bulk-spin" /> : <Send size={14} />} Publish
+            <p style={{ color: '#7F1D1D', margin: '0 0 16px', fontSize: 13 }}>{detailError}</p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                className="reg-admin-btn reg-admin-btn--primary"
+                onClick={() => setRetryCount(c => c + 1)}
+                style={{ background: '#DC2626', borderColor: '#DC2626' }}
+              >
+                <RefreshCw size={14} /> Retry
               </button>
-            )}
-            {selected.engine_status === 'PUBLISHED' && (
-              <button className="reg-admin-btn reg-admin-btn--secondary" style={{ color: '#DC2626' }} disabled={busy === 'close'} onClick={() => closeAssessment(selected)}>
-                {busy === 'close' ? <Loader2 size={14} className="bulk-spin" /> : <XCircle size={14} />} Close test
+              <button className="reg-admin-btn reg-admin-btn--secondary" onClick={handleBackToList}>
+                <ArrowLeft size={14} /> Back to Assessments
               </button>
-            )}
+            </div>
           </div>
         </div>
+      )
+    }
 
-        {detailLoading ? (
-          <div className="reg-admin-loading" style={{ padding: 60 }}><Loader2 className="bulk-spin" /> Loading assessment workflow…</div>
-        ) : detailError ? (
-          <div role="alert" className="reg-admin-card" style={{ borderColor: '#FECACA', background: '#FEF2F2', padding: 20 }}>
-            <p style={{ color: '#B91C1C', margin: 0, fontWeight: 600 }}>{detailError}</p>
-            <button className="reg-admin-btn reg-admin-btn--secondary" style={{ marginTop: 12 }} onClick={() => openDetail(selected)}>Retry</button>
+    // Initial loading state before title is loaded
+    if ((detailLoading || (urlSelectedId && !selected)) && !selected?.title) {
+      return (
+        <div className="reg-admin">
+          <div className="reg-admin-header" style={{ marginBottom: 20 }}>
+            <button
+              className="reg-admin-btn reg-admin-btn--secondary"
+              onClick={handleBackToList}
+              style={{ padding: '7px 12px' }}
+            >
+              <ArrowLeft size={15} /> Back
+            </button>
+            <div style={{ flex: 1 }}>
+              <h1 className="reg-admin-title" style={{ fontSize: 20 }}>Loading Assessment…</h1>
+            </div>
           </div>
-        ) : (
+          <div className="reg-admin-loading" style={{ padding: 60 }}>
+            <Loader2 className="bulk-spin" /> Loading assessment workflow…
+          </div>
+        </div>
+      )
+    }
+
+    if (selected) {
+      return (
+        <div className="reg-admin">
+          {/* Detail Header */}
+          <div className="reg-admin-header" style={{ marginBottom: 20 }}>
+            <button
+              className="reg-admin-btn reg-admin-btn--secondary"
+              onClick={handleBackToList}
+              style={{ padding: '7px 12px' }}
+            >
+              <ArrowLeft size={15} /> Back
+            </button>
+            <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A' }}>
+              {selected.assessment_type === 'CODING' ? <Code2 size={22} color="#16A34A" /> : <FileCode size={22} color="#16A34A" />}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <h1 className="reg-admin-title" style={{ fontSize: 22 }}>{selected.title}</h1>
+                <StatusBadge value={selected.status} />
+              </div>
+              <p className="reg-admin-subtitle" style={{ marginTop: 4 }}>
+                Hire &bull; {selected.assessment_type === 'COMBINED' ? 'Combined Quiz + Coding' : selected.assessment_type === 'CODING' ? 'Coding assessment' : 'Quiz assessment'} &bull; {selected.duration_minutes || 60} mins &bull; {selected.passing_score || 60}% passing score
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button className="reg-admin-btn reg-admin-btn--secondary" disabled={detailLoading} onClick={() => startEdit(selected)}>
+                <Edit2 size={14} /> Edit
+              </button>
+
+              {/* Direct Quiz Action */}
+              {(selected.assessment_type === 'QUIZ' || selected.assessment_type === 'COMBINED') && (
+                Number(selected.quiz_metrics?.question_count || 0) === 0 ? (
+                  <button
+                    className="reg-admin-btn reg-admin-btn--primary"
+                    style={{ background: '#16A34A', borderColor: '#16A34A' }}
+                    disabled={busy === 'create-quiz' || detailLoading}
+                    onClick={() => handleOpenQuiz(selected, true)}
+                  >
+                    {busy === 'create-quiz' ? <Loader2 size={14} className="bulk-spin" /> : <Plus size={14} />} Create Quiz
+                  </button>
+                ) : (
+                  <button
+                    className="reg-admin-btn reg-admin-btn--secondary"
+                    disabled={busy === 'create-quiz' || detailLoading}
+                    onClick={() => handleOpenQuiz(selected, false)}
+                  >
+                    <Edit2 size={14} /> Edit Quiz
+                  </button>
+                )
+              )}
+
+              {/* Direct Coding Action */}
+              {(selected.assessment_type === 'CODING' || selected.assessment_type === 'COMBINED') && (
+                Number(selected.coding_metrics?.problem_count || 0) === 0 ? (
+                  <button
+                    className="reg-admin-btn reg-admin-btn--primary"
+                    style={{ background: '#16A34A', borderColor: '#16A34A' }}
+                    disabled={busy === 'create-coding' || detailLoading}
+                    onClick={() => handleOpenCoding(selected, true)}
+                  >
+                    {busy === 'create-coding' ? <Loader2 size={14} className="bulk-spin" /> : <Plus size={14} />} Create Coding
+                  </button>
+                ) : (
+                  <button
+                    className="reg-admin-btn reg-admin-btn--secondary"
+                    disabled={busy === 'create-coding' || detailLoading}
+                    onClick={() => handleOpenCoding(selected, false)}
+                  >
+                    <Edit2 size={14} /> Edit Coding
+                  </button>
+                )
+              )}
+
+              <button className="reg-admin-btn reg-admin-btn--secondary" disabled={detailLoading} onClick={() => manageContent()}>
+                <Eye size={14} /> Manage content & reports
+              </button>
+              {selected.engine_status === 'DRAFT' && (
+                <button className="reg-admin-btn reg-admin-btn--primary" disabled={busy === 'publish' || detailLoading} onClick={() => publish(selected)}>
+                  {busy === 'publish' ? <Loader2 size={14} className="bulk-spin" /> : <Send size={14} />} Publish
+                </button>
+              )}
+              {selected.engine_status === 'PUBLISHED' && (
+                <button className="reg-admin-btn reg-admin-btn--secondary" style={{ color: '#DC2626' }} disabled={busy === 'close' || detailLoading} onClick={() => closeAssessment(selected)}>
+                  {busy === 'close' ? <Loader2 size={14} className="bulk-spin" /> : <XCircle size={14} />} Close test
+                </button>
+              )}
+              <button
+                className="reg-admin-btn reg-admin-btn--secondary"
+                style={{ color: '#DC2626' }}
+                disabled={detailLoading}
+                onClick={() => openBulkDelete([selected.id], `Delete "${selected.title}"?`)}
+              >
+                <Trash2 size={14} /> Delete
+              </button>
+            </div>
+          </div>
+
+          {detailLoading ? (
+            <div className="reg-admin-loading" style={{ padding: 60 }}><Loader2 className="bulk-spin" /> Loading assessment workflow…</div>
+          ) : detailError ? (
+            <div role="alert" className="reg-admin-card" style={{ borderColor: '#FECACA', background: '#FEF2F2', padding: 24, borderRadius: 12, margin: '20px 0' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#B91C1C', marginBottom: 8 }}>
+                <AlertTriangle size={20} />
+                <h4 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
+                  {detailError.toLowerCase().includes('not found') ? 'Assessment Not Found' : 'Unable to Load Assessment'}
+                </h4>
+              </div>
+              <p style={{ color: '#7F1D1D', margin: '0 0 16px', fontSize: 13 }}>{detailError}</p>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  className="reg-admin-btn reg-admin-btn--primary"
+                  onClick={() => setRetryCount(c => c + 1)}
+                  style={{ background: '#DC2626', borderColor: '#DC2626' }}
+                >
+                  <RefreshCw size={14} /> Retry
+                </button>
+                <button className="reg-admin-btn reg-admin-btn--secondary" onClick={handleBackToList}>
+                  <ArrowLeft size={14} /> Back to Assessments
+                </button>
+              </div>
+            </div>
+          ) : (
           <>
             {/* SECTION 1: AI PROCTORING POLICY */}
             {policyDraft && (
@@ -474,6 +1010,7 @@ export default function HireAssessmentsTab({ user }) {
                     ['livenessDetection', 'Liveness challenge', 'Prevent spoofing with head pose and expression check'],
                     ['continuousFaceVerification', 'Continuous face verification', 'Flag multiple faces, looking away, or face missing'],
                     ['mobileRoomScan', 'QR mobile 360° room scan', 'Require smartphone 360 camera sweep before starting'],
+                    ['roomScan360Enabled', 'Guided six-step room verification', 'AI-guided front, left, back, right, desk and floor captures with voice instructions'],
                     ['unauthorizedObjectDetection', 'Phone/object detection', 'AI detection of mobile phones, notes, or smart devices'],
                     ['evidenceCapture', 'Screenshot evidence', 'Capture flagged events as encrypted audit snapshots'],
                     ['voiceWarnings', 'Voice warnings', 'Speak audible warnings when suspicious activity is detected'],
@@ -522,15 +1059,7 @@ export default function HireAssessmentsTab({ user }) {
                       onChange={event => setPolicyDraft({ ...policyDraft, defaultLanguage: event.target.value })}
                     >
                       <option value="en-IN">English</option>
-                      <option value="hi-IN">Hindi</option>
                       <option value="ta-IN">Tamil</option>
-                      <option value="te-IN">Telugu</option>
-                      <option value="kn-IN">Kannada</option>
-                      <option value="ml-IN">Malayalam</option>
-                      <option value="mr-IN">Marathi</option>
-                      <option value="bn-IN">Bengali</option>
-                      <option value="gu-IN">Gujarati</option>
-                      <option value="pa-IN">Punjabi</option>
                     </select>
                   </div>
                   <div>
@@ -540,7 +1069,7 @@ export default function HireAssessmentsTab({ user }) {
                       type="number"
                       min="15"
                       max="300"
-                      value={policyDraft.identityCheckIntervalSeconds || 30}
+                        value={policyDraft.identityCheckIntervalSeconds ?? 30}
                       onChange={event => setPolicyDraft({ ...policyDraft, identityCheckIntervalSeconds: Number(event.target.value) })}
                     />
                   </div>
@@ -551,8 +1080,19 @@ export default function HireAssessmentsTab({ user }) {
                       type="number"
                       min="4"
                       max="12"
-                      value={policyDraft.roomScanMinFrames || 6}
+                      value={policyDraft.roomScanMinFrames ?? 6}
                       onChange={event => setPolicyDraft({ ...policyDraft, roomScanMinFrames: Number(event.target.value) })}
+                    />
+                  </div>
+                  <div>
+                    <label className="reg-field-label" style={{ fontSize: 12 }}>360° coverage threshold (%)</label>
+                    <input
+                      className="reg-input"
+                      type="number"
+                      min="50"
+                      max="100"
+                      value={policyDraft.roomScanCoverageThreshold || 85}
+                      onChange={event => setPolicyDraft({ ...policyDraft, roomScanCoverageThreshold: Number(event.target.value) })}
                     />
                   </div>
                   <div>
@@ -590,7 +1130,7 @@ export default function HireAssessmentsTab({ user }) {
                   <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#111827' }}>Assessment content & results</h3>
                   <p style={{ margin: '4px 0 0', color: '#64748B', fontSize: 13 }}>Generate and review questions, publish the test, and view candidate results.</p>
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                   <button className="reg-admin-btn reg-admin-btn--secondary" onClick={() => manageContent()}>
                     <Eye size={14} /> Manage content & reports
                   </button>
@@ -601,6 +1141,260 @@ export default function HireAssessmentsTab({ user }) {
                   )}
                 </div>
               </div>
+
+              {/* Direct Content Creation Cards & Empty State */}
+              {(() => {
+                const isQuiz = selected.assessment_type === 'QUIZ' || selected.assessment_type === 'COMBINED'
+                const isCoding = selected.assessment_type === 'CODING' || selected.assessment_type === 'COMBINED'
+                const quizQCount = Number(selected.quiz_metrics?.question_count || 0)
+                const codingPCount = Number(selected.coding_metrics?.problem_count || 0)
+                const hasAnyContent = (isQuiz && quizQCount > 0) || (isCoding && codingPCount > 0)
+                const quizStatusNorm = String(selected.quiz_metrics?.status || (selected.quiz_id ? 'DRAFT' : 'NOT_CREATED')).toUpperCase()
+                const codingStatusNorm = String(selected.coding_metrics?.status || (selected.coding_assessment_id ? 'DRAFT' : 'NOT_CREATED')).toUpperCase()
+
+                return (
+                  <>
+                    {!hasAnyContent && (
+                      <div style={{
+                        padding: '16px 20px',
+                        marginBottom: 18,
+                        borderRadius: 12,
+                        background: '#F8FAFC',
+                        border: '1.5px dashed #CBD5E1',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        flexWrap: 'wrap',
+                        gap: 14
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                          <div style={{
+                            width: 40, height: 40, borderRadius: 10, background: '#EFF6FF',
+                            color: '#2563EB', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                          }}>
+                            <FileQuestion size={20} />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: '#0F172A' }}>No assessment content yet</div>
+                            <div style={{ fontSize: 12.5, color: '#64748B', marginTop: 2 }}>Create the quiz or coding test that candidates will complete.</div>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                          {isQuiz && (
+                            <button
+                              className="reg-admin-btn reg-admin-btn--primary"
+                              style={{ background: '#16A34A', borderColor: '#16A34A' }}
+                              disabled={busy === 'create-quiz'}
+                              onClick={() => handleOpenQuiz(selected, true)}
+                            >
+                              {busy === 'create-quiz' ? <Loader2 size={14} className="bulk-spin" /> : <Plus size={14} />} Create Quiz
+                            </button>
+                          )}
+                          {isCoding && (
+                            <button
+                              className="reg-admin-btn reg-admin-btn--primary"
+                              style={{ background: '#16A34A', borderColor: '#16A34A' }}
+                              disabled={busy === 'create-coding'}
+                              onClick={() => handleOpenCoding(selected, true)}
+                            >
+                              {busy === 'create-coding' ? <Loader2 size={14} className="bulk-spin" /> : <Plus size={14} />} Create Coding
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: isQuiz && isCoding ? 'repeat(auto-fit, minmax(300px, 1fr))' : '1fr',
+                      gap: 14,
+                      marginBottom: 20
+                    }}>
+                      {/* Quiz Card */}
+                      {isQuiz && (
+                        <div style={{
+                          padding: 18,
+                          borderRadius: 12,
+                          border: '1.5px solid #E2E8F0',
+                          background: '#FFFFFF',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'space-between',
+                          gap: 14,
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+                        }}>
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <div style={{
+                                  width: 34, height: 34, borderRadius: 8, background: '#DCFCE7',
+                                  color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                }}>
+                                  <FileQuestion size={18} />
+                                </div>
+                                <div>
+                                  <h4 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#111827' }}>Quiz</h4>
+                                  <div style={{ fontSize: 11.5, color: '#64748B', marginTop: 1 }}>Multiple-choice assessment questions</div>
+                                </div>
+                              </div>
+                              <span style={{
+                                padding: '3px 10px',
+                                borderRadius: 999,
+                                fontSize: 11,
+                                fontWeight: 650,
+                                background: quizQCount === 0 ? '#F1F5F9' : (quizStatusNorm === 'PUBLISHED' ? '#DCFCE7' : (quizStatusNorm === 'CLOSED' ? '#FEE2E2' : '#FEF3C7')),
+                                color: quizQCount === 0 ? '#475569' : (quizStatusNorm === 'PUBLISHED' ? '#15803D' : (quizStatusNorm === 'CLOSED' ? '#DC2626' : '#92400E')),
+                                border: `1px solid ${quizQCount === 0 ? '#CBD5E1' : (quizStatusNorm === 'PUBLISHED' ? '#86EFAC' : (quizStatusNorm === 'CLOSED' ? '#FCA5A5' : '#FCD34D'))}`,
+                              }}>
+                                {quizQCount === 0 ? 'Not created' : (quizStatusNorm === 'PUBLISHED' ? 'Published' : (quizStatusNorm === 'CLOSED' ? 'Closed' : 'Draft'))}
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 10, fontSize: 13, color: '#334155' }}>
+                              <div>
+                                <span style={{ fontSize: 18, fontWeight: 750, color: '#111827' }}>{quizQCount}</span>
+                                <span style={{ color: '#64748B', fontSize: 12, marginLeft: 4 }}>Questions</span>
+                              </div>
+                              <div style={{ width: 1, height: 16, background: '#E2E8F0' }} />
+                              <div style={{ color: '#64748B', fontSize: 12 }}>
+                                {selected.duration_minutes || 60} mins duration &bull; {selected.passing_score || 50}% pass mark
+                              </div>
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingTop: 10, borderTop: '1px solid #F1F5F9' }}>
+                            {quizQCount === 0 ? (
+                              <button
+                                className="reg-admin-btn reg-admin-btn--primary"
+                                style={{ background: '#16A34A', borderColor: '#16A34A', padding: '6px 14px', fontSize: 12.5 }}
+                                disabled={busy === 'create-quiz'}
+                                onClick={() => handleOpenQuiz(selected, true)}
+                              >
+                                {busy === 'create-quiz' ? <Loader2 size={13} className="bulk-spin" /> : <Plus size={13} />} Create Quiz
+                              </button>
+                            ) : quizStatusNorm === 'CLOSED' ? (
+                              <button
+                                className="reg-admin-btn reg-admin-btn--secondary"
+                                style={{ padding: '6px 14px', fontSize: 12.5 }}
+                                onClick={() => handleOpenQuiz(selected, false)}
+                              >
+                                <Eye size={13} /> View Questions
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  className="reg-admin-btn reg-admin-btn--primary"
+                                  style={{ background: '#16A34A', borderColor: '#16A34A', padding: '6px 14px', fontSize: 12.5 }}
+                                  onClick={() => handleOpenQuiz(selected, false)}
+                                >
+                                  <Edit2 size={13} /> {quizStatusNorm === 'DRAFT' ? 'Continue Editing' : 'Edit Quiz'}
+                                </button>
+                                <button
+                                  className="reg-admin-btn reg-admin-btn--secondary"
+                                  style={{ padding: '6px 14px', fontSize: 12.5 }}
+                                  onClick={() => handleOpenQuiz(selected, false)}
+                                >
+                                  <Eye size={13} /> View Questions
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Coding Card */}
+                      {isCoding && (
+                        <div style={{
+                          padding: 18,
+                          borderRadius: 12,
+                          border: '1.5px solid #E2E8F0',
+                          background: '#FFFFFF',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'space-between',
+                          gap: 14,
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+                        }}>
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <div style={{
+                                  width: 34, height: 34, borderRadius: 8, background: '#EFF6FF',
+                                  color: '#2563EB', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                }}>
+                                  <Code2 size={18} />
+                                </div>
+                                <div>
+                                  <h4 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#111827' }}>Coding</h4>
+                                  <div style={{ fontSize: 11.5, color: '#64748B', marginTop: 1 }}>Programming problems, test cases & languages</div>
+                                </div>
+                              </div>
+                              <span style={{
+                                padding: '3px 10px',
+                                borderRadius: 999,
+                                fontSize: 11,
+                                fontWeight: 650,
+                                background: codingPCount === 0 ? '#F1F5F9' : (codingStatusNorm === 'PUBLISHED' ? '#DCFCE7' : (codingStatusNorm === 'CLOSED' ? '#FEE2E2' : '#FEF3C7')),
+                                color: codingPCount === 0 ? '#475569' : (codingStatusNorm === 'PUBLISHED' ? '#15803D' : (codingStatusNorm === 'CLOSED' ? '#DC2626' : '#92400E')),
+                                border: `1px solid ${codingPCount === 0 ? '#CBD5E1' : (codingStatusNorm === 'PUBLISHED' ? '#86EFAC' : (codingStatusNorm === 'CLOSED' ? '#FCA5A5' : '#FCD34D'))}`,
+                              }}>
+                                {codingPCount === 0 ? 'Not created' : (codingStatusNorm === 'PUBLISHED' ? 'Published' : (codingStatusNorm === 'CLOSED' ? 'Closed' : 'Draft'))}
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 10, fontSize: 13, color: '#334155' }}>
+                              <div>
+                                <span style={{ fontSize: 18, fontWeight: 750, color: '#111827' }}>{codingPCount}</span>
+                                <span style={{ color: '#64748B', fontSize: 12, marginLeft: 4 }}>Problems</span>
+                              </div>
+                              <div style={{ width: 1, height: 16, background: '#E2E8F0' }} />
+                              <div style={{ color: '#64748B', fontSize: 12 }}>
+                                Algorithmic execution &bull; Multi-language Judge
+                              </div>
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingTop: 10, borderTop: '1px solid #F1F5F9' }}>
+                            {codingPCount === 0 ? (
+                              <button
+                                className="reg-admin-btn reg-admin-btn--primary"
+                                style={{ background: '#16A34A', borderColor: '#16A34A', padding: '6px 14px', fontSize: 12.5 }}
+                                disabled={busy === 'create-coding'}
+                                onClick={() => handleOpenCoding(selected, true)}
+                              >
+                                {busy === 'create-coding' ? <Loader2 size={13} className="bulk-spin" /> : <Plus size={13} />} Create Coding
+                              </button>
+                            ) : codingStatusNorm === 'CLOSED' ? (
+                              <button
+                                className="reg-admin-btn reg-admin-btn--secondary"
+                                style={{ padding: '6px 14px', fontSize: 12.5 }}
+                                onClick={() => handleOpenCoding(selected, false)}
+                              >
+                                <Eye size={13} /> View Problems
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  className="reg-admin-btn reg-admin-btn--primary"
+                                  style={{ background: '#16A34A', borderColor: '#16A34A', padding: '6px 14px', fontSize: 12.5 }}
+                                  onClick={() => handleOpenCoding(selected, false)}
+                                >
+                                  <Edit2 size={13} /> {codingStatusNorm === 'DRAFT' ? 'Continue Editing' : 'Edit Coding'}
+                                </button>
+                                <button
+                                  className="reg-admin-btn reg-admin-btn--secondary"
+                                  style={{ padding: '6px 14px', fontSize: 12.5 }}
+                                  onClick={() => handleOpenCoding(selected, false)}
+                                >
+                                  <Eye size={13} /> View Problems
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )
+              })()}
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 12 }}>
                 {[
@@ -747,54 +1541,201 @@ export default function HireAssessmentsTab({ user }) {
                 </div>
               )}
 
+              {/* Candidate Bulk Actions Toolbar */}
+              {selectedCandidateIds.size > 0 && (
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '8px 14px',
+                  background: '#f0fdf4',
+                  border: '1px solid #bbf7d0',
+                  borderRadius: '8px',
+                  marginBottom: '12px',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '22px',
+                      height: '22px',
+                      borderRadius: '50%',
+                      background: '#16a34a',
+                      color: '#fff',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                    }}>
+                      {selectedCandidateIds.size}
+                    </span>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#166534' }}>
+                      {selectedCandidateIds.size} candidate{selectedCandidateIds.size > 1 ? 's' : ''} selected
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button
+                      type="button"
+                      className="reg-admin-btn reg-admin-btn--secondary"
+                      onClick={() => setSelectedCandidateIds(new Set())}
+                      style={{ padding: '5px 10px', fontSize: '12px', height: '30px' }}
+                    >
+                      Deselect All
+                    </button>
+                    <button
+                      type="button"
+                      className="reg-admin-btn reg-admin-btn--primary"
+                      onClick={handleBulkAssignCandidates}
+                      disabled={busy === 'bulk-assign'}
+                      style={{ padding: '5px 12px', fontSize: '12px', height: '30px' }}
+                    >
+                      {busy === 'bulk-assign' ? <Loader2 size={12} className="bulk-spin" /> : <CheckCircle size={13} />}
+                      Bulk Assign ({selectedCandidateIds.size})
+                    </button>
+                    <button
+                      type="button"
+                      className="reg-admin-btn reg-admin-btn--danger"
+                      onClick={handleBulkRemoveCandidates}
+                      disabled={busy === 'bulk-remove-candidates'}
+                      style={{ padding: '5px 12px', fontSize: '12px', height: '30px' }}
+                    >
+                      {busy === 'bulk-remove-candidates' ? <Loader2 size={12} className="bulk-spin" /> : <Trash2 size={13} />}
+                      Bulk Remove ({selectedCandidateIds.size})
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div className="reg-admin-table-wrap">
                 <table className="reg-admin-table reg-admin-table--static">
                   <thead>
                     <tr>
-                      <th style={{ width: '38%' }}>Candidate</th>
+                      <th style={{ width: 40, textAlign: 'center', padding: '10px 8px' }}>
+                        <input
+                          type="checkbox"
+                          aria-label="Select all candidates"
+                          checked={filteredCandidates.length > 0 && filteredCandidates.every(c => selectedCandidateIds.has(c.id))}
+                          ref={el => {
+                            if (el) {
+                              const someSelected = filteredCandidates.some(c => selectedCandidateIds.has(c.id))
+                              const allSelected = filteredCandidates.length > 0 && filteredCandidates.every(c => selectedCandidateIds.has(c.id))
+                              el.indeterminate = someSelected && !allSelected
+                            }
+                          }}
+                          onChange={handleSelectAllCandidates}
+                          style={{ width: 15, height: 15, cursor: 'pointer', accentColor: '#16a34a', verticalAlign: 'middle' }}
+                        />
+                      </th>
+                      <th style={{ width: '36%' }}>Candidate</th>
                       <th style={{ width: '22%' }}>Registration</th>
                       <th style={{ width: '22%' }}>Assignment</th>
-                      <th style={{ width: '18%', textAlign: 'right' }}>Action</th>
+                      <th style={{ width: '16%', textAlign: 'right' }}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {!filteredCandidates.length ? (
                       <tr>
-                        <td colSpan="4" style={{ textAlign: 'center', padding: 36, color: '#94A3B8' }}>
+                        <td colSpan="5" style={{ textAlign: 'center', padding: 36, color: '#94A3B8' }}>
                           {candidates.length ? 'No candidates matching search filter.' : 'No candidates uploaded yet.'}
                         </td>
                       </tr>
                     ) : (
-                      filteredCandidates.map((candidate) => (
-                        <tr key={candidate.id}>
-                          <td>
-                            <strong style={{ color: '#111827' }}>{candidate.full_name || 'Candidate'}</strong>
-                            <div style={{ color: '#64748B', fontSize: 12 }}>{candidate.email}</div>
-                          </td>
-                          <td><StatusBadge value={candidate.registration_status} /></td>
-                          <td><StatusBadge value={candidate.assignment_status} /></td>
-                          <td style={{ textAlign: 'right' }}>
-                            <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                              <button
-                                className="reg-admin-btn reg-admin-btn--secondary"
-                                style={{ padding: '5px 10px', fontSize: 12 }}
-                                disabled={candidate.registration_status !== 'REGISTERED' || busy === `candidate-${candidate.id}`}
-                                onClick={() => toggle(candidate)}
-                              >
-                                {candidate.assignment_status === 'ASSIGNED' ? 'Unassign' : 'Assign'}
-                              </button>
-                              <button
-                                className="reg-admin-action"
-                                style={{ width: 28, height: 28, borderRadius: 6, color: '#DC2626', borderColor: '#FECACA' }}
-                                title="Remove candidate"
-                                onClick={() => setCandidateToDelete(candidate)}
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))
+                      filteredCandidates.map((candidate) => {
+                        const isChecked = selectedCandidateIds.has(candidate.id)
+                        return (
+                          <tr key={candidate.id} style={{ background: isChecked ? '#f0fdf4' : undefined }}>
+                            <td style={{ width: 40, textAlign: 'center', padding: '10px 8px' }}>
+                              <input
+                                type="checkbox"
+                                aria-label={`Select candidate ${candidate.full_name || candidate.email}`}
+                                checked={isChecked}
+                                onChange={() => handleToggleSelectCandidate(candidate.id)}
+                                style={{ width: 15, height: 15, cursor: 'pointer', accentColor: '#16a34a', verticalAlign: 'middle' }}
+                              />
+                            </td>
+                            <td>
+                              <strong style={{ color: '#111827' }}>{candidate.full_name || 'Candidate'}</strong>
+                              <div style={{ color: '#64748B', fontSize: 12 }}>{candidate.email}</div>
+                            </td>
+                            <td><StatusBadge value={candidate.registration_status} /></td>
+                            <td><StatusBadge value={candidate.assignment_status} /></td>
+                            <td style={{ textAlign: 'right' }}>
+                              <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center', position: 'relative' }} data-hire-menu={`cand-${candidate.id}`}>
+                                <button
+                                  className="reg-admin-btn reg-admin-btn--secondary"
+                                  style={{ padding: '5px 10px', fontSize: 12 }}
+                                  disabled={candidate.registration_status !== 'REGISTERED' || busy === `candidate-${candidate.id}`}
+                                  onClick={() => toggle(candidate)}
+                                >
+                                  {candidate.assignment_status === 'ASSIGNED' ? 'Unassign' : 'Assign'}
+                                </button>
+                                <button
+                                  className="reg-admin-action"
+                                  style={{ width: 28, height: 28, borderRadius: 6, color: '#DC2626', borderColor: '#FECACA' }}
+                                  title="Remove candidate"
+                                  onClick={() => setCandidateToDelete(candidate)}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                                <button
+                                  className="reg-admin-action"
+                                  style={{ width: 28, height: 28, borderRadius: 6 }}
+                                  title="More actions"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    const key = `cand-${candidate.id}`
+                                    setActiveMenuId(activeMenuId === key ? null : key)
+                                  }}
+                                >
+                                  <MoreVertical size={14} />
+                                </button>
+                                {activeMenuId === `cand-${candidate.id}` && (
+                                  <div
+                                    style={{
+                                      position: 'absolute',
+                                      right: 0,
+                                      top: 34,
+                                      background: '#fff',
+                                      border: '1px solid #E2E8F0',
+                                      borderRadius: 10,
+                                      boxShadow: '0 10px 25px -5px rgba(15, 23, 42, 0.12), 0 8px 10px -6px rgba(15, 23, 42, 0.08)',
+                                      padding: '6px 0',
+                                      minWidth: 180,
+                                      zIndex: 50,
+                                      textAlign: 'left',
+                                    }}
+                                  >
+                                    <MenuItem
+                                      icon={<Ban size={14} color="#DC2626" />}
+                                      label="Revoke assignment"
+                                      danger
+                                      disabled={busy === `revoke-${candidate.id}`}
+                                      onClick={() => { setActiveMenuId(null); revokeCandidate(candidate) }}
+                                    />
+                                    <MenuItem
+                                      icon={<UserCheck size={14} color="#2563EB" />}
+                                      label="Reassign candidate"
+                                      disabled={candidate.registration_status !== 'REGISTERED' || busy === `reassign-${candidate.id}`}
+                                      onClick={() => { setActiveMenuId(null); reassignCandidate(candidate) }}
+                                    />
+                                    <MenuItem
+                                      icon={<RotateCcw size={14} color="#B45309" />}
+                                      label="Reset attempt"
+                                      disabled={busy === `reset-${candidate.id}`}
+                                      onClick={() => { setActiveMenuId(null); resetAttempt(candidate) }}
+                                    />
+                                    <MenuItem
+                                      icon={<Timer size={14} color="#7C3AED" />}
+                                      label="Extend time"
+                                      disabled={busy === `extend-${candidate.id}`}
+                                      onClick={() => { setActiveMenuId(null); extendTime(candidate) }}
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })
                     )}
                   </tbody>
                 </table>
@@ -828,6 +1769,7 @@ export default function HireAssessmentsTab({ user }) {
       </div>
     )
   }
+}
 
   // ==========================================
   // LIST VIEW
@@ -933,6 +1875,60 @@ export default function HireAssessmentsTab({ user }) {
         </div>
       )}
 
+      {/* Multi-Select Bulk Actions Toolbar */}
+      {selectedAssessmentIds.size > 0 && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '10px 16px',
+          background: '#f0fdf4',
+          border: '1px solid #bbf7d0',
+          borderRadius: '8px',
+          marginBottom: '14px',
+          boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '24px',
+              height: '24px',
+              borderRadius: '50%',
+              background: '#16a34a',
+              color: '#fff',
+              fontSize: '12px',
+              fontWeight: 700,
+            }}>
+              {selectedAssessmentIds.size}
+            </span>
+            <span style={{ fontSize: '13px', fontWeight: 600, color: '#166534' }}>
+              {selectedAssessmentIds.size} assessment{selectedAssessmentIds.size > 1 ? 's' : ''} selected
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              type="button"
+              className="reg-admin-btn reg-admin-btn--secondary"
+              onClick={() => setSelectedAssessmentIds(new Set())}
+              style={{ padding: '6px 12px', fontSize: '12px', height: '32px' }}
+            >
+              Deselect All
+            </button>
+            <button
+              type="button"
+              className="reg-admin-btn reg-admin-btn--danger"
+              onClick={() => openBulkDelete(Array.from(selectedAssessmentIds))}
+              style={{ padding: '6px 14px', fontSize: '12px', height: '32px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+            >
+              <Trash2 size={14} />
+              Bulk Delete ({selectedAssessmentIds.size})
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Assessments Table Wrap */}
       <div className="reg-admin-table-wrap">
         {loading ? (
@@ -952,123 +1948,130 @@ export default function HireAssessmentsTab({ user }) {
           <table className="reg-admin-table reg-admin-table--static">
             <thead>
               <tr>
-                <th style={{ width: '30%' }}>Assessment</th>
+                <th style={{ width: 44, textAlign: 'center', padding: '12px 8px' }}>
+                  <input
+                    type="checkbox"
+                    aria-label="Select all assessments on this page"
+                    checked={items.length > 0 && items.every(item => selectedAssessmentIds.has(item.id))}
+                    ref={el => {
+                      if (el) {
+                        const someSelected = items.some(item => selectedAssessmentIds.has(item.id))
+                        const allSelected = items.length > 0 && items.every(item => selectedAssessmentIds.has(item.id))
+                        el.indeterminate = someSelected && !allSelected
+                      }
+                    }}
+                    onChange={handleSelectAllAssessments}
+                    style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#16a34a', verticalAlign: 'middle' }}
+                  />
+                </th>
+                <th style={{ width: '28%' }}>Assessment</th>
                 <th style={{ width: '12%' }}>Engine</th>
                 <th style={{ width: '12%' }}>Status</th>
                 <th style={{ width: '10%' }}>Content</th>
-                <th style={{ width: '20%' }}>Candidates</th>
+                <th style={{ width: '18%' }}>Candidates</th>
                 <th style={{ width: '16%', textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => (
-                <tr key={item.id}>
-                  <td>
-                    <strong style={{ fontSize: 14, color: '#111827', display: 'block' }}>{item.title}</strong>
-                    <div style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
-                      {item.duration_minutes || 60} minutes &bull; Pass: {item.passing_score || 60}%
-                    </div>
-                  </td>
-                  <td>
-                    <span style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      color: item.assessment_type === 'CODING' ? '#2563EB' : '#059669',
-                      background: item.assessment_type === 'CODING' ? '#EFF6FF' : '#ECFDF5',
-                      padding: '3px 8px',
-                      borderRadius: 6,
-                    }}>
-                      {item.assessment_type === 'CODING' ? <Code2 size={13} /> : <FileCode size={13} />}
-                      {item.assessment_type === 'CODING' ? 'Coding' : 'Quiz'}
-                    </span>
-                  </td>
-                  <td>
-                    <StatusBadge value={item.status} />
-                  </td>
-                  <td>
-                    <span style={{ fontWeight: 650, color: '#111827' }}>{item.content_count || 0}</span>
-                    <span style={{ fontSize: 11, color: '#64748B', marginLeft: 4 }}>
-                      {item.assessment_type === 'CODING' ? 'problem(s)' : 'question(s)'}
-                    </span>
-                  </td>
-                  <td>
-                    <div style={{ fontSize: 12, color: '#111827', fontWeight: 600 }}>
-                      {item.assigned_count || 0} assigned
-                    </div>
-                    <div style={{ fontSize: 11, color: '#64748B' }}>
-                      {item.pending_candidates || 0} pending
-                    </div>
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, position: 'relative' }} data-hire-menu={item.id}>
-                      <button
-                        className="reg-admin-btn reg-admin-btn--secondary"
-                        onClick={() => openDetail(item)}
-                        style={{ padding: '6px 12px', fontSize: 12 }}
-                      >
-                        <Eye size={13} /> Open
-                      </button>
-                      <button
-                        className="reg-admin-btn reg-admin-btn--secondary"
-                        onClick={() => manageContent(item)}
-                        style={{ padding: '6px 12px', fontSize: 12 }}
-                        title="Manage shared assessment content in editor"
-                      >
-                        <BarChart3 size={13} /> Manage
-                      </button>
-
-                      {/* 3-Dot Action Menu for Edit, Delete, Publish */}
-                      <button
-                        className="reg-admin-action"
-                        style={{ width: 32, height: 32, borderRadius: 8 }}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setActiveMenuId(activeMenuId === item.id ? null : item.id)
-                        }}
-                        title="More options"
-                      >
-                        <MoreVertical size={15} />
-                      </button>
-
-                      {activeMenuId === item.id && (
-                        <div
-                          style={{
-                            position: 'absolute',
-                            right: 0,
-                            top: 36,
-                            background: '#fff',
-                            border: '1px solid #E2E8F0',
-                            borderRadius: 10,
-                            boxShadow: '0 10px 25px -5px rgba(15, 23, 42, 0.12), 0 8px 10px -6px rgba(15, 23, 42, 0.08)',
-                            padding: '6px 0',
-                            minWidth: 160,
-                            zIndex: 50,
-                            textAlign: 'left',
-                          }}
+              {items.map((item) => {
+                const isChecked = selectedAssessmentIds.has(item.id)
+                return (
+                  <tr key={item.id} style={{ background: isChecked ? '#f0fdf4' : undefined }}>
+                    <td style={{ width: 44, textAlign: 'center', padding: '12px 8px' }}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Select assessment ${item.title}`}
+                        checked={isChecked}
+                        onChange={() => handleToggleSelectAssessment(item.id)}
+                        style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#16a34a', verticalAlign: 'middle' }}
+                      />
+                    </td>
+                    <td>
+                      <strong style={{ fontSize: 14, color: '#111827', display: 'block' }}>{item.title}</strong>
+                      <div style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                        {item.duration_minutes || 60} minutes &bull; Pass: {item.passing_score || 60}%
+                      </div>
+                    </td>
+                    <td>
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: item.assessment_type === 'CODING' ? '#2563EB' : '#059669',
+                        background: item.assessment_type === 'CODING' ? '#EFF6FF' : '#ECFDF5',
+                        padding: '3px 8px',
+                        borderRadius: 6,
+                      }}>
+                        {item.assessment_type === 'CODING' ? <Code2 size={13} /> : <FileCode size={13} />}
+                        {item.assessment_type === 'CODING' ? 'Coding' : 'Quiz'}
+                      </span>
+                    </td>
+                    <td>
+                      <StatusBadge value={item.status} />
+                    </td>
+                    <td>
+                      <span style={{ fontWeight: 650, color: '#111827' }}>{item.content_count || 0}</span>
+                      <span style={{ fontSize: 11, color: '#64748B', marginLeft: 4 }}>
+                        {item.assessment_type === 'CODING' ? 'problem(s)' : 'question(s)'}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ fontSize: 12, color: '#111827', fontWeight: 600 }}>
+                        {item.assigned_count || 0} assigned
+                      </div>
+                      <div style={{ fontSize: 11, color: '#64748B' }}>
+                        {item.pending_candidates || 0} pending
+                      </div>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, position: 'relative' }} data-hire-menu={item.id}>
+                        <button
+                          className="reg-admin-btn reg-admin-btn--secondary"
+                          onClick={() => openDetail(item)}
+                          style={{ padding: '6px 12px', fontSize: 12 }}
                         >
-                          <button
+                          <Eye size={13} /> Open
+                        </button>
+                        <button
+                          className="reg-admin-btn reg-admin-btn--secondary"
+                          onClick={() => manageContent(item)}
+                          style={{ padding: '6px 12px', fontSize: 12 }}
+                          title="Manage shared assessment content in editor"
+                        >
+                          <BarChart3 size={13} /> Manage
+                        </button>
+
+                        {/* 3-Dot Action Menu for Edit, Delete, Publish, Close */}
+                        <button
+                          className="reg-admin-action"
+                          style={{ width: 32, height: 32, borderRadius: 8 }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setActiveMenuId(activeMenuId === item.id ? null : item.id)
+                          }}
+                          title="More options"
+                        >
+                          <MoreVertical size={15} />
+                        </button>
+
+                        {activeMenuId === item.id && (
+                          <div
                             style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 8,
-                              width: '100%',
-                              padding: '8px 14px',
-                              background: 'none',
-                              border: 'none',
-                              fontSize: 13,
-                              color: '#334155',
-                              cursor: 'pointer',
+                              position: 'absolute',
+                              right: 0,
+                              top: 36,
+                              background: '#fff',
+                              border: '1px solid #E2E8F0',
+                              borderRadius: 10,
+                              boxShadow: '0 10px 25px -5px rgba(15, 23, 42, 0.12), 0 8px 10px -6px rgba(15, 23, 42, 0.08)',
+                              padding: '6px 0',
+                              minWidth: 160,
+                              zIndex: 50,
+                              textAlign: 'left',
                             }}
-                            onMouseEnter={(e) => e.currentTarget.style.background = '#F8FAFC'}
-                            onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
-                            onClick={() => startEdit(item)}
                           >
-                            <Edit2 size={14} color="#64748B" /> Edit details
-                          </button>
-                          {item.engine_status === 'DRAFT' && (
                             <button
                               style={{
                                 display: 'flex',
@@ -1079,42 +2082,84 @@ export default function HireAssessmentsTab({ user }) {
                                 background: 'none',
                                 border: 'none',
                                 fontSize: 13,
-                                color: '#047857',
+                                color: '#334155',
                                 cursor: 'pointer',
                               }}
-                              onMouseEnter={(e) => e.currentTarget.style.background = '#ECFDF5'}
+                              onMouseEnter={(e) => e.currentTarget.style.background = '#F8FAFC'}
                               onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
-                              onClick={() => { setActiveMenuId(null); publish(item) }}
+                              onClick={() => startEdit(item)}
                             >
-                              <Send size={14} /> Publish test
+                              <Edit2 size={14} color="#64748B" /> Edit details
                             </button>
-                          )}
-                          <div style={{ height: 1, background: '#E2E8F0', margin: '4px 0' }} />
-                          <button
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 8,
-                              width: '100%',
-                              padding: '8px 14px',
-                              background: 'none',
-                              border: 'none',
-                              fontSize: 13,
-                              color: '#DC2626',
-                              cursor: 'pointer',
-                            }}
-                            onMouseEnter={(e) => e.currentTarget.style.background = '#FEF2F2'}
-                            onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
-                            onClick={() => { setActiveMenuId(null); setDeleteConfirm(item) }}
-                          >
-                            <Trash2 size={14} /> Delete
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                            {item.engine_status === 'DRAFT' && (
+                              <button
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 8,
+                                  width: '100%',
+                                  padding: '8px 14px',
+                                  background: 'none',
+                                  border: 'none',
+                                  fontSize: 13,
+                                  color: '#047857',
+                                  cursor: 'pointer',
+                                }}
+                                onMouseEnter={(e) => e.currentTarget.style.background = '#ECFDF5'}
+                                onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+                                onClick={() => { setActiveMenuId(null); publish(item) }}
+                              >
+                                <Send size={14} /> Publish test
+                              </button>
+                            )}
+                            {item.engine_status === 'PUBLISHED' && (
+                              <button
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 8,
+                                  width: '100%',
+                                  padding: '8px 14px',
+                                  background: 'none',
+                                  border: 'none',
+                                  fontSize: 13,
+                                  color: '#DC2626',
+                                  cursor: 'pointer',
+                                }}
+                                onMouseEnter={(e) => e.currentTarget.style.background = '#FEF2F2'}
+                                onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+                                onClick={() => { setActiveMenuId(null); closeAssessment(item) }}
+                              >
+                                <XCircle size={14} /> Close test
+                              </button>
+                            )}
+                            <div style={{ height: 1, background: '#E2E8F0', margin: '4px 0' }} />
+                            <button
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                width: '100%',
+                                padding: '8px 14px',
+                                background: 'none',
+                                border: 'none',
+                                fontSize: 13,
+                                color: '#DC2626',
+                                cursor: 'pointer',
+                              }}
+                              onMouseEnter={(e) => e.currentTarget.style.background = '#FEF2F2'}
+                              onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+                              onClick={() => { setActiveMenuId(null); openBulkDelete([item.id], `Delete "${item.title}"?`) }}
+                            >
+                              <Trash2 size={14} /> Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}
@@ -1137,10 +2182,11 @@ export default function HireAssessmentsTab({ user }) {
               {/* Type Selection Cards */}
               <div>
                 <label className="reg-field-label">Assessment Type *</label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 4 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginTop: 4 }}>
                   {[
                     { type: 'QUIZ', label: 'Quiz Assessment', desc: 'Multiple-choice questions, auto-graded quizzes' },
                     { type: 'CODING', label: 'Coding Assessment', desc: 'Live code editor, algorithmic test cases' },
+                    { type: 'COMBINED', label: 'Combined Quiz + Coding', desc: 'MCQ questions and live coding problems in a unified test' },
                   ].map(opt => (
                     <div
                       key={opt.type}
@@ -1169,6 +2215,16 @@ export default function HireAssessmentsTab({ user }) {
                   onChange={(e) => setForm({ ...form, title: e.target.value })}
                   placeholder="e.g. Graduate Developer Screening"
                   required
+                />
+              </div>
+
+              <div>
+                <label className="reg-field-label">Job role (optional)</label>
+                <input
+                  className="reg-input"
+                  value={form.jobRole}
+                  onChange={(e) => setForm({ ...form, jobRole: e.target.value })}
+                  placeholder="e.g. Fullstack Engineer, Data Analyst"
                 />
               </div>
 
@@ -1239,6 +2295,15 @@ export default function HireAssessmentsTab({ user }) {
                 />
               </div>
               <div>
+                <label className="reg-field-label">Job role (optional)</label>
+                <input
+                  className="reg-input"
+                  value={editItem.jobRole}
+                  onChange={(e) => setEditItem({ ...editItem, jobRole: e.target.value })}
+                  placeholder="e.g. Fullstack Engineer, Data Analyst"
+                />
+              </div>
+              <div>
                 <label className="reg-field-label">Description</label>
                 <textarea
                   className="reg-textarea"
@@ -1282,30 +2347,18 @@ export default function HireAssessmentsTab({ user }) {
         </Modal>
       )}
 
-      {/* DELETE ASSESSMENT CONFIRMATION MODAL */}
-      {deleteConfirm && (
-        <Modal onClose={() => setDeleteConfirm(null)} maxWidth={440}>
-          <div className="reg-modal-header">
-            <h3 style={{ color: '#DC2626', display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
-              <AlertTriangle size={20} /> Delete Assessment
-            </h3>
-            <button type="button" onClick={() => setDeleteConfirm(null)}><X size={18} /></button>
-          </div>
-          <div className="reg-modal-body">
-            <p style={{ margin: 0, fontSize: 13, color: '#334155', lineHeight: 1.5 }}>
-              Are you sure you want to delete <strong>{deleteConfirm.title}</strong>? This will remove the hiring workflow and candidate assignments.
-            </p>
-          </div>
-          <div className="reg-modal-footer">
-            <button type="button" className="reg-admin-btn reg-admin-btn--secondary" onClick={() => setDeleteConfirm(null)}>
-              Cancel
-            </button>
-            <button type="button" className="reg-admin-btn reg-admin-btn--danger" onClick={executeDelete} disabled={saving}>
-              {saving && <Loader2 size={14} className="bulk-spin" />} Delete assessment
-            </button>
-          </div>
-        </Modal>
-      )}
+      {/* REUSABLE BULK DELETE CONFIRM MODAL */}
+      <BulkDeleteConfirmModal
+        open={bulkDeleteModal.open}
+        title={bulkDeleteModal.title}
+        itemType={bulkDeleteModal.itemType}
+        count={bulkDeleteModal.count}
+        loading={bulkDeleteModal.loading}
+        failedItems={bulkDeleteModal.failedItems}
+        onClose={() => setBulkDeleteModal({ open: false, itemType: 'assessment', title: '', count: 0, ids: [], loading: false, failedItems: null })}
+        onConfirm={handleExecuteBulkDelete}
+        onClearFailed={() => setBulkDeleteModal(prev => ({ ...prev, failedItems: null }))}
+      />
     </div>
   )
 }

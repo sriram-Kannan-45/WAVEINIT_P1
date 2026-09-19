@@ -1432,8 +1432,8 @@ class InterviewController {
       if (req.user.role !== 'ADMIN') {
         return res.status(403).json({ error: 'Only admins can delete interviews' });
       }
-      if (interview.status === 'COMPLETED') {
-        return res.status(400).json({ error: 'Cannot delete a completed interview' });
+      if (['COMPLETED', 'EVALUATED', 'IN_PROGRESS'].includes(interview.status)) {
+        return res.status(400).json({ error: 'Cannot delete an interview that is completed, evaluated or in progress' });
       }
 
       const candidateId = interview.candidate_id;

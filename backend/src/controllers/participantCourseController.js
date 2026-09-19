@@ -1249,10 +1249,25 @@ async function loadAccessibleQuiz(req, res, quizId) {
     });
   }
 
-  // If no existing attempt and not enrolled, reject
+  // If no existing attempt and not enrolled, check if this is a HIRE quiz
   if (!existingAttempt && !enrollment) {
-    res.status(403).json({ error: 'You are not enrolled in this course or training' });
-    return null;
+    if (quiz.context === 'HIRE') {
+      const { HiringAssignment, HiringAssessment } = require('../models');
+      let hireAssignment = null;
+      if (HiringAssignment && HiringAssessment) {
+        hireAssignment = await HiringAssignment.findOne({
+          where: { participant_id: req.user.id },
+          include: [{ model: HiringAssessment, as: 'assessment', where: { quiz_id: quiz.id } }],
+        });
+      }
+      if (!hireAssignment) {
+        res.status(403).json({ error: 'You are not assigned to this hiring assessment' });
+        return null;
+      }
+    } else {
+      res.status(403).json({ error: 'You are not enrolled in this course or training' });
+      return null;
+    }
   }
 
   // Check availability only if no active attempt exists (new attempt)
@@ -1531,7 +1546,7 @@ async function getQuizResult(req, res) {
     const attemptWhere = {
       quizId: quiz.id,
       participantId: req.user.id,
-      status: { [Op.in]: ['SUBMITTED', 'EVALUATED', 'AUTO_SUBMITTED', 'COMPLETED', 'disqualified_copy_violation', 'disqualified_policy_violation'] }
+      status: { [Op.in]: ['SUBMITTED', 'EVALUATED', 'AUTO_SUBMITTED', 'disqualified_copy_violation', 'disqualified_policy_violation'] }
     };
     if (targetAttemptId) {
       attemptWhere.id = targetAttemptId;
@@ -1627,6 +1642,7 @@ async function getQuizResult(req, res) {
       quiz.status === 'RESULTS_PUBLISHED' ||
       quiz.resultStatus === 'PUBLISHED' ||
       !!quiz.isResultPublished ||
+      !!quiz.showResultImmediately ||
       !!result?.resultPublished;
 
     if (!isResultPublished) {

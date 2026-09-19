@@ -21,6 +21,8 @@ const {
   QuizAssignment,
   QuizCopyViolation,
   HiringAssessment,
+  HiringCandidate,
+  HiringAssignment,
   ProctoringSession,
   ProctoringEvent,
   ProctoringReport
@@ -38,6 +40,11 @@ const aiService = require('../services/aiService');
 const aiQuizService = require('../services/aiQuizService');
 const { normalizeQuizDifficulty } = require('../utils/quizDifficulty');
 const logger = require('../utils/logger');
+const {
+  validateQuestionCreate,
+  validateQuestionUpdate,
+  validateQuizSubmitAnswers,
+} = require('../security/inputValidator');
 
 const router = express.Router();
 
@@ -89,8 +96,24 @@ async function publishQuiz(req, res) {
     if (!hasAccess) return;
 
     const questions = await AIQuestion.findAll({ where: { quizId: quiz.id } });
-    if (quiz.context === 'HIRE' && questions.length === 0) {
-      return res.status(400).json({ error: 'Add questions before publishing this hiring quiz' });
+    if (questions.length === 0) {
+      return res.status(400).json({ error: 'Add at least one question before publishing this quiz.' });
+    }
+    if (quiz.context === 'HIRE') {
+      // Time limit, passing % and attempts must be sane before a hiring
+      // candidate is put through the live assessment.
+      const timeLimit = Number(quiz.timeLimit ?? 60);
+      if (!timeLimit || timeLimit <= 0) {
+        return res.status(422).json({ error: 'Set a valid duration (in minutes) before publishing.' });
+      }
+      const passing = Number(quiz.passingPercentage ?? 50);
+      if (!Number.isFinite(passing) || passing < 0 || passing > 100) {
+        return res.status(422).json({ error: 'Passing percentage must be between 0 and 100.' });
+      }
+      const attempts = Number(quiz.maxAttempts ?? 1);
+      if (!Number.isInteger(attempts) || attempts < 1 || attempts > 10) {
+        return res.status(422).json({ error: 'Max attempts must be between 1 and 10.' });
+      }
     }
 
     // Resolve trainingId
@@ -941,9 +964,6 @@ router.post('/:id/generate-questions', roleMiddleware('TRAINER', 'ADMIN'), async
     if (!quiz) return res.status(404).json({ error: 'Quiz not found' });
     if (!await verifyTrainerAccess(req, res, quiz)) return;
     if (quiz.status !== 'DRAFT') return res.status(409).json({ error: 'Questions can only be generated for a draft quiz.' });
-    if (await AIQuestion.count({ where: { quizId: quiz.id } })) {
-      return res.status(409).json({ error: 'This quiz already has questions. Review or delete them before generating a new set.' });
-    }
     const prompt = String(req.body.prompt || '').trim();
     const questionCount = Number(req.body.questionCount || 10);
     const difficulty = normalizeQuizDifficulty(req.body.difficulty || quiz.difficulty || 'MIXED');
@@ -951,13 +971,15 @@ router.post('/:id/generate-questions', roleMiddleware('TRAINER', 'ADMIN'), async
     if (!Number.isInteger(questionCount) || questionCount < 1 || questionCount > 100) {
       return res.status(422).json({ error: 'Question count must be between 1 and 100.' });
     }
+    // Append: start ordering after existing questions so multiple generates
+    // accumulate correctly per the regression test.
+    const existingCount = await AIQuestion.count({ where: { quizId: quiz.id } });
     const questions = await aiService.generateQuizFromPrompt(prompt, questionCount, difficulty, {
       marksPerQuestion: req.body.marksPerQuestion,
     });
-    await aiQuizService.saveQuestions(quiz.id, questions, { difficulty });
-    const totalMarks = await AIQuestion.sum('marks', { where: { quizId: quiz.id } }) || 0;
-    await quiz.update({ numQuestions: questions.length, questionCount: questions.length, totalMarks });
-    res.status(201).json({ success: true, count: questions.length });
+    await aiQuizService.saveQuestions(quiz.id, questions, { difficulty, orderOffset: existingCount });
+    const stats = await aiQuizService.syncQuizQuestionStats(quiz.id);
+    res.status(201).json({ success: true, count: questions.length, totalQuestions: stats.count, questionIds: [] });
   } catch (error) {
     logger.error('AI quiz question generation failed', { error: error.message });
     res.status(error.status || 500).json({ error: error.status ? error.message : 'AI question generation failed.' });
@@ -1000,8 +1022,9 @@ router.get('/:id/questions', async (req, res) => {
         order: [['order', 'ASC'], ['id', 'ASC']],
         include: [{ model: AIQuestionOption, as: 'options' }]
       });
+      const totalMarks = questions.reduce((sum, q) => sum + (q.marks || 1), 0);
       console.log(`[GET /api/quizzes/${quizId}/questions] Returning full question details (count: ${questions.length}) for trainer/admin #${userId}`);
-      return res.json({ questions });
+      return res.json({ questions, count: questions.length, totalMarks });
     } else if (userRole === 'PARTICIPANT') {
       // 1. Check if quiz is published
       if (quiz.status !== 'PUBLISHED') {
@@ -1025,32 +1048,43 @@ router.get('/:id/questions', async (req, res) => {
       const quizAssignment = await QuizAssignment.findOne({
         where: { quizId: quiz.id, participantId: userId }
       });
-      const enrollmentScopes = [
-        ...(quiz.courseId ? [{ courseId: quiz.courseId }] : []),
-        ...(quiz.trainingId ? [{ trainingId: quiz.trainingId }] : []),
-      ];
-      const enrollmentCheck = !quizAssignment && enrollmentScopes.length
-        ? await Enrollment.findOne({
-          where: {
+
+      let hireResolution = { isHire: false, assigned: false, policy: null };
+
+      if (quiz.context === 'HIRE') {
+        hireResolution = await require('../services/hireProctoringPolicy').resolvePolicy('QUIZ', quiz.id, userId);
+        if (!hireResolution.isHire || !hireResolution.assigned) {
+          console.log(`[GET /api/quizzes/${quizId}/questions] Permission denied: Participant #${userId} is not assigned to hiring assessment #${quiz.id}`);
+          return res.status(403).json({ error: 'Hiring assessment assignment required.' });
+        }
+        if (!quizAssignment) {
+          await QuizAssignment.create({
+            quizId: quiz.id,
             participantId: userId,
-            status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] },
-            [Op.or]: enrollmentScopes,
-          }
-        })
-        : null;
+            status: 'PENDING'
+          });
+        }
+      } else {
+        const enrollmentScopes = [
+          ...(quiz.courseId ? [{ courseId: quiz.courseId }] : []),
+          ...(quiz.trainingId ? [{ trainingId: quiz.trainingId }] : []),
+        ];
+        const enrollmentCheck = !quizAssignment && enrollmentScopes.length
+          ? await Enrollment.findOne({
+            where: {
+              participantId: userId,
+              status: { [Op.in]: ['APPROVED', 'ENROLLED', 'COMPLETED'] },
+              [Op.or]: enrollmentScopes,
+            }
+          })
+          : null;
 
-      console.log(`[GET /api/quizzes/${quizId}/questions] Enrollment check result for participant #${userId}:`, enrollmentCheck ? `Enrolled (ID: ${enrollmentCheck.id}, Status: ${enrollmentCheck.status})` : 'Not Enrolled');
+        console.log(`[GET /api/quizzes/${quizId}/questions] Enrollment check result for participant #${userId}:`, enrollmentCheck ? `Enrolled (ID: ${enrollmentCheck.id}, Status: ${enrollmentCheck.status})` : 'Not Enrolled');
 
-      if (!quizAssignment && !enrollmentCheck) {
-        console.log(`[GET /api/quizzes/${quizId}/questions] Permission denied: Participant #${userId} is not enrolled in course #${quiz.courseId} / training #${quiz.trainingId}`);
-        return res.status(403).json({ error: 'Access denied. You are not enrolled in this training.' });
-      }
-
-      const hireResolution = quiz.context === 'HIRE'
-        ? await require('../services/hireProctoringPolicy').resolvePolicy('QUIZ', quiz.id, userId)
-        : { isHire: false, assigned: false, policy: null };
-      if (quiz.context === 'HIRE' && (!hireResolution.isHire || !hireResolution.assigned)) {
-        return res.status(403).json({ error: 'Hiring assessment assignment required.' });
+        if (!quizAssignment && !enrollmentCheck) {
+          console.log(`[GET /api/quizzes/${quizId}/questions] Permission denied: Participant #${userId} is not enrolled in course #${quiz.courseId} / training #${quiz.trainingId}`);
+          return res.status(403).json({ error: 'Access denied. You are not enrolled in this training.' });
+        }
       }
 
       // 3. Check attempt
@@ -1156,7 +1190,7 @@ router.get('/:id/questions', async (req, res) => {
  * Adds a new question to the quiz.
  * Body: { questionText, questionType, options?, correctAnswer?, marks?, order?, ... }
  */
-router.post('/:id/questions', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) => {
+router.post('/:id/questions', roleMiddleware('TRAINER', 'ADMIN'), validateQuestionCreate, async (req, res) => {
   try {
     const quiz = await AIQuiz.findByPk(req.params.id);
     if (!quiz) return res.status(404).json({ error: 'Quiz not found' });
@@ -1187,6 +1221,8 @@ router.post('/:id/questions', roleMiddleware('TRAINER', 'ADMIN'), async (req, re
       order: questionOrder,
     });
 
+    await aiQuizService.syncQuizQuestionStats(quiz.id);
+
     res.status(201).json({ success: true, question });
   } catch (error) {
     res.status(500).json({ error: 'Server error processing quiz request' });
@@ -1197,7 +1233,7 @@ router.post('/:id/questions', roleMiddleware('TRAINER', 'ADMIN'), async (req, re
  * PUT /api/questions/:id
  * Updates a single question.
  */
-router.put('/questions/:id', roleMiddleware('TRAINER', 'ADMIN'), async (req, res) => {
+router.put('/questions/:id', roleMiddleware('TRAINER', 'ADMIN'), validateQuestionUpdate, async (req, res) => {
   try {
     const question = await AIQuestion.findByPk(req.params.id);
     if (!question) return res.status(404).json({ error: 'Question not found' });
@@ -1223,6 +1259,8 @@ router.put('/questions/:id', roleMiddleware('TRAINER', 'ADMIN'), async (req, res
       ...(order !== undefined && { order }),
     });
 
+    await aiQuizService.syncQuizQuestionStats(question.quizId);
+
     res.json({ success: true, question });
   } catch (error) {
     res.status(500).json({ error: 'Server error processing quiz request' });
@@ -1245,6 +1283,7 @@ router.delete('/questions/:id', roleMiddleware('TRAINER', 'ADMIN'), async (req, 
     }
 
     await question.destroy();
+    await aiQuizService.syncQuizQuestionStats(question.quizId);
     res.json({ success: true, message: 'Question deleted' });
   } catch (error) {
     res.status(500).json({ error: 'Server error processing quiz request' });
@@ -1271,6 +1310,8 @@ router.post('/:id/questions/reorder', roleMiddleware('TRAINER', 'ADMIN'), async 
     for (let i = 0; i < orderedIds.length; i++) {
       await AIQuestion.update({ order: i }, { where: { id: orderedIds[i], quizId: quiz.id } });
     }
+
+    await aiQuizService.syncQuizQuestionStats(quiz.id);
 
     res.json({ success: true, message: 'Questions reordered' });
   } catch (error) {
@@ -1494,10 +1535,6 @@ const startQuizAttempt = async (req, res) => {
       return res.status(404).json({ error: 'Quiz not found' });
     }
 
-    console.log("Training ID:", quiz.trainingId || quiz.courseId);
-    console.log("Quiz ID:", quiz.id);
-    console.log("quiz:", quiz.toJSON ? quiz.toJSON() : quiz);
-
     if (quiz.status !== 'PUBLISHED') {
       console.log(`[startQuizAttempt] Permission denied: Quiz is not PUBLISHED`);
       return res.status(403).json({ error: 'Quiz not published' });
@@ -1516,46 +1553,68 @@ const startQuizAttempt = async (req, res) => {
       });
     }
 
-    // Verify participant has access — either via QuizAssignment or enrollment
+    // Verify participant has access — either via QuizAssignment or enrollment / hire assignment
     let assignment = await QuizAssignment.findOne({
       where: { quizId: quiz.id, participantId }
     });
 
-    if (!assignment) {
-      const enrollmentConditions = [];
-      if (quiz.courseId) enrollmentConditions.push({ courseId: quiz.courseId });
-      if (quiz.trainingId) enrollmentConditions.push({ trainingId: quiz.trainingId });
-      if (quiz.course?.trainingProgramId) enrollmentConditions.push({ trainingId: quiz.course.trainingProgramId });
-
-      let enrollmentCheck = null;
-      if (enrollmentConditions.length > 0) {
-        enrollmentCheck = await Enrollment.findOne({
-          where: {
-            participantId,
-            status: { [Op.in]: ['ENROLLED', 'COMPLETED'] },
-            [Op.or]: enrollmentConditions
-          }
+    if (quiz.context === 'HIRE') {
+      const hireResolution = await require('../services/hireProctoringPolicy').resolvePolicy('QUIZ', quiz.id, participantId);
+      if (!hireResolution.isHire || !hireResolution.assigned) {
+        console.log(`[startQuizAttempt] Permission denied: Participant #${participantId} is not assigned to hiring assessment #${quiz.id}`);
+        return res.status(403).json({ error: 'Hiring assessment assignment required.' });
+      }
+      if (!assignment) {
+        assignment = await QuizAssignment.create({
+          quizId: quiz.id,
+          participantId,
+          status: 'PENDING'
         });
       }
-      
-      console.log(`[startQuizAttempt] Enrollment check result:`, enrollmentCheck ? `Enrolled (ID: ${enrollmentCheck.id})` : 'Not Enrolled');
+    } else {
+      if (!assignment) {
+        const enrollmentConditions = [];
+        if (quiz.courseId) enrollmentConditions.push({ courseId: quiz.courseId });
+        if (quiz.trainingId) enrollmentConditions.push({ trainingId: quiz.trainingId });
+        if (quiz.course?.trainingProgramId) enrollmentConditions.push({ trainingId: quiz.course.trainingProgramId });
 
-      if (!enrollmentCheck) {
-        console.log(`[startQuizAttempt] Permission denied: Participant #${participantId} is not enrolled in course/training`);
-        return res.status(403).json({ error: 'Participant not enrolled' });
+        let enrollmentCheck = null;
+        if (enrollmentConditions.length > 0) {
+          enrollmentCheck = await Enrollment.findOne({
+            where: {
+              participantId,
+              status: { [Op.in]: ['ENROLLED', 'COMPLETED'] },
+              [Op.or]: enrollmentConditions
+            }
+          });
+        }
+        
+        console.log(`[startQuizAttempt] Enrollment check result:`, enrollmentCheck ? `Enrolled (ID: ${enrollmentCheck.id})` : 'Not Enrolled');
+
+        if (!enrollmentCheck) {
+          console.log(`[startQuizAttempt] Permission denied: Participant #${participantId} is not enrolled in course/training`);
+          return res.status(403).json({ error: 'Participant not enrolled' });
+        }
+        // Create a pending QuizAssignment on-the-fly for tracking
+        assignment = await QuizAssignment.create({
+          quizId: quiz.id,
+          participantId,
+          status: 'PENDING'
+        });
       }
-      // Create a pending QuizAssignment on-the-fly for tracking
-      assignment = await QuizAssignment.create({
-        quizId: quiz.id,
-        participantId,
-        status: 'PENDING'
-      });
     }
 
-    // Check if completed attempt exists or resume/create in-progress attempt
+    // Check if completed attempt exists or resume/create in-progress attempt.
     let attempt = await QuizAttempt.findOne({
-      where: { quizId: quiz.id, participantId }
+      where: { quizId: quiz.id, participantId },
+      order: [['id', 'DESC']]
     });
+
+    const retakeAvailable = async () => {
+      if (quiz.allowMultipleAttempts !== true) return false;
+      const count = await QuizAttempt.count({ where: { quizId: quiz.id, participantId } });
+      return count < Math.max(1, Number(quiz.maxAttempts) || 1);
+    };
 
     if (attempt) {
       if (attempt.status === 'IN_PROGRESS') {
@@ -1651,6 +1710,9 @@ const startQuizAttempt = async (req, res) => {
 
         console.log(`[startQuizAttempt] Success resume response:`, apiResponse);
         return res.json(apiResponse);
+      } else if (await retakeAvailable()) {
+        console.log(`[startQuizAttempt] Previous attempt completed; starting a fresh retake for quiz #${quiz.id}, participant #${participantId}`);
+        attempt = null;
       } else {
         console.log(`[startQuizAttempt] Rejecting start: attempt already exists and is completed for quiz #${quiz.id}, participant #${participantId}`);
         return res.status(400).json({
@@ -1805,7 +1867,7 @@ router.get('/attempts/:attemptId', async (req, res) => {
  * POST /api/quizzes/:quizId/attempts/:attemptId/submit
  * Submits and grades the quiz attempt, updating enrollment status inside a transaction.
  */
-router.post('/:quizId/attempts/:attemptId/submit', require('../middleware/requireMobileAdmission')('QUIZ'), async (req, res) => {
+router.post('/:quizId/attempts/:attemptId/submit', require('../middleware/requireMobileAdmission')('QUIZ'), validateQuizSubmitAnswers, async (req, res) => {
   try {
     const { answers } = req.body;
     const { attemptId, quizId } = req.params;

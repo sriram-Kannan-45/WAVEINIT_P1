@@ -193,14 +193,21 @@ export default function TrainerCodingAssessmentDetails({ user }) {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const fromHire = searchParams.get('from') === 'hire'
+  const hireId = searchParams.get('hireId')
+  const hireTitle = searchParams.get('hireTitle')
+  const validHireId = hireId && hireId !== 'undefined' && hireId !== 'null' && Number(hireId) > 0 ? Number(hireId) : null
+  const initialTab = searchParams.get('tab') || (searchParams.get('action') === 'create' ? 'problems' : 'general')
 
   return (
     <CodingAssessmentDetailModal
       assessmentId={assessmentId}
       user={user}
-      onClose={() => navigate(fromHire ? '/admin?tab=hire-assessments' : '/trainer')}
+      onClose={() => navigate(fromHire ? `/admin?tab=hire-assessments${validHireId ? `&selectedId=${validHireId}` : ''}` : '/trainer')}
       isFullPageRoute={true}
       isHireWorkflow={fromHire}
+      hireId={validHireId || hireId}
+      hireTitle={hireTitle}
+      initialTab={initialTab}
     />
   )
 }
@@ -208,7 +215,17 @@ export default function TrainerCodingAssessmentDetails({ user }) {
 /* ─────────────────────────────────────────────────────────────────────────────
    LARGE POPUP / OVERLAY MODAL: CODING ASSESSMENT DETAIL MODAL
    ───────────────────────────────────────────────────────────────────────────── */
-export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRefresh, isFullPageRoute, isHireWorkflow = false }) {
+export function CodingAssessmentDetailModal({
+  assessmentId,
+  user,
+  onClose,
+  onRefresh,
+  isFullPageRoute,
+  isHireWorkflow = false,
+  hireId,
+  hireTitle,
+  initialTab = 'general',
+}) {
   const toast = useToast()
   const confirm = useConfirm()
   const auth = useCallback(() => ({
@@ -221,7 +238,7 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
   assessmentRef.current = assessment
 
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState('general')
+  const [activeTab, setActiveTab] = useState(initialTab || 'general')
   const [publishing, setPublishing] = useState(false)
   const [copiedId, setCopiedId] = useState(false)
   const [editingAssessment, setEditingAssessment] = useState(false)
@@ -427,7 +444,7 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
             onMouseOver={e => e.currentTarget.style.color = '#16A34A'}
             onMouseOut={e => e.currentTarget.style.color = '#475569'}
           >
-            <ArrowLeft size={14} /> Back to Assessments
+            <ArrowLeft size={14} /> {isHireWorkflow ? 'Back to Hire Assessment' : 'Back to Assessments'}
           </button>
 
           <button
@@ -450,6 +467,66 @@ export function CodingAssessmentDetailModal({ assessmentId, user, onClose, onRef
           flex: 1, overflowY: 'auto', padding: '20px 26px',
           display: 'flex', flexDirection: 'column', gap: 18, minHeight: 0
         }}>
+          {isHireWorkflow && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#64748B' }}>
+              <span style={{ cursor: 'pointer', color: '#16A34A', fontWeight: 500 }} onClick={onClose}>Hire</span>
+              <span>/</span>
+              <span style={{ cursor: 'pointer', color: '#16A34A', fontWeight: 500 }} onClick={onClose}>Quiz + Coding Test</span>
+              <span>/</span>
+              <span style={{ cursor: 'pointer', color: '#16A34A', fontWeight: 500 }} onClick={onClose}>{hireTitle || assessment?.title || 'Coding Assessment'}</span>
+              <span>/</span>
+              <span style={{ color: '#0F172A', fontWeight: 600 }}>Coding</span>
+            </div>
+          )}
+
+          {isHireWorkflow && (
+            <div style={{
+              background: '#F0FDF4',
+              border: '1px solid #BBF7D0',
+              borderRadius: 10,
+              padding: '12px 16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 16,
+              flexWrap: 'wrap'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{
+                  background: '#16A34A',
+                  color: '#FFFFFF',
+                  fontSize: 10,
+                  fontWeight: 800,
+                  padding: '3px 8px',
+                  borderRadius: 4,
+                  letterSpacing: 0.5,
+                  textTransform: 'uppercase'
+                }}>
+                  HIRE ASSESSMENT
+                </span>
+                <div style={{ fontSize: 13, color: '#166534' }}>
+                  Assessment Type: <strong>CODING</strong> &bull; Hire Assessment: <strong>{hireTitle || assessment?.title || 'Coding Assessment'}</strong>
+                  <div style={{ fontSize: 11, color: '#15803D', marginTop: 2 }}>
+                    This coding assessment is directly linked to the Hire candidate screening workflow.
+                  </div>
+                </div>
+              </div>
+              <button
+                className="reg-admin-btn reg-admin-btn--secondary"
+                onClick={onClose}
+                style={{
+                  background: '#FFFFFF',
+                  borderColor: '#86EFAC',
+                  color: '#166534',
+                  fontWeight: 600,
+                  fontSize: 12,
+                  padding: '6px 14px'
+                }}
+              >
+                <ArrowLeft size={13} style={{ marginRight: 4 }} /> Back to Hire Assessment
+              </button>
+            </div>
+          )}
           {loading ? (
             <div style={{ padding: '80px 20px', textAlign: 'center', color: '#64748B' }}>
               <Loader2 size={30} className="animate-spin" style={{ margin: '0 auto 12px', color: '#16A34A' }} />

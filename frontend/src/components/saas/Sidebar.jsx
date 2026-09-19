@@ -25,6 +25,7 @@ import {
 } from 'lucide-react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { API } from '../../api/api'
+import { fetchWithTimeout } from '../../api/request'
 import ProfileDropdown from './ProfileDropdown'
 import { WaveInitLogoIcon } from '../common/WaveInitLogo'
 import { getTwoLetterInitials } from '../common/UserAvatar'
@@ -36,6 +37,10 @@ const ROLE_HOME = {
 }
 
 const initials = (name) => getTwoLetterInitials(name)
+
+// Revalidate the shared course cache from the sidebar only after this window;
+// dashboards/course pages own the authoritative fetch.
+const COURSE_CACHE_FRESH_MS = 5 * 60 * 1000
 
 const navGroups = {
   ADMIN: [
@@ -192,10 +197,14 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
   const [coursesOpen, setCoursesOpen] = useState(true)
   const [courseFilter, setCourseFilter] = useState('')
 
-  // Hydrate assigned courses from cache and revalidate in background
+  // Hydrate assigned courses from cache and revalidate in background only when
+  // the shared cache is stale. Page-level components (dashboards, course pages)
+  // own the authoritative course fetch — rechecking it on every mount just adds
+  // a duplicate request for data we already rendered.
   useEffect(() => {
     let aborted = false
     const cacheKey = user?.role === 'TRAINER' ? `trainer_courses_${user?.id}` : `participant_courses_${user?.id}`
+    const cacheTsKey = `${cacheKey}_ts`
     try {
       const cached = sessionStorage.getItem(cacheKey)
       if (cached) {
@@ -214,9 +223,14 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
         else if (user.role === 'PARTICIPANT') endpoint = API.PARTICIPANT_COURSES.LIST
         if (!endpoint) return
 
-        const res = await fetch(endpoint, {
+        try {
+          const ts = sessionStorage.getItem(cacheTsKey)
+          if (ts && Date.now() - Number(ts) < COURSE_CACHE_FRESH_MS) return
+        } catch (_) {}
+
+        const res = await fetchWithTimeout(endpoint, {
           headers: { Authorization: `Bearer ${user.token}` }
-        })
+        }, 12000)
         const data = await res.json()
         if (!aborted && data.success && Array.isArray(data.courses)) {
           const normalized = data.courses.map(c => ({
@@ -227,6 +241,7 @@ export default function Sidebar({ user, activeTab, onTabChange, onLogout, onClos
           setCourses(normalized)
           try {
             sessionStorage.setItem(cacheKey, JSON.stringify(normalized))
+            sessionStorage.setItem(cacheTsKey, String(Date.now()))
           } catch (_) {}
         }
       } catch (err) {

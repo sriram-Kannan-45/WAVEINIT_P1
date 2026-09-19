@@ -66,8 +66,13 @@ export default function TrainerQuizDetails({ user, onLogout }) {
   const { quizId } = useParams()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const fromHire = searchParams.get('from') === 'hire'
-  const backPath = fromHire ? '/admin?tab=hire-assessments' : '/trainer'
+  const hireId = searchParams.get('hireId')
+  const hireTitle = searchParams.get('hireTitle')
+  const validHireId = hireId && hireId !== 'undefined' && hireId !== 'null' && Number(hireId) > 0 ? Number(hireId) : null
+  const fromHire = searchParams.get('from') === 'hire' || !!validHireId
+  const backPath = fromHire
+    ? `/admin?tab=hire-assessments${validHireId ? `&selectedId=${validHireId}` : ''}`
+    : '/trainer'
   const toast = useToast()
   const confirm = useConfirm()
   const auth = useCallback(() => ({
@@ -77,7 +82,8 @@ export default function TrainerQuizDetails({ user, onLogout }) {
 
   const [quiz, setQuiz] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState('general')
+  const initialTab = searchParams.get('tab') || (searchParams.get('action') === 'create' ? 'questions' : 'general')
+  const [activeTab, setActiveTab] = useState(initialTab)
   const [publishing, setPublishing] = useState(false)
 
   const fetchQuiz = useCallback(async () => {
@@ -178,9 +184,71 @@ export default function TrainerQuizDetails({ user, onLogout }) {
 
   return (
     <div className="reg-admin">
+      {fromHire && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#64748B', marginBottom: 12 }}>
+          <span style={{ cursor: 'pointer', color: '#16A34A', fontWeight: 500 }} onClick={() => navigate('/admin?tab=hire-assessments')}>Hire</span>
+          <span>/</span>
+          <span style={{ cursor: 'pointer', color: '#16A34A', fontWeight: 500 }} onClick={() => navigate(backPath)}>Quiz + Coding Test</span>
+          <span>/</span>
+          <span style={{ cursor: 'pointer', color: '#16A34A', fontWeight: 500 }} onClick={() => navigate(backPath)}>{hireTitle || quiz.title}</span>
+          <span>/</span>
+          <span style={{ color: '#0F172A', fontWeight: 600 }}>Quiz</span>
+        </div>
+      )}
+
+      {fromHire && (
+        <div style={{
+          background: '#F0FDF4',
+          border: '1px solid #BBF7D0',
+          borderRadius: 10,
+          padding: '12px 16px',
+          marginBottom: 16,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 16,
+          flexWrap: 'wrap'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{
+              background: '#16A34A',
+              color: '#FFFFFF',
+              fontSize: 10,
+              fontWeight: 800,
+              padding: '3px 8px',
+              borderRadius: 4,
+              letterSpacing: 0.5,
+              textTransform: 'uppercase'
+            }}>
+              HIRE ASSESSMENT
+            </span>
+            <div style={{ fontSize: 13, color: '#166534' }}>
+              Assessment Type: <strong>QUIZ</strong> &bull; Hire Assessment: <strong>{hireTitle || quiz.title}</strong>
+              <div style={{ fontSize: 11, color: '#15803D', marginTop: 2 }}>
+                This quiz assessment is directly linked to the Hire candidate screening workflow.
+              </div>
+            </div>
+          </div>
+          <button
+            className="reg-admin-btn reg-admin-btn--secondary"
+            onClick={() => navigate(backPath)}
+            style={{
+              background: '#FFFFFF',
+              borderColor: '#86EFAC',
+              color: '#166534',
+              fontWeight: 600,
+              fontSize: 12,
+              padding: '6px 14px'
+            }}
+          >
+            <ArrowLeft size={13} style={{ marginRight: 4 }} /> Back to Hire Assessment
+          </button>
+        </div>
+      )}
+
       <div className="reg-admin-header">
         <button className="reg-admin-btn reg-admin-btn--secondary" style={{ cursor: 'pointer' }} onClick={() => navigate(backPath)}>
-          <ArrowLeft size={14} /> {fromHire ? 'Back to Hire' : 'Back to Courses'}
+          <ArrowLeft size={14} /> {fromHire ? 'Back to Hire Assessment' : 'Back to Courses'}
         </button>
         <div className="reg-admin-header-icon" style={{ background: '#FFFFFF', border: '1.5px solid #16A34A', color: '#16A34A' }}>
           <FileText size={20} color="#16A34A" />
@@ -273,7 +341,10 @@ function GeneralTab({ quiz, onPublish, onDelete, publishing, onRefresh, auth }) 
 
   const handleSave = async () => {
     try {
-      const r = await fetch(API.TRAINER_COURSES.QUIZ(quiz.courseId || 0, quiz.id), {
+      const url = quiz.courseId
+        ? API.TRAINER_COURSES.QUIZ(quiz.courseId, quiz.id)
+        : API.TRAINER_COURSES.TRAINER_QUIZ(quiz.id)
+      const r = await fetch(url, {
         method: 'PUT', headers: auth(),
         body: JSON.stringify(form)
       })
@@ -452,11 +523,102 @@ function QuestionsTab({ quiz, onRefresh, auth, toast }) {
         </div>
       </div>
 
-      {showGenerate && <form onSubmit={handleGenerate} className="reg-admin-section" style={{ padding: 16, marginBottom: 16, display: 'grid', gap: 12 }}>
-        <label className="reg-admin-field"><span>Topics and skills</span><textarea rows="3" required value={generation.prompt} onChange={event => setGeneration({ ...generation, prompt: event.target.value })} placeholder="Describe what candidates should be assessed on…" /></label>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}><label className="reg-admin-field"><span>Questions</span><input type="number" min="1" max="100" value={generation.questionCount} onChange={event => setGeneration({ ...generation, questionCount: Number(event.target.value) })} /></label><label className="reg-admin-field"><span>Difficulty</span><select value={generation.difficulty} onChange={event => setGeneration({ ...generation, difficulty: event.target.value })}><option value="MIXED">Mixed</option><option value="EASY">Easy</option><option value="MEDIUM">Medium</option><option value="HARD">Hard</option></select></label></div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button type="button" className="reg-admin-btn reg-admin-btn--secondary" onClick={() => setShowGenerate(false)}>Cancel</button><button className="reg-admin-btn reg-admin-btn--primary" disabled={generating}>{generating && <Loader2 size={14} className="bulk-spin" />} Generate questions</button></div>
-      </form>}
+      {showGenerate && (
+        <div style={{
+          background: '#FFFFFF',
+          border: '1.5px solid #E2E8F0',
+          borderRadius: 14,
+          padding: '20px 24px',
+          marginBottom: 20,
+          boxShadow: '0 4px 16px -2px rgba(0, 0, 0, 0.05)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid #F1F5F9' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ width: 34, height: 34, borderRadius: 8, background: '#F0FDF4', color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Sparkles size={18} />
+              </div>
+              <div>
+                <h4 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#111827' }}>Generate Questions with AI</h4>
+                <div style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>Describe the topics, concepts, or job requirements to automatically generate assessment questions.</div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowGenerate(false)}
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: 4 }}
+              title="Close"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <form onSubmit={handleGenerate} style={{ display: 'grid', gap: 16 }}>
+            <div>
+              <label className="reg-field-label" style={{ display: 'block', marginBottom: 6 }}>
+                Topics and skills <span style={{ color: '#EF4444' }}>*</span>
+              </label>
+              <textarea
+                className="reg-textarea"
+                rows={3}
+                required
+                value={generation.prompt}
+                onChange={event => setGeneration({ ...generation, prompt: event.target.value })}
+                placeholder="e.g. JavaScript closures, async/await, promise chaining, event loop, and error handling for frontend screening…"
+                style={{ width: '100%', boxSizing: 'border-box' }}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+              <div>
+                <label className="reg-field-label" style={{ display: 'block', marginBottom: 6 }}>Number of Questions (1 - 50)</label>
+                <input
+                  className="reg-input"
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={generation.questionCount}
+                  onChange={event => setGeneration({ ...generation, questionCount: Math.max(1, Math.min(50, Number(event.target.value) || 1)) })}
+                  style={{ width: '100%', boxSizing: 'border-box' }}
+                />
+              </div>
+              <div>
+                <label className="reg-field-label" style={{ display: 'block', marginBottom: 6 }}>Difficulty Level</label>
+                <select
+                  className="reg-input"
+                  value={generation.difficulty}
+                  onChange={event => setGeneration({ ...generation, difficulty: event.target.value })}
+                  style={{ width: '100%', boxSizing: 'border-box' }}
+                >
+                  <option value="MIXED">Mixed (Balanced)</option>
+                  <option value="EASY">Easy</option>
+                  <option value="MEDIUM">Medium</option>
+                  <option value="HARD">Hard</option>
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, paddingTop: 12, borderTop: '1px solid #F1F5F9' }}>
+              <button
+                type="button"
+                className="reg-admin-btn reg-admin-btn--secondary"
+                onClick={() => setShowGenerate(false)}
+                disabled={generating}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="reg-admin-btn reg-admin-btn--primary"
+                style={{ background: '#16A34A', borderColor: '#16A34A' }}
+                disabled={generating}
+              >
+                {generating ? <Loader2 size={14} className="bulk-spin" /> : <Sparkles size={14} />}
+                {generating ? 'Generating questions…' : 'Generate questions'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {(showForm || editQ) && (
         <QuestionForm
@@ -471,13 +633,47 @@ function QuestionsTab({ quiz, onRefresh, auth, toast }) {
         <QuestionPreview questions={preview} onClose={() => setPreview(null)} />
       )}
 
-      {questions.length === 0 ? (
-        <div className="reg-admin-empty" style={{ border: '2px dashed #e2e8f0', borderRadius: 12 }}>
-          <HelpCircle size={32} style={{ opacity: 0.5 }} />
-          <h3>No questions yet</h3>
-          <p>Add your first question to get started</p>
+      {questions.length === 0 && !showForm && !showGenerate && (
+        <div className="reg-admin-empty" style={{
+          border: '2px dashed #CBD5E1',
+          borderRadius: 14,
+          padding: '48px 24px',
+          background: '#F8FAFC',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          textAlign: 'center'
+        }}>
+          <div style={{ width: 48, height: 48, borderRadius: 12, background: '#EFF6FF', color: '#2563EB', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+            <HelpCircle size={26} />
+          </div>
+          <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700, color: '#0F172A' }}>No questions yet</h3>
+          <p style={{ margin: '0 0 20px', color: '#64748B', fontSize: 13, maxWidth: 420 }}>
+            Add your first assessment question manually or generate a complete question set with AI.
+          </p>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <button
+              type="button"
+              className="reg-admin-btn reg-admin-btn--primary"
+              style={{ background: '#16A34A', borderColor: '#16A34A', padding: '8px 18px', fontSize: 13 }}
+              onClick={() => { setEditQ(null); setShowForm(true); setShowGenerate(false); }}
+            >
+              <Plus size={15} /> Add Question Manually
+            </button>
+            <button
+              type="button"
+              className="reg-admin-btn reg-admin-btn--secondary"
+              style={{ background: '#FFFFFF', padding: '8px 18px', fontSize: 13, fontWeight: 600, color: '#166534', borderColor: '#BBF7D0' }}
+              onClick={() => { setShowGenerate(true); setShowForm(false); }}
+            >
+              <Sparkles size={15} color="#16A34A" /> Generate with AI
+            </button>
+          </div>
         </div>
-      ) : (
+      )}
+
+      {questions.length > 0 && (
         <div className="reg-admin-table-wrap">
           <table className="reg-admin-table">
             <thead>
@@ -1106,7 +1302,10 @@ function SettingsTab({ quiz, onRefresh, auth, toast }) {
   const handleSave = async () => {
     setSaving(true)
     try {
-      const r = await fetch(API.TRAINER_COURSES.QUIZ(quiz.courseId || 0, quiz.id), {
+      const url = quiz.courseId
+        ? API.TRAINER_COURSES.QUIZ(quiz.courseId, quiz.id)
+        : API.TRAINER_COURSES.TRAINER_QUIZ(quiz.id)
+      const r = await fetch(url, {
         method: 'PUT', headers: auth(),
         body: JSON.stringify(form)
       })
@@ -1231,27 +1430,128 @@ function QuestionForm({ question, onSave, onClose, saving }) {
             onChange={e => setForm({ ...form, questionText: e.target.value })}
           />
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 14 }}>
           <div>
-            <label className="reg-field-label">Type</label>
+            <label className="reg-field-label" style={{ display: 'block', marginBottom: 4 }}>Type</label>
             <select className="reg-input" value={form.questionType} onChange={e => setForm({ ...form, questionType: e.target.value })}>
               {QUESTION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
           <div>
-            <label className="reg-field-label">Difficulty</label>
+            <label className="reg-field-label" style={{ display: 'block', marginBottom: 4 }}>Difficulty</label>
             <select className="reg-input" value={form.difficulty} onChange={e => setForm({ ...form, difficulty: e.target.value })}>
               {DIFFICULTIES.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
           </div>
           <div>
-            <label className="reg-field-label">Marks</label>
+            <label className="reg-field-label" style={{ display: 'block', marginBottom: 4 }}>Marks</label>
             <input className="reg-input" type="number" min={1} value={form.marks} onChange={e => setForm({ ...form, marks: parseInt(e.target.value) || 1 })} />
           </div>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+
+        {form.questionType === 'MCQ' && (
+          <div style={{ marginBottom: 16 }}>
+            <label className="reg-field-label" style={{ display: 'block', marginBottom: 4 }}>
+              Multiple Choice Options &amp; Correct Answer <span style={{ color: '#EF4444' }}>*</span>
+            </label>
+            <p style={{ margin: '0 0 10px', fontSize: 11.5, color: '#64748B' }}>
+              Select the radio button next to the option that represents the correct answer.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {(form.options || ['', '', '', '']).map((opt, idx) => (
+                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <input
+                    type="radio"
+                    name="correctOptionRadio"
+                    checked={form.correctAnswer === opt && opt.trim() !== ''}
+                    onChange={() => setForm({ ...form, correctAnswer: opt })}
+                    style={{ width: 18, height: 18, accentColor: '#16A34A', cursor: 'pointer' }}
+                    title="Mark this option as correct"
+                  />
+                  <span style={{
+                    width: 24, height: 24, borderRadius: 6, background: '#F1F5F9',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 12, fontWeight: 700, color: '#475569'
+                  }}>
+                    {String.fromCharCode(65 + idx)}
+                  </span>
+                  <input
+                    className="reg-input"
+                    value={opt}
+                    required={idx < 2}
+                    placeholder={`Option ${String.fromCharCode(65 + idx)} text…`}
+                    onChange={(e) => {
+                      const newOpts = [...(form.options || ['', '', '', ''])]
+                      const oldVal = newOpts[idx]
+                      newOpts[idx] = e.target.value
+                      const patch = { options: newOpts }
+                      if (form.correctAnswer === oldVal && e.target.value) {
+                        patch.correctAnswer = e.target.value
+                      }
+                      setForm({ ...form, ...patch })
+                    }}
+                    style={{ flex: 1 }}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {form.questionType === 'TRUE_FALSE' && (
+          <div style={{ marginBottom: 16 }}>
+            <label className="reg-field-label" style={{ display: 'block', marginBottom: 8 }}>
+              Correct Answer <span style={{ color: '#EF4444' }}>*</span>
+            </label>
+            <div style={{ display: 'flex', gap: 20 }}>
+              {['True', 'False'].map(val => (
+                <label key={val} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="tfCorrect"
+                    checked={form.correctAnswer === val}
+                    onChange={() => setForm({ ...form, correctAnswer: val })}
+                    style={{ width: 18, height: 18, accentColor: '#16A34A' }}
+                  />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{val}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(form.questionType === 'SHORT_ANSWER' || form.questionType === 'FILL_BLANK') && (
+          <div style={{ marginBottom: 16 }}>
+            <label className="reg-field-label" style={{ display: 'block', marginBottom: 6 }}>
+              Expected / Correct Answer <span style={{ color: '#EF4444' }}>*</span>
+            </label>
+            <input
+              className="reg-input"
+              required
+              value={form.correctAnswer}
+              onChange={e => setForm({ ...form, correctAnswer: e.target.value })}
+              placeholder="Enter the exact correct answer or phrase…"
+            />
+          </div>
+        )}
+
+        <div style={{ marginBottom: 16 }}>
+          <label className="reg-field-label" style={{ display: 'block', marginBottom: 6 }}>
+            Explanation / Feedback (Optional)
+          </label>
+          <textarea
+            className="reg-textarea"
+            rows={2}
+            value={form.explanation}
+            onChange={e => setForm({ ...form, explanation: e.target.value })}
+            placeholder="Helpful explanation or feedback for candidate evaluation…"
+            style={{ width: '100%', boxSizing: 'border-box' }}
+          />
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16, paddingTop: 14, borderTop: '1px solid #F1F5F9' }}>
           <button type="button" className="reg-admin-btn reg-admin-btn--secondary" onClick={onClose}>Cancel</button>
-          <button type="submit" className="reg-admin-btn reg-admin-btn--primary" disabled={saving}>
+          <button type="submit" className="reg-admin-btn reg-admin-btn--primary" style={{ background: '#16A34A', borderColor: '#16A34A' }} disabled={saving}>
             <Save size={14} /> {saving ? 'Saving…' : 'Save Question'}
           </button>
         </div>

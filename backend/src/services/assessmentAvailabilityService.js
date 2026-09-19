@@ -228,7 +228,13 @@ class AssessmentAvailabilityService {
     });
 
     const maxMarks = parseFloat(assessment.totalMarks || 100) || 100;
-    const passingPercentage = 50;
+    const passingPercentage = (() => {
+      const raw = assessment.passingPercentage
+        ?? assessment.passing_score
+        ?? assessment.passingScore;
+      const value = Number(raw);
+      return Number.isFinite(value) && value >= 0 && value <= 100 ? value : 50;
+    })();
 
     let presentCount = 0;
     let absentCount = 0;

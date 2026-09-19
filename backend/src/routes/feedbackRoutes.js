@@ -2,13 +2,14 @@ const express = require('express');
 const feedbackController = require('../controllers/feedbackController');
 const authenticateToken = require('../middleware/auth');
 const roleMiddleware = require('../middleware/roles');
+const { validateFeedbackSubmit } = require('../security/inputValidator');
 
 const router = express.Router();
 
 router.use(authenticateToken);
 
 // Participant routes
-router.post('/', roleMiddleware('PARTICIPANT', 'ADMIN'), feedbackController.submitFeedback);
+router.post('/', roleMiddleware('PARTICIPANT', 'ADMIN'), validateFeedbackSubmit, feedbackController.submitFeedback);
 router.get('/my-feedbacks', roleMiddleware('PARTICIPANT'), feedbackController.getParticipantFeedbacks);
 router.get('/participant-feedbacks', roleMiddleware('PARTICIPANT'), feedbackController.getParticipantFeedbacks);
 

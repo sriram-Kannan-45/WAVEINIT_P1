@@ -83,6 +83,12 @@ module.exports = (io, socket) => {
   socket.on('assessment_verif:stream_status', data => {
     if (bound(data) && socket.verifRole === 'mobile_camera') emit('assessment_verif:stream_status', { streaming: !!data.streaming });
   });
+  // Laptop drives the AI-guided room-verification overlay on the phone screen.
+  socket.on('assessment_verif:room_state', data => {
+    if (!bound(data) || socket.verifRole !== 'laptop') return;
+    const state = data && typeof data.state === 'object' ? data.state : data;
+    emit('assessment_verif:room_state', { sessionId: binding.session.session_id, state, broadcastAt: Date.now() });
+  });
   socket.on('disconnect', () => {
     if (binding && socket.verifRole === 'mobile_camera') emit('assessment_verif:mobile_status', { connected: false });
   });

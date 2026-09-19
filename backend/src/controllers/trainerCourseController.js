@@ -931,10 +931,11 @@ async function updateCourseQuiz(req, res) {
       title, lessonId, isMandatory, status, questions,
       showResultImmediately, showCorrectAnswersOnResult, shuffleQuestions,
       allowMultipleAttempts, maxAttempts, difficulty, timeLimit,
-      copyProtectionEnabled, maxCopyWarnings, copyViolationActions,
+      copyProtectionEnabled, copyProtection, maxCopyWarnings, copyViolationActions,
       copyWarningMessage, copyDisqualifyAction,
       proctoringEnabled, proctoringLevel, gracePeriodMinutes,
-      startTime, endTime, timezone
+      startTime, endTime, timezone,
+      passingPercentage
     } = req.body;
 
     const resolvedStartTime = startTime !== undefined ? (startTime ? new Date(startTime) : null) : quiz.startTime;
@@ -970,7 +971,7 @@ async function updateCourseQuiz(req, res) {
         maxAttempts:                maxAttempts                !== undefined ? maxAttempts : quiz.maxAttempts,
         difficulty:                 difficulty                 ?? quiz.difficulty,
         timeLimit:                  timeLimit                  !== undefined ? timeLimit : quiz.timeLimit,
-        copyProtectionEnabled:      copyProtectionEnabled      !== undefined ? copyProtectionEnabled : quiz.copyProtectionEnabled,
+        copyProtectionEnabled:      (copyProtectionEnabled ?? copyProtection) !== undefined ? (copyProtectionEnabled ?? copyProtection) : quiz.copyProtectionEnabled,
         maxCopyWarnings:            maxCopyWarnings            !== undefined ? maxCopyWarnings : quiz.maxCopyWarnings,
         copyViolationActions:       copyViolationActions       !== undefined ? copyViolationActions : quiz.copyViolationActions,
         copyWarningMessage:         copyWarningMessage         !== undefined ? copyWarningMessage : quiz.copyWarningMessage,
@@ -978,6 +979,7 @@ async function updateCourseQuiz(req, res) {
         proctoringEnabled:          proctoringEnabled          !== undefined ? proctoringEnabled : quiz.proctoringEnabled,
         proctoringLevel:            proctoringLevel            !== undefined ? proctoringLevel : quiz.proctoringLevel,
         gracePeriodMinutes:         gracePeriodMinutes         !== undefined ? gracePeriodMinutes : quiz.gracePeriodMinutes,
+        passingPercentage:          passingPercentage          !== undefined ? Math.max(0, Math.min(100, Number(passingPercentage) || 0)) : quiz.passingPercentage,
       }, { transaction: t });
       if (questions) {
         // Replace all questions atomically — simplest correct semantics for
@@ -998,6 +1000,7 @@ async function updateCourseQuiz(req, res) {
           }, { transaction: t });
         }
         await quiz.update({ numQuestions: questions.length }, { transaction: t });
+        await require('../services/aiQuizService').syncQuizQuestionStats(quiz.id, { transaction: t });
       }
     });
 
@@ -1293,8 +1296,8 @@ async function quizDashboard(req, res) {
         raw: true,
       });
       averageScore = agg?.avg != null ? parseFloat(parseFloat(agg.avg).toFixed(1)) : null;
-      // Pass rate: % who scored >= 50 (configurable later via quiz.passScore)
-      const passThreshold = quiz.passScore || 50;
+      // Pass rate: % who scored >= the quiz's configured passing percentage.
+      const passThreshold = quiz.passingPercentage ?? 50;
       const passed = await QuizResult.count({
         where: {
           quizId: quiz.id,

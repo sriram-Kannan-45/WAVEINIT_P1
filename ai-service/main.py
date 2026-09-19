@@ -145,7 +145,7 @@ async def health_check():
     # Service is "healthy" if core is ready, "degraded" if proctoring unavailable,
     # "unhealthy" only if core AI provider is not configured at all.
     core_ready = provider != "Unconfigured"
-    proctoring_up = YOLO_ENGINE_AVAILABLE or PROCTORING_ENGINE_AVAILABLE
+    proctoring_up = YOLO_ENGINE_AVAILABLE or PROCTORING_ENGINE_AVAILABLE or ROOM_SCANNER_AVAILABLE
     if not core_ready:
         status = "unhealthy"
     else:
@@ -161,8 +161,10 @@ async def health_check():
         "provider": provider,
         "yolo_engine": "available" if YOLO_ENGINE_AVAILABLE else "unavailable",
         "proctoring_engine": "available" if PROCTORING_ENGINE_AVAILABLE else "unavailable",
+        "room_scanner": "available" if ROOM_SCANNER_AVAILABLE else "unavailable",
         "yolo_status": YOLO_ENGINE_STATUS,
         "proctoring_detail": PROCTORING_ENGINE_STATUS,
+        "room_scanner_detail": ROOM_SCANNER_STATUS,
     }
 
 @app.get("/ready")
@@ -1704,6 +1706,25 @@ except Exception as e:
     PROCTORING_INIT_ERROR = str(e)
     PROCTORING_ENGINE_STATUS = {"available": False, "error": str(e)}
 
+ROOM_SCANNER_AVAILABLE = False
+ROOM_SCANNER_STATUS = None
+ROOM_SCANNER_INIT_ERROR = None
+try:
+    from inference.room_scanner import room_scanner, ROOM_SCANNER_INIT_ERROR
+    ROOM_SCANNER_AVAILABLE = bool(room_scanner and getattr(room_scanner, "initialized_ok", False))
+    ROOM_SCANNER_INIT_ERROR = getattr(room_scanner, "init_error", None) or ROOM_SCANNER_INIT_ERROR
+    ROOM_SCANNER_STATUS = room_scanner.get_status() if ROOM_SCANNER_AVAILABLE else {
+        "status": "UNAVAILABLE",
+        "init_error": ROOM_SCANNER_INIT_ERROR or "room scanner not initialized",
+    }
+    if not ROOM_SCANNER_AVAILABLE:
+        log.warning("Room scanner imported but not ready: %s", ROOM_SCANNER_INIT_ERROR)
+except Exception as e:
+    log.warning(f"Room scanner init warning: {e}")
+    ROOM_SCANNER_AVAILABLE = False
+    ROOM_SCANNER_INIT_ERROR = str(e)
+    ROOM_SCANNER_STATUS = {"status": "ERROR", "init_error": str(e)}
+
 
 # Ã¢â€â‚¬Ã¢â€â‚¬ Person-presence fallback for the MediaPipe laptop pipeline Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 # Face landmarks are the primary "occupant present" signal. When the face is
@@ -1774,6 +1795,19 @@ class HireIdentityVerifyRequest(BaseModel):
     sessionId: str
     frame: str
     referenceSignature: List[float] = Field(min_length=10, max_length=80)
+
+
+class HireRoomStepRequest(BaseModel):
+    sessionId: str
+    step: str  # front | left | back | right | desk | floor
+    frame: str
+    threshold: Optional[float] = None
+
+
+class HireRoomScan360Request(BaseModel):
+    sessionId: str
+    frames: List[str] = Field(min_length=1, max_length=12)
+    threshold: Optional[float] = None
 
 
 _HIRE_FACE_POINTS = (10, 33, 61, 93, 133, 152, 234, 263, 291, 323, 362, 454)
@@ -1881,6 +1915,42 @@ async def hire_identity_verify(req: HireIdentityVerifyRequest):
     observation = _hire_face_observation(req.frame)
     similarity = _hire_similarity(req.referenceSignature, observation["signature"])
     return {"success": True, "matched": similarity >= 0.72, "similarity": round(similarity, 4), "confidence": round(similarity, 4)}
+
+
+@app.post("/api/proctoring/hire/room-step")
+async def hire_room_step(req: HireRoomStepRequest):
+    """Analyze one of the six guided room-capture steps (AI-guided verification)."""
+    if not ROOM_SCANNER_AVAILABLE or room_scanner is None:
+        raise HTTPException(status_code=503, detail="Room scanner is unavailable")
+    try:
+        room_scanner.cleanup_stale()
+        result = room_scanner.analyze_step(frame_data=req.frame, step=req.step, session_id=req.sessionId, threshold=req.threshold or 0.45)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.warning("room-step analysis error for %s: %s", req.sessionId, exc)
+        raise HTTPException(status_code=500, detail="Room step analysis failed") from exc
+    if not result.get("success"):
+        raise HTTPException(status_code=422, detail=result.get("error", "Room step analysis failed"))
+    return result
+
+
+@app.post("/api/proctoring/hire/room-scan-360")
+async def hire_room_scan_360(req: HireRoomScan360Request):
+    """Accumulate guided 360-degree room scan sweep coverage from sampled frames."""
+    if not ROOM_SCANNER_AVAILABLE or room_scanner is None:
+        raise HTTPException(status_code=503, detail="Room scanner is unavailable")
+    try:
+        room_scanner.cleanup_stale()
+        result = room_scanner.analyze_360(frames=req.frames, session_id=req.sessionId)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.warning("room-scan-360 analysis error for %s: %s", req.sessionId, exc)
+        raise HTTPException(status_code=500, detail="360 room scan analysis failed") from exc
+    if not result.get("success"):
+        raise HTTPException(status_code=422, detail=result.get("error", "360 room scan analysis failed"))
+    return result
 
 
 @app.post("/api/proctoring/yolo/analyze-frame")
@@ -2080,16 +2150,17 @@ async def get_proctoring_status():
         log.info("Pruned stale sessions yolo=%d mediapipe=%d", pruned_yolo, pruned_mediapipe)
     yolo_status = yolo_engine.get_status() if YOLO_ENGINE_AVAILABLE else {"status": "DOWN"}
     return {
-        "status": "UP" if (PROCTORING_ENGINE_AVAILABLE or YOLO_ENGINE_AVAILABLE) else "DOWN",
+        "status": "UP" if (PROCTORING_ENGINE_AVAILABLE or YOLO_ENGINE_AVAILABLE or ROOM_SCANNER_AVAILABLE) else "DOWN",
         "instance_id": AI_INSTANCE_ID,
-        "pruned_stale_sessions": {"yolo": pruned_yolo, "mediapipe": pruned_mediapipe},
+        "pruned_stale_sessions": {"yolo": pruned_yolo, "mediapipe": pruned_mediapipe, "room_scanner": room_scanner.cleanup_stale() if ROOM_SCANNER_AVAILABLE else 0},
         "engines": {
             "yolo": yolo_status,
             "mediapipe": {
                 "status": "UP" if PROCTORING_ENGINE_AVAILABLE else "DOWN",
                 "face_landmarker": bool(FACE_MODEL_PATH and os.path.exists(FACE_MODEL_PATH)) if PROCTORING_ENGINE_AVAILABLE else False,
                 "pose_landmarker": bool(POSE_MODEL_PATH and os.path.exists(POSE_MODEL_PATH)) if PROCTORING_ENGINE_AVAILABLE else False,
-            }
+            },
+            "room_scanner": ROOM_SCANNER_STATUS or {"status": "DOWN"},
         }
     }
 

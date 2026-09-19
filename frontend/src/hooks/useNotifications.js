@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { API_BASE } from '../api/api'
-import { getAuthHeaders } from '../api/request'
+import { fetchWithTimeout, getAuthHeaders } from '../api/request'
 import { useSocketEvent } from './useSocket'
 
 /**
@@ -17,9 +17,9 @@ export function useNotifications() {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch(`${API_BASE}/notifications?limit=20`, {
+      const res = await fetchWithTimeout(`${API_BASE}/notifications?limit=20`, {
         headers: getAuthHeaders(),
-      })
+      }, 10000)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to load notifications')
       setNotifications(data.data || data.notifications || [])

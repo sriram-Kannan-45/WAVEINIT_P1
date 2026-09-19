@@ -47,9 +47,17 @@ export async function apiClient(endpoint, options = {}) {
     config.body = body
   }
 
-  // Timeout controller
+  // Timeout controller & caller cancellation support
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+  if (options.signal) {
+    if (options.signal.aborted) {
+      controller.abort()
+    } else {
+      options.signal.addEventListener('abort', () => controller.abort(), { once: true })
+    }
+  }
   config.signal = controller.signal
 
   try {
@@ -103,6 +111,11 @@ export async function apiClient(endpoint, options = {}) {
   } catch (err) {
     clearTimeout(timeoutId)
     if (err.name === 'AbortError') {
+      if (options.signal?.aborted) {
+        const cancelErr = new Error('Request cancelled.')
+        cancelErr.name = 'AbortError'
+        throw cancelErr
+      }
       throw new Error('Request timed out. Please try again.')
     }
     throw err

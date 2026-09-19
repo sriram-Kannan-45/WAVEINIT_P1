@@ -1,5 +1,6 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/db');
+const { HIRING_ASSIGNMENT_STATUSES } = require('../constants/hiringStatuses');
 
 const HiringAssignment = sequelize.define('HiringAssignment', {
   id: {
@@ -33,7 +34,7 @@ const HiringAssignment = sequelize.define('HiringAssignment', {
     comment: 'Canonical quiz assignment when this workflow uses the quiz engine.',
   },
   status: {
-    type: DataTypes.ENUM('ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'EVALUATED', 'EXPIRED'),
+    type: DataTypes.ENUM(...HIRING_ASSIGNMENT_STATUSES),
     allowNull: false,
     defaultValue: 'ASSIGNED',
   },

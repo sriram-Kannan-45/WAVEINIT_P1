@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import Sidebar, { navGroups, pageDescriptions } from './saas/Sidebar'
 import ParticipantAIChatbot from './chatbot/ParticipantAIChatbot'
 
-function Layout({ user, children, activeTab, onTabChange, onLogout, headerSlot }) {
+function Layout({ user, children, activeTab, onTabChange, onLogout, headerSlot, hideSidebar = false }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const groups = navGroups[user?.role] || []
 
@@ -11,6 +11,7 @@ function Layout({ user, children, activeTab, onTabChange, onLogout, headerSlot }
   const openSidebar = () => setSidebarOpen(true)
 
   const currentPageLabel = (() => {
+    if (hideSidebar) return 'Verification'
     for (const group of groups) {
       const found = group.items.find(i => i.key === activeTab)
       if (found) return found.label
@@ -35,15 +36,17 @@ function Layout({ user, children, activeTab, onTabChange, onLogout, headerSlot }
         Skip to navigation
       </a>
 
-      <Sidebar
-        user={user}
-        activeTab={activeTab}
-        onTabChange={onTabChange}
-        onLogout={onLogout}
-        sidebarOpen={sidebarOpen}
-        onCloseSidebar={closeSidebar}
-        onOpenSidebar={openSidebar}
-      />
+      {!hideSidebar && (
+        <Sidebar
+          user={user}
+          activeTab={activeTab}
+          onTabChange={onTabChange}
+          onLogout={onLogout}
+          sidebarOpen={sidebarOpen}
+          onCloseSidebar={closeSidebar}
+          onOpenSidebar={openSidebar}
+        />
+      )}
 
       <div className="main-content">
         <motion.main

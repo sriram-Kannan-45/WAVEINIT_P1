@@ -8,6 +8,7 @@ const {
   Enrollment, HiringAssessment, HiringAssignment
 } = require('../models');
 const logger = require('../utils/logger');
+const { INACTIVE_ASSIGNMENT_STATUSES } = require('../constants/hiringStatuses');
 const { parsePagination, formatPaginationMeta, formatPaginatedResponse } = require('../utils/paginationHelper');
 const { LANGUAGES: JUDGE_LANGUAGES } = require('../judge/languageConfig');
 const { getDefaultStarterCode } = require('../utils/languageTemplates');
@@ -52,12 +53,19 @@ async function participantCanAccessAssessment(participantId, assessment) {
   if (!participantId || !assessment) return false;
   if (assessment.context === 'HIRE') {
     const workflow = await HiringAssessment.findOne({
-      where: { coding_assessment_id: assessment.id, assessment_type: 'CODING' },
+      where: {
+        coding_assessment_id: assessment.id,
+        assessment_type: { [Op.in]: ['CODING', 'COMBINED'] },
+      },
       attributes: ['id'],
     });
     if (!workflow) return false;
     return Boolean(await HiringAssignment.findOne({
-      where: { assessment_id: workflow.id, participant_id: participantId },
+      where: {
+        assessment_id: workflow.id,
+        participant_id: participantId,
+        status: { [Op.notIn]: INACTIVE_ASSIGNMENT_STATUSES },
+      },
       attributes: ['id'],
     }));
   }
@@ -85,9 +93,19 @@ const normalizeAssessmentDifficulty = (d) => {
 const normalizeProblemDifficulty = (d) => {
   if (!d) return 'MEDIUM';
   const u = String(d).trim().toUpperCase();
-  if (['EASY', 'MEDIUM', 'HARD'].includes(u)) return u;
+  if (['EASY', 'MEDIUM', 'HARD', 'MIXED'].includes(u)) return u;
   return 'MEDIUM';
 };
+
+async function syncCodingProblemStats(assessmentId, { transaction: t } = {}) {
+  const { CodingProblem, CodingAssessment } = require('../models');
+  const count = await CodingProblem.count({ where: { assessmentId }, ...(t ? { transaction: t } : {}) });
+  await CodingAssessment.update(
+    { numProblems: count },
+    { where: { id: assessmentId }, ...(t ? { transaction: t } : {}) },
+  );
+  return count;
+}
 
 // ── Multi-language problem helpers ──
 // The list of runtimes supported by the judge engine (single source of truth).
@@ -821,6 +839,7 @@ exports.createProblem = async (req, res) => {
     }
 
     const full = await loadProblemForResponse(problem.id);
+    await syncCodingProblemStats(assessment.id);
     ok(res, { problem: full });
   } catch (err) {
     if (err.status) return fail(res, err.status, err.message);
@@ -867,6 +886,8 @@ exports.updateProblem = async (req, res) => {
       }
     });
 
+    await syncCodingProblemStats(problem.assessmentId);
+
     const full = await loadProblemForResponse(problem.id);
     ok(res, { problem: full });
   } catch (err) {
@@ -887,6 +908,7 @@ exports.deleteProblem = async (req, res) => {
     if (CodingAiHelp) await CodingAiHelp.destroy({ where: { problemId: problem.id } }).catch(() => {});
     await CodingSubmission.destroy({ where: { problemId: problem.id } });
     await problem.destroy();
+    await syncCodingProblemStats(problem.assessmentId);
     ok(res, { message: 'Problem deleted' });
   } catch (err) { fail(res, 500, err.message); }
 };
@@ -1370,13 +1392,23 @@ exports.generateLanguageCode = async (req, res) => {
     ok(res, { language: String(language).toLowerCase(), ...result });
   } catch (err) { fail(res, 500, err.message); }
 };
-
 exports.publish = async (req, res) => {
   try {
     const assessment = await CodingAssessment.findByPk(req.params.id);
     if (!assessment) return fail(res, 404, 'Assessment not found');
-    if (!await canManageAssessment(req.user, assessment)) return fail(res, 403, 'Permission denied');
     if (assessment.status !== 'DRAFT') return fail(res, 400, 'Assessment is not in DRAFT status');
+
+    // For HIRE assessments, ensure at least one candidate is added before publishing
+    if (assessment.context === 'HIRE') {
+      const { HiringAssessment: HA, HiringCandidate: HC, HiringAssignment: HAss } = require('../models');
+      const hw = await HA.findOne({ where: { coding_assessment_id: assessment.id }, attributes: ['id'] });
+      if (hw) {
+        const cc = await HC.count({ where: { assessment_id: hw.id } });
+        const ac = await HAss.count({ where: { assessment_id: hw.id } });
+        if (cc === 0 && ac === 0) return fail(res, 400, 'Cannot publish assessment: No candidates have been added or assigned. Please add participants before publishing.');
+      }
+    }
+
     const problems = await CodingProblem.findAll({
       where: { assessmentId: assessment.id },
       include: [
@@ -1809,6 +1841,9 @@ exports.runCode = async (req, res) => {
       const attempt = await CodingAttempt.findByPk(attemptId, {
         include: [{ model: CodingAssessment, as: 'assessment' }]
       });
+      if (attempt && String(attempt.participantId) !== String(req.user.id)) {
+        return fail(res, 403, 'Access denied. You can only run code on your own attempts.');
+      }
       if (attempt?.assessment) {
         const avail = availabilityService.checkAvailability(attempt.assessment);
         if (!avail.allowed) {

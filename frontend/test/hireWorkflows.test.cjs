@@ -56,7 +56,9 @@ test('assessment list settles once; opening content or showing a toast cannot re
   await act(async()=>{await delay(450)});
   assert.equal(calls,1);
   await act(async()=>{button(root,'Manage content').props.onClick()});
-  assert.equal(location.pathname,'/trainer/quiz/11');assert.equal(location.search,'?from=hire');
+  assert.equal(location.pathname,'/trainer/quiz/11');
+  assert.match(location.search,/from=hire/);
+  assert.match(location.search,/hireId=1/);
   act(()=>root.unmount());
 });
 
@@ -142,3 +144,125 @@ test('shared scheduler locks Hire entry mode, while the original scheduler retai
     act(()=>root.unmount());
   }
 });
+
+test('Hire assessment details expose direct first-class quiz creation and editing', async () => {
+  let ensuredQuizId = null;
+  const noContentQuizItem = {
+    id: 10,
+    title: 'Frontend React Test',
+    assessment_type: 'QUIZ',
+    engine_id: null,
+    engine_status: 'DRAFT',
+    content_count: 0,
+    quiz_metrics: { exists: false, id: null, title: 'Frontend React Test', status: 'DRAFT', question_count: 0 },
+    coding_metrics: { exists: false, id: null, title: null, status: 'DRAFT', problem_count: 0 },
+  };
+
+  services.hire = {
+    listAssessments: async () => ({ assessments: [noContentQuizItem] }),
+    getAssessment: async () => ({ assessment: noContentQuizItem }),
+    listCandidates: async () => ({ candidates: [] }),
+    ensureQuiz: async (id) => {
+      ensuredQuizId = id;
+      return { quiz: { id: 77, title: 'Frontend React Test' } };
+    },
+  };
+
+  const root = await mount(Hire, { user: { role: 'ADMIN' } });
+  await act(async () => { await delay(240) });
+  await act(async () => { button(root, 'Open').props.onClick(); await delay(1) });
+
+  // Empty state and direct creation actions should be visible
+  assert.match(text(root), /No assessment content yet/);
+  assert.match(text(root), /Multiple-choice assessment questions/);
+  const createQuizBtn = button(root, 'Create Quiz');
+  assert.ok(createQuizBtn, 'Direct Create Quiz button must be present in header/card');
+
+  // Clicking + Create Quiz invokes ensureQuiz and navigates to the shared Quiz Creator with hire context
+  await act(async () => { createQuizBtn.props.onClick(); await delay(1) });
+  assert.equal(ensuredQuizId, 10);
+  assert.equal(location.pathname, '/trainer/quiz/77');
+  assert.match(location.search, /from=hire/);
+  assert.match(location.search, /hireId=10/);
+  assert.match(location.search, /action=create/);
+
+  act(() => root.unmount());
+});
+
+test('Hire assessment details expose direct first-class coding creation and deep-linking restoration', async () => {
+  let ensuredCodingId = null;
+  const codingItem = {
+    id: 20,
+    title: 'Backend Systems Assessment',
+    assessment_type: 'CODING',
+    engine_id: 88,
+    engine_status: 'PUBLISHED',
+    content_count: 3,
+    quiz_metrics: { exists: false, id: null, title: null, status: 'DRAFT', question_count: 0 },
+    coding_metrics: { exists: true, id: 88, title: 'Backend Systems Assessment', status: 'PUBLISHED', problem_count: 3 },
+  };
+
+  services.hire = {
+    listAssessments: async () => ({ assessments: [codingItem] }),
+    getAssessment: async () => ({ assessment: codingItem }),
+    listCandidates: async () => ({ candidates: [] }),
+    ensureCoding: async (id) => {
+      ensuredCodingId = id;
+      return { codingAssessment: { id: 88, title: 'Backend Systems Assessment' } };
+    },
+  };
+
+  // Mount directly with deep-link query ?selectedId=20
+  const root = await mount(Hire, { user: { role: 'ADMIN' } }, '/admin?tab=hire-assessments&selectedId=20');
+  await act(async () => { await delay(240) });
+
+  // Detail view should already be open without clicking "Open"
+  assert.match(text(root), /Backend Systems Assessment/);
+  assert.match(text(root), /Assessment content & results/);
+  assert.match(text(root), /3.*Problems/);
+  assert.match(text(root), /Published/);
+
+  // Since coding content already exists with 3 problems, button should show "Edit Coding"
+  const editCodingBtn = button(root, 'Edit Coding');
+  assert.ok(editCodingBtn, 'Edit Coding button must be present instead of Create');
+
+  await act(async () => { editCodingBtn.props.onClick(); await delay(1) });
+  assert.equal(location.pathname, '/trainer/coding/88');
+  assert.match(location.search, /from=hire/);
+  assert.match(location.search, /hireId=20/);
+
+  act(() => root.unmount());
+});
+
+test('Combined Hire assessment shows both Quiz and Coding creation cards and actions', async () => {
+  const combinedItem = {
+    id: 30,
+    title: 'Fullstack Engineer Test',
+    assessment_type: 'COMBINED',
+    engine_id: 101,
+    engine_status: 'DRAFT',
+    content_count: 12,
+    quiz_metrics: { exists: true, id: 101, title: 'Fullstack Quiz', status: 'PUBLISHED', question_count: 10 },
+    coding_metrics: { exists: true, id: 202, title: 'Fullstack Coding', status: 'DRAFT', problem_count: 2 },
+  };
+
+  services.hire = {
+    listAssessments: async () => ({ assessments: [combinedItem] }),
+    getAssessment: async () => ({ assessment: combinedItem }),
+    listCandidates: async () => ({ candidates: [] }),
+  };
+
+  const root = await mount(Hire, { user: { role: 'ADMIN' } }, '/admin?tab=hire-assessments&selectedId=30');
+  await act(async () => { await delay(240) });
+
+  // Both Quiz and Coding cards must be visible
+  assert.match(text(root), /10.*Questions/);
+  assert.match(text(root), /2.*Problems/);
+  assert.ok(button(root, 'Edit Quiz'), 'Must have Edit Quiz button');
+  assert.ok(button(root, 'Edit Coding'), 'Must have Edit Coding button');
+  assert.ok(button(root, 'View Questions'), 'Must have View Questions button');
+  assert.ok(button(root, 'View Problems'), 'Must have View Problems button');
+
+  act(() => root.unmount());
+});
+

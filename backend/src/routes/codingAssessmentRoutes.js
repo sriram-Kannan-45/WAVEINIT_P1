@@ -4,6 +4,16 @@ const authenticateToken = require('../middleware/auth');
 const roleMiddleware = require('../middleware/roles');
 const ctrl = require('../controllers/codingAssessmentController');
 const validateAssessmentSession = require('../middleware/validateAssessmentSession');
+const {
+  validateCodingAssessmentCreate,
+  validateCodingAssessmentUpdate,
+  validateCodingProblemCreate,
+  validateCodingProblemUpdate,
+  validateTestCase,
+  validateRunCode,
+  validateSubmitCode,
+  validateBulkDeleteIds,
+} = require('../security/inputValidator');
 
 const requireMobileAdmission = require('../middleware/requireMobileAdmission')('CODING');
 const optionalAssessmentSession = (req, res, next) => requireMobileAdmission(req, res, () => {
@@ -17,29 +27,29 @@ router.use(authenticateToken);
 
 // ── TRAINER: CRUD Assessments ──
 router.get('/assessments', roleMiddleware('TRAINER', 'ADMIN'), ctrl.list);
-router.post('/assessments/bulk-delete', roleMiddleware('TRAINER', 'ADMIN'), ctrl.bulkDestroy);
-router.post('/assessments/bulk', roleMiddleware('TRAINER', 'ADMIN'), ctrl.bulkDestroy);
-router.delete('/assessments/bulk-delete', roleMiddleware('TRAINER', 'ADMIN'), ctrl.bulkDestroy);
-router.delete('/assessments/bulk', roleMiddleware('TRAINER', 'ADMIN'), ctrl.bulkDestroy);
-router.post('/bulk-delete', roleMiddleware('TRAINER', 'ADMIN'), ctrl.bulkDestroy);
-router.delete('/bulk', roleMiddleware('TRAINER', 'ADMIN'), ctrl.bulkDestroy);
+router.post('/assessments/bulk-delete', roleMiddleware('TRAINER', 'ADMIN'), validateBulkDeleteIds, ctrl.bulkDestroy);
+router.post('/assessments/bulk', roleMiddleware('TRAINER', 'ADMIN'), validateBulkDeleteIds, ctrl.bulkDestroy);
+router.delete('/assessments/bulk-delete', roleMiddleware('TRAINER', 'ADMIN'), validateBulkDeleteIds, ctrl.bulkDestroy);
+router.delete('/assessments/bulk', roleMiddleware('TRAINER', 'ADMIN'), validateBulkDeleteIds, ctrl.bulkDestroy);
+router.post('/bulk-delete', roleMiddleware('TRAINER', 'ADMIN'), validateBulkDeleteIds, ctrl.bulkDestroy);
+router.delete('/bulk', roleMiddleware('TRAINER', 'ADMIN'), validateBulkDeleteIds, ctrl.bulkDestroy);
 router.get('/assessments/:id(\\d+)', roleMiddleware('PARTICIPANT', 'TRAINER', 'ADMIN'), ctrl.getOne);
-router.post('/assessments', roleMiddleware('TRAINER', 'ADMIN'), ctrl.create);
-router.put('/assessments/:id(\\d+)', roleMiddleware('TRAINER', 'ADMIN'), ctrl.update);
+router.post('/assessments', roleMiddleware('TRAINER', 'ADMIN'), validateCodingAssessmentCreate, ctrl.create);
+router.put('/assessments/:id(\\d+)', roleMiddleware('TRAINER', 'ADMIN'), validateCodingAssessmentUpdate, ctrl.update);
 router.delete('/assessments/:id(\\d+)', roleMiddleware('TRAINER', 'ADMIN'), ctrl.destroy);
 // Fallback for non-regex :id parameter routes
 router.get('/assessments/:id', roleMiddleware('PARTICIPANT', 'TRAINER', 'ADMIN'), ctrl.getOne);
-router.put('/assessments/:id', roleMiddleware('TRAINER', 'ADMIN'), ctrl.update);
+router.put('/assessments/:id', roleMiddleware('TRAINER', 'ADMIN'), validateCodingAssessmentUpdate, ctrl.update);
 router.delete('/assessments/:id', roleMiddleware('TRAINER', 'ADMIN'), ctrl.destroy);
 
 // ── TRAINER: Problems ──
-router.post('/assessments/:id/problems', roleMiddleware('TRAINER', 'ADMIN'), ctrl.createProblem);
-router.put('/problems/:problemId', roleMiddleware('TRAINER', 'ADMIN'), ctrl.updateProblem);
+router.post('/assessments/:id/problems', roleMiddleware('TRAINER', 'ADMIN'), validateCodingProblemCreate, ctrl.createProblem);
+router.put('/problems/:problemId', roleMiddleware('TRAINER', 'ADMIN'), validateCodingProblemUpdate, ctrl.updateProblem);
 router.delete('/problems/:problemId', roleMiddleware('TRAINER', 'ADMIN'), ctrl.deleteProblem);
 
 // ── TRAINER: Test case management ──
-router.post('/problems/:problemId/test-cases', roleMiddleware('TRAINER', 'ADMIN'), ctrl.addTestCase);
-router.put('/test-cases/:testCaseId', roleMiddleware('TRAINER', 'ADMIN'), ctrl.updateTestCase);
+router.post('/problems/:problemId/test-cases', roleMiddleware('TRAINER', 'ADMIN'), validateTestCase, ctrl.addTestCase);
+router.put('/test-cases/:testCaseId', roleMiddleware('TRAINER', 'ADMIN'), validateTestCase, ctrl.updateTestCase);
 router.delete('/test-cases/:testCaseId', roleMiddleware('TRAINER', 'ADMIN'), ctrl.deleteTestCase);
 router.post('/problems/:problemId/reorder-test-cases', roleMiddleware('TRAINER', 'ADMIN'), ctrl.reorderTestCases);
 
@@ -70,10 +80,10 @@ router.get('/assessments/:id/recordings', roleMiddleware('TRAINER', 'ADMIN'), ct
 
 // ── PARTICIPANT ──
 router.post('/participant/start/:assessmentId', roleMiddleware('PARTICIPANT'), ctrl.start);
-router.post('/participant/run', roleMiddleware('PARTICIPANT'), optionalAssessmentSession, ctrl.runCode);
+router.post('/participant/run', roleMiddleware('PARTICIPANT'), optionalAssessmentSession, validateRunCode, ctrl.runCode);
 router.post('/participant/save', roleMiddleware('PARTICIPANT'), optionalAssessmentSession, ctrl.saveCode);
 router.post('/participant/save-batch', roleMiddleware('PARTICIPANT'), optionalAssessmentSession, ctrl.saveCodeBatch);
-router.post('/participant/submit-code', roleMiddleware('PARTICIPANT'), optionalAssessmentSession, ctrl.submitCode);
+router.post('/participant/submit-code', roleMiddleware('PARTICIPANT'), optionalAssessmentSession, validateSubmitCode, ctrl.submitCode);
 router.get('/participant/submission/:id', roleMiddleware('PARTICIPANT', 'TRAINER', 'ADMIN'), ctrl.getSubmission);
 router.post('/participant/submit/:attemptId', roleMiddleware('PARTICIPANT'), optionalAssessmentSession, ctrl.submitAssessment);
 router.get('/participant/assessments/:id/result', roleMiddleware('PARTICIPANT'), ctrl.getParticipantResult);
