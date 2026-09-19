@@ -1,7 +1,7 @@
 jest.mock('../src/models', () => Object.fromEntries([
   'AssessmentVerificationSession', 'MonitoringSession', 'MonitoringEvent', 'MonitoringConfig', 'ProctoringEvent',
   'QuizAttempt', 'CodingAttempt', 'AIQuiz', 'CodingAssessment', 'User',
-  'ExamSession', 'Violation', 'DeviceFingerprint', 'ProctorActivity',
+  'ExamSession', 'Violation', 'DeviceFingerprint', 'ProctorActivity', 'AssessmentSession',
 ].map(name => [name, Object.fromEntries(['findAll', 'findAndCountAll', 'findOne', 'findByPk', 'findOrCreate', 'count', 'create', 'update'].map(method => [method, jest.fn()]))])));
 jest.mock('../src/utils/logger', () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }));
 jest.mock('../src/socket/crossInstance', () => ({ emitToRoom: jest.fn(), relayEmit: jest.fn() }));
@@ -246,6 +246,64 @@ test('socket handshake ACK follows authorized membership and rejects wrong role/
   expect(handlers['assessment_verif:start_assessment']).toBeUndefined();
   await handlers['assessment_verif:join']({sessionId:'verification',role:'laptop'},ack);
   expect(ack).toHaveBeenLastCalledWith(expect.objectContaining({ok:false}));
+});
+
+test('paired Hire room verification remains active after the QR scan window', async () => {
+  const v = mobile(), s = sessions[1];
+  v.status = 'PAIRED';
+  v.expires_at = new Date(Date.now() - 60_000);
+  s.metadata.hireProctoring = { policy: { enabled: true }, roomScanClear: false };
+  models.AssessmentVerificationSession.findOne.mockResolvedValue(v);
+  expect(await verification.getSessionStatus({ sessionId: v.session_id, participantId: 7 }))
+    .toMatchObject({ isExpired: false, status: 'PAIRED' });
+  await expect(verification.authorizeSocket({ sessionId: v.session_id, participantId: 7,
+    token: v.token, mobile: true })).resolves.toMatchObject({ session: v, monitor: s });
+  delete s.metadata.hireProctoring;
+  expect(await verification.getSessionStatus({ sessionId: v.session_id, participantId: 7 }))
+    .toMatchObject({ isExpired: true, status: 'EXPIRED' });
+});
+
+test('Hire verification admits visible hands, laptop and workspace without person detection', async () => {
+  const v = mobile(), s = sessions[1];
+  v.status = 'PAIRED';
+  models.AssessmentVerificationSession.findOne.mockResolvedValue(v);
+  s.metadata.hireProctoring = { policy: { enabled: true }, roomScanClear: true };
+  const attempt = { startedAt: new Date(Date.now() - 3_600_000), update: jest.fn(async function (values) { Object.assign(this, values); }) };
+  const lock = { expiresAt: new Date(Date.now() + 24 * 3_600_000), update: jest.fn(async function (values) { Object.assign(this, values); }) };
+  models.CodingAttempt.findOne.mockResolvedValue(attempt);
+  models.CodingAssessment.findByPk.mockResolvedValue({ timeLimit: 60 });
+  models.AssessmentSession.findOne.mockResolvedValue(lock);
+  s.metadata.mobileEvidence = { eligible: true, person_detected: true, laptop_detected: true,
+    receivedAt: Date.now(), verificationSessionId: v.session_id, pairingVersion };
+  const args = { participantId: 7, assessmentType: 'CODING', assessmentId: 10, attemptId: 17, sessionId: v.session_id };
+  expect((await verification.verifySessionForStart(args)).valid).toBe(false);
+  s.metadata.mobileEvidence = { framing_mode: 'HIRE_WORKSPACE', eligible: true,
+    person_detected: false, hands_detected: true, laptop_detected: true, workspace_detected: true,
+    receivedAt: Date.now(), verificationSessionId: v.session_id, pairingVersion };
+  s.metadata.mobileEvidence.receivedAt -= 6000;
+  expect(await verification.getSessionStatus({ sessionId: v.session_id, participantId: 7 })).toMatchObject({
+    hireFramingVerified: true, isFullyVerified: false,
+  });
+  s.metadata.mobileEvidence.receivedAt = Date.now();
+  const result = await verification.verifySessionForStart(args);
+  expect(result.valid).toBe(true);
+  expect(s.metadata.mobileAdmission.verificationSessionId).toBe(v.session_id);
+  expect(attempt.update).toHaveBeenCalledWith(expect.objectContaining({ startedAt: expect.any(Date) }), expect.any(Object));
+  expect(lock.update).toHaveBeenCalledWith(expect.objectContaining({ expiresAt: expect.any(Date) }), expect.any(Object));
+  expect(lock.expiresAt.getTime() - attempt.startedAt.getTime()).toBe(75 * 60_000);
+});
+
+test('Hire mobile frames request workspace framing while regular frames keep the existing rule', async () => {
+  const s = sessions[1], v = mobile();
+  aiResponse(false, false);
+  await service.validateMobile({ sessionId: s.sessionId, participantId: 7, frame: 'jpeg', verificationSession: v });
+  expect(axios.post.mock.calls.at(-1)[1].hireFraming).toBe(false);
+  s.metadata.hireProctoring = { policy: { enabled: true }, roomScanClear: false };
+  expect((await service.validateMobile({ sessionId: s.sessionId, participantId: 7, frame: 'jpeg', verificationSession: v })).pendingRoomScan).toBe(true);
+  expect(axios.post).toHaveBeenCalledTimes(1);
+  s.metadata.hireProctoring.roomScanClear = true;
+  await service.validateMobile({ sessionId: s.sessionId, participantId: 7, frame: 'jpeg', verificationSession: v });
+  expect(axios.post.mock.calls.at(-1)[1].hireFraming).toBe(true);
 });
 
 test.each(['CODING','QUIZ'])('%s rescans the admitted camera QR after expiry without resetting the test or scoring', async type => {

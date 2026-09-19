@@ -13,6 +13,7 @@ const {
   CodingAssessment,
   QuizAttempt,
   CodingAttempt,
+  AssessmentSession,
   MonitoringSession,
   sequelize,
 } = require('../models');
@@ -21,6 +22,17 @@ const logger = require('../utils/logger');
 
 const SESSION_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-placeholder';
+
+function activeHirePairing(session, monitor) {
+  return ['PAIRED', 'VERIFIED', 'USED'].includes(session?.status) &&
+    monitor?.metadata?.hireProctoring?.policy?.enabled === true &&
+    !['COMPLETED', 'ABORTED'].includes(monitor.status);
+}
+
+function pairingExpired(session, monitor) {
+  return !session || session.status === 'EXPIRED' ||
+    (session.status !== 'USED' && !activeHirePairing(session, monitor) && new Date(session.expires_at) <= new Date());
+}
 
 class AssessmentVerificationService {
   async monitoringFor(session, options = {}) {
@@ -45,14 +57,17 @@ class AssessmentVerificationService {
         status: { [Op.in]: ['PAIRED', 'VERIFIED', 'USED'] },
       }, order: [['created_at', 'DESC']] });
     }
-    if (!session || session.status === 'EXPIRED' || (session.status !== 'USED' && new Date(session.expires_at) <= new Date())) throw new Error('Invalid or expired mobile pairing');
+    if (!session) throw new Error('Invalid or expired mobile pairing');
     const monitor = await this.monitoringFor(session);
+    if (pairingExpired(session, monitor)) throw new Error('Invalid or expired mobile pairing');
     if (!monitor || ['COMPLETED', 'ABORTED'].includes(monitor.status)) throw new Error('Assessment is not active');
     return { session, monitor };
   }
 
   freshEvidence(session, monitor) {
     const evidence = monitor?.metadata?.mobileEvidence;
+    if (monitor?.metadata?.hireProctoring?.policy?.enabled === true &&
+        (monitor.metadata.hireProctoring.roomScanClear !== true || evidence?.framing_mode !== 'HIRE_WORKSPACE')) return null;
     return evidence?.verificationSessionId === session.session_id && evidence.pairingVersion === crypto.createHash("sha256").update(session.token).digest("hex") &&
       Date.now() - Number(evidence.receivedAt) <= 5000 ? evidence : null;
   }
@@ -86,9 +101,20 @@ if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear 
     }
 
     if (monitor.mobileEnabled && !monitor.metadata?.mobileAdmission) {
-      throw new Error('Complete mobile person and laptop verification before entering the assessment.');
+      throw new Error(hire.isHire
+        ? 'Complete mobile hands, laptop, and workspace verification before entering the assessment.'
+        : 'Complete mobile person and laptop verification before entering the assessment.');
     }
     return monitor;
+  }
+
+  initialHireFramingVerified(session, monitor) {
+    const evidence = monitor?.metadata?.mobileEvidence;
+    return monitor?.metadata?.hireProctoring?.policy?.enabled === true &&
+      monitor.metadata.hireProctoring.roomScanClear === true &&
+      evidence?.framing_mode === 'HIRE_WORKSPACE' && evidence.eligible === true &&
+      evidence.verificationSessionId === session.session_id &&
+      evidence.pairingVersion === crypto.createHash('sha256').update(session.token).digest('hex');
   }
 
   async assertReconnectAllowed(session, monitor = null) {
@@ -222,7 +248,7 @@ if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear 
       }
     }
 
-    const isExpired = !session || session.status === 'EXPIRED' || (session.status !== 'USED' && new Date() > new Date(session.expires_at));
+    const isExpired = pairingExpired(session, monitor);
 
     if (!isExpired) {
       // Reuse existing active session!
@@ -376,7 +402,7 @@ if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear 
     const now = new Date();
 
     // Check for existing active session that hasn't expired or been used
-    const existing = await AssessmentVerificationSession.findOne({
+    let existing = await AssessmentVerificationSession.findOne({
       transaction,
       where: {
         participant_id: participantId,
@@ -389,6 +415,15 @@ if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear 
       // Prefer the already paired phone if an older server created duplicates.
       order: [[sequelize.literal("CASE WHEN status = 'USED' THEN 0 WHEN status IN ('PAIRED', 'VERIFIED') THEN 1 ELSE 2 END"), 'ASC'], ['created_at', 'DESC']],
     });
+
+    // The QR scan window must not replace a paired Hire phone during room verification.
+    if (!existing) {
+      const paired = await AssessmentVerificationSession.findOne({ transaction, where: {
+        participant_id: participantId, assessment_id: assessmentId, assessment_type: normType,
+        attempt_id: attemptId, status: { [Op.in]: ['PAIRED', 'VERIFIED', 'USED'] },
+      }, order: [['created_at', 'DESC']] });
+      if (paired && activeHirePairing(paired, await this.monitoringFor(paired, { transaction }))) existing = paired;
+    }
 
     if (existing) {
       const qrPayload = qrGenerator.generatePairingPayload({
@@ -520,7 +555,7 @@ if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear 
     if (session.status === 'USED') {
       try { await this.assertReconnectAllowed(session); }
       catch (error) { return { success: false, error: error.message }; }
-    } else if (session.status === 'EXPIRED' || new Date() > new Date(session.expires_at)) {
+    } else if (pairingExpired(session, await this.monitoringFor(session))) {
       await session.update({ status: 'EXPIRED' });
       return { success: false, error: 'This QR code has expired. Please generate a new QR code.' };
     }
@@ -542,6 +577,7 @@ if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear 
 
     // A reconnect may happen after the original socket JWT's one-hour expiry.
     const socketToken = this._issueSocketToken(session);
+    const monitor = await this.monitoringFor(session);
 
     return {
       success: true,
@@ -557,6 +593,8 @@ if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear 
       expiresAt: session.expires_at,
       status: session.status,
       isAssessmentStarted: session.status === 'USED',
+      hireFraming: monitor?.metadata?.hireProctoring?.policy?.enabled === true,
+      hireFramingVerified: this.initialHireFramingVerified(session, monitor),
     };
   }
 
@@ -565,7 +603,7 @@ if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear 
    */
   async recordMobileCameraReady({ token, deviceInfo }) {
     const session = await AssessmentVerificationSession.findOne({ where: { token } });
-    if (!session || session.status === 'EXPIRED' || (session.status !== 'USED' && new Date(session.expires_at) <= new Date())) {
+    if (!session || pairingExpired(session, await this.monitoringFor(session))) {
       throw new Error('Invalid verification token');
     }
 
@@ -620,12 +658,13 @@ if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear 
       throw new Error('Verification session not found');
     }
 
-    const isExpired = session.status !== 'USED' && new Date() > new Date(session.expires_at);
+    const monitor = await this.monitoringFor(session);
+    const isExpired = pairingExpired(session, monitor);
     if (isExpired && session.status !== 'USED') {
       await session.update({ status: 'EXPIRED' });
     }
 
-    const evidence = this.freshEvidence(session, await this.monitoringFor(session));
+    const evidence = this.freshEvidence(session, monitor);
     const isFullyVerified = !!evidence?.eligible && session.status !== 'EXPIRED';
 
     return {
@@ -638,6 +677,7 @@ if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear 
       mobileEvidence: evidence,
       laptopVerified: session.laptop_verified,
       isFullyVerified,
+      hireFramingVerified: this.initialHireFramingVerified(session, monitor),
       expiresAt: session.expires_at,
       isExpired,
     };
@@ -670,7 +710,7 @@ if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear 
       };
     }
 
-    if (session.status !== 'USED' && new Date() > new Date(session.expires_at)) {
+    if (pairingExpired(session, await this.monitoringFor(session))) {
       await session.update({ status: 'EXPIRED' });
       return {
         valid: false,
@@ -678,16 +718,35 @@ if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear 
       };
     }
 
-    const admitted = await sequelize.transaction(async transaction => {
+    const admission = await sequelize.transaction(async transaction => {
       const monitor = await this.monitoringFor(session, { transaction, lock: transaction.LOCK.UPDATE });
-      if (!monitor || ['COMPLETED', 'ABORTED'].includes(monitor.status) || !this.freshEvidence(session, monitor)?.eligible) return false;
+      const hireFraming = monitor?.metadata?.hireProctoring?.policy?.enabled === true;
+      if (!monitor || ['COMPLETED', 'ABORTED'].includes(monitor.status) || !this.freshEvidence(session, monitor)?.eligible) return { admitted: false, hireFraming };
+      if (hireFraming && session.status !== 'USED') {
+        const isCoding = session.assessment_type === 'CODING';
+        const Attempt = isCoding ? CodingAttempt : QuizAttempt;
+        const Assessment = isCoding ? CodingAssessment : AIQuiz;
+        const attempt = await Attempt.findOne({ where: { id: session.attempt_id, participantId, status: 'IN_PROGRESS' }, transaction });
+        const assessment = await Assessment.findByPk(session.assessment_id, { transaction });
+        const lock = await AssessmentSession.findOne({ where: isCoding
+          ? { codingAttemptId: session.attempt_id } : { attemptId: session.attempt_id }, transaction });
+        if (!attempt || !assessment || !lock) return { admitted: false, hireFraming };
+        const startedAt = new Date();
+        const minutes = Number(assessment.timeLimit) || 60;
+        await attempt.update({ startedAt }, { transaction });
+        await lock.update({ lockedAt: startedAt,
+          expiresAt: new Date(startedAt.getTime() + (minutes + 15) * 60_000) }, { transaction });
+      }
       await monitor.update({ metadata: { ...monitor.metadata, mobileAdmission: {
         verificationSessionId: session.session_id, admittedAt: new Date().toISOString(),
       } } }, { transaction });
       await session.update({ mobile_verified: true, status: 'USED' }, { transaction });
-      return true;
+      return { admitted: true, hireFraming };
     });
-    if (!admitted) return { valid: false, error: 'Keep the mobile stream active with both person and laptop visible until verification completes.' };
+
+    if (!admission.admitted) return { valid: false, error: admission.hireFraming
+      ? 'Keep the mobile stream active with both hands, laptop, and workspace visible until verification completes.'
+      : 'Keep the mobile stream active with both person and laptop visible until verification completes.' };
 
     return {
       valid: true,

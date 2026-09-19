@@ -36,7 +36,7 @@ const number = (value, fallback, min, max) => {
 };
 
 function normalizePolicy(input = {}) {
-  const language = SUPPORTED_LANGUAGES.includes(input.defaultLanguage) ? input.defaultLanguage : DEFAULT_POLICY.defaultLanguage;
+  const language = HIRE_VOICE_LANGUAGES.includes(input.defaultLanguage) ? input.defaultLanguage : DEFAULT_POLICY.defaultLanguage;
   return {
     enabled: bool(input.enabled, DEFAULT_POLICY.enabled),
     identityVerification: bool(input.identityVerification, DEFAULT_POLICY.identityVerification),

@@ -4,13 +4,14 @@ const fs = require('fs');
 const path = require('path');
 const monitoringService = require('./monitoringService');
 const policyService = require('./hireProctoringPolicy');
+const logger = require('../utils/logger');
 
 const AI_SERVICE_URL = (process.env.AI_SERVICE_URL || 'http://localhost:8000').replace(/\/+$/, '');
 const MAX_FRAME_BYTES = 2 * 1024 * 1024;
 
 const HIRE_ROOM_STEPS = Object.freeze(['front', 'left', 'back', 'right', 'desk', 'floor']);
 
-function publicError(message, status = 400) { const error = new Error(message); error.status = status; return error; }
+function publicError(message, status = 400, code = null) { const error = new Error(message); error.status = status; error.code = code; return error; }
 
 async function requireOwnedHireSession(sessionId, user) {
   const session = await monitoringService.getSession(sessionId);
@@ -22,28 +23,33 @@ async function requireOwnedHireSession(sessionId, user) {
   return { session, ...resolved };
 }
 
-async function callAi(pathname, payload) {
-  try {
-    const result = await axios.post(`${AI_SERVICE_URL}${pathname}`, payload, { timeout: 12000, maxContentLength: MAX_FRAME_BYTES * 8 });
-    return result.data;
-  } catch (error) {
-    // Connection-level failures (ECONNREFUSED, ETIMEDOUT) mean the AI
-    // service is not running — give a clear operational message.
-    const isConnectError = !error.response && (
-      error.code === 'ECONNREFUSED' || error.code === 'ECONNRESET' ||
-      error.code === 'ETIMEDOUT' || error.code === 'ENOTFOUND' ||
-      error.message?.includes('connect') || error.message?.includes('timeout')
-    );
-    if (isConnectError) {
-      throw publicError('Verification service is temporarily unavailable. Please try again in a moment.', 503);
+async function callAi(pathname, payload, { timeoutMs = 12000, retryTimeoutOnce = false } = {}) {
+  for (let attempt = 1; attempt <= (retryTimeoutOnce ? 2 : 1); attempt += 1) {
+    try {
+      const result = await axios.post(`${AI_SERVICE_URL}${pathname}`, payload,
+        { timeout: timeoutMs, maxContentLength: MAX_FRAME_BYTES * 8, maxBodyLength: MAX_FRAME_BYTES * 8 });
+      return result.data;
+    } catch (error) {
+      const timedOut = error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT' || /timeout/i.test(error.message || '');
+      if (timedOut && retryTimeoutOnce && attempt === 1) {
+        logger.warn('ROOM_PHOTO_AI_TIMEOUT_RETRY', { attempt, timeoutMs, pathname });
+        continue;
+      }
+      if (timedOut && retryTimeoutOnce) throw publicError('Photo analysis is taking too long. Please try again.', 504, 'AI_TIMEOUT');
+      const isConnectError = !error.response && (
+        error.code === 'ECONNREFUSED' || error.code === 'ECONNRESET' ||
+        error.code === 'ENOTFOUND' || error.message?.includes('connect')
+      );
+      if (isConnectError) {
+        throw publicError('Verification service is temporarily unavailable. Please try again.', 503, 'SERVER_ERROR');
+      }
+      const responseStatus = error.response?.status;
+      const detail = error.response?.data?.detail || error.response?.data?.message || error.message || 'AI verification unavailable';
+      // A rejected image is a candidate retake; a missing route or failed service is operational.
+      const status = responseStatus === 422 ? 422 : 503;
+      throw publicError(status === 422 ? detail : 'Verification service is temporarily unavailable. Please try again.', status,
+        status === 422 ? 'INVALID_IMAGE' : 'SERVER_ERROR');
     }
-    const responseStatus = error.response?.status;
-    const detail = error.response?.data?.detail || error.response?.data?.message || error.message || 'AI verification unavailable';
-    // 422 = model rejected the input (bad frames, face not found, liveness failed)
-    // 4xx = client error — propagate as 422
-    // 5xx / other = server/AI error — surface as 503
-    const status = responseStatus === 422 ? 422 : (responseStatus >= 400 && responseStatus < 500 ? 422 : 503);
-    throw publicError(detail, status);
   }
 }
 
@@ -67,7 +73,19 @@ async function storeIdentityReference({ sessionId, user, frames, challenge }) {
   if (!policy.identityVerification) return { skipped: true, policy };
   if (session.metadata?.hireProctoring?.identityVerifiedAt) throw publicError('Identity is already locked for this assessment session', 409);
   if (!['CALIBRATING', 'READY', 'ACTIVE'].includes(session.status)) throw publicError('Identity verification must finish before the assessment starts', 409);
-  const result = await callAi('/api/proctoring/hire/identity-reference', { sessionId, frames, challenge, requireLiveness: policy.livenessDetection });
+  const hireState = session.metadata?.hireProctoring || {};
+  const completed = Array.isArray(hireState.completedLivenessChallenges) ? hireState.completedLivenessChallenges : [];
+  const sequence = policy.livenessDetection === false ? ['LOOK_CENTER'] : ['TURN_LEFT', 'TURN_RIGHT', 'LOOK_CENTER'];
+  if (sequence[completed.length] !== challenge) throw publicError('Liveness challenge is out of sequence', 409);
+  const result = await callAi('/api/proctoring/hire/identity-reference', {
+    sessionId, frames, challenge, requireLiveness: policy.livenessDetection,
+    neutralYaw: hireState.livenessNeutralYaw ?? null,
+    previousYaw: hireState.livenessLastPoseYaw ?? null,
+  }, { timeoutMs: 25000 });
+  if (result.success && result.challengeCompleted === false) {
+    return { success: true, challengeCompleted: false, challenge, detectedMovement: null,
+      completedChallenges: completed, message: result.message || 'Movement not detected yet.' };
+  }
   if (!result.success) {
     const evidenceRef = policy.evidenceCapture && policy.evidenceMode !== 'NONE' ? await saveEvidence(frames?.[frames.length - 1], sessionId, 'liveness') : null;
     await monitoringService.reportEvent({ sessionId, participantId: user.id, eventType: 'LIVENESS_FAILED', severity: 'HIGH', confidence: 1, evidenceRef,
@@ -77,12 +95,23 @@ async function storeIdentityReference({ sessionId, user, frames, challenge }) {
     const msg = result.message || 'Liveness not detected. Please ensure you are well-lit, face the camera, and follow the movement instruction.';
     throw publicError(msg, 422);
   }
+  if (result.challengeCompleted !== true || result.detectedMovement !== challenge.replace('TURN_', '').replace('LOOK_', '')) {
+    throw publicError('Liveness result did not match the active challenge', 422);
+  }
+  const nextCompleted = [...completed, challenge];
+  const nextChallenge = sequence[nextCompleted.length] || null;
+  const verified = nextChallenge === null;
   await session.update({ metadata: { ...(session.metadata || {}), hireProctoring: {
-    ...(session.metadata?.hireProctoring || {}), policy, identitySignature: result.signature,
-    identityVerifiedAt: new Date().toISOString(), livenessPassed: !!result.livenessPassed,
-    livenessChallenge: result.challenge, challenge: null, challengeExpiresAt: null,
+    ...hireState, policy, completedLivenessChallenges: nextCompleted,
+    livenessNeutralYaw: result.neutralYaw, challenge: nextChallenge,
+    livenessLastPoseYaw: result.poseYaw,
+    challengeExpiresAt: nextChallenge ? new Date(Date.now() + 2 * 60_000).toISOString() : null,
+    ...(verified ? { identitySignature: result.signature, identityVerifiedAt: new Date().toISOString(),
+      livenessPassed: !!result.livenessPassed, livenessChallenge: nextCompleted } : {}),
   } } });
-  return { verified: true, livenessPassed: !!result.livenessPassed, challenge: result.challenge, policy };
+  return { success: true, challengeCompleted: true, detectedMovement: result.detectedMovement,
+    challenge, completedChallenges: nextCompleted, nextChallenge, verified,
+    livenessPassed: verified && !!result.livenessPassed, policy };
 }
 
 async function verifyIdentity({ sessionId, user, frame }) {
@@ -149,18 +178,36 @@ function allSixCaptured(sixCaptureStatus) {
   return HIRE_ROOM_STEPS.every(step => sixCaptureStatus?.[step]?.verifiedAt);
 }
 
-async function analyzeRoomStep({ sessionId, user, step, frame }) {
+async function analyzeRoomStep({ sessionId, user, step, frame, orientation = null, laptopFrames = [] }) {
   const { session, policy } = await requireOwnedHireSession(sessionId, user);
   if (!policy.mobileRoomScan && !policy.roomScan360Enabled) return { skipped: true, step, policy };
   if (!['CALIBRATING', 'READY'].includes(session.status)) throw publicError('Room scanning must finish before the assessment starts', 409);
   const normalizedStep = String(step || '').toLowerCase();
   if (!HIRE_ROOM_STEPS.includes(normalizedStep)) throw publicError('Unsupported room capture step', 422);
-  if (!frame || String(frame).length > MAX_FRAME_BYTES) throw publicError('Camera frame missing or too large', 422);
+  const photo = Buffer.isBuffer(frame) ? `data:image/jpeg;base64,${frame.toString('base64')}` : frame;
+  if (!photo || String(photo).length > MAX_FRAME_BYTES) throw publicError('Camera photo missing or too large', 422);
+  if (!Array.isArray(laptopFrames) || laptopFrames.length > 6 || laptopFrames.some(item => typeof item !== 'string' || item.length > 180000))
+    throw publicError('Laptop camera sample is invalid', 422);
+  const initialState = hireProctoringState(session);
+  const pending = HIRE_ROOM_STEPS.find(name => !initialState.sixCaptureStatus?.[name]?.verifiedAt);
+  if (normalizedStep !== pending) throw publicError('Capture the current room step first', 409);
 
+  const startedAt = Date.now();
+  logger.info('AI_ANALYSIS_START', { sessionId, step: normalizedStep, photoBytes: Buffer.isBuffer(frame) ? frame.length : undefined });
   const result = await callAi('/api/proctoring/hire/room-step', {
-    sessionId, step: normalizedStep, frame,
+    sessionId, step: normalizedStep, frame: photo,
     threshold: (policy.roomScanCoverageThreshold / 100) - 0.3,
-  });
+    priorCaptures: Object.entries(initialState.sixCaptureStatus || {}).filter(([, capture]) => capture.verifiedAt)
+      .map(([name, capture]) => ({ step: name, visualSignature: capture.visualSignature,
+        sceneDescriptor: capture.sceneDescriptor, orientation: capture.orientation })),
+    orientation, laptopFrames, requireLaptop: true,
+  }, { timeoutMs: 18000, retryTimeoutOnce: true });
+  logger.info('AI_ANALYSIS_COMPLETE', { sessionId, step: normalizedStep, durationMs: Date.now() - startedAt });
+  logger.info('AI_RESPONSE', { sessionId, step: normalizedStep, valid: result.valid === true,
+    confidence: result.confidence, guideKey: result.guideKey });
+  if (result.success === false || typeof result.valid !== 'boolean') {
+    throw publicError('Verification service is temporarily unavailable. Please try again.', 503, 'SERVER_ERROR');
+  }
 
   const state = hireProctoringState(session);
   const sixCaptureStatus = { ...(state.sixCaptureStatus || {}) };
@@ -173,25 +220,35 @@ async function analyzeRoomStep({ sessionId, user, step, frame }) {
     attempts: attempts + 1,
   };
 
-  if (result.valid && !result.sameFrame) {
+  const blockingObservations = (result.observations || []).filter(obs =>
+    obs.objectType === 'additional person' || (policy.unauthorizedObjectDetection &&
+      ['additional phone', 'visible notes / book', 'tablet', 'second laptop', 'additional monitor'].includes(obs.objectType)));
+  captured.observations = [...(previous.observations || []), ...(result.observations || [])].slice(-50);
+  captured.observationEvidencePaths = previous.observationEvidencePaths || [];
+  if (blockingObservations.length && policy.evidenceCapture && policy.evidenceMode !== 'NONE') {
+    const evidencePath = await saveEvidence(photo, sessionId, `room_${normalizedStep}_observation`);
+    if (evidencePath) captured.observationEvidencePaths = [...captured.observationEvidencePaths, evidencePath].slice(-5);
+  }
+  if (result.valid && !result.sameFrame && !blockingObservations.length) {
     captured.verifiedAt = new Date().toISOString();
     captured.coverage = Number(result.coverage) || 0;
     captured.confidence = Number(result.confidence) || 0;
-    if (Array.isArray(result.observations) && result.observations.length) {
-      const observations = [...((sixCaptureStatus[normalizedStep]?.observations) || []), ...result.observations];
-      captured.observations = observations.slice(-50);
-    }
+    if (result.visualSignature) captured.visualSignature = result.visualSignature;
+    if (result.sceneDescriptor) captured.sceneDescriptor = result.sceneDescriptor;
+    if (result.orientation) captured.orientation = result.orientation;
     if (Array.isArray(result.detectedObjects) && result.detectedObjects.length) {
       captured.detectedObjects = result.detectedObjects;
     }
     if (policy.evidenceCapture && policy.evidenceMode !== 'NONE') {
-      captured.evidencePath = await saveEvidence(frame, sessionId, `room_${normalizedStep}`);
+      captured.evidencePath = await saveEvidence(photo, sessionId, `room_${normalizedStep}`);
     }
   } else if (result.sameFrame) {
     captured.verifiedAt = previous.verifiedAt || null;
   }
 
   sixCaptureStatus[normalizedStep] = captured;
+  if (blockingObservations.length) captured.retakeReason = blockingObservations[0].objectType;
+  else if (!captured.verifiedAt) captured.retakeReason = result.guideKey || 'unclear';
   await updateHireState(session, { sixCaptureStatus });
 
   // Neutral observations persist for the human reviewer — never a verdict.
@@ -205,30 +262,60 @@ async function analyzeRoomStep({ sessionId, user, step, frame }) {
     await updateHireState(session, { roomObservations: mergedObservations.slice(-100) });
   }
 
-  return {
+  const observed = blockingObservations[0]?.objectType;
+  const objectNames = {
+    'additional phone': ['An additional phone', 'கூடுதல் கைப்பேசி'],
+    'visible notes / book': ['Notes or a book', 'குறிப்புகள் அல்லது புத்தகம்'],
+    tablet: ['A tablet', 'டேப்லெட்'],
+    'second laptop': ['An additional laptop', 'கூடுதல் மடிக்கணினி'],
+    'additional monitor': ['An additional display', 'கூடுதல் திரை'],
+  };
+  const objectName = objectNames[observed];
+  const message = observed === 'additional person'
+    ? 'Another person may be visible. Please ensure you are alone and take this photo again.'
+    : objectName ? `${objectName[0]} is visible. Please remove it and take the ${normalizedStep} photo again.`
+      : captured.verifiedAt ? result.message : `${result.message || 'Photo is unclear.'} Please take the ${normalizedStep} photo again.`;
+  const taMessage = observed === 'additional person'
+    ? 'மற்றொரு நபர் காணப்படுகிறார். தயவுசெய்து நீங்கள் மட்டும் இருப்பதை உறுதி செய்து இந்தப் புகைப்படத்தை மீண்டும் எடுக்கவும்.'
+    : objectName ? `${objectName[1]} காணப்படுகிறது. அதை அகற்றி இந்தப் புகைப்படத்தை மீண்டும் எடுக்கவும்.`
+      : captured.verifiedAt ? result.taMessage : `${result.taMessage || 'புகைப்படம் தெளிவாக இல்லை.'} இந்தப் புகைப்படத்தை மீண்டும் எடுக்கவும்.`;
+
+  const response = {
+    success: true,
     step: normalizedStep,
     valid: !!captured.verifiedAt,
+    verified: !!captured.verifiedAt,
+    reason: message,
+    retry: !captured.verifiedAt,
     verifiedBefore: !!previous.verifiedAt,
     coverage: captured.coverage,
     confidence: captured.confidence,
     attempts: captured.attempts,
-    guideKey: result.guideKey || null,
-    message: result.message || null,
-    taMessage: result.taMessage || null,
+    guideKey: blockingObservations.length ? 'remove_observation' : (result.guideKey || null),
+    message,
+    taMessage,
     observations: result.observations || [],
     detectedObjects: result.detectedObjects || [],
     sixCaptureStatus,
     allSixCaptured: allSixCaptured(sixCaptureStatus),
   };
+  logger.info('VERIFICATION_RESULT', { sessionId, step: normalizedStep, verified: response.verified,
+    confidence: response.confidence, attempts: response.attempts });
+  return response;
 }
 
-async function analyzeRoomScan360({ sessionId, user, frames }) {
+async function analyzeRoomScan360({ sessionId, user, frames, orientations = [], laptopFrames = [] }) {
   const { session, policy } = await requireOwnedHireSession(sessionId, user);
   if (!policy.mobileRoomScan && !policy.roomScan360Enabled) return { skipped: true, policy };
   if (!['CALIBRATING', 'READY'].includes(session.status)) throw publicError('Room scanning must finish before the assessment starts', 409);
   if (!Array.isArray(frames) || !frames.length || frames.length > 12) throw publicError('Submit 1–12 sampled scan frames', 422);
+  if (!Array.isArray(laptopFrames) || laptopFrames.length > 6 || laptopFrames.some(item => typeof item !== 'string' || item.length > 180000))
+    throw publicError('Laptop camera sample is invalid', 422);
+  if (!allSixCaptured(hireProctoringState(session).sixCaptureStatus)) throw publicError('Verify all six room photos before the 360° scan', 409);
 
-  const result = await callAi('/api/proctoring/hire/room-scan-360', { sessionId, frames });
+  const result = await callAi('/api/proctoring/hire/room-scan-360', { sessionId, frames, orientations,
+    laptopFrames, requireLaptop: true, blockObjects: policy.unauthorizedObjectDetection === true },
+    { timeoutMs: 18000, retryTimeoutOnce: true });
 
   const state = hireProctoringState(session);
   const coverage = Number(result.coverage) || 0;
@@ -238,6 +325,8 @@ async function analyzeRoomScan360({ sessionId, user, frames }) {
     roomScanGuideKey: result.guideKey || null,
     roomScanMessage: result.message || null,
     roomScanTaMessage: result.taMessage || null,
+    roomScanSectors: result.sectors || state.roomScanSectors || [],
+    roomScanPendingObject: result.pendingObject || null,
   };
   const mergedObservations = state.roomObservations || [];
   if (Array.isArray(result.observations) && result.observations.length) {
@@ -249,7 +338,7 @@ async function analyzeRoomScan360({ sessionId, user, frames }) {
     patch.roomObservations = mergedObservations.slice(-100);
   }
 
-  if (result.complete && policy.roomScanCoverageThreshold != null && coverage >= policy.roomScanCoverageThreshold) {
+  if (result.complete && !result.pendingObject && policy.roomScanCoverageThreshold != null && coverage >= policy.roomScanCoverageThreshold) {
     const six = state.sixCaptureStatus || {};
     if (allSixCaptured(six)) {
       // Room verification is only complete when the six guided captures passed
@@ -274,6 +363,10 @@ async function analyzeRoomScan360({ sessionId, user, frames }) {
     message: result.message || null,
     taMessage: result.taMessage || null,
     samplesSeen: Number(result.samplesSeen) || 0,
+    sectors: result.sectors || [],
+    missingSectors: result.missingSectors || [],
+    currentDirection: result.currentDirection || null,
+    pendingObject: result.pendingObject || null,
     pendingSteps: patch.pendingSteps || [],
     observations: result.observations || [],
     detectedObjects: result.detectedObjects || [],
@@ -291,6 +384,8 @@ async function getRoomVerificationState({ sessionId, user }) {
     roomScan360Complete: state.roomScan360Complete === true,
     roomScanCompletedAt: state.roomScanCompletedAt || null,
     roomScanClear: state.roomScanClear === true,
+    roomScanSectors: state.roomScanSectors || [],
+    roomScanPendingObject: state.roomScanPendingObject || null,
     roomObservations: state.roomObservations || [],
     roomScanCoverageThreshold: policy.roomScanCoverageThreshold,
   };

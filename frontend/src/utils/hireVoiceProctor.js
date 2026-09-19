@@ -11,7 +11,9 @@ const MESSAGES = {
   'pa-IN': { neutral: 'ਕੈਮਰੇ ਵੱਲ ਸਿੱਧਾ ਦੇਖੋ।', TURN_LEFT: 'ਆਪਣਾ ਸਿਰ ਹੌਲੀ-ਹੌਲੀ ਖੱਬੇ ਪਾਸੇ ਮੋੜੋ।', TURN_RIGHT: 'ਆਪਣਾ ਸਿਰ ਹੌਲੀ-ਹੌਲੀ ਸੱਜੇ ਪਾਸੇ ਮੋੜੋ।', BLINK: 'ਇੱਕ ਵਾਰ ਅੱਖ ਝਪਕਾਓ, ਫਿਰ ਕੈਮਰੇ ਵੱਲ ਦੇਖੋ।', room: 'ਫੋਨ ਨੂੰ ਹੌਲੀ-ਹੌਲੀ ਕਮਰੇ ਦੇ ਚਾਰੇ ਪਾਸੇ ਘੁਮਾਓ। ਹਰ ਦਿਸ਼ਾ ਕੈਪਚਰ ਕਰੋ।', mismatch: 'ਪਛਾਣ ਮੇਲ ਨਹੀਂ ਖਾਂਦੀ। ਤੁਰੰਤ ਕੈਮਰੇ ਸਾਹਮਣੇ ਵਾਪਸ ਆਓ।', warning: 'ਸ਼ੱਕੀ ਗਤੀਵਿਧੀ ਮਿਲੀ ਹੈ। ਕਿਰਪਾ ਕਰਕੇ ਪ੍ਰੀਖਿਆ ਦੇ ਨਿਯਮਾਂ ਦੀ ਪਾਲਣਾ ਕਰੋ।' },
 };
 
-export const hireVoiceMessage = (language, key) => (MESSAGES[language] || MESSAGES['en-IN'])[key] || MESSAGES['en-IN'][key] || key;
+export const hireVoiceMessage = (language, key) => key === 'LOOK_CENTER'
+  ? (language === 'ta-IN' ? 'கேமராவை நேராகப் பாருங்கள்.' : 'Look straight at the camera.')
+  : (MESSAGES[language] || MESSAGES['en-IN'])[key] || MESSAGES['en-IN'][key] || key;
 
 export function speakHireWarning({ language = 'en-IN', key = 'warning', text, rate = .95, volume = 1 } = {}) {
   if (typeof window === 'undefined' || !window.speechSynthesis) return false;

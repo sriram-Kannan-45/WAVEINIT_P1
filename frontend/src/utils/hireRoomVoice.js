@@ -1,14 +1,17 @@
 const STORAGE_KEY = 'hireProctorLang';
 
-const PRIORITIES = { CRITICAL: 0, CURRENT_STEP: 1, RETRY: 2, SUCCESS: 3, GENERAL: 4 };
+const PRIORITIES = { CRITICAL: 0, RETRY: 1, CURRENT_STEP: 2, SUCCESS: 3, GENERAL: 4 };
 
 const CATALOG = {
-  step_front: { en: 'Face the front of the room. Keep the camera steady.', ta: 'அறையின் முன்பக்கமாக நிற்கவும். கேமராவை நிலையாக வைத்திருங்கள்.' },
-  step_left: { en: 'Now turn slowly to your left.', ta: 'இப்போது மெதுவாக இடது பக்கம் திரும்புங்கள்.' },
-  step_back: { en: 'Face the back of the room.', ta: 'அறையின் பின்பக்கமாக நிற்கவும்.' },
-  step_right: { en: 'Now turn slowly to your right.', ta: 'இப்போது மெதுவாக வலது பக்கம் திரும்புங்கள்.' },
-  step_desk: { en: 'Show the desk or table where you will work.', ta: 'நீங்கள் வேலை செய்யும் மேசையைக் காட்டுங்கள்.' },
-  step_floor: { en: 'Show the floor and the space around you.', ta: 'தரை மற்றும் உங்களைச் சுற்றியுள்ள இடத்தைக் காட்டுங்கள்.' },
+  framing_laptop: { en: 'Please adjust the phone so your laptop is visible.', ta: 'உங்கள் மடிக்கணினி தெளிவாகத் தெரியும்படி கைப்பேசியை மாற்றவும்.' },
+  framing_hands: { en: 'Please keep both hands visible near your workspace.', ta: 'உங்கள் பணியிடத்திற்கு அருகில் இரண்டு கைகளும் தெளிவாகத் தெரியும்படி வைத்துக் கொள்ளவும்.' },
+  framing_workspace: { en: 'Please show your laptop and workspace clearly.', ta: 'உங்கள் மடிக்கணினி மற்றும் பணியிடத்தை தெளிவாகக் காட்டவும்.' },
+  step_front: { en: 'Please show the area in front of you and take a photo.', ta: 'உங்கள் முன்புறப் பகுதியைக் காட்டி ஒரு புகைப்படம் எடுக்கவும்.' },
+  step_left: { en: 'Please turn your phone to the left and take a clear photo.', ta: 'உங்கள் கைப்பேசியை இடது பக்கம் திருப்பி தெளிவான புகைப்படம் எடுக்கவும்.' },
+  step_back: { en: 'Please turn the phone around and show the area behind you.', ta: 'உங்கள் பின்னால் உள்ள பகுதியைக் காட்டும் வகையில் கைப்பேசியைத் திருப்பவும்.' },
+  step_right: { en: 'Please turn your phone to the right and take a clear photo.', ta: 'உங்கள் கைப்பேசியை வலது பக்கம் திருப்பி தெளிவான புகைப்படம் எடுக்கவும்.' },
+  step_desk: { en: 'Please show your complete desk and workspace.', ta: 'உங்கள் முழு மேசை மற்றும் பணியிடத்தைக் காட்டவும்.' },
+  step_floor: { en: 'Please tilt the phone down and show the floor and lower area.', ta: 'கைப்பேசியை கீழே சாய்த்து தரை மற்றும் கீழ்ப் பகுதியைக் காட்டவும்.' },
   front_ok: { en: 'Front view captured.', ta: 'முன்பக்கக் காட்சி பதிவானது.' },
   left_ok: { en: 'Left view captured.', ta: 'இடது காட்சி பதிவானது.' },
   back_ok: { en: 'Back view captured.', ta: 'பின்பக்கக் காட்சி பதிவானது.' },
@@ -24,7 +27,16 @@ const CATALOG = {
   blurred: { en: 'The image is blurry. Hold the phone steady and try again.', ta: 'படம் மங்கலாக உள்ளது. போனை நிலையாகப் பிடித்து மீண்டும் முயற்சிக்கவும்.' },
   too_dark: { en: 'The image is too dark. Please turn on a light.', ta: 'படம் மிகவும் இருட்டாக உள்ளது. விளக்கை இயக்கவும்.' },
   observed: { en: 'You are doing well. Keep going.', ta: 'நன்றாகச் செய்கிறீர்கள். தொடருங்கள்.' },
-  start_360: { en: '360 degree scan starting. Slowly turn in a full circle.', ta: '360 டிகிரி ஸ்கேன் தொடங்குகிறது. மெதுவாக முழு வட்டமாக திரும்புங்கள்.' },
+  start_360: { en: 'Now slowly rotate your phone around the room.', ta: 'இப்போது கைப்பேசியை மெதுவாக சுற்றி அறையை காட்டவும்.' },
+  photo_error: { en: 'Unable to analyze this photo. Please try again.', ta: 'இந்தப் புகைப்படத்தை ஆய்வு செய்ய முடியவில்லை. மீண்டும் முயற்சிக்கவும்.' },
+  photo_timeout: { en: 'Photo analysis is taking too long. Please try again.', ta: 'புகைப்பட ஆய்வு அதிக நேரம் எடுக்கிறது. மீண்டும் முயற்சிக்கவும்.' },
+  photo_upload_failed: { en: 'Photo could not be uploaded. Please try again.', ta: 'புகைப்படத்தை பதிவேற்ற முடியவில்லை. மீண்டும் முயற்சிக்கவும்.' },
+  photo_analyzing: { en: 'This photo is already being analyzed.', ta: 'இந்தப் புகைப்படம் ஏற்கனவே ஆய்வு செய்யப்படுகிறது.' },
+  photo_invalid: { en: 'Please capture a clearer photo.', ta: 'தெளிவான புகைப்படத்தை மீண்டும் எடுக்கவும்.' },
+  photo_area_missing: { en: 'Please show more of the requested area and take the photo again.', ta: 'கோரப்பட்ட பகுதியை மேலும் தெளிவாகக் காட்டி மீண்டும் புகைப்படம் எடுக்கவும்.' },
+  photo_move_area: { en: 'Please move the phone to the requested area and capture a new photo.', ta: 'குறிப்பிட்ட பகுதியை தெளிவாகக் காட்ட கைப்பேசியை மாற்றி மீண்டும் புகைப்படம் எடுக்கவும்.' },
+  photo_server_error: { en: 'Verification service is temporarily unavailable. Please try again.', ta: 'சரிபார்ப்பு சேவை தற்காலிகமாக கிடைக்கவில்லை. மீண்டும் முயற்சிக்கவும்.' },
+  camera_error: { en: 'The camera preview is unavailable. Please check the phone camera and try again.', ta: 'கேமரா காட்சி கிடைக்கவில்லை. கைப்பேசி கேமராவைச் சரிபார்த்து மீண்டும் முயற்சிக்கவும்.' },
   continue_left: { en: 'Keep moving left.', ta: 'இடது பக்கம் தொடர்ந்து நகரவும்.' },
   slow_down: { en: 'A little slower please.', ta: 'இன்னும் கொஞ்சம் மெதுவாக.' },
   show_behind: { en: 'Raise the camera to show the area behind you.', ta: 'உங்களுக்குப் பின்னால் உள்ள இடத்தைக் காட்ட கேமராவை உயர்த்தவும்.' },

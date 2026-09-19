@@ -207,6 +207,26 @@ router.post('/chatbot/ask', participant, async (req, res) => {
           suggestions: ['How do I submit?', 'How does this assessment work?'],
         });
       }
+      if (clientContext.isHireVerificationActive &&
+          /what should i do|what do i do|how do i continue|next step|என்ன செய்ய|அடுத்து என்ன/i.test(message)) {
+        const tamil = clientContext.selectedLanguage === 'ta-IN';
+        const step = ['front', 'left', 'back', 'right', 'desk', 'floor'].includes(clientContext.currentCaptureStep)
+          ? clientContext.currentCaptureStep : 'front';
+        const instructions = {
+          front: ['Point your phone forward and capture a clear photo.', 'கைப்பேசியை முன்புறம் காட்டி தெளிவான புகைப்படம் எடுக்கவும்.'],
+          left: ['Turn your phone left and capture a clear photo.', 'கைப்பேசியை இடதுபுறம் திருப்பி தெளிவான புகைப்படம் எடுக்கவும்.'],
+          back: ['Turn around and capture the area behind you.', 'திரும்பி, உங்களுக்குப் பின்னால் உள்ள பகுதியைப் புகைப்படம் எடுக்கவும்.'],
+          right: ['Turn your phone right and capture a clear photo.', 'கைப்பேசியை வலதுபுறம் திருப்பி தெளிவான புகைப்படம் எடுக்கவும்.'],
+          desk: ['Capture your complete desk and workspace.', 'முழு மேசை மற்றும் பணியிடத்தைப் புகைப்படம் எடுக்கவும்.'],
+          floor: ['Tilt your phone down and capture the floor below your desk.', 'கைப்பேசியை கீழே சாய்த்து மேசையின் கீழுள்ள தரையைப் புகைப்படம் எடுக்கவும்.'],
+        };
+        const reply = clientContext.roomScanPhase === 'scan360'
+          ? (tamil ? '360 டிகிரி அறை ஸ்கேனுக்காக கைப்பேசியை மெதுவாக முழு வட்டமாகச் சுழற்றுங்கள்.' : 'Slowly rotate your phone in a full circle to finish the 360° room scan.')
+          : clientContext.captureStatus === 'RETRY'
+            ? (tamil ? `சிக்கலைச் சரிசெய்து இதே புகைப்படத்தை மீண்டும் எடுக்கவும். ${instructions[step][1]}` : `Correct the issue shown above and retake this same photo. ${instructions[step][0]}`)
+            : instructions[step][tamil ? 1 : 0];
+        return res.json({ success: true, intent: 'HIRE_VERIFICATION_GUIDANCE', reply, actionButtons: [] });
+      }
     }
     // ── End Hire Context ───────────────────────────────────────────────────
 

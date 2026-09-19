@@ -1,4 +1,3 @@
-const crypto = require('crypto');
 const policyService = require('../services/hireProctoringPolicy');
 const proctoringService = require('../services/hireProctoringService');
 
@@ -42,17 +41,20 @@ async function updatePolicy(req, res) {
 
 async function getChallenge(req, res) {
   try {
-    const { session } = await proctoringService.requireOwnedHireSession(req.params.sessionId, req.user);
+    const { session, policy } = await proctoringService.requireOwnedHireSession(req.params.sessionId, req.user);
     // Allow challenge generation for any pre-verification status, including
     // ACTIVE (which can occur when the quiz attempt starts before identity
     // verification completes on the verification page).
     const alreadyVerified = !!session.metadata?.hireProctoring?.identityVerifiedAt;
     if (alreadyVerified) return res.status(409).json({ error: 'Identity has already been verified for this session.' });
-    const values = ['TURN_LEFT', 'TURN_RIGHT', 'BLINK'];
-    const challenge = values[crypto.randomInt(values.length)];
+    const current = session.metadata?.hireProctoring || {};
+    const challenges = policy.livenessDetection === false ? ['LOOK_CENTER'] : ['TURN_LEFT', 'TURN_RIGHT', 'LOOK_CENTER'];
+    const completed = Array.isArray(current.completedLivenessChallenges) ? current.completedLivenessChallenges : [];
+    const challenge = challenges[completed.length] || challenges[0];
     const expiresAt = new Date(Date.now() + 2 * 60_000).toISOString();
-    await session.update({ metadata: { ...(session.metadata || {}), hireProctoring: { ...(session.metadata?.hireProctoring || {}), challenge, challengeExpiresAt: expiresAt } } });
-    res.json({ challenge, expiresAt });
+    await session.update({ metadata: { ...(session.metadata || {}), hireProctoring: { ...current, challenge, challengeExpiresAt: expiresAt,
+      completedLivenessChallenges: completed } } });
+    res.json({ challenge, expiresAt, completedChallenges: completed, challengeCount: challenges.length });
   } catch (error) { fail(res, error); }
 }
 
@@ -77,12 +79,14 @@ async function inspectRoom(req, res) {
 }
 
 async function roomStep(req, res) {
-  try { res.json(await proctoringService.analyzeRoomStep({ sessionId: req.params.sessionId, user: req.user, step: req.body.step, frame: req.body.frame })); }
+  try { res.json(await proctoringService.analyzeRoomStep({ sessionId: req.params.sessionId, user: req.user, step: req.body.step,
+    frame: req.body.frame, orientation: req.body.orientation, laptopFrames: req.body.laptopFrames })); }
   catch (error) { fail(res, error); }
 }
 
 async function roomScan360(req, res) {
-  try { res.json(await proctoringService.analyzeRoomScan360({ sessionId: req.params.sessionId, user: req.user, frames: req.body.frames })); }
+  try { res.json(await proctoringService.analyzeRoomScan360({ sessionId: req.params.sessionId, user: req.user,
+    frames: req.body.frames, orientations: req.body.orientations, laptopFrames: req.body.laptopFrames })); }
   catch (error) { fail(res, error); }
 }
 

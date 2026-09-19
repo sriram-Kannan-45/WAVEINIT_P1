@@ -511,7 +511,9 @@ class MonitoringEngineService {
     if (['COMPLETED', 'ABORTED'].includes(session.status)) return session;
 
     if (session.mobileEnabled && ['QUIZ', 'CODING'].includes(session.contextType) && !session.metadata?.mobileAdmission) {
-      throw new Error('Complete mobile person and laptop verification before starting the test.');
+      throw new Error(session.metadata?.hireProctoring?.policy?.enabled === true
+        ? 'Complete mobile hands, laptop, and workspace verification before starting the test.'
+        : 'Complete mobile person and laptop verification before starting the test.');
     }
 
     const startTime = testStartedAt ? new Date(testStartedAt) : new Date();
@@ -1072,6 +1074,9 @@ class MonitoringEngineService {
   }
 
   async validateAssessmentMobile({ session, verificationSession, frame }) {
+    if (session.metadata?.hireProctoring?.policy?.enabled === true && session.metadata.hireProctoring.roomScanClear !== true) {
+      return { success: false, pendingRoomScan: true };
+    }
     this.mobileFrameJobs ||= new Set();
     if (this.mobileFrameJobs.has(session.sessionId)) return { success: false, busy: true };
     this.mobileFrameJobs.add(session.sessionId);
@@ -1081,9 +1086,13 @@ class MonitoringEngineService {
       const { data } = await axios.post(`${AI_SERVICE_URL}/api/proctoring/yolo/analyze-frame`, {
         frame, sessionId: verificationSession.session_id + ':' + crypto.createHash('sha256').update(verificationSession.token).digest('hex').slice(0, 16) + (session.status === 'ACTIVE' && verificationSession.status === 'USED' ? ':active' : ':verification'), participantId: session.participantId,
         moduleType: session.contextType, cameraSource: 'MOBILE_CAMERA', confidenceThreshold: 0.35,
+        hireFraming: session.metadata?.hireProctoring?.policy?.enabled === true,
         timestampMs: receivedAt,
       }, { timeout: 10000 }); // CPU cold inference can exceed four seconds; never queue a second frame.
-      if (!data?.success || !data.mobile_evidence) return { success: false, composition_state: 'DISCONNECTED' };
+      if (!data?.success || !data.mobile_evidence ||
+          (session.metadata?.hireProctoring?.policy?.enabled === true && data.mobile_evidence.framing_mode !== 'HIRE_WORKSPACE')) {
+        return { success: false, composition_state: 'DISCONNECTED' };
+      }
       const evidence = { ...data.mobile_evidence, receivedAt, verificationSessionId: verificationSession.session_id, pairingVersion: crypto.createHash('sha256').update(verificationSession.token).digest('hex') };
       // Save a bounded freshness lease, not a frame history. Transitions save
       // immediately; unchanged evidence saves at most once every two seconds.

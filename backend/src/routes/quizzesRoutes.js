@@ -14,6 +14,7 @@ const {
   ProctorActivity,
   Violation,
   AssessmentSession,
+  AssessmentVerificationSession,
   Course,
   Training,
   CourseTrainerAssignment,
@@ -1629,7 +1630,10 @@ const startQuizAttempt = async (req, res) => {
 
         const minutes = Number.isFinite(quiz.timeLimit) && quiz.timeLimit > 0 ? quiz.timeLimit : 0;
         const ttlMs = minutes > 0 ? (minutes + 15) * 60_000 : 3 * 60 * 60_000;
-        const expiresAt = new Date(Date.now() + ttlMs);
+        const hireAlreadyStarted = quiz.context === 'HIRE' && !!(await AssessmentVerificationSession.findOne({
+          where: { attempt_id: attempt.id, status: 'USED' },
+        }));
+        const expiresAt = new Date(Date.now() + (quiz.context === 'HIRE' && !hireAlreadyStarted ? 24 * 60 * 60_000 : ttlMs));
 
         let session = await AssessmentSession.findOne({ where: { attemptId: attempt.id } });
         const sessionToken = crypto.randomBytes(32).toString('hex');
@@ -1766,7 +1770,7 @@ const startQuizAttempt = async (req, res) => {
 
     const minutes = Number.isFinite(quiz.timeLimit) && quiz.timeLimit > 0 ? quiz.timeLimit : 0;
     const ttlMs = minutes > 0 ? (minutes + 15) * 60_000 : 3 * 60 * 60_000;
-    const expiresAt = new Date(Date.now() + ttlMs);
+    const expiresAt = new Date(Date.now() + (quiz.context === 'HIRE' ? 24 * 60 * 60_000 : ttlMs));
 
     let session = await AssessmentSession.findOne({
       where: {

@@ -327,10 +327,15 @@ class AssessmentVerificationController {
         }
       }
 
-      // If session was explicitly ended by submit / endSession
+      // Hire room verification is a pre-test stage. Preserve the existing
+      // status fallback for ordinary quiz/coding sessions only.
       if (!isEnded && (session?.status === 'COMPLETED' || monitoringSession?.status === 'COMPLETED')) {
-        isEnded = true;
-        sessionStatus = 'COMPLETED';
+        const linkedMonitor = monitoringSession || (session && await MonitoringSession.findOne({ where: {
+          participantId: session.participant_id, contextType: session.assessment_type,
+          contextId: session.assessment_id, attemptId: session.attempt_id,
+        } }));
+        const hirePretest = linkedMonitor?.metadata?.hireProctoring?.policy?.enabled === true;
+        if (!hirePretest) { isEnded = true; sessionStatus = 'COMPLETED'; }
       }
 
       const activeSessionId = session?.session_id || monitoringSession?.sessionId;

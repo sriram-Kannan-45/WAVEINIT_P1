@@ -3,6 +3,7 @@ const { sequelize } = require('../config/db');
 const {
   CodingAssessment, CodingProblem, CodingProblemLanguage, CodingTestCase, CodingAttempt, CodingSubmission, CodingResult, CodingAiHelp,
   AssessmentSession, ExamSession, Violation, ProctorActivity, Screenshot,
+  AssessmentVerificationSession,
   ProctoringSession, ProctoringEvent, ProctoringReport, MonitoringSession,
   Training, Course, CourseTrainerAssignment, TrainingTrainerAssignment, User, QuizRecording,
   Enrollment, HiringAssessment, HiringAssignment
@@ -1757,7 +1758,10 @@ exports.start = async (req, res) => {
 
     const minutes = Number.isFinite(assessment.timeLimit) && assessment.timeLimit > 0 ? assessment.timeLimit : 0;
     const ttlMs = minutes > 0 ? (minutes + 15) * 60_000 : 3 * 60 * 60_000;
-    const expiresAt = new Date(Date.now() + ttlMs);
+    const hireAlreadyStarted = assessment.context === 'HIRE' && !!(await AssessmentVerificationSession.findOne({
+      where: { attempt_id: attempt.id, status: 'USED' },
+    }));
+    const expiresAt = new Date(Date.now() + (assessment.context === 'HIRE' && !hireAlreadyStarted ? 24 * 60 * 60_000 : ttlMs));
 
     let session = await AssessmentSession.findOne({ where: { codingAttemptId: attempt.id } });
     const sessionToken = crypto.randomBytes(32).toString('hex');

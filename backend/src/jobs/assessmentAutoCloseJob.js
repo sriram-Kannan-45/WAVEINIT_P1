@@ -27,6 +27,7 @@ const {
   QuizAssignment,
   ProctoringReport,
   MonitoringSession,
+  AssessmentVerificationSession,
   Notification,
 } = require('../models');
 const { withLeaderLock } = require('../utils/leaderElection');
@@ -38,6 +39,13 @@ const NotificationService = require('../services/notificationService');
 const logger = require('../utils/logger');
 
 const INTERVAL_MS = 30_000;
+
+async function hireAttemptEnteredTest(context, attemptId) {
+  if (context !== 'HIRE') return true;
+  if (await AssessmentVerificationSession.findOne({ where: { attempt_id: attemptId, status: 'USED' } })) return true;
+  const monitor = await MonitoringSession.findOne({ where: { attemptId }, order: [['id', 'DESC']] });
+  return !!monitor && monitor.metadata?.hireProctoring?.policy?.enabled !== true;
+}
 
 /**
  * Auto-finalizes an expired Quiz
@@ -55,7 +63,9 @@ async function finalizeQuiz(quiz, now, io) {
   let maxScore = questions.reduce((sum, q) => sum + (parseFloat(q.marks) || 1), 0);
   if (maxScore <= 0) maxScore = questions.length || 1;
 
+  let autoSubmittedCount = 0;
   for (const attempt of activeAttempts) {
+    if (!await hireAttemptEnteredTest(quiz.context, attempt.id)) continue;
     try {
       const answers = await QuizAnswer.findAll({ where: { attemptId: attempt.id } });
       let totalScore = 0;
@@ -102,6 +112,7 @@ async function finalizeQuiz(quiz, now, io) {
         submissionType: 'AUTO_SUBMITTED',
         attendanceStatus: 'PRESENT',
       });
+      autoSubmittedCount += 1;
 
       // Update assignment
       await QuizAssignment.update(
@@ -165,7 +176,6 @@ async function finalizeQuiz(quiz, now, io) {
   const allResults = await QuizResult.findAll({ where: { quizId: quiz.id } });
   const totalEnrolled = enrolledParticipants.length;
   const completedCount = allResults.length;
-  const autoSubmittedCount = activeAttempts.length;
   const absentCount = absentParticipantIds.length;
   const avgScore = completedCount > 0
     ? Math.round(allResults.reduce((s, r) => s + (parseFloat(r.percentage) || 0), 0) / completedCount)
@@ -229,7 +239,9 @@ async function finalizeCodingAssessment(assessment, now, io) {
     where: { assessmentId: assessment.id, status: 'IN_PROGRESS' },
   });
 
+  let autoSubmittedCount = 0;
   for (const attempt of activeAttempts) {
+    if (!await hireAttemptEnteredTest(assessment.context, attempt.id)) continue;
     try {
       const { CodingSubmission, CodingProblem } = require('../models');
       const submissions = await CodingSubmission.findAll({ where: { attemptId: attempt.id } });
@@ -265,6 +277,7 @@ async function finalizeCodingAssessment(assessment, now, io) {
         submissionType: 'AUTO_SUBMITTED',
         attendanceStatus: 'PRESENT',
       });
+      autoSubmittedCount += 1;
 
       proctoringReportService.generateFinalProctoringReport(attempt.id).catch(() => {});
       assessmentVerificationService.endSession({
@@ -307,7 +320,6 @@ async function finalizeCodingAssessment(assessment, now, io) {
   const allResults = await CodingResult.findAll({ where: { assessmentId: assessment.id } });
   const totalEnrolled = enrolledParticipants.length;
   const completedCount = allResults.length;
-  const autoSubmittedCount = activeAttempts.length;
   const absentCount = absentParticipantIds.length;
   const avgScore = completedCount > 0
     ? Math.round(allResults.reduce((s, r) => s + (parseFloat(r.percentage) || 0), 0) / completedCount)
@@ -493,4 +505,5 @@ module.exports = {
   autoCloseExpiredAssessments: tick,
   finalizeQuiz,
   finalizeCodingAssessment,
+  hireAttemptEnteredTest,
 };

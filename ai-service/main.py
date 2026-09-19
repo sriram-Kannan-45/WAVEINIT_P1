@@ -1776,6 +1776,7 @@ class YOLOAnalyzeFrameRequest(BaseModel):
     cameraSource: Optional[str] = "PC_CAMERA" # PC_CAMERA | MOBILE_CAMERA
     confidenceThreshold: Optional[float] = 0.35
     timestampMs: Optional[int] = None
+    hireFraming: bool = False
 
 
 class CalibrateRequest(BaseModel):
@@ -1789,6 +1790,8 @@ class HireIdentityReferenceRequest(BaseModel):
     frames: List[str] = Field(min_length=3, max_length=8)
     challenge: str
     requireLiveness: bool = True
+    neutralYaw: Optional[float] = None
+    previousYaw: Optional[float] = None
 
 
 class HireIdentityVerifyRequest(BaseModel):
@@ -1802,12 +1805,20 @@ class HireRoomStepRequest(BaseModel):
     step: str  # front | left | back | right | desk | floor
     frame: str
     threshold: Optional[float] = None
+    priorCaptures: Optional[List[Dict[str, Any]]] = None
+    orientation: Optional[Dict[str, Any]] = None
+    laptopFrames: Optional[List[str]] = Field(default=None, max_length=6)
+    requireLaptop: bool = False
 
 
 class HireRoomScan360Request(BaseModel):
     sessionId: str
     frames: List[str] = Field(min_length=1, max_length=12)
     threshold: Optional[float] = None
+    orientations: Optional[List[Optional[Dict[str, Any]]]] = None
+    blockObjects: bool = True
+    laptopFrames: Optional[List[str]] = Field(default=None, max_length=6)
+    requireLaptop: bool = False
 
 
 _HIRE_FACE_POINTS = (10, 33, 61, 93, 133, 152, 234, 263, 291, 323, 362, 454)
@@ -1887,27 +1898,24 @@ def _hire_similarity(reference: List[float], candidate: List[float]) -> float:
 async def hire_identity_reference(req: HireIdentityReferenceRequest):
     observations = [_hire_face_observation(frame) for frame in req.frames]
     challenge = req.challenge.upper()
-    if challenge not in {"TURN_LEFT", "TURN_RIGHT", "BLINK"}:
+    if challenge not in {"TURN_LEFT", "TURN_RIGHT", "LOOK_CENTER", "BLINK"}:
         raise HTTPException(status_code=422, detail="Unsupported liveness challenge")
-    live = True
-    if req.requireLiveness:
-        yaw_values = [item["yaw"] for item in observations]
-        eye_values = [item["eyeOpen"] for item in observations]
-        if challenge in {"TURN_LEFT", "TURN_RIGHT"}:
-            movement = yaw_values[-1] - yaw_values[0]
-            # Raw (non-CSS-mirrored) webcam coordinates move right when the
-            # participant turns to their own left, and vice versa.
-            expected = 1 if challenge == "TURN_LEFT" else -1
-            live = movement * expected > 0.07
-        else:
-            live = max(eye_values) > 0.01 and min(eye_values) < max(eye_values) * 0.65
+    from inference.hire_liveness import check_movement
+    movement = check_movement(observations, challenge, req.neutralYaw, req.previousYaw)
+    live = movement["completed"] if req.requireLiveness else True
     if not live:
-        return {"success": False, "livenessPassed": False, "challenge": challenge, "message": "Liveness movement was not detected. Please retry."}
+        return {"success": True, "challengeCompleted": False, "livenessPassed": False,
+                "challenge": challenge, "detectedMovement": None,
+                "message": "Movement not detected yet."}
     # Use the three most frontal observations so challenge movement does not
     # become part of the identity template. Median aggregation reduces noise.
     reference_observations = sorted(observations, key=lambda item: abs(item["yaw"]))[:3]
     signature = [round(sorted(item["signature"][i] for item in reference_observations)[len(reference_observations) // 2], 5) for i in range(len(reference_observations[0]["signature"]))]
-    return {"success": True, "livenessPassed": True, "challenge": challenge, "signature": signature}
+    return {"success": True, "challengeCompleted": True, "livenessPassed": True,
+            "challenge": challenge, "detectedMovement": (movement["detectedMovement"] if req.requireLiveness
+                                                     else challenge.replace("TURN_", "").replace("LOOK_", "")),
+            "neutralYaw": movement["neutralYaw"], "poseYaw": movement.get("poseYaw"),
+            "signature": signature}
 
 
 @app.post("/api/proctoring/hire/identity-verify")
@@ -1923,8 +1931,16 @@ async def hire_room_step(req: HireRoomStepRequest):
     if not ROOM_SCANNER_AVAILABLE or room_scanner is None:
         raise HTTPException(status_code=503, detail="Room scanner is unavailable")
     try:
+        from starlette.concurrency import run_in_threadpool
+        started_at = time.monotonic()
+        log.info("ROOM_PHOTO_AI_START session=%s step=%s", req.sessionId, req.step)
         room_scanner.cleanup_stale()
-        result = room_scanner.analyze_step(frame_data=req.frame, step=req.step, session_id=req.sessionId, threshold=req.threshold or 0.45)
+        result = await run_in_threadpool(room_scanner.analyze_step,
+            frame_data=req.frame, step=req.step, session_id=req.sessionId, threshold=req.threshold or 0.45,
+            prior_captures=req.priorCaptures, orientation=req.orientation,
+            laptop_frames=req.laptopFrames, require_laptop=req.requireLaptop)
+        log.info("ROOM_PHOTO_AI_COMPLETE session=%s step=%s elapsed_ms=%d valid=%s",
+                 req.sessionId, req.step, int((time.monotonic() - started_at) * 1000), result.get("valid"))
     except HTTPException:
         raise
     except Exception as exc:
@@ -1942,7 +1958,10 @@ async def hire_room_scan_360(req: HireRoomScan360Request):
         raise HTTPException(status_code=503, detail="Room scanner is unavailable")
     try:
         room_scanner.cleanup_stale()
-        result = room_scanner.analyze_360(frames=req.frames, session_id=req.sessionId)
+        from starlette.concurrency import run_in_threadpool
+        result = await run_in_threadpool(room_scanner.analyze_360,
+            frames=req.frames, session_id=req.sessionId, orientations=req.orientations,
+            block_objects=req.blockObjects, laptop_frames=req.laptopFrames, require_laptop=req.requireLaptop)
     except HTTPException:
         raise
     except Exception as exc:
@@ -1972,7 +1991,8 @@ async def analyze_yolo_frame(req: YOLOAnalyzeFrameRequest):
         module_type=req.moduleType or "QUIZ",
         camera_source=req.cameraSource or "PC_CAMERA",
         confidence_threshold=req.confidenceThreshold or 0.35,
-        timestamp_ms=req.timestampMs
+        timestamp_ms=req.timestampMs,
+        hire_framing=req.hireFraming,
     )
 
     if not result.get("success"):

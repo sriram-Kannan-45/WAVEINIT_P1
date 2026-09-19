@@ -1686,6 +1686,8 @@
 .wi-room-overlay-inner {
   width: 100%;
   max-width: 360px;
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
   background: rgba(255, 255, 255, 0.97);
   border: 1px solid rgba(255, 255, 255, 0.6);
   border-radius: 20px;
@@ -1697,6 +1699,83 @@
   gap: 12px;
   text-align: center;
 }
+
+.wi-hire-flow-page .wi-verif-split-grid { grid-template-columns: minmax(0, 1fr); }
+.wi-hire-flow-page .wi-verif-qr-column { display: none; }
+.wi-hire-stage-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  background: #f0fdf4;
+  color: #166534;
+  font-size: 13px;
+  font-weight: 600;
+}
+.wi-hire-stage-banner button {
+  margin-left: auto;
+  border: 1px solid #86efac;
+  border-radius: 7px;
+  padding: 5px 8px;
+  background: white;
+  color: #166534;
+  font: inherit;
+  cursor: pointer;
+}
+.wi-hire-system-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: #92400e;
+}
+.wi-hire-system-check.is-done { color: #166534; }
+.wi-room-sector-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.wi-room-sector-summary strong { color: #b45309; }
+
+.wi-room-mobile-preview {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #0f172a;
+}
+
+.wi-room-mobile-preview video,
+.wi-room-mobile-preview img,
+.wi-room-photo-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.wi-room-mobile-preview img,
+.wi-room-photo-preview img { object-fit: contain; }
+
+.wi-room-captured-thumb { align-self: flex-start; display: flex; align-items: center; gap: 8px; font-size: 11px; color: #475569; }
+.wi-room-captured-thumb img { width: 72px; height: 54px; object-fit: contain; border-radius: 6px; background: #0f172a; }
+
+.wi-room-capture-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.wi-room-capture-button:disabled { opacity: 0.55; cursor: wait; }
+
+.wi-room-photo-preview { margin: 10px 0; max-width: 320px; color: #475569; font-size: 12px; }
+.wi-room-photo-preview img { display: block; max-height: 210px; border-radius: 10px; margin-bottom: 5px; }
 
 .wi-room-overlay-shield {
   width: 52px;

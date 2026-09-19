@@ -547,6 +547,11 @@ export default function ParticipantAIChatbot({ user, activeTab }) {
           roomScanCoverage: verifState.coverage || 0,
           roomScanComplete: verifState.complete === true,
           roomScanAiStatus: verifState.aiStatus || null,
+          currentCaptureStep: verifState.step?.key || null,
+          captureStatus: verifState.aiStatus || null,
+          retakeReason: verifState.retakeReason || null,
+          selectedLanguage: verifState.selectedLanguage || 'en-IN',
+          roomScanStatus: verifState.roomScanStatus || null,
         },
       });
 

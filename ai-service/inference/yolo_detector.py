@@ -29,6 +29,7 @@ import logging
 from typing import Dict, Any, List, Optional, Tuple
 from collections import deque
 from .mobile_composition import evaluate_mobile
+from .hire_mobile_framing import evaluate_hire_mobile
 
 import cv2
 import numpy as np
@@ -62,6 +63,9 @@ class YOLOProctorEngine:
         self.book_class_ids = []
         self.initialized_ok = False
         self.init_error = None
+        self.hand_landmarker = None
+        self.hand_detector_error = None
+        self.hand_detector_retry_at = 0
 
         # Session state memory: sessionId -> {
         #   last_event_type, last_state, consecutive_valid_frames,
@@ -72,6 +76,37 @@ class YOLOProctorEngine:
 
         self._load_model()
         self._initialized = True
+
+    def _detect_hands(self, image):
+        """Detect actual hand landmarks for Hire framing only."""
+        if self.hand_landmarker is None:
+            if time.monotonic() < self.hand_detector_retry_at:
+                return None
+            try:
+                import mediapipe as mp
+                model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models", "hand_landmarker.task")
+                options = mp.tasks.vision.HandLandmarkerOptions(
+                    base_options=mp.tasks.BaseOptions(model_asset_path=model_path),
+                    running_mode=mp.tasks.vision.RunningMode.IMAGE,
+                    num_hands=2,
+                    min_hand_detection_confidence=0.5,
+                )
+                self.hand_landmarker = mp.tasks.vision.HandLandmarker.create_from_options(options)
+                self.hand_detector_error = None
+            except Exception as exc:
+                self.hand_detector_error = str(exc)
+                self.hand_detector_retry_at = time.monotonic() + 30
+                logger.warning("Hire hand detector unavailable: %s", exc)
+                return None
+        try:
+            import mediapipe as mp
+            rgb = np.ascontiguousarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            result = self.hand_landmarker.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
+            return [[(point.x, point.y) for point in hand] for hand in result.hand_landmarks]
+        except Exception as exc:
+            self.hand_detector_error = str(exc)
+            logger.warning("Hire hand detection failed: %s", exc)
+            return None
 
     def _find_model_file(self) -> Optional[str]:
         """
@@ -384,6 +419,7 @@ class YOLOProctorEngine:
         camera_source: str = "MOBILE_CAMERA",
         confidence_threshold: float = 0.35,
         timestamp_ms: Optional[int] = None,
+        hire_framing: bool = False,
     ) -> Dict[str, Any]:
         """
         Runs YOLO11s inference on a mobile stream frame and produces
@@ -452,11 +488,31 @@ class YOLOProctorEngine:
 
         # Composition analysis
         session_key = f"{session_id}_{camera_source}"
-        composition_state, event_type, user_msg, comp_conf = self.validate_mobile_composition(
-            detections, w, h, session_key
-        )
         mobile_evidence = {}
-        if camera_source == "MOBILE_CAMERA" and module_type.upper() in ("QUIZ", "CODING", "INTERVIEW"):
+        if hire_framing and camera_source == "MOBILE_CAMERA" and module_type.upper() in ("QUIZ", "CODING"):
+            hands = self._detect_hands(img)
+            if hands is None:
+                return {
+                    "success": False,
+                    "error": "Hand detection is temporarily unavailable. Please try again.",
+                    "composition_state": "HAND_DETECTION_UNAVAILABLE",
+                    "user_message": "Hand detection is temporarily unavailable. Please try again.",
+                    "mobile_evidence": {},
+                }
+            temporal = self._get_session_state(session_key).setdefault("hire_mobile", {})
+            mobile_evidence = evaluate_hire_mobile(detections, hands, w, h, temporal)
+            composition_state = mobile_evidence["composition_state"]
+            user_msg = mobile_evidence["user_message"]
+            event_type = "COMPOSITION_VALID" if mobile_evidence["eligible"] else "COMPOSITION_STABILIZING"
+            comp_conf = max((item.get("confidence", 0) for item in detections if item.get("class_name") == "laptop"), default=0)
+            if mobile_evidence["phone_stable"]:
+                event_type = "PHONE_DETECTED"
+                comp_conf = mobile_evidence["phone_confidence"]
+        else:
+            composition_state, event_type, user_msg, comp_conf = self.validate_mobile_composition(
+                detections, w, h, session_key
+            )
+        if not hire_framing and camera_source == "MOBILE_CAMERA" and module_type.upper() in ("QUIZ", "CODING", "INTERVIEW"):
             temporal = self._get_session_state(session_key).setdefault("assessment_mobile", {})
             mobile_evidence = evaluate_mobile(detections, w, h, temporal)
             composition_state = mobile_evidence["composition_state"]
@@ -471,6 +527,8 @@ class YOLOProctorEngine:
             "POSITIONING_REQUIRED": "INFO",
             "WAITING_FOR_PERSON": "LOW",
             "WAITING_FOR_LAPTOP": "LOW",
+            "WAITING_FOR_HANDS": "LOW",
+            "WAITING_FOR_WORKSPACE": "LOW",
             "WARNING": "MEDIUM",
             "VIOLATION": "HIGH",
             "DISCONNECTED": "HIGH",

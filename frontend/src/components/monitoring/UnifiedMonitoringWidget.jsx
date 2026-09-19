@@ -125,7 +125,8 @@ export default function UnifiedMonitoringWidget({
   const [reconnectLoading, setReconnectLoading] = useState(false);
   const [reconnectError, setReconnectError] = useState(null);
   const [socketError, setSocketError] = useState(null);
-  const mobileStatus = mobileCameraStatus({ connected: mobileConnected, evidence: mobileEvidence, now: statusClock });
+  const mobileStatus = mobileCameraStatus({ connected: mobileConnected, evidence: mobileEvidence, now: statusClock,
+    hireFraming: hirePolicy?.enabled === true });
   const keepCameraVisible = mobileEnabled && isQuizOrCoding && isTestActive;
 
   const fetchReconnectQr = useCallback(async ({ forceNew = false } = {}) => {

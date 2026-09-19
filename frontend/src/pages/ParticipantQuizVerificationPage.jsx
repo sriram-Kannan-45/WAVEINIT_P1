@@ -30,7 +30,6 @@ Lock,
   Volume2,
   VolumeX,
   ScanLine,
-  Undo2,
   BadgeCheck
 } from 'lucide-react'
 import Layout from '../components/Layout'
@@ -103,22 +102,33 @@ const [identityReady, setIdentityReady] = useState(false)
   const [roomAiStatus, setRoomAiStatus] = useState('idle')
   const [roomAiMessage, setRoomAiMessage] = useState('')
   const [roomAiTaMessage, setRoomAiTaMessage] = useState('')
-  const [roomGuideKey, setRoomGuideKey] = useState(null)
   const [roomCurrentStep, setRoomCurrentStep] = useState(null)
   const [sixCaptureStatus, setSixCaptureStatus] = useState({})
   const [roomScanCoverage, setRoomScanCoverage] = useState(0)
-  const [roomAttempts, setRoomAttempts] = useState(0)
+  const [roomScanSectors, setRoomScanSectors] = useState([])
+  const [roomScanPendingObject, setRoomScanPendingObject] = useState(null)
+  const [roomScanDirection, setRoomScanDirection] = useState('Front')
   const [roomVoiceEnabled, setRoomVoiceEnabled] = useState(true)
   const [roomLanguage, setRoomLanguage] = useState(() => getHireRoomLanguage())
   const [roomObservations, setRoomObservations] = useState([])
+  const [roomCaptureEvent, setRoomCaptureEvent] = useState(null)
+  const [roomCapturePreview, setRoomCapturePreview] = useState(null)
+  const roomCaptureHandledRef = useRef(null)
+  const roomAdvanceTimerRef = useRef(null)
   const roomLoopRef = useRef(null)
   const roomScanBatchRef = useRef([])
-  const roomStepRef = useRef(null)
   const roomBusyRef = useRef(false)
   const roomStatusRef = useRef('idle')
   const feedActiveRef = useRef(false)
+  const mobileOrientationRef = useRef(null)
+  const laptopPreviewRef = useRef(null)
+  const laptopStreamRef = useRef(null)
+  const laptopSamplesRef = useRef([])
+  const [laptopCameraStatus, setLaptopCameraStatus] = useState('Waiting for room check')
+  const [laptopCameraReady, setLaptopCameraReady] = useState(false)
   const roomGuideSpokenRef = useRef({ key: null, at: 0 })
   const roomStateEmitTimerRef = useRef(null)
+  const roomLatestStateRef = useRef(null)
 
 useEffect(() => {
     if (!isHire || !effectiveId) return
@@ -126,11 +136,12 @@ useEffect(() => {
       setHirePolicy(result.policy)
       if (activeAttemptId || attemptId) sessionStorage.setItem(`hire_proctor_policy_${activeAttemptId || attemptId}`, JSON.stringify(result.policy))
       if (!result.policy.enabled || !result.policy.identityVerification || result.state?.identityVerifiedAt) setIdentityReady(true)
-      if (result.state?.roomScanClear) setRoomScanComplete(true)
       if (result.state?.sixCaptureStatus) setSixCaptureStatus(result.state.sixCaptureStatus)
       if (typeof result.state?.roomScanCoverage === 'number') setRoomScanCoverage(result.state.roomScanCoverage)
+      if (Array.isArray(result.state?.roomScanSectors)) setRoomScanSectors(result.state.roomScanSectors)
+      if (result.state?.roomScanPendingObject) setRoomScanPendingObject(result.state.roomScanPendingObject)
       if (Array.isArray(result.state?.roomObservations)) setRoomObservations(result.state.roomObservations)
-      if (result.state?.roomScanClear) setRoomPhase('done')
+      if (result.state?.roomScanClear) { setRoomPhase('done'); setRoomScanComplete(true) }
       primeHireRoomVoice()
     }).catch(error => setRoomScanError(error.message || 'Could not load Hire proctoring policy'))
   }, [isHire, currentAssessmentType, effectiveId, activeAttemptId, attemptId, activeMonitoringSessionId])
@@ -151,7 +162,11 @@ useEffect(() => {
   const [webRtcConnected, setWebRtcConnected] = useState(false)
   const [remoteVideoReady, setRemoteVideoReady] = useState(false)
   const [isFullyVerified, setIsFullyVerified] = useState(false)
-  const [compositionMessage, setCompositionMessage] = useState("Show both yourself and your laptop in the mobile camera.")
+  const [workspaceVerified, setWorkspaceVerified] = useState(false)
+  const [hireRoomPageStarted, setHireRoomPageStarted] = useState(false)
+  const [compositionMessage, setCompositionMessage] = useState(isHire
+    ? 'Connect your mobile camera to begin room verification.'
+    : 'Show both yourself and your laptop in the mobile camera.')
   const lastEvidenceRef = useRef(0)
   const lastMobileFrameAtRef = useRef(0)
   const [transportError, setTransportError] = useState(null)
@@ -337,7 +352,8 @@ useEffect(() => {
     return () => clearInterval(interval)
   }, [sessionData?.expiresAt])
 
-  const isExpired = (timeLeft <= 0 && !loading && sessionData) || sessionData?.status === 'EXPIRED'
+  const isExpired = sessionData?.status === 'EXPIRED' ||
+    (timeLeft <= 0 && !loading && sessionData && !(isHire && qrScanned))
 
   const formattedTimer = useMemo(() => {
     const mins = Math.floor(timeLeft / 60)
@@ -448,6 +464,9 @@ useEffect(() => {
       console.log('[LAPTOP-VERIF] Mobile joined:', payload)
       setQrScanned(true)
       setParticipantValidated(true)
+      if (roomLatestStateRef.current) socket.emit('assessment_verif:room_state', {
+        sessionId: currentSessionId, state: roomLatestStateRef.current,
+      })
       if (payload?.socketId) {
         mobileSocketIdRef.current = payload.socketId
         // Inform mobile that laptop is active in the room
@@ -472,6 +491,9 @@ useEffect(() => {
     })
     socket.on('assessment_verif:stream_status', (payload) => {
       if (payload?.streaming) setMobileCameraReady(true)
+    })
+    socket.on('assessment_verif:orientation', reading => {
+      if (Number.isFinite(reading?.yaw)) mobileOrientationRef.current = reading
     })
     socket.on('assessment_verif:yolo_detection', (payload) => {
       const evidence = payload?.success && Date.now() - Number(payload.mobileEvidence?.receivedAt) <= 5000 && payload.mobileEvidence
@@ -539,6 +561,7 @@ useEffect(() => {
         setIsDisconnected(false)
       }
     })
+    socket.on('assessment_verif:room_capture_state', setRoomCaptureEvent)
 
     socket.on('assessment_verif:mobile-disconnected', () => {
       console.warn('[LAPTOP-VERIF] Mobile device disconnected')
@@ -568,6 +591,7 @@ useEffect(() => {
         const data = await res.json()
         if (data.success) {
           const s = data.session || data
+          if (s.hireFramingVerified) setWorkspaceVerified(true)
           if (s.status === 'PAIRED' || s.status === 'VERIFIED' || s.mobileVerified || s.qrScanned) {
             setQrScanned(true)
             setParticipantValidated(true)
@@ -637,6 +661,8 @@ useEffect(() => {
         setWebRtcConnected(false)
         setRemoteVideoReady(false)
         setIsFullyVerified(false)
+        setWorkspaceVerified(false)
+        setHireRoomPageStarted(false)
         setIsDisconnected(false)
         showSuccess('QR code refreshed successfully')
       }
@@ -667,7 +693,10 @@ useEffect(() => {
       const hireWithoutMobile = isHire && hirePolicy && (!hirePolicy.enabled || (!hirePolicy.mobileRoomScan && !hirePolicy.roomScan360Enabled))
       if (isHire && hirePolicy?.enabled && hirePolicy.identityVerification && !identityReady) throw new Error('Complete identity verification first.')
       if (isHire && hirePolicy?.enabled && (hirePolicy.mobileRoomScan || hirePolicy.roomScan360Enabled) && !roomScanComplete) throw new Error('Complete the room verification first.')
-      if (!hireWithoutMobile && (!isFullyVerified || !mobileStreamConnected || isExpired || isDisconnected)) throw new Error('Wait for stable person and laptop verification.')
+      if (isHire && hirePolicy?.enabled && (hirePolicy.mobileRoomScan || hirePolicy.roomScan360Enabled) && !workspaceVerified) throw new Error('Complete the workspace check first.')
+      if (!hireWithoutMobile && (!isFullyVerified || !mobileStreamConnected || isExpired || isDisconnected)) throw new Error(isHire
+        ? 'Wait for stable hands, laptop, and workspace verification.'
+        : 'Wait for stable person and laptop verification.')
       if (hireWithoutMobile) {
         const coursePath = `/trainings/hire`
         const params = new URLSearchParams({ attemptId: String(activeAttemptId), sessionToken: activeSessionToken || '', monitoringSessionId: activeMonitoringSessionId || '' })
@@ -717,11 +746,72 @@ useEffect(() => {
   const mobilePairUrl = buildAssessmentMobileUrl(sessionData?.qrPayload?.shortUrl)
 
 const roomScanRequired = isHire && hirePolicy?.enabled && (hirePolicy.mobileRoomScan || hirePolicy.roomScan360Enabled)
-  const roomScan360Enabled = hirePolicy?.roomScan360Enabled !== false
+  const hireConnectionReady = isHire && roomScanRequired && qrScanned && participantValidated && mobileCameraReady &&
+    mobileStreamConnected && (remoteVideoReady || !!lastFrame)
+  useEffect(() => { if (hireConnectionReady) setHireRoomPageStarted(true) }, [hireConnectionReady])
+  const hireFlowPage = isHire && roomScanRequired && hireRoomPageStarted
+  useEffect(() => {
+    if (isHire && roomScanComplete && isFullyVerified) setWorkspaceVerified(true)
+  }, [isHire, roomScanComplete, isFullyVerified])
+  const roomScan360Enabled = roomScanRequired
   const roomScanThreshold = hirePolicy?.roomScanCoverageThreshold || 85
-  const allSixCaptured = HIRE_ROOM_STEP_LIST.every(step => !!sixCaptureStatus[step.key]?.verifiedAt)
   const activeRoomLanguage = hirePolicy?.allowParticipantLanguage === false ? (hirePolicy.defaultLanguage || 'en-IN') : roomLanguage
   const activeRoomIsTa = String(activeRoomLanguage).toLowerCase().startsWith('ta')
+
+  useEffect(() => {
+    if (!roomScanRequired || !['six', 'scan360'].includes(roomPhase)) return undefined
+    let cancelled = false
+    let timer = null
+    const preview = laptopPreviewRef.current
+    laptopSamplesRef.current = []
+    setLaptopCameraReady(false)
+    setLaptopCameraStatus('Connecting laptop camera…')
+    navigator.mediaDevices?.getUserMedia({ video: { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 } }, audio: false })
+      .then(stream => {
+        if (cancelled) { stream.getTracks().forEach(track => track.stop()); return }
+        laptopStreamRef.current = stream
+        const video = preview
+        if (video) { video.srcObject = stream; video.play().catch(() => {}) }
+        setLaptopCameraStatus('Laptop camera active for movement check')
+        timer = setInterval(() => {
+          if (!video?.videoWidth || video.readyState < 2) return
+          const canvas = document.createElement('canvas')
+          canvas.width = 240
+          canvas.height = Math.round(240 * video.videoHeight / video.videoWidth)
+          canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height)
+          laptopSamplesRef.current.push({ frame: canvas.toDataURL('image/jpeg', 0.58), at: Date.now() })
+          laptopSamplesRef.current = laptopSamplesRef.current.filter(item => Date.now() - item.at <= 5000).slice(-12)
+          if (laptopSamplesRef.current.length >= 3) setLaptopCameraReady(true)
+        }, 450)
+      })
+      .catch(() => { if (!cancelled) setLaptopCameraStatus('Allow laptop camera access to confirm phone movement') })
+    return () => {
+      cancelled = true
+      if (timer) clearInterval(timer)
+      laptopStreamRef.current?.getTracks().forEach(track => track.stop())
+      laptopStreamRef.current = null
+      laptopSamplesRef.current = []
+      setLaptopCameraReady(false)
+      if (preview) preview.srcObject = null
+    }
+  }, [roomScanRequired, roomPhase])
+
+  const recentLaptopFrames = useCallback(() => laptopSamplesRef.current
+    .filter(item => Date.now() - item.at <= 3500).slice(-6).map(item => item.frame), [])
+
+  useEffect(() => {
+    const socket = socketRef.current
+    if (!socket || !roomScanRequired) return undefined
+    const onRequest = ({ captureId }) => {
+      if (!captureId || roomPhase !== 'six') return
+      socket.emit('assessment_verif:laptop_evidence', {
+        sessionId: sessionData?.sessionId || sessionIdRef.current, captureId,
+        frames: recentLaptopFrames(),
+      })
+    }
+    socket.on('assessment_verif:laptop_evidence_request', onRequest)
+    return () => socket.off('assessment_verif:laptop_evidence_request', onRequest)
+  }, [roomScanRequired, roomPhase, recentLaptopFrames, sessionData?.sessionId])
 
   const captureFrame = useCallback(() => {
     let frame = lastFrame
@@ -746,7 +836,6 @@ const roomScanRequired = isHire && hirePolicy?.enabled && (hirePolicy.mobileRoom
 
   const beginScan360 = useCallback(() => {
     roomScanBatchRef.current = []
-    setRoomGuideKey('start_360')
     setRoomAiMessage(hireRoomMessage(activeRoomLanguage, 'start_360') || 'Slowly turn in a full circle')
     setRoomAiTaMessage(hireRoomMessage('ta-IN', 'start_360') || '')
     setRoomAiStatus('GUIDING')
@@ -755,11 +844,14 @@ const roomScanRequired = isHire && hirePolicy?.enabled && (hirePolicy.mobileRoom
   }, [activeRoomLanguage, speakRoom])
 
   const advanceRoomStep = useCallback((verifiedStepKey) => {
+    setRoomCapturePreview(previous => {
+      if (previous?.startsWith('blob:')) URL.revokeObjectURL(previous)
+      return null
+    })
     const currentIndex = HIRE_ROOM_STEP_LIST.findIndex(step => step.key === verifiedStepKey)
     const next = HIRE_ROOM_STEP_LIST[currentIndex + 1]
     if (next) {
       setRoomCurrentStep({ ...next, index: currentIndex + 1 })
-      setRoomGuideKey(`step_${next.key}`)
       setRoomAiMessage(hireRoomMessage(activeRoomLanguage, `step_${next.key}`) || next.label)
       setRoomAiTaMessage(hireRoomMessage('ta-IN', `step_${next.key}`) || '')
       setRoomAiStatus('GUIDING')
@@ -773,6 +865,51 @@ const roomScanRequired = isHire && hirePolicy?.enabled && (hirePolicy.mobileRoom
       speakRoom({ priority: 'SUCCESS', key: 'all_done' })
     }
   }, [activeRoomLanguage, roomScan360Enabled, beginScan360, speakRoom])
+
+  useEffect(() => {
+    const event = roomCaptureEvent
+    if (!event || roomPhase !== 'six' || event.step !== roomCurrentStep?.key) return
+    const eventKey = `${event.captureId}:${event.status}`
+    if (roomCaptureHandledRef.current === eventKey) return
+    roomCaptureHandledRef.current = eventKey
+    if (event.preview) {
+      setRoomCapturePreview(previous => {
+        if (previous?.startsWith('blob:')) URL.revokeObjectURL(previous)
+        return event.preview
+      })
+    }
+    if (event.status === 'ANALYZING') {
+      setRoomAiStatus('ANALYZING')
+      setRoomAiMessage('Analyzing photo…')
+      setRoomAiTaMessage('புகைப்படம் ஆய்வு செய்யப்படுகிறது…')
+    } else if (event.status === 'ERROR') {
+      setRoomAiStatus('ERROR')
+      setRoomAiMessage(event.error || 'Unable to analyze this photo. Try again.')
+      setRoomAiTaMessage(event.taError || hireRoomMessage('ta-IN', 'photo_server_error'))
+      const errorVoiceKeys = {
+        AI_TIMEOUT: 'photo_timeout', UPLOAD_FAILED: 'photo_upload_failed', INVALID_IMAGE: 'photo_invalid',
+        ALREADY_ANALYZING: 'photo_analyzing', SERVER_ERROR: 'photo_server_error',
+      }
+      speakRoom({ priority: 'CRITICAL', key: errorVoiceKeys[event.errorCode] || 'photo_server_error' })
+    } else if (event.result) {
+      const result = event.result
+      setSixCaptureStatus(result.sixCaptureStatus || {})
+      if (result.observations?.length) {
+        setRoomObservations(previous => [...previous, ...result.observations].slice(-50))
+      }
+      setRoomAiMessage(result.message || hireRoomMessage(activeRoomLanguage, result.guideKey))
+      setRoomAiTaMessage(result.taMessage || hireRoomMessage('ta-IN', result.guideKey))
+      if (event.status === 'VERIFIED') {
+        setRoomAiStatus('SUCCESS')
+        speakRoom({ priority: 'SUCCESS', key: `${event.step}_ok`, message: result.message, taMessage: result.taMessage })
+        clearTimeout(roomAdvanceTimerRef.current)
+        roomAdvanceTimerRef.current = setTimeout(() => advanceRoomStep(event.step), 2200)
+      } else {
+        setRoomAiStatus('RETRY')
+        speakRoom({ priority: 'RETRY', key: `retake_${event.step}_${result.guideKey}`, message: result.message, taMessage: result.taMessage })
+      }
+    }
+  }, [roomCaptureEvent, roomPhase, roomCurrentStep?.key, activeRoomLanguage, advanceRoomStep, speakRoom])
 
   const startRoomScanFlow = useCallback(() => {
     stopHireRoomVoice()
@@ -788,7 +925,6 @@ const roomScanRequired = isHire && hirePolicy?.enabled && (hirePolicy.mobileRoom
     }
     const step = { ...HIRE_ROOM_STEP_LIST[firstPendingIndex], index: firstPendingIndex }
     setRoomCurrentStep(step)
-    setRoomGuideKey(`step_${step.key}`)
     setRoomAiMessage(hireRoomMessage(activeRoomLanguage, `step_${step.key}`) || step.label)
     setRoomAiTaMessage(hireRoomMessage('ta-IN', `step_${step.key}`) || '')
     setRoomAiStatus('GUIDING')
@@ -796,41 +932,18 @@ const roomScanRequired = isHire && hirePolicy?.enabled && (hirePolicy.mobileRoom
     speakRoom({ priority: 'CURRENT_STEP', key: `step_${step.key}` })
   }, [sixCaptureStatus, roomScan360Enabled, beginScan360, speakRoom, activeRoomLanguage])
 
-  const handleRetakeRoomStep = useCallback((stepKey) => {
-    stopHireRoomVoice()
-    setSixCaptureStatus(prev => ({ ...prev, [stepKey]: { ...(prev[stepKey] || {}), verifiedAt: null } }))
-    const index = HIRE_ROOM_STEP_LIST.findIndex(step => step.key === stepKey)
-    setRoomCurrentStep({ ...HIRE_ROOM_STEP_LIST[index], index })
-    roomGuideSpokenRef.current = { key: null, at: 0 }
-    if (roomPhase === 'scan360') setRoomPhase('six')
-    setRoomAiStatus('GUIDING')
-    setRoomAiMessage(hireRoomMessage(activeRoomLanguage, 'redo_step') || 'Show the area clearly')
-    setRoomAiTaMessage(hireRoomMessage('ta-IN', 'redo_step') || '')
-    speakRoom({ priority: 'RETRY', key: 'redo_step' })
-  }, [activeRoomLanguage, roomPhase, speakRoom])
-
-  // Keep live-step refs so the room sampling loop reads current values.
-  useEffect(() => { roomStepRef.current = roomCurrentStep }, [roomCurrentStep])
+  // Keep live transport refs so the 360 sampling loop reads current values.
   useEffect(() => { roomStatusRef.current = roomAiStatus }, [roomAiStatus])
-  useEffect(() => { feedActiveRef.current = remoteVideoReady || !!lastFrame || webRtcConnected }, [remoteVideoReady, lastFrame, webRtcConnected])
+  useEffect(() => { feedActiveRef.current = mobileStreamConnected && (remoteVideoReady || !!lastFrame) }, [mobileStreamConnected, remoteVideoReady, lastFrame])
 
   useEffect(() => {
-    if (!roomScanRequired || roomPhase !== 'idle' || !feedActiveRef.current) return
+    if (!roomScanRequired || roomPhase !== 'idle' || !hireConnectionReady) return
     startRoomScanFlow()
-  }, [roomPhase, roomScanRequired, startRoomScanFlow])
+  }, [roomPhase, roomScanRequired, hireConnectionReady, startRoomScanFlow])
 
+  // Only the separate 360 sweep samples the live preview. Six-step photos arrive from the phone.
   useEffect(() => {
-    if (roomPhase === 'scan360' && allSixCaptured && roomScanCoverage >= roomScanThreshold) {
-      setRoomPhase('done')
-      setRoomScanComplete(true)
-      speakRoom({ priority: 'SUCCESS', key: 'all_done' })
-    }
-  }, [roomPhase, allSixCaptured, roomScanCoverage, roomScanThreshold, speakRoom])
-
-  // AI-Guided sampling loop: six guided steps, then the 360 sweep.
-  useEffect(() => {
-    if (!roomScanRequired || (roomPhase !== 'six' && roomPhase !== 'scan360')) return
-    const phase = roomPhase
+    if (!roomScanRequired || roomPhase !== 'scan360') return
     const interval = setInterval(async () => {
       if (roomBusyRef.current) return
       if (!feedActiveRef.current) {
@@ -844,45 +957,9 @@ const roomScanRequired = isHire && hirePolicy?.enabled && (hirePolicy.mobileRoom
       const frame = captureFrame()
       if (!frame) return
 
-      if (phase === 'six') {
-        const step = roomStepRef.current
-        if (!step) return
-        roomBusyRef.current = true
-        setRoomAiStatus('ANALYZING')
-        try {
-          const result = await hiringService.analyzeRoomStep(activeMonitoringSessionId, step.key, frame)
-          if (result.skipped) { setRoomPhase('done'); setRoomScanComplete(true); return }
-          setSixCaptureStatus(result.sixCaptureStatus)
-          setRoomAttempts(result.attempts || 0)
-          if (result.observations?.length) {
-            setRoomObservations(prev => [...prev, ...result.observations.map(obs => ({ objectType: obs.objectType || 'item', confidence: Number(obs.confidence) || 0 }))].slice(-50))
-          }
-          if (result.valid && !result.sameFrame) {
-            setRoomAiStatus('SUCCESS')
-            const successText = result.message || hireRoomMessage(activeRoomLanguage, `${step.key}_ok`) || 'Captured'
-            setRoomAiMessage(successText)
-            setRoomAiTaMessage(result.taMessage || hireRoomMessage('ta-IN', `${step.key}_ok`) || '')
-            speakRoom({ priority: 'SUCCESS', key: `${step.key}_ok`, message: result.message, taMessage: result.taMessage })
-            advanceRoomStep(step.key)
-          } else if (result.sameFrame && result.verifiedBefore) {
-            setRoomAiStatus('SUCCESS')
-            advanceRoomStep(step.key)
-          } else {
-            setRoomAiStatus('RETRY')
-            const guide = result.guideKey || `${step.key}_poor`
-            setRoomGuideKey(guide)
-            setRoomAiMessage(result.message || hireRoomMessage(activeRoomLanguage, guide) || 'Adjust the angle and try again')
-            setRoomAiTaMessage(result.taMessage || hireRoomMessage('ta-IN', guide) || '')
-            const now = Date.now()
-            const lastGuide = roomGuideSpokenRef.current
-            if (guide !== lastGuide.key || now - lastGuide.at > 7000) {
-              roomGuideSpokenRef.current = { key: guide, at: now }
-              speakRoom({ priority: 'RETRY', key: guide, message: result.message, taMessage: result.taMessage })
-            }
-          }
-        } finally { roomBusyRef.current = false }
-      } else {
-        roomScanBatchRef.current.push(frame)
+      {
+        roomScanBatchRef.current.push({ frame, orientation: Date.now() - (mobileOrientationRef.current?.at || 0) < 2000
+          ? mobileOrientationRef.current : null })
         if (roomScanBatchRef.current.length < 3) {
           if (roomStatusRef.current !== 'GUIDING') setRoomAiStatus('GUIDING')
           return
@@ -892,18 +969,23 @@ const roomScanRequired = isHire && hirePolicy?.enabled && (hirePolicy.mobileRoom
         roomBusyRef.current = true
         setRoomAiStatus('ANALYZING')
         try {
-          const result = await hiringService.analyzeRoomScan360(activeMonitoringSessionId, batch)
+          const result = await hiringService.analyzeRoomScan360(activeMonitoringSessionId,
+            batch.map(item => item.frame), batch.map(item => item.orientation), recentLaptopFrames())
           if (result.skipped) { setRoomPhase('done'); setRoomScanComplete(true); return }
           if (typeof result.coverage === 'number') setRoomScanCoverage(result.coverage)
+          if (Array.isArray(result.sectors)) setRoomScanSectors(result.sectors)
+          setRoomScanPendingObject(result.pendingObject || null)
+          if (result.currentDirection) setRoomScanDirection(result.currentDirection)
           if (result.observations?.length) {
             setRoomObservations(prev => [...prev, ...result.observations.map(obs => ({ objectType: obs.objectType || 'item', confidence: Number(obs.confidence) || 0 }))].slice(-50))
           }
-          const guide = result.guideKey || (result.coverage >= roomScanThreshold ? 'scan_complete' : 'coverage_pending')
-          setRoomGuideKey(guide)
+          const guide = result.guideKey || (result.roomScanClear ? 'scan_complete' : 'coverage_pending')
           setRoomAiMessage(result.message || hireRoomMessage(activeRoomLanguage, guide) || 'Scanning')
           setRoomAiTaMessage(result.taMessage || hireRoomMessage('ta-IN', guide) || '')
-          if (result.coverage >= roomScanThreshold) {
+          if (result.roomScanClear) {
             setRoomAiStatus('SUCCESS')
+            setRoomPhase('done')
+            setRoomScanComplete(true)
             speakRoom({ priority: 'SUCCESS', key: 'scan_complete', message: result.message, taMessage: result.taMessage })
           } else {
             setRoomAiStatus('GUIDING')
@@ -914,11 +996,15 @@ const roomScanRequired = isHire && hirePolicy?.enabled && (hirePolicy.mobileRoom
               speakRoom({ priority: 'GENERAL', key: guide, message: result.message, taMessage: result.taMessage })
             }
           }
+        } catch (scanError) {
+          setRoomAiStatus('ERROR')
+          setRoomAiMessage(scanError.message || 'Unable to analyze the scan. Continue rotating and try again.')
+          setRoomAiTaMessage('ஸ்கேனை ஆய்வு செய்ய முடியவில்லை. மெதுவாகச் சுழற்றி மீண்டும் முயற்சிக்கவும்.')
         } finally { roomBusyRef.current = false }
       }
     }, 900)
     return () => clearInterval(interval)
-  }, [roomScanRequired, roomPhase, captureFrame, speakRoom, advanceRoomStep, activeRoomLanguage, roomScanThreshold, activeMonitoringSessionId])
+  }, [roomScanRequired, roomPhase, captureFrame, speakRoom, activeRoomLanguage, roomScanThreshold, activeMonitoringSessionId, recentLaptopFrames])
 
   // Keep the chatbot + page store in sync with the live room state.
   useEffect(() => {
@@ -928,36 +1014,52 @@ const roomScanRequired = isHire && hirePolicy?.enabled && (hirePolicy.mobileRoom
       step: roomCurrentStep ? { key: roomCurrentStep.key, label: roomCurrentStep.label, index: roomCurrentStep.index } : null,
       steps: sixCaptureStatus,
       coverage: roomScanCoverage,
+      sectors: roomScanSectors,
+      currentDirection: roomScanDirection,
+      pendingObject: roomScanPendingObject,
       complete: roomPhase === 'done',
       aiStatus: roomAiStatus,
+      retakeReason: roomAiStatus === 'RETRY' ? roomAiMessage : null,
+      selectedLanguage: activeRoomLanguage,
+      roomScanStatus: roomPhase === 'scan360' ? roomAiStatus : null,
     })
-  }, [isHire, roomPhase, roomCurrentStep, sixCaptureStatus, roomScanCoverage, roomAiStatus])
+  }, [isHire, roomPhase, roomCurrentStep, sixCaptureStatus, roomScanCoverage, roomScanSectors, roomScanDirection, roomScanPendingObject, roomAiStatus, roomAiMessage, activeRoomLanguage])
 
   // Drive the phone's full-screen overlay via the shared socket room.
   useEffect(() => {
     if (!isHire || !socketRef.current?.connected) return
     clearTimeout(roomStateEmitTimerRef.current)
     roomStateEmitTimerRef.current = setTimeout(() => {
-      socketRef.current.emit('assessment_verif:room_state', {
-        sessionId: sessionData?.sessionId || sessionIdRef.current,
-        state: {
+      const state = {
           phase: roomPhase,
           step: roomCurrentStep ? { key: roomCurrentStep.key, label: roomCurrentStep.label, index: roomCurrentStep.index } : null,
           steps: sixCaptureStatus,
           coverage: roomScanCoverage,
+          sectors: roomScanSectors,
+          currentDirection: roomScanDirection,
+          pendingObject: roomScanPendingObject,
           complete: roomPhase === 'done',
           aiStatus: roomAiStatus,
+          message: roomAiMessage,
+          taMessage: roomAiTaMessage,
           language: activeRoomLanguage,
-        },
+          voiceEnabled: roomVoiceEnabled && hirePolicy?.voiceWarnings !== false,
+          laptopCameraReady,
+      }
+      roomLatestStateRef.current = state
+      socketRef.current.emit('assessment_verif:room_state', {
+        sessionId: sessionData?.sessionId || sessionIdRef.current,
+        state,
       })
     }, 400)
     return () => clearTimeout(roomStateEmitTimerRef.current)
-  }, [isHire, roomPhase, roomCurrentStep, sixCaptureStatus, roomScanCoverage, roomAiStatus, activeRoomLanguage, sessionData?.sessionId])
+  }, [isHire, roomPhase, roomCurrentStep, sixCaptureStatus, roomScanCoverage, roomScanSectors, roomScanDirection, roomScanPendingObject, roomAiStatus, roomAiMessage, roomAiTaMessage, activeRoomLanguage, roomVoiceEnabled, hirePolicy?.voiceWarnings, sessionData?.sessionId, laptopCameraReady])
 
   useEffect(() => () => {
     stopHireRoomVoice()
     hireVerificationStore.reset()
     if (roomStateEmitTimerRef.current) clearTimeout(roomStateEmitTimerRef.current)
+    if (roomAdvanceTimerRef.current) clearTimeout(roomAdvanceTimerRef.current)
   }, [])
 
   if (isHire && (loading || (hirePolicy?.enabled && !activeMonitoringSessionId))) {
@@ -976,7 +1078,7 @@ const roomScanRequired = isHire && hirePolicy?.enabled && (hirePolicy.mobileRoom
     )
   }
 
-if (isHire && hirePolicy?.enabled && hirePolicy.identityVerification && !identityReady && ((!hirePolicy.mobileRoomScan && !hirePolicy.roomScan360Enabled) || roomScanComplete)) {
+if (isHire && hirePolicy?.enabled && hirePolicy.identityVerification && !identityReady && ((!hirePolicy.mobileRoomScan && !hirePolicy.roomScan360Enabled) || (roomScanComplete && workspaceVerified))) {
     return <Layout user={user} activeTab="hiring-assessments" onLogout={onLogout} hideSidebar><HireIdentityGate sessionId={activeMonitoringSessionId} policy={hirePolicy} onVerified={() => setIdentityReady(true)} /></Layout>
   }
 
@@ -1028,7 +1130,9 @@ activeTab={trainingId === 'hire' || isHire ? 'hiring-assessments' : 'myEnrollmen
             </button>
             <div>
               <h1 className="wi-verif-heading">
-                {isHire
+                {hireFlowPage
+                  ? (roomScanComplete ? 'Hire Workspace Verification' : 'AI-Guided Room Verification')
+                  : isHire
                   ? (isCoding ? 'Hire Coding Assessment – Camera Verification' : 'Hire Assessment – Camera Verification')
                   : (isCoding ? 'Coding Assessment – Mobile Camera Verification' : 'AI Quiz – Mobile Camera Verification')
                 }
@@ -1092,10 +1196,10 @@ activeTab={trainingId === 'hire' || isHire ? 'hiring-assessments' : 'myEnrollmen
         </div>
 
         {/* ── Main 2-Column Verification Card ── */}
-        <div className="wi-verif-main-card">
+        <div className={`wi-verif-main-card ${hireFlowPage ? 'wi-hire-flow-page' : ''}`}>
           <div className="wi-verif-split-grid">
             {/* ── LEFT COLUMN: QR Scan ── */}
-            <div className="wi-verif-col">
+            <div className="wi-verif-col wi-verif-qr-column">
               <div className="wi-verif-col-header">
                 <span className="wi-verif-num-badge">1</span>
                 <h2 className="wi-verif-col-title">Scan with Mobile Camera</h2>
@@ -1113,7 +1217,7 @@ activeTab={trainingId === 'hire' || isHire ? 'hiring-assessments' : 'myEnrollmen
                   <li>Open camera on your mobile device</li>
                   <li>Scan the QR code shown below</li>
                   <li>Allow camera access when prompted</li>
-                  <li>Position phone at a 45° angle to capture desk & hands</li>
+                  <li>{isHire ? 'Keep the live mobile video stream open' : 'Position phone at a 45° angle to capture desk & hands'}</li>
                 </ol>
               </div>
 
@@ -1188,11 +1292,16 @@ activeTab={trainingId === 'hire' || isHire ? 'hiring-assessments' : 'myEnrollmen
             <div className="wi-verif-col">
               <div className="wi-verif-col-header">
                 <span className="wi-verif-num-badge">2</span>
-                <h2 className="wi-verif-col-title">Live Mobile Camera Feed</h2>
+                <h2 className="wi-verif-col-title">{hireFlowPage ? (roomScanComplete ? 'Workspace Check' : 'AI-Guided Room Verification') : 'Live Mobile Camera Feed'}</h2>
               </div>
               <p className="wi-verif-col-desc">
-                Once paired, your mobile stream will appear below in real-time.
+                {hireFlowPage
+                  ? (roomScanComplete ? 'Show both hands, your laptop, and your desk or workspace.' : 'Complete six guided room photos, then the 360° room scan.')
+                  : 'Once paired, your mobile stream will appear below in real-time.'}
               </p>
+              {hireFlowPage && <div className="wi-hire-stage-banner"><CheckCircle2 size={17} /> {mobileStreamConnected ? 'Mobile camera connected' : 'Mobile camera reconnecting…'}
+                {!mobileStreamConnected && <button type="button" onClick={() => setHireRoomPageStarted(false)}>Show pairing QR</button>}
+              </div>}
 
               {/* Video Preview Container */}
               <div
@@ -1302,22 +1411,40 @@ activeTab={trainingId === 'hire' || isHire ? 'hiring-assessments' : 'myEnrollmen
                     </span>
                   </div>
 
-                  <div className={`wi-verif-check-item ${remoteVideoReady || lastFrame || webRtcConnected ? 'is-done' : ''}`}>
+                  <div className={`wi-verif-check-item ${mobileStreamConnected && (remoteVideoReady || lastFrame) ? 'is-done' : ''}`}>
                     <div className="wi-verif-check-left">
                       <div className="wi-verif-check-circle">
-                        {remoteVideoReady || lastFrame || webRtcConnected ? <Check size={13} strokeWidth={3} /> : <span className="wi-verif-check-dot" />}
+                        {mobileStreamConnected && (remoteVideoReady || lastFrame) ? <Check size={13} strokeWidth={3} /> : <span className="wi-verif-check-dot" />}
                       </div>
                       <span className="wi-verif-check-text">Live Video Stream Active</span>
                     </div>
-                    <span className={`wi-verif-check-pill ${remoteVideoReady || lastFrame || webRtcConnected ? 'is-done' : ''}`}>
-                      {remoteVideoReady || lastFrame || webRtcConnected ? '✓ Active' : 'Waiting...'}
+                    <span className={`wi-verif-check-pill ${mobileStreamConnected && (remoteVideoReady || lastFrame) ? 'is-done' : ''}`}>
+                      {mobileStreamConnected && (remoteVideoReady || lastFrame) ? '✓ Active' : 'Waiting...'}
                     </span>
                   </div>
+                  {isHire && hirePolicy?.enabled && roomScanComplete && (
+                    <div className={`wi-verif-check-item ${workspaceVerified ? 'is-done' : ''}`}>
+                      <div className="wi-verif-check-left">
+                        <div className="wi-verif-check-circle">
+                          {workspaceVerified ? <Check size={13} strokeWidth={3} /> : <span className="wi-verif-check-dot" />}
+                        </div>
+                        <span className="wi-verif-check-text">Workspace Verified</span>
+                      </div>
+                      <span className={`wi-verif-check-pill ${workspaceVerified ? 'is-done' : ''}`}>
+                        {workspaceVerified ? '✓ Completed' : 'Checking...'}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
 {isHire && roomScanRequired && <div className="wi-verif-checklist-box wi-room-flow" style={{ marginTop: 12 }}>
                 <div className="wi-verif-checklist-title">AI-Guided Room Verification</div>
+                {roomPhase !== 'done' && <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '8px 0', fontSize: 12, color: '#475569' }}>
+                  <video ref={laptopPreviewRef} autoPlay muted playsInline aria-label="Laptop camera movement preview"
+                    style={{ width: 112, borderRadius: 6, background: '#0f172a' }} />
+                  <span>{laptopCameraStatus}</span>
+                </div>}
 
                 <div className="wi-room-toolbar">
                   <div className="wi-room-lang-toggle" role="group" aria-label="Voice language">
@@ -1369,50 +1496,62 @@ activeTab={trainingId === 'hire' || isHire ? 'hiring-assessments' : 'myEnrollmen
                       <div className="wi-room-coverage">
                         <div className="wi-room-coverage-label"><span>Room coverage</span><span>{Math.round(roomScanCoverage)}% / {roomScanThreshold}%</span></div>
                         <div className="wi-room-coverage-bar"><div className="wi-room-coverage-fill" style={{ width: `${Math.min(100, roomScanCoverage)}%` }} /></div>
+                        <div className="wi-room-sector-summary">
+                          <span>Current direction: {roomScanDirection}</span>
+                          <span>Covered: {roomScanSectors.filter(sector => sector.verified).map(sector => sector.label).join(', ') || 'Starting area'}</span>
+                          <span>Remaining: {roomScanSectors.filter(sector => !sector.verified).map(sector => sector.label).join(', ') || 'Return to the starting area'}</span>
+                          {roomScanPendingObject && <strong role="alert">{roomScanPendingObject.objectType} in {roomScanPendingObject.label}: remove it and rescan this area.</strong>}
+                        </div>
+                      </div>
+                    )}
+
+                    {roomPhase === 'six' && roomCapturePreview && (
+                      <div className="wi-room-photo-preview">
+                        <img src={roomCapturePreview} alt={`${roomCurrentStep?.label || 'Room'} captured on mobile`} />
+                        <span>Photo captured on your phone</span>
                       </div>
                     )}
 
                     <div className={`wi-room-status wi-room-status--${String(roomAiStatus).toLowerCase()}`}>
-                      {roomAiStatus === 'ANALYZING' && <><Loader2 size={13} className="bulk-spin" /> Analyzing frame…</>}
-                      {roomAiStatus === 'GUIDING' && <><ScanLine size={13} /> Following your camera…</>}
-                      {roomAiStatus === 'RETRY' && <><RefreshCw size={13} /> Adjust the angle and continue</>}
+                      {roomAiStatus === 'ANALYZING' && <><Loader2 size={13} className="bulk-spin" /> {roomPhase === 'six' ? 'Analyzing photo…' : 'Analyzing scan…'}</>}
+                      {roomAiStatus === 'GUIDING' && <><ScanLine size={13} /> {roomPhase === 'six' ? 'Capture this photo on your phone' : 'Continue the 360° sweep'}</>}
+                      {roomAiStatus === 'RETRY' && <><RefreshCw size={13} /> {roomPhase === 'six' ? 'Retake this photo on your phone' : 'Adjust the angle and continue'}</>}
                       {roomAiStatus === 'ERROR' && <><AlertCircle size={13} /> {activeRoomIsTa ? (roomAiTaMessage || roomAiMessage) : roomAiMessage}</>}
                       {roomAiStatus === 'SUCCESS' && <><CheckCircle2 size={13} /> Captured — moving on</>}
                     </div>
 
                     {roomScanError && <p role="alert" className="wi-room-error">{roomScanError}</p>}
 
-                    {HIRE_ROOM_STEP_LIST.filter(step => sixCaptureStatus[step.key]?.verifiedAt).length > 0 && (
-                      <div className="wi-room-retakes">
-                        {HIRE_ROOM_STEP_LIST.filter(step => sixCaptureStatus[step.key]?.verifiedAt).map(step => (
-                          <button key={step.key} type="button" className="wi-room-retake-btn" onClick={() => handleRetakeRoomStep(step.key)} title={`Retake ${step.label} view`}>
-                            <Undo2 size={11} /> {step.label}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                    <p className="wi-room-note">{HIRE_ROOM_STEP_LIST.filter(step => sixCaptureStatus[step.key]?.verifiedAt).length}/6 photos verified</p>
 
                     {roomObservations.length > 0 && (
-                      <p className="wi-room-note">Noted {roomObservations.length} item{roomObservations.length > 1 ? 's' : ''} in view — recorded for the reviewer. Keep going.</p>
+                      <p className="wi-room-note">{roomObservations.length} observation{roomObservations.length > 1 ? 's' : ''} saved for review. {roomAiStatus === 'RETRY' ? 'Correct the issue and retake this photo.' : ''}</p>
                     )}
                   </>
                 ) : (
                   <div className="wi-room-complete">
                     <BadgeCheck size={30} color="#16a34a" />
                     <div>
-                      <strong>Room verification complete</strong>
-                      <span>{hirePolicy?.identityVerification === false ? 'You can now begin the assessment.' : 'Identity verification is next.'}</span>
+                      <strong>6/6 room photos verified · 360° room verified</strong>
+                      <span>Now show both hands, your laptop, and your desk or workspace.</span>
                     </div>
                   </div>
                 )}
               </div>}
 
               {/* Start Assessment CTA Button */}
-              <div className="wi-verif-start-btn-wrap">
-                <p role="status">{transportError || (isFullyVerified ? "Person and laptop verified — ready for monitoring." : compositionMessage)}</p>
+              {(!isHire || !roomScanRequired || (roomScanComplete && workspaceVerified && identityReady)) && <div className="wi-verif-start-btn-wrap">
+                {isHire && roomScanRequired && <div className={`wi-hire-system-check ${isFullyVerified && mobileStreamConnected && !isExpired && !isDisconnected ? 'is-done' : ''}`} role="status">
+                  <Shield size={18} /> <span>{isFullyVerified && mobileStreamConnected && !isExpired && !isDisconnected
+                    ? 'System check complete — mobile camera and workspace monitoring are ready.'
+                    : 'System check in progress — keep the mobile camera connected and workspace visible.'}</span>
+                </div>}
+                <p role="status">{transportError || (isFullyVerified
+                  ? (isHire ? 'Hands, laptop, and workspace verified — ready for monitoring.' : 'Person and laptop verified — ready for monitoring.')
+                  : compositionMessage)}</p>
                 <button
                   onClick={handleStartQuiz}
-                  disabled={verifyingStart || loading || !isFullyVerified || !mobileStreamConnected || isExpired || isDisconnected || (isHire && (hirePolicy?.mobileRoomScan || hirePolicy?.roomScan360Enabled) && !roomScanComplete)}
+                  disabled={verifyingStart || loading || !isFullyVerified || !mobileStreamConnected || isExpired || isDisconnected || (isHire && roomScanRequired && !workspaceVerified)}
                   className="wi-verif-start-btn"
                 >
                   {verifyingStart ? (
@@ -1427,7 +1566,7 @@ activeTab={trainingId === 'hire' || isHire ? 'hiring-assessments' : 'myEnrollmen
                     </>
                   )}
                 </button>
-              </div>
+              </div>}
             </div>
           </div>
         </div>

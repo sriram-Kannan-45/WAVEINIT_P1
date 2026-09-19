@@ -6,6 +6,7 @@ const {
   finalizeQuiz,
   finalizeCodingAssessment,
   autoCloseExpiredAssessments,
+  hireAttemptEnteredTest,
 } = require('../src/jobs/assessmentAutoCloseJob');
 const {
   AIQuiz,
@@ -21,6 +22,8 @@ const {
   Enrollment,
   QuizAssignment,
   Notification,
+  AssessmentVerificationSession,
+  MonitoringSession,
 } = require('../src/models');
 
 describe('Assessment Scheduling, Auto-Closing & Reporting System Lifecycle', () => {
@@ -222,6 +225,19 @@ describe('Assessment Scheduling, Auto-Closing & Reporting System Lifecycle', () 
   describe('3. Auto-Close Background Sweep & Idempotency', () => {
     beforeEach(() => {
       jest.clearAllMocks();
+    });
+
+    test('Hire room verification is not an auto-submitted test attempt', async () => {
+      const verification = jest.spyOn(AssessmentVerificationSession, 'findOne').mockResolvedValue(null);
+      const monitor = jest.spyOn(MonitoringSession, 'findOne').mockResolvedValue({
+        metadata: { hireProctoring: { policy: { enabled: true } } },
+      });
+      expect(await hireAttemptEnteredTest('HIRE', 501)).toBe(false);
+      verification.mockResolvedValue({ status: 'USED' });
+      expect(await hireAttemptEnteredTest('HIRE', 501)).toBe(true);
+      expect(await hireAttemptEnteredTest('COURSE', 501)).toBe(true);
+      verification.mockRestore();
+      monitor.mockRestore();
     });
 
     test('Case 3, 7, 8: Finalizes expired quiz, auto-submits active attempts, and marks absentees', async () => {

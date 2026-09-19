@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { API_BASE, BACKEND_ORIGIN } from '../../api/api';
 import { mobileCameraStatus } from '../../utils/mobileCameraStatus.mjs';
+import { hireRoomMessage, speakHireRoomVoice, stopHireRoomVoice } from '../../utils/hireRoomVoice';
 import '../../styles/assessment-verification.css';
 
 const PHASE = {
@@ -33,6 +34,19 @@ const PHASE = {
   STREAMING: 'streaming',
   COMPLETED: 'completed',
   ERROR: 'error',
+};
+
+const ROOM_PHOTO_ERROR_KEYS = {
+  AI_TIMEOUT: 'photo_timeout',
+  UPLOAD_FAILED: 'photo_upload_failed',
+  INVALID_IMAGE: 'photo_invalid',
+  ALREADY_ANALYZING: 'photo_analyzing',
+  SERVER_ERROR: 'photo_server_error',
+};
+
+const roomPhotoError = code => Object.assign(new Error(code), { code });
+const logRoomPhoto = (stage, details = {}) => {
+  if (import.meta.env.DEV) console.info(`[HIRE_ROOM_PHOTO] ${stage}`, details);
 };
 
 const ICE_SERVERS = [
@@ -135,6 +149,15 @@ function AssessmentMobileJoinContent() {
 const [transportError, setTransportError] = useState(null);
   const [compositionWarning, setCompositionWarning] = useState(null);
   const [roomState, setRoomState] = useState(null);
+  const roomStateRef = useRef(null);
+  const [roomCaptureStatus, setRoomCaptureStatus] = useState('CAPTURE_READY');
+  const [roomCaptureError, setRoomCaptureError] = useState('');
+  const [roomPhotoPreview, setRoomPhotoPreview] = useState(null);
+  const roomCaptureBusyRef = useRef(false);
+  const roomUploadAcceptedRef = useRef(null);
+  const deviceOrientationRef = useRef(null);
+  const [motionPermission, setMotionPermission] = useState('unknown');
+  const overlayVideoRef = useRef(null);
   const lastDesktopReceiptRef = useRef(0);
   const retryJoinRef = useRef(null);
   const cameraLinked = socketConnected && (peerConnected || desktopReceiving);
@@ -353,6 +376,22 @@ const [transportError, setTransportError] = useState(null);
     setPhase(PHASE.COMPLETED);
   }, []);
 
+  const confirmAssessmentEnded = useCallback(async reason => {
+    if (!info?.hireFraming) { handleSessionClosed(reason); return; }
+    const statusKey = token || info?.token || info?.sessionId;
+    if (!statusKey) return;
+    try {
+      const response = await fetch(`${API_BASE}/assessment-verification/mobile-status/${statusKey}`);
+      if (!response.ok) return;
+      const status = await response.json();
+      if (status.isEnded === true && ['COMPLETED', 'SUBMITTED', 'EVALUATED', 'AUTO_SUBMITTED', 'TERMINATED'].includes(status.status)) {
+        handleSessionClosed(reason);
+      } else {
+        setTransportError('The verification session is still active. Keep your mobile camera open.');
+      }
+    } catch (_) { /* polling will confirm a genuine submission */ }
+  }, [handleSessionClosed, info?.hireFraming, info?.sessionId, info?.token, token]);
+
   // Periodic fallback check to detect if assessment was legitimately submitted/completed
   useEffect(() => {
     const activeToken = token || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('token') : null) || info?.token;
@@ -403,7 +442,7 @@ const [transportError, setTransportError] = useState(null);
 frameIntervalRef.current = setInterval(() => {
       const p2pLive = !!pcRef.current && pcRef.current.connectionState === 'connected';
       const video = videoRef.current;
-      if (!framePendingRef.current && !p2pLive && joinedRef.current && video && video.videoWidth > 0 && video.videoHeight > 0 && socketRef.current?.connected) {
+      if (!framePendingRef.current && (!p2pLive || roomState?.complete) && joinedRef.current && video && video.videoWidth > 0 && video.videoHeight > 0 && socketRef.current?.connected) {
         try {
           canvas.width = Math.min(640, video.videoWidth);
           canvas.height = Math.round(video.videoHeight * canvas.width / video.videoWidth);
@@ -431,7 +470,7 @@ frameIntervalRef.current = setInterval(() => {
         frameIntervalRef.current = null;
       }
     };
-  }, [phase, info?.sessionId, info?.participantId, socketConnected]);
+  }, [phase, info?.sessionId, info?.participantId, socketConnected, roomState?.complete]);
 
   // 2. Setup Socket Connection for real-time synchronization with Laptop (Stable lifecycle)
   const sessionId = info?.sessionId;
@@ -495,12 +534,23 @@ frameIntervalRef.current = setInterval(() => {
       setTransportError(null);
     });
 socket.on('assessment_verif:yolo_detection', data => {
-      const status = mobileCameraStatus({ connected: true, evidence: data?.success ? data.mobileEvidence : null });
+      const evidence = data?.success ? data.mobileEvidence : null;
+      const status = mobileCameraStatus({ connected: true, evidence, hireFraming: info?.hireFraming === true });
       setCompositionWarning(status.kind === 'reposition' ? `${status.title}. ${status.message}` : null);
+      if (status.kind === 'reposition' && evidence?.framing_mode === 'HIRE_WORKSPACE'
+        && roomStateRef.current?.complete === true
+        && roomStateRef.current?.voiceEnabled !== false) {
+        const key = { LAPTOP: 'framing_laptop', HANDS: 'framing_hands', WORKSPACE: 'framing_workspace' }[evidence.guidance_key];
+        if (key) speakHireRoomVoice({ priority: 'RETRY', language: roomStateRef.current?.language, key });
+      }
     });
     socket.on('assessment_verif:room_state', data => {
       if (!data || typeof data.state !== 'object') return;
+      roomStateRef.current = data.state;
       setRoomState({ ...data.state });
+    });
+    socket.on('assessment_verif:room_capture_state', event => {
+      if (event?.status === 'ANALYZING' && event.captureId) roomUploadAcceptedRef.current = event.captureId;
     });
     const receiptTimer = setInterval(() => {
       if (Date.now() - lastDesktopReceiptRef.current > 5000) setDesktopReceiving(false);
@@ -578,19 +628,24 @@ socket.on('assessment_verif:yolo_detection', data => {
     // Assessment ended / submitted by laptop → immediately stop camera
     socket.on('assessment_verif:session_ended', (data) => {
       console.log('[AssessmentMobileJoin] Received assessment_verif:session_ended:', data);
-      handleSessionClosed(data?.reason || 'SOCKET_ASSESSMENT_VERIF_SESSION_ENDED');
+      confirmAssessmentEnded(data?.reason || 'SOCKET_ASSESSMENT_VERIF_SESSION_ENDED');
     });
     socket.on('assessment_verif:assessment_completed', (data) => {
       console.log('[AssessmentMobileJoin] Received assessment_verif:assessment_completed:', data);
-      handleSessionClosed('SOCKET_ASSESSMENT_COMPLETED');
+      confirmAssessmentEnded('SOCKET_ASSESSMENT_COMPLETED');
     });
     socket.on('monitoring:session_ended', (data) => {
       console.log('[AssessmentMobileJoin] Received monitoring:session_ended:', data);
-      handleSessionClosed(data?.reason || 'SOCKET_MONITORING_SESSION_ENDED');
+      confirmAssessmentEnded(data?.reason || 'SOCKET_MONITORING_SESSION_ENDED');
     });
     socket.on('assessment_verif:session_expired', (data) => {
       console.log('[AssessmentMobileJoin] Received assessment_verif:session_expired:', data);
-      handleSessionClosed('SOCKET_SESSION_EXPIRED');
+      if (joinedRef.current) {
+        setTransportError('The pairing session needs to be refreshed on your laptop. Keep this page open while reconnecting.');
+      } else {
+        setError('The QR pairing link expired. Scan a new QR code from the laptop.');
+        setPhase(PHASE.ERROR);
+      }
     });
 
     return () => {
@@ -604,7 +659,161 @@ socket.on('assessment_verif:yolo_detection', data => {
         } catch (e) {}
       }
     };
-  }, [sessionId, socketToken, info?.token, token, startWebRTCOffer, handleSessionClosed]);
+  }, [sessionId, socketToken, info?.token, info?.hireFraming, token, startWebRTCOffer, confirmAssessmentEnded]);
+
+  useEffect(() => {
+    if (overlayVideoRef.current && streamRef.current && overlayVideoRef.current.srcObject !== streamRef.current) {
+      overlayVideoRef.current.srcObject = streamRef.current;
+      overlayVideoRef.current.play().catch(() => {});
+    }
+  }, [roomState?.phase, cameraActive]);
+
+  useEffect(() => {
+    roomCaptureBusyRef.current = false;
+    setRoomCaptureStatus('CAPTURE_READY');
+    setRoomCaptureError('');
+    setRoomPhotoPreview(previous => {
+      if (previous) URL.revokeObjectURL(previous);
+      return null;
+    });
+  }, [roomState?.phase, roomState?.step?.key]);
+
+  useEffect(() => {
+    if (roomState?.phase === 'six' && roomState.step?.key) {
+      stopHireRoomVoice();
+      if (roomState.voiceEnabled !== false) speakHireRoomVoice({ priority: 'CURRENT_STEP', language: roomState.language,
+        key: `step_${roomState.step.key}` });
+    } else if (roomState?.phase === 'scan360') {
+      stopHireRoomVoice();
+      if (roomState.voiceEnabled !== false) speakHireRoomVoice({ priority: 'CURRENT_STEP', language: roomState.language, key: 'start_360' });
+    }
+  }, [roomState?.phase, roomState?.step?.key, roomState?.language, roomState?.voiceEnabled]);
+
+  useEffect(() => { if (roomState?.voiceEnabled === false) stopHireRoomVoice(); }, [roomState?.voiceEnabled]);
+  useEffect(() => () => stopHireRoomVoice(), []);
+
+  useEffect(() => {
+    if (phase !== PHASE.STREAMING || !info?.hireFraming || typeof DeviceOrientationEvent === 'undefined') return;
+    let lastSentAt = 0;
+    const onOrientation = event => {
+      const yaw = Number.isFinite(event.webkitCompassHeading) ? event.webkitCompassHeading : event.alpha;
+      if (!Number.isFinite(yaw)) return;
+      const reading = { yaw, pitch: Number.isFinite(event.beta) ? event.beta : null, at: Date.now() };
+      deviceOrientationRef.current = reading;
+      if (reading.at - lastSentAt >= 450 && socketRef.current?.connected) {
+        lastSentAt = reading.at;
+        socketRef.current.emit('assessment_verif:orientation', { sessionId: info.sessionId, ...reading });
+      }
+    };
+    window.addEventListener('deviceorientation', onOrientation);
+    return () => window.removeEventListener('deviceorientation', onOrientation);
+  }, [phase, info?.hireFraming, info?.sessionId]);
+
+  const enableMotionGuidance = useCallback(async () => {
+    if (typeof DeviceOrientationEvent === 'undefined' || typeof DeviceOrientationEvent.requestPermission !== 'function') return;
+    try { setMotionPermission(await DeviceOrientationEvent.requestPermission()); }
+    catch (_) { setMotionPermission('denied'); }
+  }, []);
+
+  useEffect(() => {
+    if (roomState?.phase !== 'six' || !roomState.step?.key) return;
+    if (roomState.aiStatus === 'ANALYZING') {
+      setRoomCaptureStatus('ANALYZING');
+    } else if (roomState.aiStatus === 'RETRY') {
+      setRoomCaptureStatus('RETAKE');
+      if (roomState.voiceEnabled !== false) speakHireRoomVoice({ priority: 'RETRY', language: roomState.language,
+        key: `retake_${roomState.step.key}`, message: roomState.message, taMessage: roomState.taMessage });
+    } else if (roomState.aiStatus === 'SUCCESS') {
+      setRoomCaptureStatus('VERIFIED');
+      if (roomState.voiceEnabled !== false) speakHireRoomVoice({ priority: 'SUCCESS', language: roomState.language,
+        key: `${roomState.step.key}_ok`, message: roomState.message, taMessage: roomState.taMessage });
+    }
+  }, [roomState?.aiStatus, roomState?.message, roomState?.taMessage, roomState?.step?.key, roomState?.phase, roomState?.language, roomState?.voiceEnabled]);
+
+  const captureRoomPhoto = useCallback(async () => {
+    const step = roomState?.step?.key;
+    const video = videoRef.current;
+    const socket = socketRef.current;
+    if (roomCaptureBusyRef.current || roomState?.phase !== 'six' || !step || !socket?.connected) return;
+    if (!video?.videoWidth || !video?.videoHeight) {
+      setRoomCaptureStatus('ERROR');
+      setRoomCaptureError('Camera preview is unavailable. Please check the camera and try again.');
+      if (roomState.voiceEnabled !== false) speakHireRoomVoice({ priority: 'CRITICAL', language: roomState.language, key: 'camera_error' });
+      return;
+    }
+    roomCaptureBusyRef.current = true;
+    setRoomCaptureStatus('CAPTURING');
+    setRoomCaptureError('');
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.min(960, video.videoWidth);
+      canvas.height = Math.round(video.videoHeight * canvas.width / video.videoWidth);
+      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      const toJpeg = quality => new Promise((resolve, reject) => canvas.toBlob(blob =>
+        blob ? resolve(blob) : reject(roomPhotoError('INVALID_IMAGE')), 'image/jpeg', quality));
+      let photo = await toJpeg(0.8);
+      if (photo.size > 1200000) {
+        const optimized = document.createElement('canvas');
+        optimized.width = Math.min(800, canvas.width);
+        optimized.height = Math.round(canvas.height * optimized.width / canvas.width);
+        optimized.getContext('2d').drawImage(canvas, 0, 0, optimized.width, optimized.height);
+        photo = await new Promise((resolve, reject) => optimized.toBlob(blob =>
+          blob ? resolve(blob) : reject(roomPhotoError('INVALID_IMAGE')), 'image/jpeg', 0.72));
+      }
+      if (photo.size > 1400000) throw roomPhotoError('UPLOAD_FAILED');
+      logRoomPhoto('PHOTO_CAPTURED', { step });
+      logRoomPhoto('PHOTO_SIZE', { step, bytes: photo.size, width: canvas.width, height: canvas.height });
+      const previewCanvas = document.createElement('canvas');
+      previewCanvas.width = Math.min(320, canvas.width);
+      previewCanvas.height = Math.round(canvas.height * previewCanvas.width / canvas.width);
+      previewCanvas.getContext('2d').drawImage(canvas, 0, 0, previewCanvas.width, previewCanvas.height);
+      const preview = previewCanvas.toDataURL('image/jpeg', 0.55);
+      setRoomPhotoPreview(previous => {
+        if (previous) URL.revokeObjectURL(previous);
+        return URL.createObjectURL(photo);
+      });
+      setRoomCaptureStatus('UPLOADING');
+      const captureId = crypto.randomUUID();
+      await new Promise(resolve => {
+        const timer = setTimeout(() => { socket.off('assessment_verif:laptop_evidence', onEvidence); resolve(false); }, 3200);
+        const onEvidence = evidence => {
+          if (evidence?.captureId !== captureId) return;
+          clearTimeout(timer);
+          socket.off('assessment_verif:laptop_evidence', onEvidence);
+          resolve(evidence.ready === true);
+        };
+        socket.on('assessment_verif:laptop_evidence', onEvidence);
+        socket.emit('assessment_verif:laptop_evidence_request', { sessionId: info.sessionId, captureId });
+      });
+      roomUploadAcceptedRef.current = null;
+      const bytes = await photo.arrayBuffer();
+      logRoomPhoto('UPLOAD_START', { captureId, step, bytes: photo.size });
+      const reply = await new Promise((resolve, reject) => socket.timeout(48000).emit('assessment_verif:room_capture',
+        { sessionId: info.sessionId, step, captureId, photo: bytes, preview,
+          orientation: Date.now() - (deviceOrientationRef.current?.at || 0) < 2000 ? deviceOrientationRef.current : null },
+        (error, ack) => error ? reject(roomPhotoError(roomUploadAcceptedRef.current === captureId ? 'AI_TIMEOUT' : 'UPLOAD_FAILED')) : resolve(ack)));
+      logRoomPhoto('UPLOAD_COMPLETE', { captureId, step, accepted: reply?.ok === true });
+      if (!reply?.ok) throw roomPhotoError(reply?.errorCode || 'SERVER_ERROR');
+      logRoomPhoto('AI_RESPONSE', { captureId, step, verified: reply.result?.verified === true,
+        confidence: reply.result?.confidence, guideKey: reply.result?.guideKey });
+      setRoomCaptureStatus(reply.result?.valid ? 'VERIFIED' : 'RETAKE');
+      if (!reply.result?.valid) {
+        const key = ['blurred', 'image_invalid'].includes(reply.result?.guideKey) ? 'photo_invalid'
+          : reply.result?.guideKey === 'move_to_area' ? 'photo_move_area' : 'photo_area_missing';
+        setRoomCaptureError((String(roomState.language).startsWith('ta') ? reply.result?.taMessage : reply.result?.message)
+          || hireRoomMessage(roomState.language, key));
+      }
+      logRoomPhoto('VERIFICATION_RESULT', { captureId, step, verified: reply.result?.valid === true });
+    } catch (captureError) {
+      setRoomCaptureStatus('ERROR');
+      const key = ROOM_PHOTO_ERROR_KEYS[captureError.code] || 'photo_server_error';
+      setRoomCaptureError(hireRoomMessage(roomState.language, key));
+      logRoomPhoto('VERIFICATION_ERROR', { step, code: captureError.code || 'SERVER_ERROR' });
+      if (roomState.voiceEnabled !== false) speakHireRoomVoice({ priority: 'CRITICAL', language: roomState.language, key });
+    } finally {
+      roomCaptureBusyRef.current = false;
+    }
+  }, [roomState, info?.sessionId]);
 
   // 3. Request Mobile Camera Access (Defaults to Back Camera / Environment)
   const enableCamera = useCallback(async (requestedFacingMode = 'environment') => {
@@ -888,12 +1097,16 @@ socket.on('assessment_verif:yolo_detection', data => {
                   <Info size={20} strokeWidth={2.5} />
                 </div>
                 <div className="wi-mobile-instruction-content">
-                  <h3 className="wi-mobile-instruction-title">Camera Framing Requirement</h3>
+                  <h3 className="wi-mobile-instruction-title">{info?.hireFraming ? 'Camera Connection' : 'Camera Framing Requirement'}</h3>
                   <p className="wi-mobile-instruction-text">
-                    Position your phone using the <strong>Back Camera</strong> so your{' '}
-                    <span className="wi-mobile-instruction-highlight">face</span>,{' '}
-                    <span className="wi-mobile-instruction-highlight">upper body</span>, and{' '}
-                    <span className="wi-mobile-instruction-highlight">laptop screen</span> are clearly visible.
+                    {info?.hireFraming ? <>
+                      Pair the phone and keep the <strong>live camera</strong> open. Room verification starts after the camera connects.
+                    </> : <>
+                      Position your phone using the <strong>Back Camera</strong> so your{' '}
+                      <span className="wi-mobile-instruction-highlight">face</span>,{' '}
+                      <span className="wi-mobile-instruction-highlight">upper body</span>, and{' '}
+                      <span className="wi-mobile-instruction-highlight">laptop screen</span> are clearly visible.
+                    </>}
                   </p>
                 </div>
               </div>
@@ -1061,11 +1274,15 @@ socket.on('assessment_verif:yolo_detection', data => {
                       <>Your camera is open. Keep both pages open while the laptop connects. If it stays here, refresh the verification page on your laptop and scan its current QR code.</>
                     ) : isAssessmentStarted ? (
                       <>
-                        <strong>Your assessment is currently in progress on your laptop.</strong> Position your phone so your face, upper body, and laptop screen are clearly visible. Keep this page open.
+                        <strong>Your assessment is currently in progress on your laptop.</strong> {info?.hireFraming
+                          ? 'Position your phone so both hands, your laptop, and your desk or workspace are clearly visible.'
+                          : 'Position your phone so your face, upper body, and laptop screen are clearly visible.'} Keep this page open.
                       </>
+                    ) : info?.hireFraming && roomState?.complete ? (
+                      <><strong>Room verification is complete.</strong> Show both hands, your laptop, and your desk or workspace to finish the workspace check.</>
                     ) : (
                       <>
-                        <strong>Your phone camera is paired and streaming.</strong> Please complete the verification steps on your laptop. Keep this page open while you start the assessment.
+                        <strong>Your phone camera is paired and streaming.</strong> Complete the guided room photos and 360° scan. Keep this page open.
                       </>
                     )}
                   </p>
@@ -1175,11 +1392,34 @@ socket.on('assessment_verif:yolo_detection', data => {
               <Shield size={26} strokeWidth={2.2} />
             </div>
             <div className="wi-room-overlay-title">ROOM VERIFICATION</div>
+            {['six', 'scan360'].includes(roomState.phase) && typeof DeviceOrientationEvent !== 'undefined' &&
+              typeof DeviceOrientationEvent.requestPermission === 'function' && motionPermission === 'unknown' &&
+              <button type="button" className="wi-mobile-btn-primary" onClick={enableMotionGuidance}>Enable motion guidance</button>}
             {roomState.phase === 'scan360' ? (
               <div className="wi-room-overlay-step">360° Room Scan — turn slowly in a full circle</div>
             ) : roomState.step ? (
               <div className="wi-room-overlay-step">Step {roomState.step.index + 1} of 6 — {roomState.step.label}</div>
             ) : null}
+            <p className="wi-room-overlay-hint">{roomState.language?.startsWith('ta')
+              ? (roomState.taMessage || hireRoomMessage('ta-IN', `step_${roomState.step?.key}`))
+              : (roomState.message || hireRoomMessage('en-IN', `step_${roomState.step?.key}`))}</p>
+            <div className="wi-room-mobile-preview">
+              <video ref={overlayVideoRef} autoPlay playsInline muted />
+            </div>
+            {roomPhotoPreview && roomState.phase === 'six' && (
+              <div className="wi-room-captured-thumb">
+                <img src={roomPhotoPreview} alt={`Captured ${roomState.step?.label || 'room'} photo`} />
+                <span>Captured photo</span>
+              </div>
+            )}
+            {roomState.phase === 'six' && (
+              <button type="button" className="wi-mobile-btn-primary wi-room-capture-button"
+                onClick={captureRoomPhoto}
+                disabled={!cameraActive || !socketConnected || roomState.laptopCameraReady === false || ['CAPTURING', 'UPLOADING', 'ANALYZING', 'VERIFIED'].includes(roomCaptureStatus) || (roomState.aiStatus === 'ANALYZING' && roomCaptureStatus !== 'ERROR')}>
+                <Camera size={17} /> {roomCaptureStatus === 'RETAKE' ? `Retake ${roomState.step?.label || ''} Photo`
+                  : roomCaptureStatus === 'ERROR' ? 'Try Again' : 'Capture Photo'}
+              </button>
+            )}
             {typeof roomState.coverage === 'number' && roomState.coverage > 0 && (
               <div className="wi-room-overlay-coverage">
                 <div className="wi-room-overlay-coverage-bar">
@@ -1188,10 +1428,23 @@ socket.on('assessment_verif:yolo_detection', data => {
                 <span>Coverage {Math.round(roomState.coverage)}%</span>
               </div>
             )}
+            {roomState.phase === 'scan360' && <div className="wi-room-sector-summary">
+              <span>Current direction: {roomState.currentDirection || 'Front'}</span>
+              <span>Covered: {(roomState.sectors || []).filter(sector => sector.verified).map(sector => sector.label).join(', ') || 'Starting area'}</span>
+              <span>Remaining: {(roomState.sectors || []).filter(sector => !sector.verified).map(sector => sector.label).join(', ') || 'Continue rotating'}</span>
+              {roomState.pendingObject && <strong role="alert">{roomState.pendingObject.objectType} in {roomState.pendingObject.label}: remove it and rescan this area.</strong>}
+            </div>}
             <div className="wi-room-overlay-status">
-              {roomState.aiStatus === 'ANALYZING' ? 'Analyzing…' : roomState.aiStatus === 'RETRY' ? 'Adjust the angle and continue' : roomState.aiStatus === 'SUCCESS' ? 'Captured' : 'Scanning'}
+              {roomState.phase === 'six'
+                ? (roomCaptureStatus === 'CAPTURING' ? 'Capturing…' : roomCaptureStatus === 'UPLOADING' ? 'Uploading…'
+                  : roomState.laptopCameraReady === false ? 'Waiting for laptop movement camera…'
+                  : roomCaptureStatus === 'ERROR' ? 'Photo analysis temporarily failed'
+                    : roomState.aiStatus === 'ANALYZING' ? 'Analyzing photo…'
+                      : roomCaptureStatus === 'VERIFIED' ? 'Photo verified' : roomCaptureStatus === 'RETAKE' ? 'Retake this photo' : 'Ready to capture')
+                : roomState.aiStatus === 'ANALYZING' ? 'Analyzing scan…' : 'Keep rotating slowly'}
             </div>
-            <p className="wi-room-overlay-hint">Follow the instructions shown on your laptop screen. Keep the phone steady.</p>
+            {roomCaptureError && <p role="alert" className="wi-room-error">{roomCaptureError}</p>}
+            <p className="wi-room-overlay-hint">{roomState.phase === 'six' ? `${Object.values(roomState.steps || {}).filter(step => step?.verifiedAt).length}/6 photos verified` : 'Keep the phone moving slowly for the 360° scan.'}</p>
           </div>
         </div>
       )}

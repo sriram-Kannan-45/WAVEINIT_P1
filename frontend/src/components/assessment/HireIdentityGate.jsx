@@ -8,7 +8,12 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 const CHALLENGE_LABELS = {
   TURN_LEFT: 'Slowly turn your head to the left',
   TURN_RIGHT: 'Slowly turn your head to the right',
+  LOOK_CENTER: 'Look straight at the camera',
   BLINK: 'Blink once, then look at the camera',
+}
+const MOVEMENT_FEEDBACK = {
+  'en-IN': { LEFT: 'Left movement detected.', RIGHT: 'Right movement detected.', CENTER: 'Face aligned.' },
+  'ta-IN': { LEFT: 'இடது பக்க அசைவு கண்டறியப்பட்டது.', RIGHT: 'வலது பக்க அசைவு கண்டறியப்பட்டது.', CENTER: 'முகம் நேராக உள்ளது.' },
 }
 
 // Classify backend/network errors into user-facing messages
@@ -38,6 +43,7 @@ const HIRE_VOICE_LANGUAGES = ['en-IN', 'ta-IN']
 export default function HireIdentityGate({ sessionId, policy, onVerified }) {
   const videoRef = useRef(null)
   const streamRef = useRef(null)
+  const runRef = useRef(0)
   const [language, setLanguage] = useState(() => {
     const preferred = policy.allowParticipantLanguage === false
       ? (policy.defaultLanguage || 'en-IN')
@@ -53,6 +59,10 @@ export default function HireIdentityGate({ sessionId, policy, onVerified }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [step, setStep] = useState('camera') // 'camera' | 'challenge' | 'capturing' | 'done'
+  const [challengeStatus, setChallengeStatus] = useState('IDLE')
+  const [completedChallenges, setCompletedChallenges] = useState([])
+  const [challengeCount, setChallengeCount] = useState(3)
+  const [detectedMovement, setDetectedMovement] = useState(null)
 
   // Camera setup
   useEffect(() => {
@@ -92,6 +102,7 @@ export default function HireIdentityGate({ sessionId, policy, onVerified }) {
 
     return () => {
       cancelled = true
+      runRef.current += 1
       streamRef.current?.getTracks().forEach(t => t.stop())
       window.speechSynthesis?.cancel()
     }
@@ -119,10 +130,10 @@ export default function HireIdentityGate({ sessionId, policy, onVerified }) {
     try {
       const next = await hiringService.getLivenessChallenge(sessionId)
       setChallenge(next.challenge)
+      setCompletedChallenges(next.completedChallenges || [])
+      setChallengeCount(next.challengeCount || 3)
+      setChallengeStatus('CHALLENGE_ACTIVE')
       setStep('challenge')
-      if (policy.voiceWarnings) {
-        speakHireWarning({ language, key: 'neutral', rate: policy.voiceRate, volume: policy.voiceVolume })
-      }
     } catch (err) {
       setError(classifyError(err))
     } finally {
@@ -130,37 +141,83 @@ export default function HireIdentityGate({ sessionId, policy, onVerified }) {
     }
   }
 
-  // Step 2: Capture frames + submit identity reference
-  const begin = async () => {
+  // Keep the first two frames as the pose before the instruction. Later batches
+  // reuse them, so a normal turn is still seen if it happens after batch one.
+  const begin = async (retry = false) => {
     if (!challenge) { setError('Please request a challenge first.'); return }
+    const run = ++runRef.current
     setBusy(true)
     setError('')
     setStep('capturing')
     try {
-      // Neutral frame first
-      const frames = [capture()]
-      // Announce challenge instruction via voice
-      if (policy.voiceWarnings) {
-        speakHireWarning({ language, key: challenge, rate: policy.voiceRate, volume: policy.voiceVolume })
+      let current = challenge
+      if (retry) {
+        const resumed = await hiringService.getLivenessChallenge(sessionId)
+        current = resumed.challenge
+        setChallenge(current)
+        setCompletedChallenges(resumed.completedChallenges || [])
+        setChallengeCount(resumed.challengeCount || 3)
       }
-      await delay(300)
-      // Capture burst: 7 frames at 180ms intervals to capture full movement arc
-      for (let i = 0; i < 7; i++) {
-        frames.push(capture())
-        await delay(180)
+      while (current && runRef.current === run) {
+        setChallengeStatus('CHALLENGE_ACTIVE')
+        setDetectedMovement(null)
+        const baseline = [capture()]
+        await delay(230)
+        baseline.push(capture())
+        if (policy.voiceWarnings) {
+          speakHireWarning({ language, key: current, rate: policy.voiceRate, volume: policy.voiceVolume })
+        }
+        setChallengeStatus('DETECTING')
+        const deadline = Date.now() + 30000
+        let result = null
+        while (Date.now() < deadline && runRef.current === run) {
+          const frames = [...baseline]
+          for (let i = 0; i < 6; i++) {
+            await delay(420)
+            if (runRef.current !== run) return
+            frames.push(capture())
+          }
+          result = await hiringService.captureIdentity(sessionId, { challenge: current, frames })
+          if (result.challengeCompleted === true) break
+        }
+        if (runRef.current !== run) return
+        if (!result?.challengeCompleted) {
+          setChallengeStatus('TIMED_OUT')
+          setError('Movement not detected. Please try again.')
+          setStep('challenge')
+          return
+        }
+        setChallengeStatus('CHALLENGE_COMPLETED')
+        setDetectedMovement(result.detectedMovement)
+        setCompletedChallenges(result.completedChallenges || [])
+        if (policy.voiceWarnings) {
+          speakHireWarning({ language, text: MOVEMENT_FEEDBACK[language]?.[result.detectedMovement],
+            rate: policy.voiceRate, volume: policy.voiceVolume })
+        }
+        await delay(850)
+        if (runRef.current !== run) return
+        if (result.verified) {
+          current = null
+        } else {
+          current = result.nextChallenge
+          if (!current) throw new Error('Next liveness challenge was not provided.')
+          setChallengeStatus('NEXT_CHALLENGE')
+          setChallenge(current)
+        }
       }
-      const result = await hiringService.captureIdentity(sessionId, { challenge, frames })
-      if (!result.verified) throw new Error('Identity verification did not complete. Please retry.')
+      if (runRef.current !== run) return
+      setChallengeStatus('ALL_CHALLENGES_COMPLETED')
       sessionStorage.setItem('hire_proctor_language', language)
       setStep('done')
       await delay(400)
       onVerified({ language })
     } catch (err) {
+      if (runRef.current !== run) return
       setError(classifyError(err))
-      setStep('challenge') // allow retry from challenge step
-      setChallenge(null)  // force re-request of challenge
+      setChallengeStatus('TIMED_OUT')
+      setStep('challenge')
     } finally {
-      setBusy(false)
+      if (runRef.current === run) setBusy(false)
     }
   }
 
@@ -184,7 +241,7 @@ export default function HireIdentityGate({ sessionId, policy, onVerified }) {
       <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
         {[
           { key: 'camera', label: '① Camera', done: cameraReady },
-          { key: 'challenge', label: '② Challenge', done: !!challenge },
+          { key: 'challenge', label: '② Challenge', done: challengeStatus === 'ALL_CHALLENGES_COMPLETED' || step === 'done' },
           { key: 'capturing', label: '③ Verify', done: step === 'done' },
         ].map(s => (
           <div key={s.key} style={{
@@ -252,7 +309,7 @@ export default function HireIdentityGate({ sessionId, policy, onVerified }) {
           <span><Languages size={13} /> Instruction language</span>
           <select
             value={language}
-            disabled={policy.allowParticipantLanguage === false}
+            disabled={busy || policy.allowParticipantLanguage === false}
             onChange={e => setLanguage(e.target.value)}
           >
             <option value="en-IN">English</option>
@@ -274,20 +331,20 @@ export default function HireIdentityGate({ sessionId, policy, onVerified }) {
         )}
 
         {/* Step 2: Perform liveness */}
-        {challenge && (
+        {challenge && step !== 'done' && (
           <button
             className="reg-admin-btn reg-admin-btn--primary"
-            onClick={begin}
+            onClick={() => begin(challengeStatus === 'TIMED_OUT')}
             disabled={!canCapture}
           >
             {busy ? <Loader2 size={15} className="bulk-spin" /> : <Camera size={15} />}
-            {busy ? 'Verifying…' : 'Verify Identity'}
+            {busy ? 'Detecting movement…' : challengeStatus === 'TIMED_OUT' ? 'Try Again' : 'Verify Identity'}
           </button>
         )}
       </div>
 
       {/* Challenge instruction */}
-      {challenge && !busy && (
+      {challenge && step !== 'done' && (
         <div
           aria-live="polite"
           style={{
@@ -305,8 +362,13 @@ export default function HireIdentityGate({ sessionId, policy, onVerified }) {
               {hireVoiceMessage(language, challenge)}
             </p>
             <p style={{ margin: '6px 0 0', color: '#6B7280', fontSize: 12 }}>
-              Click "Verify Identity" and perform the movement when the verification starts.
+              {busy ? 'Perform the movement now. The next instruction will appear automatically.'
+                : challengeStatus === 'TIMED_OUT' ? 'Press Try Again to repeat this movement.'
+                  : 'Click "Verify Identity" and perform the movement when verification starts.'}
             </p>
+            {completedChallenges.length > 0 && <p style={{ margin: '6px 0 0', color: '#047857', fontSize: 12 }}>
+              {completedChallenges.length} of {challengeCount} movements completed{detectedMovement ? ` · ${detectedMovement} detected` : ''}
+            </p>}
           </div>
         </div>
       )}
@@ -316,7 +378,8 @@ export default function HireIdentityGate({ sessionId, policy, onVerified }) {
         <div aria-live="assertive" style={{ marginTop: 14, padding: '12px 16px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 10 }}>
           <p style={{ margin: 0, color: '#1E40AF', fontWeight: 600 }}>
             <Loader2 size={14} className="bulk-spin" style={{ marginRight: 6, verticalAlign: 'middle' }} />
-            Capturing frames — please {CHALLENGE_LABELS[challenge]?.toLowerCase() || 'follow the instruction'}…
+            {challengeStatus === 'CHALLENGE_COMPLETED' ? `${detectedMovement} movement detected` :
+              `Detecting movement — please ${CHALLENGE_LABELS[challenge]?.toLowerCase() || 'follow the instruction'}…`}
           </p>
         </div>
       )}

@@ -40,6 +40,7 @@ const initializeSocket = (server) => {
       callback(null, isOriginAllowed(request.headers.origin));
     },
     transports: ['websocket', 'polling'],
+    maxHttpBufferSize: 2 * 1024 * 1024,
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
