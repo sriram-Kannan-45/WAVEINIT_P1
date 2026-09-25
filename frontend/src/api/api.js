@@ -19,7 +19,7 @@ export { getAuthHeaders };
 const getBackendOrigin = () => {
   const envUrl = import.meta.env.VITE_API_URL;
   if (envUrl) {
-    return envUrl.replace(/\/api$/, '');
+    return envUrl.trim().replace(/\/+$/, '').replace(/\/api$/, '');
   }
   if (typeof window !== 'undefined' && window.location && window.location.origin) {
     if (window.location.hostname.includes('waveinitlms.online')) {

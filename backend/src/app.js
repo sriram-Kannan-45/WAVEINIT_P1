@@ -78,6 +78,13 @@ const app = express();
 // hop lets a caller spoof X-Forwarded-For and bypass IP-based controls.
 app.set('trust proxy', getTrustProxyHops());
 app.use(ipNormalizerMiddleware);
+// Normalize duplicate slashes in request URLs (e.g. //api/... -> /api/...)
+app.use((req, res, next) => {
+  if (req.url && req.url.includes('//')) {
+    req.url = req.url.replace(/\/+/g, '/');
+  }
+  next();
+});
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3001;
 
@@ -863,7 +870,7 @@ const startServer = async () => {
     // Delivers signaling/notification events that originated on other instances.
     try {
       const crossInstance = require('./socket/crossInstance');
-      crossInstance.startRelayPoller(io, { intervalMs: 120 });
+      crossInstance.startRelayPoller(io, { intervalMs: 500 });
       logger.info(`Socket relay poller started (mode: ${crossInstance.isClusterMode() ? 'redis' : 'db-outbox'})`);
     } catch (e) {
       logger.warn('Could not start socket relay poller', { error: e.message });
