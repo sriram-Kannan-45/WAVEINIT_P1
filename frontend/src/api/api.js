@@ -22,6 +22,9 @@ const getBackendOrigin = () => {
     return envUrl.replace(/\/api$/, '');
   }
   if (typeof window !== 'undefined' && window.location && window.location.origin) {
+    if (window.location.hostname.includes('waveinitlms.online')) {
+      return 'https://waveinit-p1-2.onrender.com';
+    }
     return window.location.origin;
   }
   return 'http://localhost:3001';

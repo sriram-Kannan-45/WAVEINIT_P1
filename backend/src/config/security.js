@@ -9,7 +9,10 @@ const LOCAL_DEVELOPMENT_ORIGINS = [
   'https://localhost:5174',
 ];
 
-const DEFAULT_PRODUCTION_ORIGINS = ['https://www.waveinitlms.online'];
+const DEFAULT_PRODUCTION_ORIGINS = [
+  'https://www.waveinitlms.online',
+  'https://waveinitlms.online',
+];
 
 function normaliseOrigin(value) {
   if (!value || typeof value !== 'string') return null;

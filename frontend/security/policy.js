@@ -1,8 +1,10 @@
 const API_ORIGINS = [
+  'https://waveinit-p1-2.onrender.com',
   'https://waveinint-ahhsevgvcqaeesh2.centralindia-01.azurewebsites.net',
   'https://waveinint.azurewebsites.net',
   'https://waveinit-init-a9bfbeh3fgh0f0ca.centralindia-01.azurewebsites.net',
   'https://waveinit-init.azurewebsites.net',
+  ...(typeof process !== 'undefined' && process.env?.VITE_API_URL ? [process.env.VITE_API_URL.replace(/\/api$/, '')] : []),
 ];
 
 const SOCKET_ORIGINS = API_ORIGINS.map((origin) => origin.replace(/^https:/, 'wss:'));

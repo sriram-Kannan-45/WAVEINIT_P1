@@ -36,6 +36,7 @@ backup-*
 *.env
 !.env.example
 !*.env.example
+!frontend/.env.production
 
 
 # Python
