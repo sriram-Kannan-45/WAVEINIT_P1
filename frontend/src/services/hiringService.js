@@ -37,7 +37,8 @@ export const hiringService = {
   captureIdentity: (sessionId, data, opts) => api.post(`${BASE}/proctoring/sessions/${sessionId}/identity/reference`, data, opts),
   verifyIdentity: (sessionId, frame, opts) => api.post(`${BASE}/proctoring/sessions/${sessionId}/identity/verify`, { frame }, opts),
   inspectRoom: (sessionId, frames, opts) => api.post(`${BASE}/proctoring/sessions/${sessionId}/room-scan`, { frames }, opts),
-  analyzeRoomStep: (sessionId, step, frame, opts) => api.post(`${BASE}/proctoring/sessions/${sessionId}/room-step`, { step, frame }, opts),
+  analyzeRoomStep: (sessionId, step, frame, capture = {}, opts) => api.post(`${BASE}/proctoring/sessions/${sessionId}/room-step`,
+    { step, frame, ...capture }, opts),
   analyzeRoomScan360: (sessionId, frames, orientations, laptopFrames, opts) => api.post(`${BASE}/proctoring/sessions/${sessionId}/room-scan-360`, { frames, orientations, laptopFrames }, opts),
   getRoomVerificationState: (sessionId, opts) => api.get(`${BASE}/proctoring/sessions/${sessionId}/room-state`, opts),
 };

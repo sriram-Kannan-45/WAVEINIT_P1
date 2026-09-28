@@ -26,8 +26,13 @@ os.environ["YOLO_VERBOSE"] = "False"
 import time
 import base64
 import logging
+import threading
 from typing import Dict, Any, List, Optional, Tuple
 from collections import deque
+
+# MediaPipe HandLandmarker.detect() is not safe to call concurrently from
+# multiple worker threads (the AI service runs frame analysis in a threadpool).
+_HAND_DETECT_LOCK = threading.Lock()
 from .mobile_composition import evaluate_mobile
 from .hire_mobile_framing import evaluate_hire_mobile
 
@@ -101,7 +106,10 @@ class YOLOProctorEngine:
         try:
             import mediapipe as mp
             rgb = np.ascontiguousarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-            result = self.hand_landmarker.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
+            with _HAND_DETECT_LOCK:
+                result = self.hand_landmarker.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
+            if not result or not result.hand_landmarks:
+                return []
             return [[(point.x, point.y) for point in hand] for hand in result.hand_landmarks]
         except Exception as exc:
             self.hand_detector_error = str(exc)

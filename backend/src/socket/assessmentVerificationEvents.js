@@ -7,6 +7,9 @@ const logger = require('../utils/logger');
 
 const activeRoomCaptures = new Set();
 const laptopRoomEvidence = new Map();
+const activeMobileSockets = new Map();
+const CAPTURE_ID_PATTERN = /^[a-z0-9-]{8,64}$/i;
+const ROOM_CAPTURE_MAX_AGE_MS = Number(process.env.ROOM_CAPTURE_MAX_AGE_MS) || 15000;
 
 module.exports = (io, socket) => {
   let binding = null;
@@ -22,6 +25,17 @@ module.exports = (io, socket) => {
       socket.data.assessmentVerification = { sessionId: binding.session.session_id, role: mobile ? 'mobile_camera' : 'laptop' };
       socket.verifRole = socket.data.assessmentVerification.role;
       const room = `assessment_verif_${binding.session.session_id}`;
+      if (mobile) {
+        const existingPeers = await io.in(room).fetchSockets();
+        for (const peer of existingPeers) {
+          if (peer.id !== socket.id && peer.data?.assessmentVerification?.role === 'mobile_camera') {
+            logger.warn('MOBILE_PAIR_REPLACED', { sessionId: binding.session.session_id,
+              oldSocketId: peer.id, newSocketId: socket.id });
+            await peer.disconnect(true);
+          }
+        }
+        activeMobileSockets.set(binding.session.session_id, socket.id);
+      }
       await socket.join(room);
       ack?.({ ok: true, sessionId: binding.session.session_id });
       const peers = await io.in(room).fetchSockets();
@@ -63,7 +77,7 @@ module.exports = (io, socket) => {
       const roomVerificationPending = hire?.policy?.enabled && (hire.policy.mobileRoomScan || hire.policy.roomScan360Enabled) && hire.roomScanClear !== true;
       if (roomVerificationPending) {
         // Pairing frames remain live preview transport. Workspace inference
-        // starts only after all six photos and the 360 sweep are complete.
+        // starts only after all five photos and the 360 sweep are complete.
         return;
       }
       if (busy) return;
@@ -117,10 +131,23 @@ module.exports = (io, socket) => {
     const photo = Buffer.isBuffer(data?.photo) ? data.photo
       : data?.photo instanceof ArrayBuffer ? Buffer.from(data.photo)
         : ArrayBuffer.isView(data?.photo) ? Buffer.from(data.photo.buffer, data.photo.byteOffset, data.photo.byteLength) : null;
-    if (!bound(data) || socket.verifRole !== 'mobile_camera') return ack?.({ ok: false, errorCode: 'UPLOAD_FAILED', error: 'Photo could not be uploaded. Please try again.' });
+    if (!bound(data) || socket.verifRole !== 'mobile_camera' ||
+        activeMobileSockets.get(binding?.session?.session_id) !== socket.id) {
+      return ack?.({ ok: false, errorCode: 'QR_NOT_PAIRED', error: 'This phone is not the active device for the assessment session.' });
+    }
+    const capturedAt = Number(data?.capturedAt);
+    const captureAgeMs = Date.now() - capturedAt;
+    if (!Number.isFinite(capturedAt) || captureAgeMs > ROOM_CAPTURE_MAX_AGE_MS || captureAgeMs < -5000) {
+      return ack?.({ ok: false, errorCode: 'STALE_CAPTURE', error: 'That camera frame is no longer fresh. Capture a new photo.' });
+    }
     if (!photo || photo.length < 100 || photo.length > 1400000 ||
-        !/^[a-z0-9-]{8,64}$/i.test(String(data.captureId || ''))) {
+        !CAPTURE_ID_PATTERN.test(String(data.captureId || '')) ||
+        !CAPTURE_ID_PATTERN.test(String(data.mobileStreamId || ''))) {
       return ack?.({ ok: false, errorCode: 'INVALID_IMAGE', error: 'Please capture a clearer photo.' });
+    }
+    if (!socket.data?.assessmentVerification?.mobileStreamId ||
+        socket.data.assessmentVerification.mobileStreamId !== String(data.mobileStreamId)) {
+      return ack?.({ ok: false, errorCode: 'CAMERA_NOT_READY', error: 'The active mobile camera stream could not be verified.' });
     }
     const key = String(binding.monitor.sessionId);
     if (activeRoomCaptures.has(key)) return ack?.({ ok: false, errorCode: 'ALREADY_ANALYZING', error: 'This photo is already being analyzed.' });
@@ -147,42 +174,78 @@ module.exports = (io, socket) => {
       const result = await hireProctoring.analyzeRoomStep({ sessionId: current.monitor.sessionId,
         user: { id: socket.userId, role: 'PARTICIPANT' }, step, frame: photo,
         orientation: data.orientation,
-        laptopFrames: laptopEvidence && Date.now() - laptopEvidence.at <= 10000 ? laptopEvidence.frames : [] });
+        laptopFrames: laptopEvidence && Date.now() - laptopEvidence.at <= 10000 ? laptopEvidence.frames : [],
+        captureId: data.captureId, capturedAt, mobileStreamId: data.mobileStreamId,
+        transportSessionId: socket.id });
       emit('assessment_verif:room_capture_state', { captureId: data.captureId, step,
         status: result.valid ? 'VERIFIED' : 'RETAKE', result });
       ack?.({ ok: true, result });
     } catch (error) {
-      const errorCode = ['AI_TIMEOUT', 'INVALID_IMAGE', 'UPLOAD_FAILED', 'ALREADY_ANALYZING'].includes(error.code)
+      const errorCode = ['AI_TIMEOUT', 'INVALID_IMAGE', 'UPLOAD_FAILED', 'ALREADY_ANALYZING',
+        'CAPTURE_REPLAY', 'STALE_CAPTURE', 'CAMERA_NOT_READY', 'QR_NOT_PAIRED', 'INVALID_CAPTURE_ID',
+        'STEP_OUT_OF_ORDER', 'ROOM_PHASE_INVALID', 'UNSUPPORTED_STEP', 'INVALID_LAPTOP_SAMPLE'].includes(error.code)
         ? error.code : 'SERVER_ERROR';
       const messages = {
         AI_TIMEOUT: ['Photo analysis is taking too long. Please try again.', 'புகைப்பட ஆய்வு அதிக நேரம் எடுக்கிறது. மீண்டும் முயற்சிக்கவும்.'],
         INVALID_IMAGE: ['Please capture a clearer photo.', 'தெளிவான புகைப்படத்தை மீண்டும் எடுக்கவும்.'],
         UPLOAD_FAILED: ['Photo could not be uploaded. Please try again.', 'புகைப்படத்தை பதிவேற்ற முடியவில்லை. மீண்டும் முயற்சிக்கவும்.'],
         ALREADY_ANALYZING: ['This photo is already being analyzed.', 'இந்தப் புகைப்படம் ஏற்கனவே ஆய்வு செய்யப்படுகிறது.'],
+        CAPTURE_REPLAY: ['This capture was already submitted. Take a new photo.', 'இந்தப் படம் ஏற்கனவே சமர்ப்பிக்கப்பட்டது. புதிய புகைப்படம் எடுக்கவும்.'],
+        STALE_CAPTURE: ['That camera frame is no longer fresh. Capture a new photo.', 'அந்தப் படம் புதியதாக இல்லை. புதிய புகைப்படம் எடுக்கவும்.'],
+        CAMERA_NOT_READY: ['The active mobile camera stream could not be verified.', 'செயலில் உள்ள மொபைல் கேமரா இணைப்பை உறுதிப்படுத்த முடியவில்லை.'],
+        QR_NOT_PAIRED: ['This phone is not paired to the active assessment session.', 'இந்தக் கைப்பேசி செயலில் உள்ள மதிப்பீட்டு அமர்வுடன் இணைக்கப்படவில்லை.'],
+        INVALID_CAPTURE_ID: ['The camera capture could not be verified. Take a new photo.', 'கேமரா படத்தை உறுதிப்படுத்த முடியவில்லை. புதிய புகைப்படம் எடுக்கவும்.'],
+        STEP_OUT_OF_ORDER: ['Room verification is out of sync. Reloading the current step.', 'அறை சரிபார்ப்பு வரிசை மாறியுள்ளது. தற்போதைய படி மீண்டும் ஏற்றப்படுகிறது.'],
+        ROOM_PHASE_INVALID: ['Room scanning must finish before the assessment can start.', 'மதிப்பீட்டைத் தொடங்குவதற்கு முன் அறை ஸ்கேனிங் முடிய வேண்டும்.'],
+        UNSUPPORTED_STEP: ['This room verification step is not part of the current flow.', 'இந்த அறை சரிபார்ப்புப் படி தற்போதைய வரிசையில் இல்லை.'],
+        INVALID_LAPTOP_SAMPLE: ['The laptop camera could not be sampled. Keep it open and try again.', 'லேப்டாப் கேமராவை சரி பதிவேற்ற முடியவில்லை. அதைத் திறந்து வைத்து மீண்டும் முயற்சிக்கவும்.'],
         SERVER_ERROR: ['Verification service is temporarily unavailable. Please try again.', 'சரிபார்ப்பு சேவை தற்காலிகமாக கிடைக்கவில்லை. மீண்டும் முயற்சிக்கவும்.'],
       };
       const [message, taError] = messages[errorCode];
+      // A step desync is a state problem, not an outage. Push the authoritative
+      // capture map on a dedicated event so both clients re-derive the real
+      // pending step. `room_state` stays laptop-owned: it carries UI fields
+      // (step/aiStatus) this server-side snapshot does not include.
+      if (errorCode === 'STEP_OUT_OF_ORDER') {
+        try {
+          const state = await hireProctoring.getRoomVerificationState({
+            sessionId: binding.monitor.sessionId,
+            user: { id: socket.userId, role: 'PARTICIPANT' },
+          });
+          emit('assessment_verif:room_state_sync', {
+            sessionId: binding.session.session_id,
+            roomSteps: state.roomSteps,
+            sixCaptureStatus: state.sixCaptureStatus || {},
+            pendingStep: hireProctoring.HIRE_ROOM_STEPS.find(name => !state.sixCaptureStatus?.[name]?.verifiedAt) || null,
+            verificationState: state.verificationState,
+            reason: 'STEP_OUT_OF_ORDER',
+            broadcastAt: Date.now(),
+          });
+        } catch (syncError) {
+          logger.warn('ROOM_PHOTO_RESYNC_FAILED', { captureId: data.captureId, detail: syncError.message });
+        }
+      }
       logger.warn('ROOM_PHOTO_ANALYSIS_ERROR', { captureId: data.captureId, step: data.step, errorCode, detail: error.message });
-      emit('assessment_verif:room_capture_state', { captureId: data.captureId, step: data.step, status: 'ERROR', errorCode, error: message, taError });
-      ack?.({ ok: false, errorCode, error: message, taError });
+      emit('assessment_verif:room_capture_state', { captureId: data.captureId, step: data.step, status: 'ERROR',
+        errorCode, expectedStep: error.expectedStep || null, error: message, taError });
+      ack?.({ ok: false, errorCode, expectedStep: error.expectedStep || null, error: message, taError });
     } finally {
       activeRoomCaptures.delete(key);
     }
   });
   socket.on('assessment_verif:mobile_ready', async data => {
     if (!bound(data) || socket.verifRole !== 'mobile_camera') return;
+    const streamId = String(data?.mobileStreamId || '');
+    if (!CAPTURE_ID_PATTERN.test(streamId)) return;
+    socket.data.assessmentVerification.mobileStreamId = streamId;
     emit('assessment_verif:mobile_status', { mobileCameraReady: true, status: 'PAIRED' });
   });
   socket.on('assessment_verif:stream_status', data => {
-    if (bound(data) && socket.verifRole === 'mobile_camera') emit('assessment_verif:stream_status', { streaming: !!data.streaming });
-  });
-  socket.on('assessment_verif:orientation', data => {
-    if (!bound(data) || socket.verifRole !== 'mobile_camera' || !Number.isFinite(data?.yaw)) return;
-    emit('assessment_verif:orientation', {
-      yaw: ((data.yaw % 360) + 360) % 360,
-      pitch: Number.isFinite(data.pitch) ? data.pitch : null,
-      at: Date.now(),
-    });
+    if (!bound(data) || socket.verifRole !== 'mobile_camera') return;
+    const streamId = String(data?.mobileStreamId || '');
+    if (data.streaming && (!CAPTURE_ID_PATTERN.test(streamId) ||
+        socket.data?.assessmentVerification?.mobileStreamId !== streamId)) return;
+    emit('assessment_verif:stream_status', { streaming: !!data.streaming });
   });
   // Laptop drives the AI-guided room-verification overlay on the phone screen.
   socket.on('assessment_verif:room_state', data => {
@@ -191,7 +254,12 @@ module.exports = (io, socket) => {
     emit('assessment_verif:room_state', { sessionId: binding.session.session_id, state, broadcastAt: Date.now() });
   });
   socket.on('disconnect', () => {
-    if (binding && socket.verifRole === 'mobile_camera') emit('assessment_verif:mobile_status', { connected: false });
+    if (binding && socket.verifRole === 'mobile_camera') {
+      if (activeMobileSockets.get(binding.session.session_id) === socket.id) {
+        activeMobileSockets.delete(binding.session.session_id);
+        emit('assessment_verif:mobile_status', { connected: false });
+      }
+    }
   });
   // Unlock/start/end are server lifecycle decisions, never client socket commands.
 };

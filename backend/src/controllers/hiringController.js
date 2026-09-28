@@ -58,65 +58,121 @@ async function loadWorkflow(id) {
   });
 }
 
-async function workflowMetrics(workflow) {
-  const isCoding = workflow.assessment_type === 'CODING';
-  const isCombined = workflow.assessment_type === 'COMBINED';
-  const engine = isCoding ? workflow.codingAssessment : (workflow.quiz || workflow.codingAssessment);
-  const quizId = workflow.quiz_id;
-  const codingId = workflow.coding_assessment_id;
+async function groupedCounts(Model, ids, idAttribute, idColumn, statusAttribute = null, statusColumn = null) {
+  if (!ids.length) return [];
+  const attributes = [
+    [sequelize.col(idColumn), 'entityId'],
+    [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+  ];
+  const group = [sequelize.col(idColumn)];
+  if (statusAttribute) {
+    attributes.splice(1, 0, [sequelize.col(statusColumn), 'status']);
+    group.push(sequelize.col(statusColumn));
+  }
+  return Model.findAll({
+    where: { [idAttribute]: { [Op.in]: ids } },
+    attributes,
+    group,
+    raw: true,
+  });
+}
 
-  const [
-    candidateCount,
-    registeredCount,
-    pendingCount,
-    assignments,
-    quizAttempts,
-    codingAttempts,
-    quizQuestionCount,
-    codingProblemCount,
-  ] = await Promise.all([
-    HiringCandidate.count({ where: { assessment_id: workflow.id } }),
-    HiringCandidate.count({ where: { assessment_id: workflow.id, registration_status: 'REGISTERED' } }),
-    HiringCandidate.count({ where: { assessment_id: workflow.id, registration_status: { [Op.ne]: 'REGISTERED' } } }),
-    HiringAssignment.findAll({ where: { assessment_id: workflow.id }, attributes: ['status'] }),
-    quizId ? QuizAttempt.findAll({ where: { quizId }, attributes: ['status'] }) : [],
-    codingId ? CodingAttempt.findAll({ where: { assessmentId: codingId }, attributes: ['status'] }) : [],
-    quizId ? AIQuestion.count({ where: { quizId } }) : 0,
-    codingId ? CodingProblem.count({ where: { assessmentId: codingId } }) : 0,
+function statusCountMap(rows) {
+  const result = new Map();
+  for (const row of rows) {
+    const key = String(row.entityId);
+    const values = result.get(key) || {};
+    values[String(row.status || '').toUpperCase()] = Number(row.count) || 0;
+    result.set(key, values);
+  }
+  return result;
+}
+
+function totalCountMap(rows) {
+  return new Map(rows.map((row) => [String(row.entityId), Number(row.count) || 0]));
+}
+
+async function workflowMetricsBatch(workflows) {
+  if (!workflows.length) return new Map();
+  const workflowIds = [...new Set(workflows.map((workflow) => Number(workflow.id)).filter(Boolean))];
+  const quizIds = [...new Set(workflows.map((workflow) => Number(workflow.quiz_id)).filter(Boolean))];
+  const codingIds = [...new Set(workflows.map((workflow) => Number(workflow.coding_assessment_id)).filter(Boolean))];
+
+  // Six grouped queries replace eight queries per assessment. A page of 100
+  // workflows therefore stays six queries instead of growing to 800.
+  const [candidateRows, assignmentRows, quizAttemptRows, codingAttemptRows, questionRows, problemRows] = await Promise.all([
+    groupedCounts(HiringCandidate, workflowIds, 'assessment_id', 'assessment_id', 'registration_status', 'registration_status'),
+    groupedCounts(HiringAssignment, workflowIds, 'assessment_id', 'assessment_id'),
+    groupedCounts(QuizAttempt, quizIds, 'quizId', 'quiz_id', 'status', 'status'),
+    groupedCounts(CodingAttempt, codingIds, 'assessmentId', 'assessment_id', 'status', 'status'),
+    groupedCounts(AIQuestion, quizIds, 'quizId', 'quiz_id'),
+    groupedCounts(CodingProblem, codingIds, 'assessmentId', 'assessment_id'),
   ]);
 
-  const attempts = isCoding ? codingAttempts : (isCombined ? [...quizAttempts, ...codingAttempts] : quizAttempts);
-  const inProgress = attempts.filter((a) => String(a.status).toUpperCase() === 'IN_PROGRESS').length;
-  const completed = attempts.filter((a) => ['SUBMITTED', 'AUTO_SUBMITTED', 'EVALUATED'].includes(String(a.status).toUpperCase())).length;
+  const candidates = statusCountMap(candidateRows);
+  const assignments = totalCountMap(assignmentRows);
+  const quizAttempts = statusCountMap(quizAttemptRows);
+  const codingAttempts = statusCountMap(codingAttemptRows);
+  const questionCounts = totalCountMap(questionRows);
+  const problemCounts = totalCountMap(problemRows);
+  const completedStatuses = ['SUBMITTED', 'AUTO_SUBMITTED', 'EVALUATED'];
+  const attemptMetrics = (counts = {}) => ({
+    inProgress: counts.IN_PROGRESS || 0,
+    completed: completedStatuses.reduce((total, status) => total + (counts[status] || 0), 0),
+  });
 
-  const totalContent = isCombined
-    ? (quizQuestionCount + codingProblemCount)
-    : (isCoding ? codingProblemCount : quizQuestionCount);
+  const metrics = new Map();
+  for (const workflow of workflows) {
+    const workflowId = String(workflow.id);
+    const quizId = workflow.quiz_id;
+    const codingId = workflow.coding_assessment_id;
+    const isCoding = workflow.assessment_type === 'CODING';
+    const isCombined = workflow.assessment_type === 'COMBINED';
+    const engine = isCoding ? workflow.codingAssessment : (workflow.quiz || workflow.codingAssessment);
+    const candidateStatuses = candidates.get(workflowId) || {};
+    const registeredCount = candidateStatuses.REGISTERED || 0;
+    const candidateCount = Object.values(candidateStatuses).reduce((total, count) => total + count, 0);
+    const quiz = attemptMetrics(quizAttempts.get(String(quizId)));
+    const coding = attemptMetrics(codingAttempts.get(String(codingId)));
+    const inProgress = isCoding ? coding.inProgress : (isCombined ? quiz.inProgress + coding.inProgress : quiz.inProgress);
+    const completed = isCoding ? coding.completed : (isCombined ? quiz.completed + coding.completed : quiz.completed);
+    const quizQuestionCount = questionCounts.get(String(quizId)) || 0;
+    const codingProblemCount = problemCounts.get(String(codingId)) || 0;
+    const totalContent = isCombined
+      ? quizQuestionCount + codingProblemCount
+      : (isCoding ? codingProblemCount : quizQuestionCount);
 
-  return {
-    engine_status: engine?.status || 'DRAFT',
-    content_count: totalContent,
-    candidate_count: candidateCount,
-    registered_count: registeredCount,
-    pending_candidates: pendingCount,
-    assigned_count: assignments.length,
-    in_progress_count: inProgress,
-    completed_count: completed,
-    quiz_metrics: {
-      exists: Boolean(quizId && workflow.quiz),
-      id: quizId || null,
-      title: workflow.quiz?.title || null,
-      status: workflow.quiz?.status || (quizId ? 'DRAFT' : 'NOT_CREATED'),
-      question_count: quizQuestionCount,
-    },
-    coding_metrics: {
-      exists: Boolean(codingId && workflow.codingAssessment),
-      id: codingId || null,
-      title: workflow.codingAssessment?.title || null,
-      status: workflow.codingAssessment?.status || (codingId ? 'DRAFT' : 'NOT_CREATED'),
-      problem_count: codingProblemCount,
-    },
-  };
+    metrics.set(workflowId, {
+      engine_status: engine?.status || 'DRAFT',
+      content_count: totalContent,
+      candidate_count: candidateCount,
+      registered_count: registeredCount,
+      pending_candidates: candidateCount - registeredCount,
+      assigned_count: assignments.get(workflowId) || 0,
+      in_progress_count: inProgress,
+      completed_count: completed,
+      quiz_metrics: {
+        exists: Boolean(quizId && workflow.quiz),
+        id: quizId || null,
+        title: workflow.quiz?.title || null,
+        status: workflow.quiz?.status || (quizId ? 'DRAFT' : 'NOT_CREATED'),
+        question_count: quizQuestionCount,
+      },
+      coding_metrics: {
+        exists: Boolean(codingId && workflow.codingAssessment),
+        id: codingId || null,
+        title: workflow.codingAssessment?.title || null,
+        status: workflow.codingAssessment?.status || (codingId ? 'DRAFT' : 'NOT_CREATED'),
+        problem_count: codingProblemCount,
+      },
+    });
+  }
+  return metrics;
+}
+
+async function workflowMetrics(workflow) {
+  const metrics = await workflowMetricsBatch([workflow]);
+  return metrics.get(String(workflow.id)) || {};
 }
 
 function responseWorkflow(workflow, metrics = {}) {
@@ -251,8 +307,8 @@ async function listAssessments(req, res) {
       offset: (page - 1) * limit,
       distinct: true,
     });
-    const assessments = [];
-    for (const workflow of rows) assessments.push(responseWorkflow(workflow, await workflowMetrics(workflow)));
+    const metricMap = await workflowMetricsBatch(rows);
+    const assessments = rows.map((workflow) => responseWorkflow(workflow, metricMap.get(String(workflow.id)) || {}));
     res.json({ assessments, total: count, page, limit, totalPages: Math.max(1, Math.ceil(count / limit)) });
   } catch (error) {
     logger.error('List hiring workflows failed', { error: error.message });
@@ -924,4 +980,3 @@ module.exports = {
   ensureQuiz,
   ensureCoding,
 };
-

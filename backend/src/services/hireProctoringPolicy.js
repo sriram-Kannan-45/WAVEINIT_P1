@@ -27,6 +27,13 @@ const DEFAULT_POLICY = Object.freeze({
   evidenceMode: 'SCREENSHOT',
   roomScan360Enabled: true,
   roomScanCoverageThreshold: 85,
+  // Accept bar for a SINGLE guided room photo, as a quality score out of 100.
+  // Deliberately separate from `roomScanCoverageThreshold`, which is the
+  // percentage of a 360-degree sweep that must be covered. A room photo only
+  // has to prove that a room is visible, so this bar is much lower: a dim,
+  // plain-walled or empty room is legitimate evidence and must not be retaken
+  // forever. The 360 sweep keeps its own stricter, unrelated threshold.
+  roomPhotoQualityThreshold: 40,
 });
 
 const bool = (value, fallback) => typeof value === 'boolean' ? value : fallback;
@@ -55,6 +62,7 @@ function normalizePolicy(input = {}) {
     evidenceMode: input.evidenceMode === 'NONE' ? 'NONE' : 'SCREENSHOT',
     roomScan360Enabled: bool(input.roomScan360Enabled, DEFAULT_POLICY.roomScan360Enabled),
     roomScanCoverageThreshold: Math.round(number(input.roomScanCoverageThreshold, DEFAULT_POLICY.roomScanCoverageThreshold, 50, 100)),
+    roomPhotoQualityThreshold: Math.round(number(input.roomPhotoQualityThreshold, DEFAULT_POLICY.roomPhotoQualityThreshold, 20, 90)),
   };
 }
 

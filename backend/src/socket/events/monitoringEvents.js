@@ -36,6 +36,16 @@ module.exports = function registerMonitoringEvents(io, socket) {
       return;
     }
 
+    // Non-interview monitoring rooms relay live mobile frames and proctoring
+    // events, so a participant must own the session (staff may monitor).
+    if (!String(sessionId).startsWith('ms_interview_')) {
+      const session = await monitoringService.getSession(sessionId);
+      if (!session) return ack?.({ ok: false, error: 'Monitoring session not found' });
+      const isOwner = socket.userRole === 'PARTICIPANT' && String(socket.userId) === String(session.participantId);
+      const isStaff = ['TRAINER', 'ADMIN'].includes(socket.userRole);
+      if (!isOwner && !isStaff) return ack?.({ ok: false, error: 'Access denied' });
+    }
+
     socket.monitoringSessionId = sessionId;
     socket.monitoringRole = role;
 
@@ -280,10 +290,18 @@ module.exports = function registerMonitoringEvents(io, socket) {
   });
 
   // End Monitoring Session
-  on('monitoring:end_session', (data) => {
+  on('monitoring:end_session', async (data) => {
     const { sessionId } = data || {};
     const targetSession = sessionId || socket.monitoringSessionId;
     if (!targetSession) return;
+
+    if (!String(targetSession).startsWith('ms_interview_')) {
+      const session = await monitoringService.getSession(targetSession);
+      if (!session) return;
+      const isOwner = socket.userRole === 'PARTICIPANT' && String(socket.userId) === String(session.participantId);
+      const isStaff = ['TRAINER', 'ADMIN'].includes(socket.userRole);
+      if (!isOwner && !isStaff) return;
+    }
 
     relay.relayEmit(io, 'room', `monitoring_room_${targetSession}`, 'monitoring:session_ended', {
       sessionId: targetSession,

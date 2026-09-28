@@ -948,9 +948,14 @@ async def upload_and_generate(
                 detail=f"Unsupported file extension: .{suffix}. Only .pdf, .docx, .pptx, and .txt files are allowed."
             )
         
-        # LAYER 3: MAGIC BYTES CHECK
+        # LAYER 3: MAGIC BYTES CHECK (size-cap first so oversized files are
+        # never buffered into memory)
+        declared_size = file.size if hasattr(file, "size") else None
+        if declared_size is not None and declared_size > 10 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="File too large. Maximum size is 10MB.")
+
         file_content = await file.read()
-        
+
         if len(file_content) > 10 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="File too large. Maximum size is 10MB.")
         
@@ -1802,7 +1807,10 @@ class HireIdentityVerifyRequest(BaseModel):
 
 class HireRoomStepRequest(BaseModel):
     sessionId: str
-    step: str  # front | left | back | right | desk | floor
+    captureId: str
+    capturedAt: int
+    mobileStreamId: str
+    step: str  # front | left | right | bottom | desk
     frame: str
     threshold: Optional[float] = None
     priorCaptures: Optional[List[Dict[str, Any]]] = None
@@ -1822,6 +1830,48 @@ class HireRoomScan360Request(BaseModel):
 
 
 _HIRE_FACE_POINTS = (10, 33, 61, 93, 133, 152, 234, 263, 291, 323, 362, 454)
+
+# Frame payload cap (base64 chars) applied to every hire/proctoring image
+# before it is decoded. 14 MB of base64 ≈ ≤ 10.5 MB decoded JPEG/PNG.
+_MAX_FRAME_DATA = 14_000_000
+# Client-supplied accept threshold is clamped server-side so a candidate
+# cannot widen the accept gate (coverage is normalized to 0..1, so any value
+# outside [0.3, 0.6] is rejected).
+_MIN_ACCEPT_THRESHOLD = 0.30
+_MAX_ACCEPT_THRESHOLD = 0.60
+
+# Room/identity endpoints mutate process-global per-session engine state
+# (scan_states, yolo session_states). Concurrent requests for the same session
+# interleave read-modify-write sequences, so every analyze call for a session
+# is serialized through a per-session asyncio.Lock.
+_HIRE_SESSION_LOCKS: Dict[str, asyncio.Lock] = {}
+
+
+def _hire_session_lock(session_id: str) -> asyncio.Lock:
+    lock = _HIRE_SESSION_LOCKS.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _HIRE_SESSION_LOCKS[session_id] = lock
+    return lock
+
+
+def _prune_session_locks(active_sessions) -> None:
+    """Drop lock entries whose session no longer holds engine state."""
+    for key in [k for k in _HIRE_SESSION_LOCKS if k not in active_sessions]:
+        lock = _HIRE_SESSION_LOCKS[key]
+        if not lock.locked():
+            _HIRE_SESSION_LOCKS.pop(key, None)
+
+
+def _clamp_accept_threshold(value) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.45
+    return max(_MIN_ACCEPT_THRESHOLD, min(_MAX_ACCEPT_THRESHOLD, float(value)))
+
+
+def _check_frame_size(frame: str) -> None:
+    if isinstance(frame, str) and len(frame) > _MAX_FRAME_DATA:
+        raise HTTPException(status_code=413, detail="Image payload exceeds the allowed size")
 
 
 def _hire_face_observation(frame_data: str) -> Dict[str, Any]:
@@ -1896,6 +1946,8 @@ def _hire_similarity(reference: List[float], candidate: List[float]) -> float:
 
 @app.post("/api/proctoring/hire/identity-reference")
 async def hire_identity_reference(req: HireIdentityReferenceRequest):
+    for frame in req.frames:
+        _check_frame_size(frame)
     observations = [_hire_face_observation(frame) for frame in req.frames]
     challenge = req.challenge.upper()
     if challenge not in {"TURN_LEFT", "TURN_RIGHT", "LOOK_CENTER", "BLINK"}:
@@ -1907,6 +1959,12 @@ async def hire_identity_reference(req: HireIdentityReferenceRequest):
         return {"success": True, "challengeCompleted": False, "livenessPassed": False,
                 "challenge": challenge, "detectedMovement": None,
                 "message": "Movement not detected yet."}
+    # check_movement degrades when fewer than 4 observations are supplied
+    # (e.g. requireLiveness=false with 3 frames) so the yaw fields may be absent.
+    neutral_yaw = movement.get("neutralYaw")
+    pose_yaw = movement.get("poseYaw")
+    if neutral_yaw is None:
+        neutral_yaw = float(sum(item["yaw"] for item in observations) / max(1, len(observations)))
     # Use the three most frontal observations so challenge movement does not
     # become part of the identity template. Median aggregation reduces noise.
     reference_observations = sorted(observations, key=lambda item: abs(item["yaw"]))[:3]
@@ -1914,12 +1972,13 @@ async def hire_identity_reference(req: HireIdentityReferenceRequest):
     return {"success": True, "challengeCompleted": True, "livenessPassed": True,
             "challenge": challenge, "detectedMovement": (movement["detectedMovement"] if req.requireLiveness
                                                      else challenge.replace("TURN_", "").replace("LOOK_", "")),
-            "neutralYaw": movement["neutralYaw"], "poseYaw": movement.get("poseYaw"),
+            "neutralYaw": neutral_yaw, "poseYaw": pose_yaw,
             "signature": signature}
 
 
 @app.post("/api/proctoring/hire/identity-verify")
 async def hire_identity_verify(req: HireIdentityVerifyRequest):
+    _check_frame_size(req.frame)
     observation = _hire_face_observation(req.frame)
     similarity = _hire_similarity(req.referenceSignature, observation["signature"])
     return {"success": True, "matched": similarity >= 0.72, "similarity": round(similarity, 4), "confidence": round(similarity, 4)}
@@ -1927,18 +1986,22 @@ async def hire_identity_verify(req: HireIdentityVerifyRequest):
 
 @app.post("/api/proctoring/hire/room-step")
 async def hire_room_step(req: HireRoomStepRequest):
-    """Analyze one of the six guided room-capture steps (AI-guided verification)."""
+    """Analyze one of the guided room-capture steps (AI-guided verification)."""
     if not ROOM_SCANNER_AVAILABLE or room_scanner is None:
         raise HTTPException(status_code=503, detail="Room scanner is unavailable")
+    _check_frame_size(req.frame)
     try:
         from starlette.concurrency import run_in_threadpool
         started_at = time.monotonic()
-        log.info("ROOM_PHOTO_AI_START session=%s step=%s", req.sessionId, req.step)
+        log.info("ROOM_PHOTO_AI_START session=%s capture=%s step=%s mobile_frame_ts=%s stream=%s",
+                 req.sessionId, req.captureId, req.step, req.capturedAt, req.mobileStreamId)
         room_scanner.cleanup_stale()
-        result = await run_in_threadpool(room_scanner.analyze_step,
-            frame_data=req.frame, step=req.step, session_id=req.sessionId, threshold=req.threshold or 0.45,
-            prior_captures=req.priorCaptures, orientation=req.orientation,
-            laptop_frames=req.laptopFrames, require_laptop=req.requireLaptop)
+        async with _hire_session_lock(req.sessionId):
+            result = await run_in_threadpool(room_scanner.analyze_step,
+                frame_data=req.frame, step=req.step, session_id=req.sessionId, threshold=_clamp_accept_threshold(req.threshold),
+                prior_captures=req.priorCaptures, orientation=req.orientation,
+                laptop_frames=req.laptopFrames, require_laptop=req.requireLaptop)
+        _prune_session_locks(room_scanner.scan_states)
         log.info("ROOM_PHOTO_AI_COMPLETE session=%s step=%s elapsed_ms=%d valid=%s",
                  req.sessionId, req.step, int((time.monotonic() - started_at) * 1000), result.get("valid"))
     except HTTPException:
@@ -1956,12 +2019,16 @@ async def hire_room_scan_360(req: HireRoomScan360Request):
     """Accumulate guided 360-degree room scan sweep coverage from sampled frames."""
     if not ROOM_SCANNER_AVAILABLE or room_scanner is None:
         raise HTTPException(status_code=503, detail="Room scanner is unavailable")
+    for frame in req.frames:
+        _check_frame_size(frame)
     try:
         room_scanner.cleanup_stale()
         from starlette.concurrency import run_in_threadpool
-        result = await run_in_threadpool(room_scanner.analyze_360,
-            frames=req.frames, session_id=req.sessionId, orientations=req.orientations,
-            block_objects=req.blockObjects, laptop_frames=req.laptopFrames, require_laptop=req.requireLaptop)
+        async with _hire_session_lock(req.sessionId):
+            result = await run_in_threadpool(room_scanner.analyze_360,
+                frames=req.frames, session_id=req.sessionId, orientations=req.orientations,
+                block_objects=req.blockObjects, laptop_frames=req.laptopFrames, require_laptop=req.requireLaptop)
+        _prune_session_locks(room_scanner.scan_states)
     except HTTPException:
         raise
     except Exception as exc:
@@ -1983,6 +2050,7 @@ async def analyze_yolo_frame(req: YOLOAnalyzeFrameRequest):
             status_code=503,
             detail="YOLO proctoring engine is initializing or unavailable"
         )
+    _check_frame_size(req.frame)
 
     result = yolo_engine.analyze_frame(
         frame_data=req.frame,
@@ -2196,12 +2264,17 @@ async def generate_proctoring_report_endpoint(req: GenerateReportRequest):
     if not PROCTORING_ENGINE_AVAILABLE:
         raise HTTPException(status_code=503, detail="MediaPipe proctoring engine is unavailable")
     try:
-        out_path = req.outputPath or str(Path(__file__).resolve().parent / "reports" / f"session_{req.sessionId}_report.xlsx")
+        reports_root = (Path(__file__).resolve().parent / "reports").resolve()
+        reports_root.mkdir(parents=True, exist_ok=True)
+        safe_session = re.sub(r"[^A-Za-z0-9_.-]", "_", req.sessionId)[:80] or "session"
+        out_path = str(reports_root / f"session_{safe_session}_report.xlsx")
         payload = proctor_engine.finalize_session(
             session_id=req.sessionId,
             output_excel=out_path,
         )
         return {"success": True, "sessionId": req.sessionId, "excelPath": payload.get("excel_path", out_path)}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

@@ -41,6 +41,15 @@ const ROOM_PHOTO_ERROR_KEYS = {
   UPLOAD_FAILED: 'photo_upload_failed',
   INVALID_IMAGE: 'photo_invalid',
   ALREADY_ANALYZING: 'photo_analyzing',
+  CAPTURE_REPLAY: 'failure_duplicate_image',
+  STALE_CAPTURE: 'failure_stale',
+  CAMERA_NOT_READY: 'failure_webcam',
+  QR_NOT_PAIRED: 'photo_upload_failed',
+  INVALID_CAPTURE_ID: 'photo_invalid',
+  STEP_OUT_OF_ORDER: 'photo_step_resync',
+  ROOM_PHASE_INVALID: 'room_phase_invalid',
+  UNSUPPORTED_STEP: 'unsupported_step',
+  INVALID_LAPTOP_SAMPLE: 'failure_webcam',
   SERVER_ERROR: 'photo_server_error',
 };
 
@@ -48,6 +57,11 @@ const roomPhotoError = code => Object.assign(new Error(code), { code });
 const logRoomPhoto = (stage, details = {}) => {
   if (import.meta.env.DEV) console.info(`[HIRE_ROOM_PHOTO] ${stage}`, details);
 };
+
+// Canonical guided room steps, mirroring the laptop page. Counting only these
+// keys keeps the counter correct on sessions resumed from the older 6-step
+// build, whose stored status map may still hold a retired step.
+const HIRE_ROOM_STEP_KEYS = ['front', 'left', 'right', 'bottom', 'desk'];
 
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -155,8 +169,7 @@ const [transportError, setTransportError] = useState(null);
   const [roomPhotoPreview, setRoomPhotoPreview] = useState(null);
   const roomCaptureBusyRef = useRef(false);
   const roomUploadAcceptedRef = useRef(null);
-  const deviceOrientationRef = useRef(null);
-  const [motionPermission, setMotionPermission] = useState('unknown');
+  const mobileStreamIdRef = useRef(crypto.randomUUID());
   const overlayVideoRef = useRef(null);
   const lastDesktopReceiptRef = useRef(0);
   const retryJoinRef = useRef(null);
@@ -176,6 +189,7 @@ const [transportError, setTransportError] = useState(null);
   const offerInProgressRef = useRef(false);
   const joinedRef = useRef(false);
   const offerTargetRef = useRef(null);
+  const lastOfferAtRef = useRef(0);
   const framePendingRef = useRef(false);
   const mobileCandidateQueueRef = useRef([]);
   const frameIntervalRef = useRef(null);
@@ -249,7 +263,7 @@ const [transportError, setTransportError] = useState(null);
   }, [token, addLog]);
 
   // WebRTC Helper: Ultra-low latency P2P WebRTC negotiation
-  const startWebRTCOffer = useCallback(async (targetSocketId = null) => {
+  const startWebRTCOffer = useCallback(async (targetSocketId = null, options = {}) => {
     const target = targetSocketId || laptopSocketIdRef.current;
     if (!joinedRef.current || !socketRef.current?.connected || !streamRef.current || !info?.sessionId) {
       console.log('[MOBILE-P2P] Socket, stream, or session not ready yet');
@@ -262,7 +276,17 @@ const [transportError, setTransportError] = useState(null);
     }
 
     if (offerInProgressRef.current) return;
-    if (offerTargetRef.current === target && pcRef.current && !['failed', 'closed', 'disconnected'].includes(pcRef.current.connectionState)) return;
+    const nowMs = Date.now();
+    const force = Boolean(options?.force);
+    const pcState = pcRef.current?.connectionState;
+    // Rate-limit background retries and never spam renegotiation on a healthy
+    // connected peer — unless the laptop explicitly (re)joined, forcing a
+    // fresh pair. A connection stuck 'connecting' because the old laptop peer
+    // died is NOT exempt, so the next retry re-offers and recovers instead of
+    // suppressing the renegotiation forever.
+    if (!force && nowMs - lastOfferAtRef.current < 2500) return;
+    if (!force && offerTargetRef.current === target && pcState === 'connected') return;
+    lastOfferAtRef.current = nowMs;
     offerInProgressRef.current = true;
     offerTargetRef.current = target;
     mobileCandidateQueueRef.current = [];
@@ -514,10 +538,12 @@ frameIntervalRef.current = setInterval(() => {
         socket.emit('assessment_verif:mobile_ready', {
           sessionId,
           token: info?.token || token,
+          mobileStreamId: mobileStreamIdRef.current,
         });
         socket.emit('assessment_verif:stream_status', {
           sessionId,
           streaming: true,
+          mobileStreamId: mobileStreamIdRef.current,
         });
       }
       });
@@ -537,20 +563,41 @@ socket.on('assessment_verif:yolo_detection', data => {
       const evidence = data?.success ? data.mobileEvidence : null;
       const status = mobileCameraStatus({ connected: true, evidence, hireFraming: info?.hireFraming === true });
       setCompositionWarning(status.kind === 'reposition' ? `${status.title}. ${status.message}` : null);
-      if (status.kind === 'reposition' && evidence?.framing_mode === 'HIRE_WORKSPACE'
+if (status.kind === 'reposition' && evidence?.framing_mode === 'HIRE_WORKSPACE'
         && roomStateRef.current?.complete === true
-        && roomStateRef.current?.voiceEnabled !== false) {
+        && roomStateRef.current?.voiceEnabled === false) {
         const key = { LAPTOP: 'framing_laptop', HANDS: 'framing_hands', WORKSPACE: 'framing_workspace' }[evidence.guidance_key];
         if (key) speakHireRoomVoice({ priority: 'RETRY', language: roomStateRef.current?.language, key });
       }
     });
-    socket.on('assessment_verif:room_state', data => {
+socket.on('assessment_verif:room_state', data => {
       if (!data || typeof data.state !== 'object') return;
-      roomStateRef.current = data.state;
-      setRoomState({ ...data.state });
+      const capturing = roomCaptureBusyRef.current || roomUploadAcceptedRef.current;
+      // While a capture/upload is in flight on this device, the laptop's
+      // room_state broadcast can race the machine's own ack and regress our
+      // CAPTURING/UPLOADING/ANALYZING status. Keep the in-flight verdict and
+      // apply only the remaining room fields.
+      const next = capturing
+        ? { ...data.state, aiStatus: roomStateRef.current?.aiStatus ?? data.state.aiStatus }
+        : data.state;
+      roomStateRef.current = next;
+      setRoomState({ ...next });
     });
     socket.on('assessment_verif:room_capture_state', event => {
       if (event?.status === 'ANALYZING' && event.captureId) roomUploadAcceptedRef.current = event.captureId;
+    });
+    // Server-authoritative step correction after a step-order rejection, so the
+    // capture button targets the step the backend actually expects.
+    socket.on('assessment_verif:room_state_sync', payload => {
+      if (!payload || payload.reason !== 'STEP_OUT_OF_ORDER') return;
+      const key = payload.pendingStep;
+      if (!key) return;
+      const current = roomStateRef.current || {};
+      const index = Math.max(0, HIRE_ROOM_STEP_KEYS.indexOf(key));
+      const next = { ...current, step: { key, index, label: current.step?.label }, sixCaptureStatus: payload.sixCaptureStatus || {} };
+      roomStateRef.current = next;
+      setRoomState({ ...next });
+      console.warn('[HIRE_ROOM_PHOTO] step desync corrected by server', key);
     });
     const receiptTimer = setInterval(() => {
       if (Date.now() - lastDesktopReceiptRef.current > 5000) setDesktopReceiving(false);
@@ -571,31 +618,37 @@ socket.on('assessment_verif:yolo_detection', data => {
       console.log('[MOBILE-P2P] Laptop joined:', socketId);
       laptopSocketIdRef.current = socketId;
       if (streamRef.current) {
-        startWebRTCOffer(socketId);
+        startWebRTCOffer(socketId, { force: true });
       }
     });
 
     // Laptop answered SDP offer
     socket.on('assessment_verif:answer', async ({ answer }) => {
       console.log('[MOBILE-P2P] SDP Answer received from laptop');
-      if (pcRef.current && answer) {
-        try {
-          await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+      const pc = pcRef.current;
+      if (!pc || !answer) return;
+      // A staple from a previous renegotiation must never be applied to a pc
+      // that has moved on (new offer), which would corrupt the SDP state.
+      if (pc.signalingState !== 'have-local-offer') {
+        console.warn('[MOBILE-P2P] Ignoring stale answer (signalingState=' + pc.signalingState + ')');
+        return;
+      }
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
 
-          // Flush queued candidates
-          if (mobileCandidateQueueRef.current.length > 0) {
-            for (const cand of mobileCandidateQueueRef.current) {
-              try {
-                await pcRef.current.addIceCandidate(new RTCIceCandidate(cand));
-              } catch (e) {
-                console.error('[MOBILE-P2P] ICE error:', e);
-              }
+        // Flush queued candidates
+        if (mobileCandidateQueueRef.current.length > 0) {
+          for (const cand of mobileCandidateQueueRef.current) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(cand));
+            } catch (e) {
+              console.error('[MOBILE-P2P] ICE error:', e);
             }
-            mobileCandidateQueueRef.current = [];
           }
-        } catch (err) {
-          console.error('[MOBILE-P2P] Remote description error:', err);
+          mobileCandidateQueueRef.current = [];
         }
+      } catch (err) {
+        console.error('[MOBILE-P2P] Remote description error:', err);
       }
     });
 
@@ -678,54 +731,44 @@ socket.on('assessment_verif:yolo_detection', data => {
     });
   }, [roomState?.phase, roomState?.step?.key]);
 
-  useEffect(() => {
+useEffect(() => {
     if (roomState?.phase === 'six' && roomState.step?.key) {
       stopHireRoomVoice();
-      if (roomState.voiceEnabled !== false) speakHireRoomVoice({ priority: 'CURRENT_STEP', language: roomState.language,
+      // The laptop voices the room flow; the phone only speaks when the
+      // laptop voice is disabled to avoid overlapping duplicate prompts.
+      if (roomState.voiceEnabled === false) speakHireRoomVoice({ priority: 'CURRENT_STEP', language: roomState.language,
         key: `step_${roomState.step.key}` });
     } else if (roomState?.phase === 'scan360') {
       stopHireRoomVoice();
-      if (roomState.voiceEnabled !== false) speakHireRoomVoice({ priority: 'CURRENT_STEP', language: roomState.language, key: 'start_360' });
+      if (roomState.voiceEnabled === false) speakHireRoomVoice({ priority: 'CURRENT_STEP', language: roomState.language, key: 'start_360' });
     }
   }, [roomState?.phase, roomState?.step?.key, roomState?.language, roomState?.voiceEnabled]);
+
+  useEffect(() => {
+    if (roomState?.phase !== 'scan360') return;
+    const key = roomState.restarted ? 'scan_restarted'
+      : roomState.pendingObject?.objectType ? 'object_detected_360' : null;
+    if (key && roomState.voiceEnabled === false) {
+      speakHireRoomVoice({ priority: 'CRITICAL', language: roomState.language, key,
+        message: roomState.message, taMessage: roomState.taMessage });
+    }
+  }, [roomState?.phase, roomState?.pendingObject?.objectType, roomState?.restarted,
+    roomState?.message, roomState?.taMessage, roomState?.language, roomState?.voiceEnabled]);
 
   useEffect(() => { if (roomState?.voiceEnabled === false) stopHireRoomVoice(); }, [roomState?.voiceEnabled]);
   useEffect(() => () => stopHireRoomVoice(), []);
 
   useEffect(() => {
-    if (phase !== PHASE.STREAMING || !info?.hireFraming || typeof DeviceOrientationEvent === 'undefined') return;
-    let lastSentAt = 0;
-    const onOrientation = event => {
-      const yaw = Number.isFinite(event.webkitCompassHeading) ? event.webkitCompassHeading : event.alpha;
-      if (!Number.isFinite(yaw)) return;
-      const reading = { yaw, pitch: Number.isFinite(event.beta) ? event.beta : null, at: Date.now() };
-      deviceOrientationRef.current = reading;
-      if (reading.at - lastSentAt >= 450 && socketRef.current?.connected) {
-        lastSentAt = reading.at;
-        socketRef.current.emit('assessment_verif:orientation', { sessionId: info.sessionId, ...reading });
-      }
-    };
-    window.addEventListener('deviceorientation', onOrientation);
-    return () => window.removeEventListener('deviceorientation', onOrientation);
-  }, [phase, info?.hireFraming, info?.sessionId]);
-
-  const enableMotionGuidance = useCallback(async () => {
-    if (typeof DeviceOrientationEvent === 'undefined' || typeof DeviceOrientationEvent.requestPermission !== 'function') return;
-    try { setMotionPermission(await DeviceOrientationEvent.requestPermission()); }
-    catch (_) { setMotionPermission('denied'); }
-  }, []);
-
-  useEffect(() => {
     if (roomState?.phase !== 'six' || !roomState.step?.key) return;
     if (roomState.aiStatus === 'ANALYZING') {
       setRoomCaptureStatus('ANALYZING');
-    } else if (roomState.aiStatus === 'RETRY') {
+} else if (roomState.aiStatus === 'RETRY') {
       setRoomCaptureStatus('RETAKE');
-      if (roomState.voiceEnabled !== false) speakHireRoomVoice({ priority: 'RETRY', language: roomState.language,
+      if (roomState.voiceEnabled === false) speakHireRoomVoice({ priority: 'RETRY', language: roomState.language,
         key: `retake_${roomState.step.key}`, message: roomState.message, taMessage: roomState.taMessage });
     } else if (roomState.aiStatus === 'SUCCESS') {
       setRoomCaptureStatus('VERIFIED');
-      if (roomState.voiceEnabled !== false) speakHireRoomVoice({ priority: 'SUCCESS', language: roomState.language,
+      if (roomState.voiceEnabled === false) speakHireRoomVoice({ priority: 'SUCCESS', language: roomState.language,
         key: `${roomState.step.key}_ok`, message: roomState.message, taMessage: roomState.taMessage });
     }
   }, [roomState?.aiStatus, roomState?.message, roomState?.taMessage, roomState?.step?.key, roomState?.phase, roomState?.language, roomState?.voiceEnabled]);
@@ -738,7 +781,7 @@ socket.on('assessment_verif:yolo_detection', data => {
     if (!video?.videoWidth || !video?.videoHeight) {
       setRoomCaptureStatus('ERROR');
       setRoomCaptureError('Camera preview is unavailable. Please check the camera and try again.');
-      if (roomState.voiceEnabled !== false) speakHireRoomVoice({ priority: 'CRITICAL', language: roomState.language, key: 'camera_error' });
+      if (roomState.voiceEnabled === false) speakHireRoomVoice({ priority: 'CRITICAL', language: roomState.language, key: 'camera_error' });
       return;
     }
     roomCaptureBusyRef.current = true;
@@ -774,7 +817,8 @@ socket.on('assessment_verif:yolo_detection', data => {
       });
       setRoomCaptureStatus('UPLOADING');
       const captureId = crypto.randomUUID();
-      await new Promise(resolve => {
+      const capturedAt = Date.now();
+      const laptopEvidenceReady = await new Promise(resolve => {
         const timer = setTimeout(() => { socket.off('assessment_verif:laptop_evidence', onEvidence); resolve(false); }, 3200);
         const onEvidence = evidence => {
           if (evidence?.captureId !== captureId) return;
@@ -785,12 +829,13 @@ socket.on('assessment_verif:yolo_detection', data => {
         socket.on('assessment_verif:laptop_evidence', onEvidence);
         socket.emit('assessment_verif:laptop_evidence_request', { sessionId: info.sessionId, captureId });
       });
+      if (!laptopEvidenceReady) throw roomPhotoError('CAMERA_NOT_READY');
       roomUploadAcceptedRef.current = null;
       const bytes = await photo.arrayBuffer();
       logRoomPhoto('UPLOAD_START', { captureId, step, bytes: photo.size });
       const reply = await new Promise((resolve, reject) => socket.timeout(48000).emit('assessment_verif:room_capture',
-        { sessionId: info.sessionId, step, captureId, photo: bytes, preview,
-          orientation: Date.now() - (deviceOrientationRef.current?.at || 0) < 2000 ? deviceOrientationRef.current : null },
+        { sessionId: info.sessionId, step, captureId, capturedAt,
+          mobileStreamId: mobileStreamIdRef.current, photo: bytes, preview },
         (error, ack) => error ? reject(roomPhotoError(roomUploadAcceptedRef.current === captureId ? 'AI_TIMEOUT' : 'UPLOAD_FAILED')) : resolve(ack)));
       logRoomPhoto('UPLOAD_COMPLETE', { captureId, step, accepted: reply?.ok === true });
       if (!reply?.ok) throw roomPhotoError(reply?.errorCode || 'SERVER_ERROR');
@@ -798,10 +843,49 @@ socket.on('assessment_verif:yolo_detection', data => {
         confidence: reply.result?.confidence, guideKey: reply.result?.guideKey });
       setRoomCaptureStatus(reply.result?.valid ? 'VERIFIED' : 'RETAKE');
       if (!reply.result?.valid) {
-        const key = ['blurred', 'image_invalid'].includes(reply.result?.guideKey) ? 'photo_invalid'
-          : reply.result?.guideKey === 'move_to_area' ? 'photo_move_area' : 'photo_area_missing';
+        const failureKeys = {
+          DUPLICATE_IMAGE: 'failure_duplicate_image',
+          TOO_SIMILAR_TO_PREVIOUS_VIEW: 'failure_too_similar',
+          WRONG_DIRECTION: 'failure_wrong_direction',
+          WEBCAM_VALIDATION_FAILED: 'failure_webcam',
+          PARTICIPANT_NOT_DETECTED: 'failure_participant',
+          MULTIPLE_PERSONS_DETECTED: 'failure_multiple_people',
+          INSUFFICIENT_CAMERA_MOVEMENT: 'failure_movement',
+          FRAME_TOO_BLURRY: 'failure_blurry',
+          FRAME_TOO_DARK: 'failure_dark',
+          FRAME_OVEREXPOSED: 'failure_overexposed',
+          CAMERA_BLOCKED: 'failure_camera_blocked',
+          RESOLUTION_TOO_LOW: 'failure_resolution',
+          QUALITY_TOO_LOW: 'failure_quality_low',
+          IMAGE_UNREADABLE: 'failure_unreadable',
+          STALE_CAPTURE: 'failure_stale',
+        };
+        const guideKeys = {
+          blurred: 'failure_blurry',
+          too_dark: 'failure_dark',
+          overexposed: 'failure_overexposed',
+          camera_blocked: 'failure_camera_blocked',
+          resolution_low: 'failure_resolution',
+          quality_low: 'failure_quality_low',
+          image_invalid: 'failure_unreadable',
+          duplicate_image: 'failure_duplicate_image',
+        };
+        // Prefer the backend's explicit failure code, then its guide key, so the
+        // candidate is shown the real cause rather than a generic instruction.
+        const key = failureKeys[reply.result?.failureReason]
+          || guideKeys[reply.result?.guideKey]
+          || (['move_to_area', 'move_further', 'move_left_further', 'move_right_further'].includes(reply.result?.guideKey) ? 'move_further'
+          : ['laptop_camera_required'].includes(reply.result?.guideKey) ? 'laptop_camera_required'
+           : ['laptop_motion_missing', 'movement_unconfirmed'].includes(reply.result?.guideKey) ? 'laptop_motion_missing'
+           : reply.result?.guideKey === 'laptop_participant_not_visible' ? 'laptop_participant_not_visible'
+           : reply.result?.guideKey === 'rotation_unconfirmed' ? 'rotation_unconfirmed'
+          : 'photo_area_missing');
         setRoomCaptureError((String(roomState.language).startsWith('ta') ? reply.result?.taMessage : reply.result?.message)
           || hireRoomMessage(roomState.language, key));
+        setRoomPhotoPreview(previous => {
+          if (previous?.startsWith('blob:')) URL.revokeObjectURL(previous);
+          return null;
+        });
       }
       logRoomPhoto('VERIFICATION_RESULT', { captureId, step, verified: reply.result?.valid === true });
     } catch (captureError) {
@@ -809,7 +893,7 @@ socket.on('assessment_verif:yolo_detection', data => {
       const key = ROOM_PHOTO_ERROR_KEYS[captureError.code] || 'photo_server_error';
       setRoomCaptureError(hireRoomMessage(roomState.language, key));
       logRoomPhoto('VERIFICATION_ERROR', { step, code: captureError.code || 'SERVER_ERROR' });
-      if (roomState.voiceEnabled !== false) speakHireRoomVoice({ priority: 'CRITICAL', language: roomState.language, key });
+      if (roomState.voiceEnabled === false) speakHireRoomVoice({ priority: 'CRITICAL', language: roomState.language, key });
     } finally {
       roomCaptureBusyRef.current = false;
     }
@@ -871,6 +955,7 @@ socket.on('assessment_verif:yolo_detection', data => {
       }
       const actualSettings = videoTrack?.getSettings?.() || {};
       const finalFacingMode = actualSettings.facingMode || usedFacingMode;
+      mobileStreamIdRef.current = crypto.randomUUID();
       setFacingMode(finalFacingMode);
 
       console.log('[MOBILE-P2P] Camera stream acquired:', finalFacingMode);
@@ -884,10 +969,12 @@ socket.on('assessment_verif:yolo_detection', data => {
         socketRef.current.emit('assessment_verif:mobile_ready', {
           sessionId: info?.sessionId,
           token: info?.token || token,
+          mobileStreamId: mobileStreamIdRef.current,
         });
         socketRef.current.emit('assessment_verif:stream_status', {
           sessionId: info?.sessionId,
           streaming: true,
+          mobileStreamId: mobileStreamIdRef.current,
         });
       }
 
@@ -1221,10 +1308,12 @@ socket.on('assessment_verif:yolo_detection', data => {
                       console.log('[AssessmentMobileJoin] onPlaying -> emitting mobile_ready and stream_status');
                       socketRef.current.emit('assessment_verif:mobile_ready', {
                         sessionId: info?.sessionId,
+                        mobileStreamId: mobileStreamIdRef.current,
                       });
                       socketRef.current.emit('assessment_verif:stream_status', {
                         sessionId: info?.sessionId,
                         streaming: true,
+                        mobileStreamId: mobileStreamIdRef.current,
                       });
                     }
                   }}
@@ -1392,13 +1481,12 @@ socket.on('assessment_verif:yolo_detection', data => {
               <Shield size={26} strokeWidth={2.2} />
             </div>
             <div className="wi-room-overlay-title">ROOM VERIFICATION</div>
-            {['six', 'scan360'].includes(roomState.phase) && typeof DeviceOrientationEvent !== 'undefined' &&
-              typeof DeviceOrientationEvent.requestPermission === 'function' && motionPermission === 'unknown' &&
-              <button type="button" className="wi-mobile-btn-primary" onClick={enableMotionGuidance}>Enable motion guidance</button>}
+            {roomState.phase === 'scan360' &&
+              <p className="wi-room-overlay-sensor-note">Camera tracking is active. Keep the phone upright, point across the room, and turn slowly with overlapping views.</p>}
             {roomState.phase === 'scan360' ? (
               <div className="wi-room-overlay-step">360° Room Scan — turn slowly in a full circle</div>
             ) : roomState.step ? (
-              <div className="wi-room-overlay-step">Step {roomState.step.index + 1} of 6 — {roomState.step.label}</div>
+              <div className="wi-room-overlay-step">Step {roomState.step.index + 1} of {HIRE_ROOM_STEP_KEYS.length} — {roomState.step.label}</div>
             ) : null}
             <p className="wi-room-overlay-hint">{roomState.language?.startsWith('ta')
               ? (roomState.taMessage || hireRoomMessage('ta-IN', `step_${roomState.step?.key}`))
@@ -1425,14 +1513,15 @@ socket.on('assessment_verif:yolo_detection', data => {
                 <div className="wi-room-overlay-coverage-bar">
                   <div style={{ width: `${Math.min(100, roomState.coverage)}%` }} />
                 </div>
-                <span>Coverage {Math.round(roomState.coverage)}%</span>
+                <span>{(roomState.sectors || []).filter(sector => sector.verified).length} of 8 directions verified · Coverage {Math.round(roomState.coverage)}%</span>
               </div>
             )}
-            {roomState.phase === 'scan360' && <div className="wi-room-sector-summary">
+{roomState.phase === 'scan360' && <div className="wi-room-sector-summary">
               <span>Current direction: {roomState.currentDirection || 'Front'}</span>
               <span>Covered: {(roomState.sectors || []).filter(sector => sector.verified).map(sector => sector.label).join(', ') || 'Starting area'}</span>
               <span>Remaining: {(roomState.sectors || []).filter(sector => !sector.verified).map(sector => sector.label).join(', ') || 'Continue rotating'}</span>
-              {roomState.pendingObject && <strong role="alert">{roomState.pendingObject.objectType} in {roomState.pendingObject.label}: remove it and rescan this area.</strong>}
+              {roomState.restarted && <strong role="alert" className="wi-room-restarted-notice">Room scan restarted — please return to the starting position.</strong>}
+              {roomState.pendingObject && <strong role="alert">A prohibited object was detected. Please remove it from the room — the 360° scan will restart from the beginning.</strong>}
             </div>}
             <div className="wi-room-overlay-status">
               {roomState.phase === 'six'
@@ -1440,11 +1529,21 @@ socket.on('assessment_verif:yolo_detection', data => {
                   : roomState.laptopCameraReady === false ? 'Waiting for laptop movement camera…'
                   : roomCaptureStatus === 'ERROR' ? 'Photo analysis temporarily failed'
                     : roomState.aiStatus === 'ANALYZING' ? 'Analyzing photo…'
-                      : roomCaptureStatus === 'VERIFIED' ? 'Photo verified' : roomCaptureStatus === 'RETAKE' ? 'Retake this photo' : 'Ready to capture')
-                : roomState.aiStatus === 'ANALYZING' ? 'Analyzing scan…' : 'Keep rotating slowly'}
+                      : roomCaptureStatus === 'VERIFIED' ? 'Photo verified' : roomCaptureStatus === 'RETAKE' ? 'Photo not verified — see the reason below' : 'Ready to capture')
+                : (roomState.sectors || []).filter(sector => sector.verified).length === 7
+                  ? (roomState.language?.startsWith('ta')
+                    ? 'முன்-வலது பகுதியை பதிவு செய்ய தொடங்கிய காட்சியை நோக்கி இன்னும் சிறிது சுழற்றவும்.'
+                    : 'Continue toward your starting view to capture Front-right.')
+                  : roomState.aiStatus === 'ANALYZING' ? 'Analyzing scan…' : 'Keep rotating slowly'}
             </div>
             {roomCaptureError && <p role="alert" className="wi-room-error">{roomCaptureError}</p>}
-            <p className="wi-room-overlay-hint">{roomState.phase === 'six' ? `${Object.values(roomState.steps || {}).filter(step => step?.verifiedAt).length}/6 photos verified` : 'Keep the phone moving slowly for the 360° scan.'}</p>
+            <p className="wi-room-overlay-hint">{roomState.phase === 'six'
+              ? `${HIRE_ROOM_STEP_KEYS.filter(key => roomState.steps?.[key]?.verifiedAt).length}/${HIRE_ROOM_STEP_KEYS.length} photos verified`
+              : ((roomState.sectors || []).filter(sector => sector.verified).length === 7
+                ? (roomState.language?.startsWith('ta')
+                  ? 'முன்-வலது பகுதியை பதிவு செய்து சுற்றை முடிக்க, தொடங்கிய காட்சியை நோக்கி இன்னும் சிறிது சுழற்றவும்.'
+                  : 'Continue slightly toward your starting view to capture Front-right and complete the circle.')
+                : 'Keep the phone moving slowly for the 360° scan.')}</p>
           </div>
         </div>
       )}

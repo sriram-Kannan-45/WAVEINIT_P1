@@ -38,11 +38,10 @@ class HireMobileFramingTests(unittest.TestCase):
             ([LAPTOP], HANDS_AWAY_FROM_DESK, "WORKSPACE", "Please show your laptop and workspace clearly."),
         ]
         for objects, hands, key, message in cases:
-            with self.subTest(key=key):
-                result = self.sample(objects, hands, {}, 0)
-                self.assertFalse(result["eligible"])
-                self.assertEqual(result["guidance_key"], key)
-                self.assertEqual(result["user_message"], message)
+            result = self.sample(objects, hands, {}, 0)
+            self.assertFalse(result["eligible"], f"{key}: eligible must be false")
+            self.assertEqual(result["guidance_key"], key, f"{key}: guidance_key")
+            self.assertEqual(result["user_message"], message, f"{key}: message")
 
     def test_workspace_geometry_can_verify_real_desk_without_table_label(self):
         state = {}

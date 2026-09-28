@@ -1010,7 +1010,7 @@ export default function HireAssessmentsTab({ user }) {
                     ['livenessDetection', 'Liveness challenge', 'Prevent spoofing with head pose and expression check'],
                     ['continuousFaceVerification', 'Continuous face verification', 'Flag multiple faces, looking away, or face missing'],
                     ['mobileRoomScan', 'QR mobile 360° room scan', 'Require smartphone 360 camera sweep before starting'],
-                    ['roomScan360Enabled', 'Guided six-step room verification', 'AI-guided front, left, back, right, desk and floor captures with voice instructions'],
+                    ['roomScan360Enabled', 'Guided five-step room verification', 'AI-guided front, left, right, bottom and desk captures with voice instructions'],
                     ['unauthorizedObjectDetection', 'Phone/object detection', 'AI detection of mobile phones, notes, or smart devices'],
                     ['evidenceCapture', 'Screenshot evidence', 'Capture flagged events as encrypted audit snapshots'],
                     ['voiceWarnings', 'Voice warnings', 'Speak audible warnings when suspicious activity is detected'],

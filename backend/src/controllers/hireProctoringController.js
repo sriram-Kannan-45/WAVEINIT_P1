@@ -14,15 +14,11 @@ async function getPolicy(req, res) {
         return res.status(403).json({ error: 'Monitoring session does not belong to this hiring assessment' });
       }
       const value = owned.session.metadata?.hireProctoring || {};
+      const room = await proctoringService.getRoomVerificationState({ sessionId: req.query.sessionId, user: req.user });
       state = {
         identityVerifiedAt: value.identityVerifiedAt || null,
         livenessPassed: value.livenessPassed === true,
-        roomScanCompletedAt: value.roomScanCompletedAt || null,
-        roomScanClear: value.roomScanClear === true,
-        sixCaptureStatus: value.sixCaptureStatus || null,
-        roomScanCoverage: Number(value.roomScanCoverage) || 0,
-        roomScan360Complete: value.roomScan360Complete === true,
-        roomObservations: value.roomObservations || [],
+        ...room,
       };
     }
     res.json({ policy: resolved.policy, assessmentId: resolved.workflow.id, state });
@@ -79,9 +75,12 @@ async function inspectRoom(req, res) {
 }
 
 async function roomStep(req, res) {
-  try { res.json(await proctoringService.analyzeRoomStep({ sessionId: req.params.sessionId, user: req.user, step: req.body.step,
-    frame: req.body.frame, orientation: req.body.orientation, laptopFrames: req.body.laptopFrames })); }
-  catch (error) { fail(res, error); }
+  // Guided photos are accepted only through the authenticated paired-phone
+  // socket, where the server can bind the binary frame to the active stream.
+  // Keep this legacy route explicit instead of letting a REST client spoof a
+  // stream id and bypass the QR/device binding.
+  return res.status(409).json({ success: false, errorCode: 'CAMERA_NOT_READY',
+    message: 'Use the paired mobile camera to capture this room photo.' });
 }
 
 async function roomScan360(req, res) {

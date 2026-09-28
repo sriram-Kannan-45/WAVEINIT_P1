@@ -23,9 +23,11 @@
 const SocketRelayEvent = require('../models/SocketRelayEvent');
 const { getInstanceId } = require('../config/instance');
 const logger = require('../utils/logger');
+const { Op } = require('sequelize');
 
 const adapterMode = { value: 'single' }; // 'single' | 'redis'
 let poller = null;
+let pollInFlight = false;
 
 /** Set 'redis' once setupRedisAdapter succeeds (called from config/socket.js). */
 function setAdapterMode(mode) {
@@ -152,6 +154,7 @@ async function pollRelay(io, { maxAgeMs = 5000, batchSize = 100 } = {}) {
   }
 
   const cutoff = Date.now() - maxAgeMs;
+  const expiredIds = [];
   for (const row of rows) {
     if (markDelivered(row.id)) {
       emitLocal(io, row.targetType, row.target, row.event, row.payload);
@@ -159,23 +162,41 @@ async function pollRelay(io, { maxAgeMs = 5000, batchSize = 100 } = {}) {
 
     // GC: rows older than maxAgeMs have been seen by every healthy instance.
     if (new Date(row.createdAt).getTime() < cutoff) {
-      try {
-        await row.destroy();
-      } catch (_) { /* already deleted by another instance */ }
+      expiredIds.push(row.id);
     }
+  }
+
+  // Delete expired rows in one statement. Deleting each row separately kept a
+  // pool connection busy for every event and amplified a slow database into a
+  // request-wide outage.
+  if (expiredIds.length) {
+    try {
+      await SocketRelayEvent.destroy({ where: { id: { [Op.in]: expiredIds } } });
+    } catch (_) { /* another instance may already have removed these rows */ }
+  }
+}
+
+async function runPollCycle(io, opts = {}) {
+  // setInterval does not wait for async callbacks. Without this guard, a slow
+  // query creates another poll every interval until the Sequelize pool is full.
+  if (pollInFlight) return false;
+  pollInFlight = true;
+  try {
+    await pollRelay(io, opts);
+    return true;
+  } finally {
+    pollInFlight = false;
   }
 }
 
 /** Start the poller. Safe to call multiple times (idempotent per instance). */
 function startRelayPoller(io, opts = {}) {
   if (poller || isClusterMode()) return poller;
-  const intervalMs = opts.intervalMs || 120;
-  poller = setInterval(async () => {
-    try {
-      await pollRelay(io, opts);
-    } catch (err) {
+  const intervalMs = opts.intervalMs || 500;
+  poller = setInterval(() => {
+    runPollCycle(io, opts).catch((err) => {
       logger.warn('[relay] poll cycle failed', { error: err.message });
-    }
+    });
   }, intervalMs);
   if (poller.unref) poller.unref();
   return poller;
@@ -193,6 +214,7 @@ module.exports = {
   emitLocal,
   isClusterMode,
   setAdapterMode,
+  runPollCycle,
   startRelayPoller,
   stopRelayPoller,
 };

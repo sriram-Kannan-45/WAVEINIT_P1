@@ -22,7 +22,7 @@ const getBackendOrigin = () => {
     return envUrl.trim().replace(/\/+$/, '').replace(/\/api$/, '');
   }
   if (typeof window !== 'undefined' && window.location && window.location.origin) {
-    if (window.location.hostname.includes('waveinitlms.online')) {
+    if (String(window.location.hostname || '').includes('waveinitlms.online')) {
       return 'https://waveinit-p1-2.onrender.com';
     }
     return window.location.origin;

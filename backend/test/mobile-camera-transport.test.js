@@ -4,7 +4,11 @@ const { io: connect } = require('socket.io-client');
 
 jest.mock('../src/services/assessmentVerificationService', () => ({ authorizeSocket:jest.fn() }));
 jest.mock('../src/services/monitoringService', () => ({ validateMobile:jest.fn() }));
-jest.mock('../src/services/hireProctoringService', () => ({ analyzeRoomStep:jest.fn() }));
+jest.mock('../src/services/hireProctoringService', () => ({
+  analyzeRoomStep: jest.fn(),
+  getRoomVerificationState: jest.fn(),
+  HIRE_ROOM_STEPS: ['front', 'left', 'right', 'bottom', 'desk'],
+}));
 jest.mock('../src/socket/crossInstance', () => ({ relayEmit:jest.fn((io, kind, target, event, data, options={}) => {
   const sender = options.excludingSocket || io;
   sender.to(target).emit(event, data);
@@ -99,6 +103,7 @@ test('Hire room previews skip workspace inference and one binary capture uses ph
     const phone = connect(url, { auth: { mobile: true }, transports: ['polling'], forceNew: true }); clients.push(phone);
     await once(phone, 'connect');
     await emitAck(phone, 'assessment_verif:join', { sessionId: 'hire-room', role: 'mobile_camera' });
+    phone.emit('assessment_verif:mobile_ready', { sessionId: 'hire-room', mobileStreamId: 'mobile-stream-test-01' });
     const previewFrame = once(laptop, 'assessment_verif:frame');
     expect(await emitAck(phone, 'assessment_verif:frame', { sessionId: 'hire-room', frame: 'preview-only' })).toEqual({ ok: true });
     await previewFrame;
@@ -120,7 +125,11 @@ test('Hire room previews skip workspace inference and one binary capture uses ph
 
     const photo = Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(100), Buffer.from([0xff, 0xd9])]);
     const capture = { sessionId: 'hire-room', step: 'front', captureId: 'capture-1234', photo,
+      capturedAt: Date.now(), mobileStreamId: 'mobile-stream-test-01',
       preview: 'data:image/jpeg;base64,QQ==' };
+    expect(await emitAck(phone, 'assessment_verif:room_capture', {
+      ...capture, captureId: 'capture-wrong-stream', mobileStreamId: 'different-mobile-stream',
+    })).toMatchObject({ ok: false, errorCode: 'CAMERA_NOT_READY' });
     const analyzing = once(laptop, 'assessment_verif:room_capture_state');
     const first = emitAck(phone, 'assessment_verif:room_capture', capture);
     expect(await analyzing).toMatchObject({ status: 'ANALYZING', step: 'front', preview: capture.preview });
@@ -141,7 +150,8 @@ test('Hire room previews skip workspace inference and one binary capture uses ph
       };
       laptop.on('assessment_verif:room_capture_state', onState);
     });
-    const retry = await emitAck(phone, 'assessment_verif:room_capture', { ...capture, step: 'left', captureId: 'capture-5678' });
+    const retry = await emitAck(phone, 'assessment_verif:room_capture', { ...capture, step: 'left',
+      captureId: 'capture-5678', capturedAt: Date.now() });
     expect(retry).toMatchObject({ ok: false, errorCode: 'AI_TIMEOUT' });
     expect(await failed).toMatchObject({ status: 'ERROR', step: 'left', errorCode: 'AI_TIMEOUT' });
     monitor.metadata.hireProctoring.roomScanClear = true;
@@ -154,6 +164,66 @@ test('Hire room previews skip workspace inference and one binary capture uses ph
     expect(monitoring.validateMobile).toHaveBeenCalledTimes(1);
   } finally {
     finishPhoto?.({ valid: true });
+    clients.forEach(client => client.disconnect());
+    await new Promise(resolve => io.close(resolve));
+  }
+}, 12000);
+
+test('a desk step-order desync is reported as STEP_OUT_OF_ORDER and re-syncs both clients', async () => {
+  const server = http.createServer();
+  const io = new Server(server, { maxHttpBufferSize: 2 * 1024 * 1024 });
+  const clients = [];
+  const monitor = { sessionId: 'hire-desk', metadata: { hireProctoring: {
+    policy: { enabled: true, mobileRoomScan: true }, roomScanClear: false,
+  } } };
+  verification.authorizeSocket.mockImplementation(async ({ sessionId }) => ({
+    session: { session_id: sessionId, token: 'test-hire-token' }, monitor,
+  }));
+  monitoring.validateMobile.mockResolvedValue({ success: true });
+  // The backend still expects the fourth step while the phone submitted Desk.
+  hireProctoring.getRoomVerificationState.mockResolvedValue({
+    roomSteps: ['front', 'left', 'right', 'bottom', 'desk'],
+    sixCaptureStatus: { front: { verifiedAt: 't' }, left: { verifiedAt: 't' }, right: { verifiedAt: 't' } },
+    verificationState: 'ROOM_BOTTOM_PENDING',
+  });
+  hireProctoring.analyzeRoomStep.mockRejectedValue(Object.assign(
+    new Error('Capture the current room step first'),
+    { code: 'STEP_OUT_OF_ORDER', status: 409, expectedStep: 'bottom' },
+  ));
+  io.on('connection', socket => {
+    socket.userId = 7;
+    if (socket.handshake.auth.mobile) socket.assessmentMobileClaims = { token: 'test' };
+    register(io, socket);
+  });
+  try {
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${server.address().port}`;
+    const laptop = connect(url, { transports: ['polling'], forceNew: true }); clients.push(laptop);
+    await once(laptop, 'connect');
+    await emitAck(laptop, 'assessment_verif:join', { sessionId: 'desk-room', role: 'laptop' });
+    const phone = connect(url, { auth: { mobile: true }, transports: ['polling'], forceNew: true }); clients.push(phone);
+    await once(phone, 'connect');
+    await emitAck(phone, 'assessment_verif:join', { sessionId: 'desk-room', role: 'mobile_camera' });
+    phone.emit('assessment_verif:mobile_ready', { sessionId: 'desk-room', mobileStreamId: 'mobile-stream-desk-01' });
+    await new Promise(resolve => setTimeout(resolve, 550));
+
+    const laptopSync = once(laptop, 'assessment_verif:room_state_sync');
+    const phoneSync = once(phone, 'assessment_verif:room_state_sync');
+    const photo = Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(100), Buffer.from([0xff, 0xd9])]);
+    const ack = await emitAck(phone, 'assessment_verif:room_capture', {
+      sessionId: 'desk-room', step: 'desk', captureId: 'capture-desk01', photo,
+      capturedAt: Date.now(), mobileStreamId: 'mobile-stream-desk-01',
+      preview: 'data:image/jpeg;base64,QQ==',
+    });
+    // The real cause must reach the phone, not a generic outage.
+    expect(ack).toMatchObject({ ok: false, errorCode: 'STEP_OUT_OF_ORDER', expectedStep: 'bottom' });
+    expect(ack.errorCode).not.toBe('SERVER_ERROR');
+    for (const sync of [await laptopSync, await phoneSync]) {
+      expect(sync).toMatchObject({ reason: 'STEP_OUT_OF_ORDER', pendingStep: 'bottom',
+        roomSteps: ['front', 'left', 'right', 'bottom', 'desk'] });
+      expect(sync.sixCaptureStatus.desk).toBeUndefined();
+    }
+  } finally {
     clients.forEach(client => client.disconnect());
     await new Promise(resolve => io.close(resolve));
   }
