@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 
 /**
  * HTTPS for local development (optional custom certs via .cert or env vars).
@@ -22,10 +23,38 @@ function loadHttps() {
 
 const customHttps = loadHttps()
 
+function currentLanAddress() {
+  const interfaces = Object.entries(os.networkInterfaces())
+  const addresses = interfaces.flatMap(([name, entries]) => (entries || [])
+    .filter(entry => entry.family === 'IPv4' && !entry.internal &&
+      !entry.address.startsWith('169.254.'))
+    .map(entry => ({ name, address: entry.address })))
+  addresses.sort((a, b) => Number(/wi-?fi|wlan|ethernet/i.test(b.name)) -
+    Number(/wi-?fi|wlan|ethernet/i.test(a.name)))
+  return addresses[0]?.address || null
+}
+
 export default defineConfig({
   plugins: [
     react(),
-    tailwindcss()
+    tailwindcss(),
+    {
+      name: 'local-lan-pairing-address',
+      configureServer(server) {
+        server.middlewares.use('/__local-lan-origin', (_req, res) => {
+          const address = currentLanAddress()
+          res.setHeader('Cache-Control', 'no-store')
+          res.setHeader('Content-Type', 'application/json')
+          if (!address) {
+            res.statusCode = 503
+            res.end(JSON.stringify({ error: 'No LAN address is available' }))
+            return
+          }
+          const protocol = server.config.server.https ? 'https' : 'http'
+          res.end(JSON.stringify({ origin: `${protocol}://${address}:${server.config.server.port || 5174}` }))
+        })
+      }
+    }
   ],
   resolve: {
     dedupe: ['react', 'react-dom']

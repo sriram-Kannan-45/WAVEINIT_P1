@@ -11,6 +11,7 @@ import { API_BASE, BACKEND_ORIGIN } from '../../../api/api'
 import hiringService from '../../../services/hiringService'
 import { useToast } from '../../Toast'
 import BulkDeleteConfirmModal from '../BulkDeleteConfirmModal'
+import '../../../styles/admin-sessions.css'
 
 const emptyForm = { title: '', jobRole: '', assessmentType: 'QUIZ', description: '', durationMinutes: 60, passingScore: 60 }
 
@@ -1009,7 +1010,7 @@ export default function HireAssessmentsTab({ user }) {
                     ['identityVerification', 'Identity verification', 'Verify candidate ID with reference portrait snapshot'],
                     ['livenessDetection', 'Liveness challenge', 'Prevent spoofing with head pose and expression check'],
                     ['continuousFaceVerification', 'Continuous face verification', 'Flag multiple faces, looking away, or face missing'],
-                    ['mobileRoomScan', 'QR mobile 360° room scan', 'Require smartphone 360 camera sweep before starting'],
+                    ['mobileRoomScan', 'QR mobile 180° room scan', 'Require smartphone left-to-right 180° camera sweep before starting'],
                     ['roomScan360Enabled', 'Guided five-step room verification', 'AI-guided front, left, right, bottom and desk captures with voice instructions'],
                     ['unauthorizedObjectDetection', 'Phone/object detection', 'AI detection of mobile phones, notes, or smart devices'],
                     ['evidenceCapture', 'Screenshot evidence', 'Capture flagged events as encrypted audit snapshots'],
@@ -1085,7 +1086,7 @@ export default function HireAssessmentsTab({ user }) {
                     />
                   </div>
                   <div>
-                    <label className="reg-field-label" style={{ fontSize: 12 }}>360° coverage threshold (%)</label>
+                    <label className="reg-field-label" style={{ fontSize: 12 }}>180° coverage threshold (%)</label>
                     <input
                       className="reg-input"
                       type="number"
@@ -1094,6 +1095,14 @@ export default function HireAssessmentsTab({ user }) {
                       value={policyDraft.roomScanCoverageThreshold || 85}
                       onChange={event => setPolicyDraft({ ...policyDraft, roomScanCoverageThreshold: Number(event.target.value) })}
                     />
+                  </div>
+                  <div>
+                    <label className="reg-field-label" style={{ fontSize: 12 }}>Room reference match threshold (%)</label>
+                    <input className="reg-input" type="number" value="60" readOnly />
+                  </div>
+                  <div>
+                    <label className="reg-field-label" style={{ fontSize: 12 }}>Repeated photo similarity threshold (%)</label>
+                    <input className="reg-input" type="number" value="60" readOnly />
                   </div>
                   <div>
                     <label className="reg-field-label" style={{ fontSize: 12 }}>Voice speed</label>
@@ -1474,6 +1483,47 @@ export default function HireAssessmentsTab({ user }) {
                                 <div style={{ color: '#64748B', fontSize: 11 }}>
                                   {identity.livenessPassed ? 'Liveness passed' : 'Liveness pending'} &bull; {identity.roomScanClear ? 'Room clear' : 'Room scan pending/flagged'}
                                 </div>
+                                <details className="wi-hire-room-audit">
+                                  <summary>Room verification timeline</summary>
+                                  <div>Baseline: {identity.roomReference?.photos?.length || 0}/5 photos · Duplicate attempts: {(identity.roomCaptureAttempts || []).filter(attempt => attempt.duplicate).length}</div>
+                                  <div>180° coverage: {Math.round(Number(identity.roomScanCoverage) || 0)}% · Verified sectors: {(identity.roomScanSectors || []).filter(sector => sector.verified).length}/{identity.roomPostScanReport?.arcDegrees === 180 ? 5 : 8}</div>
+                                  <div>Room match: {identity.roomSimilarityReport?.overallSimilarity == null ? 'Pending'
+                                    : `${Math.round(identity.roomSimilarityReport.overallSimilarity * 100)}%`} · Threshold: {Math.round((identity.roomSimilarityReport?.threshold ?? 0.6) * 100)}%</div>
+                                  <div>Result: {identity.roomScanClear ? 'PASS' : identity.roomPostScanReport?.result || 'PENDING'}</div>
+                                  <div>Post-scan checks: {Object.entries(identity.roomPostScanReport?.checks || {}).map(([key, passed]) =>
+                                    `${key} ${passed ? '✓' : '✗'}`).join(' · ') || 'Pending'}</div>
+                                  <div className="wi-hire-room-audit-gallery">
+                                    {(identity.roomScanSampleIds || []).map((imageId, index) => <button key={`${imageId}-${index}`}
+                                      type="button" onClick={() => openEvidence(imageId)}><Eye size={12} /> Scan sector {index + 1}</button>)}
+                                  </div>
+                                  <details>
+                                    <summary>Photo capture attempts</summary>
+                                    {(identity.roomCaptureAttempts || []).map(attempt => <div key={attempt.captureId}>
+                                      {attempt.capturedAt || attempt.receivedAt} · {String(attempt.step || '').toUpperCase()} · {attempt.validationStatus || 'PENDING'}
+                                      {attempt.visualSimilarityScore != null ? ` · ${Math.round(attempt.visualSimilarityScore * 100)}% visual overlap` : ''}
+                                      {attempt.failureReason ? ` · ${attempt.failureReason}` : ''}
+                                    </div>)}
+                                  </details>
+                                  <div className="wi-hire-room-audit-gallery">
+                                    {(identity.roomReference?.photos || []).map(photo => <button key={photo.stepId} type="button"
+                                      onClick={() => photo.imageId && openEvidence(photo.imageId)} disabled={!photo.imageId}>
+                                      <Eye size={12} /> {photo.direction} baseline
+                                    </button>)}
+                                  </div>
+                                  {(identity.roomSimilarityReport?.sectorResults || []).map(sector =>
+                                    <div key={sector.sector}>{sector.sector}: {Math.round((sector.similarity || 0) * 100)}% · {sector.matchedReference || 'No match'} · {sector.status}</div>)}
+                                  {(identity.roomPostScanReport?.baselineResults || []).map(item =>
+                                    <div key={item.step}>{item.step.toUpperCase()} baseline: {Math.round((item.bestSimilarity || 0) * 100)}% · sector {item.bestSector == null ? 'none' : item.bestSector + 1} · {item.role}</div>)}
+                                  {(identity.roomObjectEvents || []).map(event => <div key={event.eventId} className="wi-hire-room-object-event">
+                                    <strong>{event.objectType} · sector {event.sector} · {event.status}</strong>
+                                    <div>{event.beforeTimestamp || ''} → {event.afterTimestamp || 'Awaiting re-verification'}</div>
+                                    <div className="wi-hire-room-audit-gallery">
+                                      {event.beforeEvidenceId && <button type="button" onClick={() => openEvidence(event.beforeEvidenceId)}>Before image</button>}
+                                      {event.afterEvidenceId && <button type="button" onClick={() => openEvidence(event.afterEvidenceId)}>After image</button>}
+                                    </div>
+                                    {event.afterVerificationResult && <div>Same area: {Math.round((event.afterVerificationResult.sameAreaSimilarity || 0) * 100)}% · Clear frames: {event.afterVerificationResult.clearFrames}</div>}
+                                  </div>)}
+                                </details>
                               </td>
                               <td style={{ textAlign: 'right' }}>
                                 {item.evidence?.length ? (

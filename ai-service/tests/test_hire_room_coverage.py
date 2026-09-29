@@ -5,7 +5,8 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 
-from inference.room_scanner import room_scanner, _laptop_motion, laptop_pose_tracker
+from inference.room_scanner import (room_scanner, _laptop_motion, laptop_pose_tracker,
+    _visual_signature, _scene_descriptor, _feature_descriptor, _reference_similarity)
 
 
 def photo(image):
@@ -71,10 +72,339 @@ class HireRoomCoverageTest(unittest.TestCase):
             )
         return result
 
+    def recorded_references(self):
+        references = []
+        for step, angle in (("left", 270), ("front", 0), ("right", 90),
+                            ("bottom", 180), ("desk", 30)):
+            _, gray, _ = room_scanner._prepare(room_scanner.decode_frame(panorama_frame(angle)))
+            references.append({"step": step, "visualSignature": _visual_signature(gray),
+                               "sceneDescriptor": _scene_descriptor(gray),
+                               "featureDescriptor": _feature_descriptor(gray)})
+        return references
+
+    def test_finished_recording_is_reviewed_once_without_full_circle(self):
+        room_scanner.yolo = object()
+        angles = (270, 285, 300, 315, 330, 345, 360, 375, 390, 405, 420, 450)
+        detections = [{"class_name": "person", "confidence": 0.9, "box": [10, 10, 80, 200]},
+                      {"class_name": "laptop", "confidence": 0.9, "box": [120, 80, 320, 230]}]
+        pose = {"available": True, "moved": True, "participantDetected": True,
+                "mode": "pose", "score": 0.7}
+        with patch('inference.room_scanner._laptop_motion', return_value=pose), \
+             patch.object(room_scanner, '_yolo_detections', return_value=detections):
+            result = room_scanner.analyze_180_recording(
+                [panorama_frame(angle) for angle in angles], 'recorded-pass',
+                require_laptop=True, laptop_frames=laptop_samples(True),
+                references=self.recorded_references())
+        self.assertTrue(result['complete'], result)
+        self.assertEqual(result['verdict'], 'PASS')
+        self.assertEqual(result['failureReason'], 'scan_complete')
+        self.assertEqual(result['mode'], 'recorded_video')
+        self.assertIsNone(result['pendingObject'])
+        self.assertEqual(result['postScanReport']['coverageMode'], 'recorded_video')
+        self.assertEqual(len(result['sampledFrames']), 5)
+        self.assertEqual(result['postScanReport']['reviewedSectors'], 5)
+
+    def test_finished_recording_rejects_static_or_wrong_order(self):
+        room_scanner.yolo = object()
+        detections = [{"class_name": "person", "confidence": 0.9, "box": [10, 10, 80, 200]},
+                      {"class_name": "laptop", "confidence": 0.9, "box": [120, 80, 320, 230]}]
+        pose = {"available": True, "moved": True, "participantDetected": True,
+                "mode": "pose", "score": 0.7}
+        with patch('inference.room_scanner._laptop_motion', return_value=pose), \
+             patch.object(room_scanner, '_yolo_detections', return_value=detections):
+            for angles in ((270,) * 12, (90, 75, 60, 45, 30, 15, 0, 345, 330, 315, 300, 270)):
+                result = room_scanner.analyze_180_recording(
+                    [panorama_frame(angle) for angle in angles], 'recorded-reject',
+                    require_laptop=True, laptop_frames=laptop_samples(True),
+                    references=self.recorded_references())
+                self.assertFalse(result['complete'])
+                self.assertTrue(result['rescanRequired'])
+                # A sweep that is simply not usable is a plain RETRY: the room
+                # may be fine, the recording was not.
+                self.assertEqual(result['verdict'], 'RETRY')
+                self.assertIn(result['failureReason'],
+                              ('room_mismatch', 'movement_unconfirmed'))
+                self.assertIsNone(result['pendingObject'])
+
+    def test_short_recording_is_retried_without_blaming_the_room(self):
+        room_scanner.yolo = object()
+        detections = [{"class_name": "person", "confidence": 0.9, "box": [10, 10, 80, 200]},
+                      {"class_name": "laptop", "confidence": 0.9, "box": [120, 80, 320, 230]}]
+        pose = {"available": True, "moved": True, "participantDetected": True,
+                "mode": "pose", "score": 0.7}
+        with patch('inference.room_scanner._laptop_motion', return_value=pose), \
+             patch.object(room_scanner, '_yolo_detections', return_value=detections):
+            result = room_scanner.analyze_180_recording(
+                [panorama_frame(angle) for angle in (270, 300, 0, 90)],
+                'recorded-short', require_laptop=True, laptop_frames=laptop_samples(True),
+                references=self.recorded_references())
+        self.assertFalse(result['complete'])
+        self.assertEqual(result['verdict'], 'RETRY')
+        self.assertEqual(result['failureReason'], 'recording_short')
+        self.assertEqual(result['sampledFrames'], [])
+
+    def test_finished_recording_blocks_repeated_prohibited_object(self):
+        room_scanner.yolo = object()
+        angles = (270, 285, 300, 315, 330, 345, 360, 375, 390, 405, 420, 450)
+        pose = {"available": True, "moved": True, "participantDetected": True,
+                "mode": "pose", "score": 0.7}
+        detections = [{"class_name": "person", "confidence": 0.9, "box": [10, 10, 80, 200]},
+                      {"class_name": "laptop", "confidence": 0.9, "box": [120, 80, 320, 230]}]
+        observation = [{"objectType": "additional phone", "confidence": 0.9}]
+        with patch('inference.room_scanner._laptop_motion', return_value=pose), \
+             patch.object(room_scanner, '_yolo_detections', return_value=detections), \
+             patch.object(room_scanner, '_observations', return_value=observation):
+            result = room_scanner.analyze_180_recording(
+                [panorama_frame(angle) for angle in angles], 'recorded-object',
+                require_laptop=True, laptop_frames=laptop_samples(True),
+                references=self.recorded_references())
+        self.assertFalse(result['complete'])
+        self.assertFalse(result['postScanReport']['checks']['unauthorizedObjects'])
+        self.assertEqual(result['objectTransition']['type'], 'DETECTED')
+        # The sweep itself was fine, so this is a FLAG and never a room mismatch.
+        self.assertEqual(result['verdict'], 'FLAG')
+        self.assertEqual(result['failureReason'], 'remove_object')
+        self.assertEqual(result['guideKey'], 'remove_object')
+        self.assertIsNotNone(result['pendingObject'])
+        self.assertEqual(result['pendingObject']['objectType'], 'additional phone')
+        self.assertEqual(result['pendingObject']['action'], 'REMOVE_AND_RESCAN')
+        self.assertIn('additional phone', result['message'])
+
+    def test_prohibited_object_outranks_a_failed_sweep(self):
+        room_scanner.yolo = object()
+        pose = {"available": True, "moved": True, "participantDetected": True,
+                "mode": "pose", "score": 0.7}
+        detections = [{"class_name": "person", "confidence": 0.9, "box": [10, 10, 80, 200]},
+                      {"class_name": "laptop", "confidence": 0.9, "box": [120, 80, 320, 230]}]
+        observation = [{"objectType": "second laptop", "confidence": 0.9}]
+        with patch('inference.room_scanner._laptop_motion', return_value=pose), \
+             patch.object(room_scanner, '_yolo_detections', return_value=detections), \
+             patch.object(room_scanner, '_observations', return_value=observation):
+            result = room_scanner.analyze_180_recording(
+                [panorama_frame(270)] * 12, 'recorded-object-static',
+                require_laptop=True, laptop_frames=laptop_samples(True),
+                references=self.recorded_references())
+        # The sweep also failed here, but the object still has to be named: the
+        # candidate has to clear the room before any re-recording can pass.
+        self.assertEqual(result['verdict'], 'FLAG')
+        self.assertEqual(result['failureReason'], 'remove_object')
+        self.assertFalse(result['postScanReport']['checks']['coverage'])
+        self.assertIn('second laptop', result['message'])
+
+    def test_pose_tracker_outage_does_not_fail_every_recording(self):
+        # MediaPipe missing/loading/erroring is an infrastructure fault, not
+        # evidence that the candidate is absent. Optical movement plus the
+        # webcam person check must still be able to approve the sweep.
+        room_scanner.yolo = object()
+        angles = (270, 285, 300, 315, 330, 345, 360, 375, 390, 405, 420, 450)
+        detections = [{"class_name": "person", "confidence": 0.9, "box": [10, 10, 80, 200]},
+                      {"class_name": "laptop", "confidence": 0.9, "box": [120, 80, 320, 230]}]
+        for mode in ("optical_fallback", "pose_unavailable"):
+            degraded = {"available": True, "moved": True, "score": 0.4, "mode": mode,
+                        "participantDetected": None, "poseVerdict": None}
+            with patch('inference.room_scanner._laptop_motion', return_value=degraded), \
+                 patch.object(room_scanner, '_yolo_detections', return_value=detections):
+                result = room_scanner.analyze_180_recording(
+                    [panorama_frame(angle) for angle in angles], f'recording-{mode}',
+                    require_laptop=True, laptop_frames=laptop_samples(True),
+                    references=self.recorded_references())
+            self.assertTrue(result['complete'], f'{mode}: {result}')
+            self.assertEqual(result['verdict'], 'PASS')
+
+    def test_pose_that_ran_and_saw_nobody_still_fails_the_person_gate(self):
+        room_scanner.yolo = object()
+        angles = (270, 285, 300, 315, 330, 345, 360, 375, 390, 405, 420, 450)
+        detections = [{"class_name": "person", "confidence": 0.9, "box": [10, 10, 80, 200]},
+                      {"class_name": "laptop", "confidence": 0.9, "box": [120, 80, 320, 230]}]
+        empty_room = {"available": True, "moved": True, "score": 0.4,
+                      "mode": "optical_fallback", "participantDetected": None,
+                      "poseVerdict": "no_participant"}
+        with patch('inference.room_scanner._laptop_motion', return_value=empty_room), \
+             patch.object(room_scanner, '_yolo_detections', return_value=detections):
+            result = room_scanner.analyze_180_recording(
+                [panorama_frame(angle) for angle in angles], 'recording-empty-webcam',
+                require_laptop=True, laptop_frames=laptop_samples(True),
+                references=self.recorded_references())
+        self.assertFalse(result['complete'])
+        self.assertFalse(result['postScanReport']['checks']['person'])
+        self.assertEqual(result['failureReason'], 'laptop_motion_missing')
+
     def test_stationary_phone_never_completes(self):
         result = self.scan("still", [0] * 60)
         self.assertFalse(result["complete"])
         self.assertLessEqual(result["coverage"], 13)
+
+    def test_reference_similarity_scores_same_view_above_changed_view(self):
+        first = room_scanner.decode_frame(panorama_frame(0))
+        second = room_scanner.decode_frame(panorama_frame(180))
+        _, first_gray, _ = room_scanner._prepare(first)
+        _, second_gray, _ = room_scanner._prepare(second)
+        reference = {"visualSignature": _visual_signature(first_gray),
+                     "sceneDescriptor": _scene_descriptor(first_gray),
+                     "featureDescriptor": _feature_descriptor(first_gray)}
+        same = _reference_similarity(reference["visualSignature"], reference["sceneDescriptor"],
+                                     reference["featureDescriptor"], reference)
+        changed = _reference_similarity(_visual_signature(second_gray), _scene_descriptor(second_gray),
+                                        _feature_descriptor(second_gray), reference)
+        self.assertGreaterEqual(same, 0.95)
+        self.assertGreater(same, changed)
+
+    def test_360_compares_directional_views_with_initial_reference(self):
+        def reference(step, angle):
+            _, gray, _ = room_scanner._prepare(room_scanner.decode_frame(panorama_frame(angle)))
+            return {"step": step, "visualSignature": _visual_signature(gray),
+                    "sceneDescriptor": _scene_descriptor(gray),
+                    "featureDescriptor": _feature_descriptor(gray)}
+        references = [reference("front", 0), reference("right", 90), reference("left", 270),
+                      reference("bottom", 180), reference("desk", 30)]
+        result = None
+        room_scanner.yolo = object()
+        with patch.object(room_scanner, "_yolo_detections", return_value=[
+                {"class_name": "laptop", "confidence": 0.9, "box": [120, 80, 320, 230]}]):
+            for angle in range(0, 361, 30):
+                result = room_scanner.analyze_360([panorama_frame(angle)], "matched-room",
+                    [{"yaw": angle % 360}], references=references)
+        self.assertTrue(result["sweepCovered"])
+        self.assertTrue(result["complete"])
+        self.assertEqual(result["postScanReport"]["result"], "PASS")
+        self.assertEqual(len(result["sampledFrames"]), 8)
+        self.assertEqual(result["similarityReport"]["result"], "PASS")
+        self.assertGreaterEqual(result["similarityReport"]["overallSimilarity"], 0.6)
+        self.assertEqual(result["similarityReport"]["sectorResults"][2]["matchedReference"], "right")
+
+    def test_180_scan_requires_ordered_left_front_right_and_saved_review(self):
+        def reference(step, angle):
+            _, gray, _ = room_scanner._prepare(room_scanner.decode_frame(panorama_frame(angle)))
+            return {"step": step, "visualSignature": _visual_signature(gray),
+                    "sceneDescriptor": _scene_descriptor(gray),
+                    "featureDescriptor": _feature_descriptor(gray)}
+        references = [reference("left", 270), reference("front", 0),
+                      reference("right", 90), reference("bottom", 180), reference("desk", 30)]
+        pose = {"available": True, "moved": True, "participantDetected": True,
+                "multiplePersonsDetected": False, "mode": "pose", "score": 0.1}
+        detections = [{"class_name": "person", "confidence": 0.9, "box": [10, 10, 80, 200]},
+                      {"class_name": "laptop", "confidence": 0.9, "box": [120, 80, 320, 230]}]
+        room_scanner.yolo = object()
+        result = None
+        with patch("inference.room_scanner._laptop_motion", return_value=pose), \
+             patch.object(room_scanner, "_yolo_detections", return_value=detections):
+            for angle in (270, 300, 330, 0, 30, 60, 90):
+                result = room_scanner.analyze_180([panorama_frame(angle)], "half-room",
+                    [{"yaw": angle}], laptop_frames=laptop_samples(True), require_laptop=True,
+                    references=references)
+        self.assertTrue(result["complete"])
+        self.assertEqual(result["coverage"], 100)
+        self.assertEqual(result["postScanReport"]["reviewedSectors"], 5)
+        self.assertEqual(len(result["sampledFrames"]), 5)
+        self.assertGreaterEqual(result["similarityReport"]["overallSimilarity"], 0.6)
+
+    def test_180_scan_rejects_repeated_view_even_without_sensor(self):
+        _, gray, _ = room_scanner._prepare(room_scanner.decode_frame(panorama_frame(0)))
+        reference = {"step": "left", "visualSignature": _visual_signature(gray),
+                     "sceneDescriptor": _scene_descriptor(gray),
+                     "featureDescriptor": _feature_descriptor(gray)}
+        for angle in (0, 0, 0, 0, 0):
+            result = room_scanner.analyze_180([panorama_frame(angle)], "static-half",
+                [{"yaw": angle}], references=[reference])
+        self.assertFalse(result["complete"])
+        self.assertEqual(result["coverage"], 20)
+        missing = room_scanner.analyze_180([panorama_frame(30)], "no-sensor",
+            [None], references=[reference])
+        self.assertEqual(missing["coverage"], 20)
+        self.assertEqual(missing["mode"], "visual_baseline")
+        self.assertFalse(missing["complete"])
+
+    def test_180_visual_fallback_uses_ordered_baseline_and_mediapipe_hand(self):
+        def reference(step, angle):
+            _, gray, _ = room_scanner._prepare(room_scanner.decode_frame(panorama_frame(angle)))
+            return {"step": step, "visualSignature": _visual_signature(gray),
+                    "sceneDescriptor": _scene_descriptor(gray),
+                    "featureDescriptor": _feature_descriptor(gray)}
+        references = [reference("left", 270), reference("front", 0),
+                      reference("right", 90), reference("bottom", 180), reference("desk", 30)]
+        hand = {"available": True, "moved": True, "participantDetected": None,
+                "handDetected": True, "mode": "hand", "score": 0.12,
+                "motionSource": "mediapipe_hands"}
+        detections = [{"class_name": "person", "confidence": 0.9, "box": [10, 10, 80, 200]},
+                      {"class_name": "laptop", "confidence": 0.9, "box": [120, 80, 320, 230]}]
+        room_scanner.yolo = object()
+        with patch("inference.room_scanner._laptop_motion", return_value=hand), \
+             patch.object(room_scanner, "_yolo_detections", return_value=detections):
+            for angle in (270, 285, 300, 315, 330, 345, 0, 15, 30, 45, 60, 75, 90):
+                result = room_scanner.analyze_180([panorama_frame(angle)], "visual-half",
+                    [None], laptop_frames=laptop_samples(True), require_laptop=True,
+                    references=references)
+        self.assertTrue(result["complete"])
+        self.assertEqual(result["coverage"], 100)
+        self.assertEqual(result["mode"], "visual_baseline")
+        self.assertGreaterEqual(result["motionEvidence"]["visualContinuity"], 4)
+
+    def test_180_scan_cannot_pass_without_pose_or_visible_computer(self):
+        def reference(step, angle):
+            _, gray, _ = room_scanner._prepare(room_scanner.decode_frame(panorama_frame(angle)))
+            return {"step": step, "visualSignature": _visual_signature(gray),
+                    "sceneDescriptor": _scene_descriptor(gray),
+                    "featureDescriptor": _feature_descriptor(gray)}
+        references = [reference("left", 270), reference("front", 0),
+                      reference("right", 90), reference("bottom", 180), reference("desk", 30)]
+        detections = [{"class_name": "person", "confidence": 0.9, "box": [10, 10, 80, 200]}]
+        room_scanner.yolo = object()
+        angles = (270, 300, 330, 0, 30, 60, 90)
+        for label, pose in (("missing-pose", {"available": True, "moved": False,
+                            "participantDetected": False, "mode": "pose_no_participant"}),
+                            ("missing-computer", {"available": True, "moved": True,
+                            "participantDetected": True, "mode": "pose"})):
+            result = None
+            with patch("inference.room_scanner._laptop_motion", return_value=pose), \
+                 patch.object(room_scanner, "_yolo_detections", return_value=detections):
+                for angle in angles:
+                    result = room_scanner.analyze_180([panorama_frame(angle)], label,
+                        [{"yaw": angle}], laptop_frames=laptop_samples(True),
+                        require_laptop=True, references=references)
+                    if result["rescanRequired"]:
+                        break
+            self.assertFalse(result["complete"])
+            self.assertEqual(result["coverage"], 100)
+            if label == "missing-computer":
+                self.assertTrue(result["rescanRequired"])
+                self.assertFalse(result["postScanReport"]["checks"]["computer"])
+
+    def test_covered_sweep_waits_for_person_in_laptop_camera(self):
+        def reference(step, angle):
+            _, gray, _ = room_scanner._prepare(room_scanner.decode_frame(panorama_frame(angle)))
+            return {"step": step, "visualSignature": _visual_signature(gray),
+                    "sceneDescriptor": _scene_descriptor(gray), "featureDescriptor": _feature_descriptor(gray)}
+        references = [reference(step, angle) for step, angle in
+                      (("front", 0), ("right", 90), ("left", 270), ("bottom", 180), ("desk", 30))]
+        room_scanner.yolo = object()
+        computer = {"class_name": "laptop", "confidence": 0.9, "box": [120, 80, 320, 230]}
+        with patch.object(room_scanner, "_yolo_detections", side_effect=lambda image:
+                          [computer] if image.shape[1] > 400 else []):
+            result = None
+            for angle in range(0, 361, 30):
+                result = room_scanner.analyze_360([panorama_frame(angle)], "missing-person",
+                    [{"yaw": angle % 360}], laptop_frames=laptop_samples(True),
+                    require_laptop=True, references=references)
+        self.assertTrue(result["sweepCovered"])
+        self.assertFalse(result["complete"])
+        self.assertFalse(result["postScanReport"]["checks"]["person"])
+        self.assertEqual(result["postScanReport"]["result"], "FAIL")
+
+    def test_covered_sweep_without_computer_requires_rescan(self):
+        def reference(step, angle):
+            _, gray, _ = room_scanner._prepare(room_scanner.decode_frame(panorama_frame(angle)))
+            return {"step": step, "visualSignature": _visual_signature(gray),
+                    "sceneDescriptor": _scene_descriptor(gray), "featureDescriptor": _feature_descriptor(gray)}
+        references = [reference(step, angle) for step, angle in
+                      (("front", 0), ("right", 90), ("left", 270), ("bottom", 180), ("desk", 30))]
+        room_scanner.yolo = object()
+        with patch.object(room_scanner, "_yolo_detections", return_value=[]):
+            reviews = [room_scanner.analyze_360([panorama_frame(angle)], "missing-computer",
+                [{"yaw": angle % 360}], references=references) for angle in range(0, 361, 30)]
+        rejected = [item for item in reviews if item["rescanRequired"]]
+        self.assertTrue(rejected)
+        self.assertFalse(rejected[0]["complete"])
+        self.assertFalse(rejected[0]["postScanReport"]["checks"]["computer"])
 
     def test_slow_inference_does_not_expire_same_batch_laptop_evidence(self):
         clock = [1000.0]
@@ -123,14 +453,16 @@ class HireRoomCoverageTest(unittest.TestCase):
         self.assertFalse(halfway["complete"])
         self.assertLess(halfway["coverage"], 100)
         complete = self.scan("real-turn", range(210, 361, 30))
-        self.assertTrue(complete["complete"])
-        self.assertEqual(complete["coverage"], 100)
+        self.assertTrue(complete["sweepCovered"])
+        self.assertFalse(complete["complete"])
+        self.assertEqual(complete["coverage"], 87)
         self.assertTrue(all(sector["verified"] for sector in complete["sectors"]))
 
     def test_visual_fallback_requires_distinct_overlapping_scenes_and_loop(self):
         result = self.scan("visual-turn", range(0, 361, 20), sensor=False)
-        self.assertTrue(result["complete"])
-        self.assertEqual(result["coverage"], 100)
+        self.assertTrue(result["sweepCovered"])
+        self.assertFalse(result["complete"])
+        self.assertEqual(result["coverage"], 87)
 
     def test_second_photo_cannot_reuse_first_view(self):
         first = room_scanner.analyze_step(panorama_frame(0), "front", "six-photo")
@@ -182,27 +514,52 @@ class HireRoomCoverageTest(unittest.TestCase):
         self.assertTrue(_laptop_motion(laptop_samples(True, pixels=2))["moved"])
 
     def test_pose_tracker_reports_missing_and_multiple_participants(self):
-        with patch.object(laptop_pose_tracker, "_detect_poses", return_value=[]):
+        if laptop_pose_tracker is None:
+            self.skipTest("optional MediaPipe laptop pose tracker is unavailable")
+        laptop_pose_tracker.retry_at = 0.0
+        with patch.object(laptop_pose_tracker, "_detect_poses", return_value=[]), \
+             patch.object(laptop_pose_tracker, "_detect_hand_tracks", return_value={}):
             missing = laptop_pose_tracker.evaluate_motion(laptop_samples(False))
         self.assertFalse(missing["participantDetected"])
         self.assertEqual(missing["personCount"], 0)
 
         pose = [(0.4, 0.4, 0.0)] * 33
-        with patch.object(laptop_pose_tracker, "_detect_poses", return_value=[pose, pose]):
-            multiple = laptop_pose_tracker.evaluate_motion(laptop_samples(False))
-        self.assertTrue(multiple["participantDetected"])
-        self.assertTrue(multiple["multiplePersonsDetected"])
-        self.assertEqual(multiple["personCount"], 2)
+        with patch.object(laptop_pose_tracker, "_detect_poses", return_value=[pose, pose]), \
+             patch.object(laptop_pose_tracker, "_detect_hand_tracks", return_value={}):
+            consecutive = laptop_pose_tracker.evaluate_motion(laptop_samples(False))
+        self.assertTrue(consecutive["participantDetected"])
+        self.assertFalse(consecutive["multiplePersonsDetected"])
+        self.assertEqual(consecutive["personCount"], 1)
+
+    def test_mediapipe_hand_motion_detects_moving_hand_but_not_static_hand(self):
+        if laptop_pose_tracker is None:
+            self.skipTest("MediaPipe laptop tracker is unavailable")
+        laptop_pose_tracker.retry_at = 0.0
+        moving = {"Right": [(0, 0.30, 0.40), (1, 0.36, 0.43), (2, 0.43, 0.47)]}
+        still = {"Right": [(0, 0.30, 0.40), (1, 0.31, 0.405), (2, 0.305, 0.40)]}
+        with patch.object(laptop_pose_tracker, "_detect_poses", return_value=[]), \
+             patch.object(laptop_pose_tracker, "_detect_hand_tracks", return_value=moving):
+            moved = laptop_pose_tracker.evaluate_motion(laptop_samples(False))
+        self.assertTrue(moved["moved"])
+        self.assertEqual(moved["mode"], "hand")
+        self.assertEqual(moved["motionSource"], "mediapipe_hands")
+        with patch.object(laptop_pose_tracker, "_detect_poses", return_value=[]), \
+             patch.object(laptop_pose_tracker, "_detect_hand_tracks", return_value=still):
+            static = laptop_pose_tracker.evaluate_motion(laptop_samples(False))
+        self.assertFalse(static["moved"])
 
     def test_360_completes_with_distinct_views_and_repeated_laptop_movement(self):
         result = None
         for angle in range(0, 361, 30):
             result = room_scanner.analyze_360([panorama_frame(angle)], "moving-laptop",
                 [{"yaw": angle % 360}], laptop_frames=laptop_samples(True), require_laptop=True)
-        self.assertTrue(result["complete"])
-        self.assertEqual(result["coverage"], 100)
+        self.assertTrue(result["sweepCovered"])
+        self.assertFalse(result["complete"])
+        self.assertEqual(result["coverage"], 87)
 
     def test_360_not_visible_in_laptop_camera_still_completes(self):
+        if laptop_pose_tracker is None:
+            self.skipTest("optional MediaPipe laptop pose tracker is unavailable")
         # A candidate sweeping the room with the phone is routinely outside the
         # laptop webcam's view, so pose inference reports nobody. That is
         # inconclusive, not proof of stillness: treating it as "no movement"
@@ -216,11 +573,14 @@ class HireRoomCoverageTest(unittest.TestCase):
             for angle in range(0, 361, 30):
                 result = room_scanner.analyze_360([panorama_frame(angle)], "not-in-laptop-view",
                     [None], laptop_frames=laptop_samples(True), require_laptop=True)
-        self.assertTrue(result["complete"])
-        self.assertEqual(result["coverage"], 100)
+        self.assertTrue(result["sweepCovered"])
+        self.assertFalse(result["complete"])
+        self.assertEqual(result["coverage"], 87)
         self.assertEqual(len([s for s in result["sectors"] if s["verified"]]), 8)
 
     def test_360_not_visible_and_static_laptop_still_cannot_advance(self):
+        if laptop_pose_tracker is None:
+            self.skipTest("optional MediaPipe laptop pose tracker is unavailable")
         # The same blind pose verdict must NOT turn a genuinely static laptop
         # camera into movement evidence.
         blind = {"available": True, "moved": False, "score": 0.0,
@@ -305,7 +665,18 @@ class HireRoomCoverageTest(unittest.TestCase):
         priors = []
 
         def capture(step, angle, pitch):
-            result = room_scanner.analyze_step(panorama_frame(angle), step, "five-order",
+            frame = panorama_frame(angle)
+            if step in ("bottom", "desk"):
+                # These are separately framed vertical views, not another crop
+                # of the horizontal panorama used for the side directions.
+                rng = np.random.default_rng(200 if step == "bottom" else 300)
+                scene = np.full((360, 640, 3), (165, 173, 181), dtype=np.uint8)
+                for index in range(85):
+                    x, y = int(rng.integers(0, 595)), int(rng.integers(0, 320))
+                    color = tuple(int(value) for value in rng.integers(35, 225, 3))
+                    cv2.rectangle(scene, (x, y), (x + 25, y + 20), color, -1)
+                frame = photo(scene)
+            result = room_scanner.analyze_step(frame, step, "five-order",
                 prior_captures=priors, orientation={"yaw": angle % 360, "pitch": pitch},
                 laptop_frames=laptop_samples(True), require_laptop=True)
 
@@ -339,7 +710,9 @@ class HireRoomCoverageTest(unittest.TestCase):
             self.assertIsNotNone(first_clean["pendingObject"])
             self.assertFalse(first_clean["restarted"])
 
-            # Second clean view confirms removal -> the ENTIRE sweep restarts.
+            # Three same-area clear frames are required before the restart.
+            second_clean = self.scan("object-restart", [90])
+            self.assertIsNotNone(second_clean["pendingObject"])
             restored = self.scan("object-restart", [90])
             self.assertIsNone(restored["pendingObject"])
             self.assertTrue(restored["restarted"])
@@ -349,8 +722,9 @@ class HireRoomCoverageTest(unittest.TestCase):
 
             # The fresh sweep can complete like any other turn.
             complete = self.scan("object-restart", range(0, 361, 30))
-            self.assertTrue(complete["complete"])
-            self.assertEqual(complete["coverage"], 100)
+            self.assertTrue(complete["sweepCovered"])
+            self.assertFalse(complete["complete"])
+            self.assertEqual(complete["coverage"], 87)
 
     def test_sensorless_small_camera_wiggle_is_not_a_new_direction(self):
         front_img = panorama_frame(0)
@@ -382,8 +756,14 @@ class HireRoomCoverageTest(unittest.TestCase):
             self.assertIsNotNone(blocked["pendingObject"])
             self.assertFalse(blocked["complete"])
 
-            # A single clean view confirms removal and triggers the full reset.
-            reset_batch = self.scan("restart-safety", [90])
+            # Three consecutive same-area clean views trigger the full reset.
+            reset_batch = None
+            for angle in (60, 60, 60):
+                result = self.scan("restart-safety", [angle])
+                if result["restarted"]:
+                    reset_batch = result
+                    break
+            self.assertIsNotNone(reset_batch)
             self.assertTrue(reset_batch["restarted"])
             self.assertEqual(reset_batch["coverage"], 0)
             self.assertFalse(reset_batch["complete"])
@@ -410,6 +790,22 @@ class HireRoomCoverageTest(unittest.TestCase):
         self.assertFalse(result["restarted"])
         self.assertGreater(result["coverage"], 0)
 
+    def test_object_removal_requires_clear_frames_from_same_area(self):
+        calls = 0
+        def detection(_frame):
+            nonlocal calls
+            calls += 1
+            return [{"class_name": "book", "confidence": 0.9, "box": [10, 10, 60, 80]}] if calls <= 2 else []
+        with patch.object(room_scanner, "_yolo_detections", side_effect=detection):
+            blocked = self.scan("same-area", [0, 30])
+            self.assertIsNotNone(blocked["pendingObject"])
+            wrong_area = self.scan("same-area", [180, 210, 240, 270])
+            self.assertIsNotNone(wrong_area["pendingObject"])
+            self.assertFalse(wrong_area["restarted"])
+            cleared = self.scan("same-area", [30, 30, 30])
+            self.assertTrue(cleared["restarted"])
+            self.assertEqual(cleared["objectTransition"]["type"], "CLEARED")
+
     def test_person_rendered_inside_laptop_screen_is_not_an_additional_person(self):
         detections = [
             {"class_name": "laptop", "confidence": 0.94, "box": [150, 80, 620, 430]},
@@ -435,8 +831,8 @@ class HireRoomCoverageTest(unittest.TestCase):
             )
             self.assertIsNotNone(blocked["pendingObject"])
             restarted = room_scanner.analyze_360(
-                [panorama_frame(60), panorama_frame(90), panorama_frame(120)], "hard-restart",
-                [{"yaw": 60}, {"yaw": 90}, {"yaw": 120}],
+                [panorama_frame(30), panorama_frame(30), panorama_frame(30), panorama_frame(120)], "hard-restart",
+                [{"yaw": 30}, {"yaw": 30}, {"yaw": 30}, {"yaw": 120}],
             )
         self.assertTrue(restarted["restarted"])
         self.assertEqual(restarted["coverage"], 0)
@@ -508,8 +904,9 @@ class HireRoomCoverageTest(unittest.TestCase):
                 laptop_frames=laptop_samples(True),
                 require_laptop=True,
             )
-        self.assertTrue(result["complete"])
-        self.assertEqual(result["coverage"], 100)
+        self.assertTrue(result["sweepCovered"])
+        self.assertFalse(result["complete"])
+        self.assertEqual(result["coverage"], 87)
         self.assertEqual(len([s for s in result["sectors"] if s["verified"]]), 8)
 
     def test_case5_orientation_unavailable_does_not_use_insecure_counter(self):
@@ -554,6 +951,12 @@ class HireRoomCoverageTest(unittest.TestCase):
         self.assertFalse(repeated["valid"])
         self.assertTrue(repeated["sameView"])
         self.assertGreaterEqual(repeated["sceneSignals"][0]["featureMatches"], 28)
+        # A changed phone yaw must not override the repeated visual content.
+        prior[0]["orientation"] = {"yaw": 0, "pitch": 0}
+        spoofed_turn = room_scanner.analyze_step(photo(shifted), "left", "feature-duplicate-yaw",
+            prior_captures=prior, orientation={"yaw": 70, "pitch": 0})
+        self.assertFalse(spoofed_turn["valid"])
+        self.assertTrue(spoofed_turn["sameView"])
 
     def test_visual_scan_ignores_one_noisy_reverse_motion_estimate(self):
         calls = 0
@@ -567,8 +970,9 @@ class HireRoomCoverageTest(unittest.TestCase):
         with patch("inference.room_scanner._orb_direction_displacement", side_effect=motion):
             for angle in range(0, 361, 20):
                 result = room_scanner.analyze_360([panorama_frame(angle)], "visual-noise", [None])
-        self.assertTrue(result["complete"])
-        self.assertEqual(result["coverage"], 100)
+        self.assertTrue(result["sweepCovered"])
+        self.assertFalse(result["complete"])
+        self.assertEqual(result["coverage"], 87)
         self.assertGreaterEqual(result["accumulatedSweep"], 330)
 
     def test_recorded_87_percent_pattern_closes_without_erasing_confirmed_sweep(self):
@@ -586,8 +990,9 @@ class HireRoomCoverageTest(unittest.TestCase):
             for angle in range(0, 361, 20):
                 result = room_scanner.analyze_360([panorama_frame(angle)], "recorded-87-pattern", [None])
 
-        self.assertTrue(result["complete"])
-        self.assertEqual(result["coverage"], 100)
+        self.assertTrue(result["sweepCovered"])
+        self.assertFalse(result["complete"])
+        self.assertEqual(result["coverage"], 87)
         self.assertTrue(result["sectors"][7]["verified"])
         self.assertGreaterEqual(result["maxForwardSweep"], 300)
         self.assertTrue(result["closingEvidence"]["proved"])

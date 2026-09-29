@@ -327,13 +327,13 @@ class AssessmentVerificationController {
         }
       }
 
-      // Hire room verification is a pre-test stage. Preserve the existing
+       const linkedMonitor = isEnded ? null : (monitoringSession || (session && await MonitoringSession.findOne({ where: {
+         participantId: session.participant_id, contextType: session.assessment_type,
+         contextId: session.assessment_id, attemptId: session.attempt_id,
+       } })));
+       // Hire room verification is a pre-test stage. Preserve the existing
       // status fallback for ordinary quiz/coding sessions only.
       if (!isEnded && (session?.status === 'COMPLETED' || monitoringSession?.status === 'COMPLETED')) {
-        const linkedMonitor = monitoringSession || (session && await MonitoringSession.findOne({ where: {
-          participantId: session.participant_id, contextType: session.assessment_type,
-          contextId: session.assessment_id, attemptId: session.attempt_id,
-        } }));
         const hirePretest = linkedMonitor?.metadata?.hireProctoring?.policy?.enabled === true;
         if (!hirePretest) { isEnded = true; sessionStatus = 'COMPLETED'; }
       }
@@ -346,6 +346,8 @@ class AssessmentVerificationController {
         status: sessionStatus,
         isEnded,
         mobileVerified: session?.mobile_verified ?? true,
+         hireFraming: linkedMonitor?.metadata?.hireProctoring?.policy?.enabled === true,
+         workspaceReady: require('../services/hireProctoringPolicy').roomScanApproved(linkedMonitor?.metadata?.hireProctoring),
       });
     } catch (error) {
       return res.status(500).json({ error: 'Failed to fetch mobile status' });

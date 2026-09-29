@@ -1,0 +1,66 @@
+Hire 180-degree room recording: audit and implementation plan
+29 September 2026
+
+Current flow and root cause
+- The five guided photos are already verified and saved as the room baseline.
+- During scan360 UI phase, the paired phone sends one JPEG and optional yaw about every 900 ms.
+- The laptop immediately calls the AI endpoint on batches of 3-4 frames. That blocks further decisions and repeatedly compares unfinished views, explaining the long Analyzing state and the Front mismatch shown in the supplied screenshots.
+- The current screen presents 5/5 directions and percent coverage as a live completion target. The user needs one recorded left-to-right half-turn followed by review, without a 100% progress goal.
+- Socket and HTTP guards already bind phone JPEGs to the paired mobile camera. Keep these guards; do not accept laptop-generated or stale images as phone evidence.
+
+Target workflow
+1. Keep QR pairing, five-photo capture, and the saved room reference unchanged.
+2. On the phone, show Start recording. The candidate starts at the saved left view, moves continuously through front, and stops at right using Finish recording. Show recording time and sample count, not AI coverage percent.
+3. Collect bounded phone JPEG samples, sensor readings when available, and recent laptop webcam frames while recording. No room AI requests run during recording.
+4. On Finish, reject an obviously empty/too-short recording without calling AI. Select ordered samples across the entire recording and send one authenticated review request. Keep the captured evidence until the review returns.
+5. The AI reviews the completed sequence after recording: verify ordered left/front/right baseline views at >=60% similarity, image continuity and actual movement, MediaPipe hand/arm motion and one participant in the laptop camera, working laptop/desktop visibility, and prohibited objects. Back-side or full-circle closure is not required. The five original photos remain the baseline; bottom and desk are contextual evidence for a horizontal sweep.
+6. A PASS saves the sampled evidence and post-scan report, then immediately starts the existing hand-and-laptop mobile check. A FAIL explains the reason and offers Record again; it never reuses partial progress from the failed recording.
+
+Implementation
+- Add a paired-phone-only start/finish socket control and recording state. Clear stale sample ledgers at each start; prevent duplicate finish/review requests.
+- Replace the laptop's interval-driven room AI loop with a one-time post-recording request. Keep the existing HTTP authorization and sample hash verification.
+- Add a recording-complete mode in the AI endpoint and post-scan analysis; keep the old incremental routine for compatibility tests but do not call it from this UI path.
+- Replace live 5/5 and percentage widgets with recording/review/retry state on both screens. Keep English and Tamil instructions and manual Play instructions.
+- Add focused tests for start/stop authorization, one analysis per recording, no live AI calls, ordered baseline pass, insufficient movement/mismatch/object failure, and automatic hand+laptop transition. Build the frontend and probe the running AI endpoint.
+
+Acceptance limits
+- No timer or percentage alone may approve the room. Recording time is only user feedback and a minimum evidence sanity check.
+- Do not require the rear of the room or a return to the starting view.
+- A physical phone/laptop run is still required to confirm camera, sound, Wi-Fi, and real-scene model behavior.
+
+Completed state
+- Recording is continuous and uninterruptible. The phone streams bounded JPEG
+  samples over the paired socket; the laptop makes exactly one AI request, and
+  only after Finish. No room AI call runs while the candidate is turning.
+- One finished recording is reviewed once by RoomScanEngine.analyze_180_recording.
+  It picks five ordered representative frames across the whole sweep, discards
+  blurred/unusable frames, and aggregates the sequence into a single verdict.
+- The review returns verdict PASS | FLAG | RETRY with a precise failureReason.
+  PASS admits the room. FLAG means the sweep was usable but a prohibited object
+  or a second person must be dealt with. RETRY means the recording itself has to
+  be repeated. A detected object is now reported ahead of any sweep-quality
+  reason, so an object in the room is never blamed on a room mismatch.
+- Sufficiency is judged on aggregated evidence: anchor similarity for the
+  left/front/right views, real change between them, frame-to-frame continuity
+  and webcam movement. Temporary blur, floor/ceiling frames, small gaps,
+  lighting and perspective differences are tolerated. There is no 100%
+  coverage requirement and no per-frame comparison against the saved photo.
+- The saved room photos are a similarity reference only. A mismatch is reported
+  once, after the recording, from the best ordered match across the sequence.
+- Both UIs show recording state, elapsed time and sample count during capture,
+  then a single review result. No live direction, coverage or "N of 5" widget
+  remains on either screen, in English or Tamil.
+- Retry never reuses a spent recording: the buffer, sample count and coverage
+  are cleared and a fresh Start begins from the saved left view.
+
+Remaining known items
+- ai-service/inference/laptop_pose_tracker.py is still untracked in git. It must
+  be added or every deploy loses the MediaPipe tracker. The scanner no longer
+  hard-fails when it is unavailable, but the pose signal is simply absent.
+- The legacy incremental accumulator (analyze_180, and the 8-sector analyze_360)
+  is retained for compatibility tests only. The backend refuses any response
+  whose mode is not recorded_video, so it can never gate a room decision.
+- The sample ledger is process-local, so a multi-instance deploy would need a
+  shared store before start/finish and review can span instances.
+- A YOLO inference exception during review surfaces as a 503/500 rather than a
+  clean FLAG; the candidate is asked to record again and is never wrongly passed.

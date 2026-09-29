@@ -50,12 +50,12 @@ export function getAssessmentMobileBaseUrl() {
   return `${protocol}://${host}${defaultPort ? '' : `:${port}`}`;
 }
 
-export function buildAssessmentMobileUrl(shortUrl) {
+export function buildAssessmentMobileUrl(shortUrl, baseOrigin) {
   if (!shortUrl) return null;
   if (/^https?:\/\//i.test(shortUrl)) {
     return shortUrl;
   }
-  const base = getAssessmentMobileBaseUrl();
+  const base = baseOrigin || getAssessmentMobileBaseUrl();
   const path = shortUrl.startsWith('/') ? shortUrl : `/${shortUrl}`;
   return `${base}${path}`;
 }

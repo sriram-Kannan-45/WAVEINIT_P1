@@ -3,9 +3,9 @@ const STORAGE_KEY = 'hireProctorLang';
 const PRIORITIES = { CRITICAL: 0, RETRY: 1, CURRENT_STEP: 2, SUCCESS: 3, GENERAL: 4 };
 
 const CATALOG = {
+  workspace_start: { en: 'Room verified. Point your phone at your hand and laptop together. Keep the phone steady.', ta: 'அறை சரிபார்க்கப்பட்டது. உங்கள் கையும் மடிக்கணினியும் ஒரே காட்சியில் தெரியும்படி கைப்பேசியை வைக்கவும். கைப்பேசியை அசைக்காமல் வைக்கவும்.' },
   framing_laptop: { en: 'Please adjust the phone so your laptop is visible.', ta: 'உங்கள் மடிக்கணினி தெளிவாகத் தெரியும்படி கைப்பேசியை மாற்றவும்.' },
-  framing_hands: { en: 'Please keep both hands visible near your workspace.', ta: 'உங்கள் பணியிடத்திற்கு அருகில் இரண்டு கைகளும் தெளிவாகத் தெரியும்படி வைத்துக் கொள்ளவும்.' },
-  framing_workspace: { en: 'Please show your laptop and workspace clearly.', ta: 'உங்கள் மடிக்கணினி மற்றும் பணியிடத்தை தெளிவாகக் காட்டவும்.' },
+  framing_hands: { en: 'Please keep a hand visible beside your laptop.', ta: 'உங்கள் மடிக்கணினிக்கு அருகில் ஒரு கை தெளிவாகத் தெரியும்படி வைக்கவும்.' },
   step_front: { en: 'Please show the area in front of you and take a photo.', ta: 'உங்கள் முன்புறப் பகுதியைக் காட்டி ஒரு புகைப்படம் எடுக்கவும்.' },
   step_left: { en: 'Please turn your phone to the left and take a clear photo.', ta: 'உங்கள் கைப்பேசியை இடது பக்கம் திருப்பி தெளிவான புகைப்படம் எடுக்கவும்.' },
   step_right: { en: 'Please turn your phone to the right and take a clear photo.', ta: 'உங்கள் கைப்பேசியை வலது பக்கம் திருப்பி தெளிவான புகைப்படம் எடுக்கவும்.' },
@@ -24,7 +24,17 @@ const CATALOG = {
   blurred: { en: 'The image is blurry. Hold the phone steady and try again.', ta: 'படம் மங்கலாக உள்ளது. போனை நிலையாகப் பிடித்து மீண்டும் முயற்சிக்கவும்.' },
   too_dark: { en: 'The image is too dark. Please turn on a light.', ta: 'படம் மிகவும் இருட்டாக உள்ளது. விளக்கை இயக்கவும்.' },
   observed: { en: 'You are doing well. Keep going.', ta: 'நன்றாகச் செய்கிறீர்கள். தொடருங்கள்.' },
-  start_360: { en: 'Now slowly rotate your phone around the room.', ta: 'இப்போது கைப்பேசியை மெதுவாக சுற்றி அறையை காட்டவும்.' },
+  start_360: { en: 'Point at the saved left view. Then turn slowly through front to right for a 180 degree scan.', ta: 'சேமித்த இடது காட்சியை முதலில் காட்டுங்கள். பின்னர் முன்பக்கம் வழியாக வலதுபுறம் வரை மெதுவாக 180 டிகிரி திரும்புங்கள்.' },
+  recording_started: { en: 'Recording has started. Turn slowly from left through front to right, then finish the recording.', ta: 'பதிவு தொடங்கியது. இடப்புறத்திலிருந்து முன்பக்கம் வழியாக வலப்புறம் வரை மெதுவாகத் திரும்பி, பின்னர் பதிவை முடியவும்.' },
+  recording_reviewing: { en: 'Recording finished. Please wait while the room scan is reviewed.', ta: 'பதிவு முடிந்தது. அறை ஸ்கேன் ஆய்வு செய்யப்படும் வரை காத்திருங்கள்.' },
+  recording_short: { en: 'The recording was too short. Start again at the saved left view, turn through front, and finish at the saved right view.', ta: 'பதிவு மிகவும் குறுகியதாக இருந்தது. சேமித்த இடது காட்சியில் மீண்டும் தொடங்கி, முன்பக்கம் வழியாகத் திரும்பி, சேமித்த வலது காட்சியில் முடியவும்.' },
+  start_left: { en: 'Point at the saved left room view to begin.', ta: 'தொடங்க, சேமித்த இடது அறைக் காட்சியை காட்டுங்கள்.' },
+  continue_right: { en: 'Turn slowly from left through front toward right.', ta: 'இடப்புறத்திலிருந்து முன்பக்கம் வழியாக வலப்புறம் நோக்கி மெதுவாகத் திரும்புங்கள்.' },
+  orientation_required: { en: 'Allow phone motion access so the turn direction can be verified.', ta: 'திரும்பும் திசையை சரிபார்க்க கைப்பேசியின் அசைவு அனுமதியை வழங்குங்கள்.' },
+  wrong_direction: { en: 'Continue from left through front toward right. Do not turn back.', ta: 'இடப்புறத்திலிருந்து முன்பக்கம் வழியாக வலப்புறம் தொடருங்கள். பின்னோக்கித் திரும்ப வேண்டாம்.' },
+  room_mismatch: { en: 'This view does not match the saved room photo. Show the same area clearly and try again.', ta: 'இந்தக் காட்சி சேமித்த அறைப் புகைப்படத்துடன் பொருந்தவில்லை. அதே பகுதியை தெளிவாகக் காட்டி மீண்டும் முயற்சிக்கவும்.' },
+  visual_continuity: { en: 'Keep the same room area in view while turning slowly toward the next saved view.', ta: 'அடுத்த சேமித்த காட்சியை நோக்கி மெதுவாகத் திரும்பும்போது, அதே அறைப் பகுதி தொடர்ந்து தெரியும்படி வைத்திருங்கள்.' },
+  remove_object: { en: 'Remove the detected object and show the same area clearly.', ta: 'கண்டறியப்பட்ட பொருளை அகற்றி அதே பகுதியை தெளிவாகக் காட்டுங்கள்.' },
   photo_error: { en: 'Unable to analyze this photo. Please try again.', ta: 'இந்தப் புகைப்படத்தை ஆய்வு செய்ய முடியவில்லை. மீண்டும் முயற்சிக்கவும்.' },
   photo_timeout: { en: 'Photo analysis is taking too long. Please try again.', ta: 'புகைப்பட ஆய்வு அதிக நேரம் எடுக்கிறது. மீண்டும் முயற்சிக்கவும்.' },
   photo_upload_failed: { en: 'Photo could not be uploaded. Please try again.', ta: 'புகைப்படத்தை பதிவேற்ற முடியவில்லை. மீண்டும் முயற்சிக்கவும்.' },
@@ -60,18 +70,18 @@ const CATALOG = {
   move_up: { en: 'Raise the camera a little.', ta: 'கேமராவை கொஞ்சம் உயர்த்துங்கள்.' },
   coverage_pending: { en: 'Almost there. Keep scanning the remaining area.', ta: 'கிட்டத்தட்ட முடிந்தது. மீதமுள்ள பகுதியை ஸ்கேன் செய்யுங்கள்.' },
   coverage_incomplete: { en: 'Some areas were not covered. Please continue scanning.', ta: 'சில பகுதிகள் மறைக்கப்படவில்லை. தொடர்ந்து ஸ்கேன் செய்யுங்கள்.' },
-  scan_complete: { en: 'Great. 360 degree scan is complete.', ta: 'நன்று. 360 டிகிரி ஸ்கேன் முடிந்தது.' },
+  scan_complete: { en: 'Great. 180 degree room scan is verified. Show your hand and laptop next.', ta: 'நன்று. 180 டிகிரி அறை ஸ்கேன் சரிபார்க்கப்பட்டது. அடுத்து உங்கள் கையும் மடிக்கணினியும் காட்டுங்கள்.' },
   all_done: { en: 'Room verification complete. Please continue.', ta: 'அறை சரிபார்ப்பு முடிந்தது. தொடருங்கள்.' },
   redo_step: { en: 'Retaking this step. Show the area clearly.', ta: 'இந்தப் படியை மீண்டும் செய்கிறோம். அந்தப் பகுதியை தெளிவாகக் காட்டுங்கள்.' },
   move_further: { en: 'Please move the camera further to the requested side.', ta: 'கேமராவை கேட்டுள்ள திசைக்கு இன்னும் நகர்த்தி மீண்டும் படம் எடுக்கவும்.' },
   move_left_further: { en: 'Please move further to the left. The current view is too similar to the previous view.', ta: 'இன்னும் கொஞ்சம் இடது பக்கம் நகர்த்துங்கள். தற்போதைய காட்சி முந்தைய காட்சியைப் போலவே உள்ளது.' },
   move_back_further: { en: 'Please move further to the back. The current view is too similar to the previous view.', ta: 'இன்னும் சிறிது பின்பக்கம் திருப்புங்கள். தற்போதைய காட்சி முந்தைய காட்சியைப் போலவே உள்ளது.' },
   move_right_further: { en: 'Please move further to the right. The current view is too similar to the previous view.', ta: 'இன்னும் கொஞ்சம் வலது பக்கம் நகர்த்துங்கள். தற்போதைய காட்சி முந்தைய காட்சியைப் போலவே உள்ளது.' },
-  object_detected_360: { en: 'A prohibited object was detected. Please remove it from the room.', ta: 'அனுமதிக்கப்படாத பொருள் கண்டறியப்பட்டுள்ளது. அதை அகற்றவும்.' },
-  scan_restarted: { en: 'Please return to the starting position. We will restart the room scan.', ta: 'தொடக்க நிலைக்கு மீண்டும் திரும்புங்கள்.' },
+  object_detected: { en: 'A prohibited object was detected. Please remove it from the room.', ta: 'அனுமதிக்கப்படாத பொருள் கண்டறியப்பட்டுள்ளது. அதை அகற்றவும்.' },
+  scan_restarted: { en: 'Point at the left view again. We will restart the 180 degree scan.', ta: 'மீண்டும் இடது காட்சியை காட்டுங்கள். 180 டிகிரி ஸ்கேனை மீண்டும் தொடங்குவோம்.' },
   rotation_unconfirmed: { en: 'Camera movement could not be tracked. Keep the phone upright, point across the room, and turn slowly with overlapping views.', ta: 'கேமரா அசைவைக் கண்காணிக்க முடியவில்லை. போனை நேராகப் பிடித்து அறையைக் காட்டுங்கள். முந்தைய காட்சியின் ஒரு பகுதி தெரியும்படி மெதுவாகச் சுழற்றுங்கள்.' },
   laptop_camera_required: { en: "The laptop camera could not capture movement samples. Please allow camera access on the laptop and capture this photo again.", ta: "மடிக்கணினி கேமராவ் இயங்கும் நிகழ்வ்களைக் கைப்பறிய முடியவில்லை. மடிக்கணினியில் கேமரா அணுகலைக் கொடுங்கள் மீண்டும் படம் எடுக்கவும்." },
-  laptop_motion_missing: { en: 'Movement could not be confirmed by the laptop camera. Please turn the phone slowly and try again.', ta: 'மடிக்கணினி கேமராவில் அசைவை உறுதிப்படுத்த முடியவில்லை. கைப்பேசியை மெதுவாகத் திருப்பி மீண்டும் முயற்சிக்கவும்.' },
+  laptop_motion_missing: { en: 'Stay visible in the laptop camera and move the phone slowly so your arm movement can be confirmed.', ta: 'மடிக்கணினி கேமராவில் நீங்கள் தெரியும்படி இருங்கள். கை அசைவை உறுதிப்படுத்த கைப்பேசியை மெதுவாக நகர்த்துங்கள்.' },
   laptop_participant_not_visible: { en: "You cannot be seen in the laptop camera. Step into the laptop camera's view and keep turning the phone slowly.", ta: "மடிக்கணினி கேமராவில் உங்களைக் காண முடியவில்லை. மடிக்கணினி கேமராவின் பார்வையில் சென்று கைப்பேசியை மெதுவாகச் சுழற்றுங்கள்." },
   movement_unconfirmed: { en: 'Movement could not be confirmed by the laptop camera. Please turn the phone slowly and try again.', ta: 'மடிக்கணினி கேமராவில் அசைவை உறுதிப்படுத்த முடியவில்லை. கைப்பேசியை மெதுவாகத் திருப்பி மீண்டும் முயற்சிக்கவும்.' },
   mobile_turn_further: { en: 'Please point the mobile camera further to the left.', ta: 'மொபைல் கேமராவை இன்னும் இடது பக்கம் திருப்பவும்.' },
@@ -146,17 +156,18 @@ function cancelActive() {
   }
 }
 
-export function speakHireRoomVoice({ priority = 'GENERAL', language, key, message, taMessage, rate = 0.95, volume = 1 }) {
+export function speakHireRoomVoice({ priority = 'GENERAL', language, key, message, taMessage, rate = 0.95, volume = 1, force = false }) {
   if (typeof window === 'undefined' || !window.speechSynthesis) return;
   const lang = language || getHireRoomLanguage();
-  const text = (lang === 'ta-IN' && taMessage) ? taMessage
+  const text = lang.startsWith('ta')
+    ? (taMessage || hireRoomMessage(lang, key) || message || key)
     : (message || hireRoomMessage(lang, key) || key);
   const p = PRIORITIES[priority] ?? PRIORITIES.GENERAL;
   const speechKey = key || text;
   const now = Date.now();
   const cached = spokenCache.get(speechKey);
   const isMoreUrgent = p < (cached ? cached.priority : Infinity);
-  if (cached && now - cached.last < DEDUP_WINDOW_MS && !isMoreUrgent) return;
+  if (!force && cached && now - cached.last < DEDUP_WINDOW_MS && !isMoreUrgent) return;
   spokenCache.set(speechKey, { last: now, priority: p });
   if (spokenCache.size > 24) {
     for (const [cacheKey, value] of spokenCache) {

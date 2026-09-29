@@ -235,7 +235,7 @@ test('socket handshake ACK follows authorized membership and rejects wrong role/
   require('../src/socket/assessmentVerificationEvents')(io,socket);
   await handlers['assessment_verif:join']({sessionId:'verification',role:'mobile_camera'},ack);
   expect(joined).toEqual(['assessment_verif_verification']);
-  expect(ack).toHaveBeenCalledWith({ok:true,sessionId:'verification'});
+  expect(ack).toHaveBeenCalledWith({ok:true,sessionId:'verification',workspaceReady:false});
   const relay=require('../src/socket/crossInstance'); relay.relayEmit.mockClear();
   await handlers['assessment_verif:offer']({sessionId:'someone-else',targetSocketId:'laptop',offer:{type:'offer'}});
   await handlers['assessment_verif:offer']({sessionId:'verification',targetSocketId:'intruder',offer:{type:'offer'}});
@@ -263,11 +263,16 @@ test('paired Hire room verification remains active after the QR scan window', as
     .toMatchObject({ isExpired: true, status: 'EXPIRED' });
 });
 
-test('Hire verification admits visible hands, laptop and workspace without person detection', async () => {
+const approvedHireRoom = () => ({ policy: { enabled: true }, roomScanClear: true,
+  roomScanCompletedAt: new Date().toISOString(), roomScanSampleIds: Array(5).fill('/uploads/sector.jpg'),
+  roomSimilarityReport: { result: 'PASS' }, roomPostScanReport: { result: 'PASS', arcDegrees: 180, reviewedSectors: 5,
+    checks: { coverage: true, baseline: true, person: true, computer: true, unauthorizedObjects: true } } });
+
+test('Hire verification admits hand and laptop without face or desk only after the reviewed room', async () => {
   const v = mobile(), s = sessions[1];
   v.status = 'PAIRED';
   models.AssessmentVerificationSession.findOne.mockResolvedValue(v);
-  s.metadata.hireProctoring = { policy: { enabled: true }, roomScanClear: true };
+  s.metadata.hireProctoring = approvedHireRoom();
   const attempt = { startedAt: new Date(Date.now() - 3_600_000), update: jest.fn(async function (values) { Object.assign(this, values); }) };
   const lock = { expiresAt: new Date(Date.now() + 24 * 3_600_000), update: jest.fn(async function (values) { Object.assign(this, values); }) };
   models.CodingAttempt.findOne.mockResolvedValue(attempt);
@@ -278,8 +283,14 @@ test('Hire verification admits visible hands, laptop and workspace without perso
   const args = { participantId: 7, assessmentType: 'CODING', assessmentId: 10, attemptId: 17, sessionId: v.session_id };
   expect((await verification.verifySessionForStart(args)).valid).toBe(false);
   s.metadata.mobileEvidence = { framing_mode: 'HIRE_WORKSPACE', eligible: true,
-    person_detected: false, hands_detected: true, laptop_detected: true, workspace_detected: true,
+    person_detected: false, hands_detected: true, laptop_detected: true, workspace_detected: false,
     receivedAt: Date.now(), verificationSessionId: v.session_id, pairingVersion };
+  s.metadata.mobileEvidence.hands_detected = false;
+  expect((await verification.verifySessionForStart(args)).valid).toBe(false);
+  s.metadata.mobileEvidence.hands_detected = true;
+  s.metadata.mobileEvidence.laptop_detected = false;
+  expect((await verification.verifySessionForStart(args)).valid).toBe(false);
+  s.metadata.mobileEvidence.laptop_detected = true;
   s.metadata.mobileEvidence.receivedAt -= 6000;
   expect(await verification.getSessionStatus({ sessionId: v.session_id, participantId: 7 })).toMatchObject({
     hireFramingVerified: true, isFullyVerified: false,
@@ -301,7 +312,7 @@ test('Hire mobile frames request workspace framing while regular frames keep the
   s.metadata.hireProctoring = { policy: { enabled: true }, roomScanClear: false };
   expect((await service.validateMobile({ sessionId: s.sessionId, participantId: 7, frame: 'jpeg', verificationSession: v })).pendingRoomScan).toBe(true);
   expect(axios.post).toHaveBeenCalledTimes(1);
-  s.metadata.hireProctoring.roomScanClear = true;
+  s.metadata.hireProctoring = approvedHireRoom();
   await service.validateMobile({ sessionId: s.sessionId, participantId: 7, frame: 'jpeg', verificationSession: v });
   expect(axios.post.mock.calls.at(-1)[1].hireFraming).toBe(true);
 });

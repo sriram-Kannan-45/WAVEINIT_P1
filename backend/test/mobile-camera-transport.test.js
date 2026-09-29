@@ -124,6 +124,37 @@ test('Hire room previews skip workspace inference and one binary capture uses ph
     expect(relay.relayEmit.mock.calls.some(call => call[3] === 'assessment_verif:laptop_evidence')).toBe(false);
 
     const photo = Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(100), Buffer.from([0xff, 0xd9])]);
+    const scanFrame = `data:image/jpeg;base64,${photo.toString('base64')}`;
+    const recordingStarted = once(laptop, 'assessment_verif:scan_recording_control');
+    expect(await emitAck(phone, 'assessment_verif:scan_recording_control', { sessionId: 'hire-room',
+      mobileStreamId: 'mobile-stream-test-01', action: 'start' })).toEqual({ ok: true });
+    expect(await recordingStarted).toMatchObject({ action: 'start' });
+    const phoneSample = once(laptop, 'assessment_verif:scan_sample');
+    expect(await emitAck(phone, 'assessment_verif:scan_sample', { sessionId: 'hire-room',
+      mobileStreamId: 'mobile-stream-test-01', capturedAt: Date.now(), frame: scanFrame,
+      orientation: { yaw: 94, pitch: 2 } })).toEqual({ ok: true });
+    expect(await phoneSample).toMatchObject({ frame: scanFrame, orientation: { yaw: 94, pitch: 2 } });
+    expect(register.consumeScanSamples('hire-room', phone.id, [scanFrame])).toEqual([{ yaw: 94, pitch: 2 }]);
+    expect(register.consumeScanSamples('hire-room', phone.id, [scanFrame])).toBeNull();
+    for (const yaw of [100, 101]) {
+      const relaySample = once(laptop, 'assessment_verif:scan_sample');
+      expect(await emitAck(phone, 'assessment_verif:scan_sample', { sessionId: 'hire-room',
+        mobileStreamId: 'mobile-stream-test-01', capturedAt: Date.now(), frame: scanFrame,
+        orientation: { yaw } })).toEqual({ ok: true });
+      await relaySample;
+    }
+    expect(register.consumeScanSamples('hire-room', phone.id, [scanFrame, scanFrame]))
+      .toEqual([{ yaw: 100, pitch: null }, { yaw: 101, pitch: null }]);
+    expect(await emitAck(laptop, 'assessment_verif:scan_sample', { sessionId: 'hire-room',
+      mobileStreamId: 'mobile-stream-test-01', capturedAt: Date.now(), frame: scanFrame }))
+      .toMatchObject({ ok: false });
+    const recordingFinished = once(laptop, 'assessment_verif:scan_recording_control');
+    expect(await emitAck(phone, 'assessment_verif:scan_recording_control', { sessionId: 'hire-room',
+      mobileStreamId: 'mobile-stream-test-01', action: 'finish' })).toEqual({ ok: true });
+    expect(await recordingFinished).toMatchObject({ action: 'finish' });
+    expect(await emitAck(phone, 'assessment_verif:scan_sample', { sessionId: 'hire-room',
+      mobileStreamId: 'mobile-stream-test-01', capturedAt: Date.now(), frame: scanFrame }))
+      .toMatchObject({ ok: false });
     const capture = { sessionId: 'hire-room', step: 'front', captureId: 'capture-1234', photo,
       capturedAt: Date.now(), mobileStreamId: 'mobile-stream-test-01',
       preview: 'data:image/jpeg;base64,QQ==' };
@@ -155,11 +186,22 @@ test('Hire room previews skip workspace inference and one binary capture uses ph
     expect(retry).toMatchObject({ ok: false, errorCode: 'AI_TIMEOUT' });
     expect(await failed).toMatchObject({ status: 'ERROR', step: 'left', errorCode: 'AI_TIMEOUT' });
     monitor.metadata.hireProctoring.roomScanClear = true;
+    monitor.metadata.hireProctoring.roomScanCompletedAt = new Date().toISOString();
+    monitor.metadata.hireProctoring.roomPostScanReport = { result: 'PASS', arcDegrees: 180, reviewedSectors: 5,
+      checks: { coverage: true, baseline: true, person: true, computer: true, unauthorizedObjects: true } };
+    monitor.metadata.hireProctoring.roomScanSampleIds = Array(5).fill('/uploads/sector.jpg');
+    monitor.metadata.hireProctoring.roomSimilarityReport = { result: 'PASS' };
+    // A phone reconnecting after the HTTP scan verdict recovers the next
+    // step from persisted evidence even when it missed the laptop event.
+    const rejoined = connect(url, { auth: { mobile: true }, transports: ['polling'], forceNew: true }); clients.push(rejoined);
+    await once(rejoined, 'connect');
+    expect(await emitAck(rejoined, 'assessment_verif:join', { sessionId: 'hire-room', role: 'mobile_camera' }))
+      .toMatchObject({ ok: true, workspaceReady: true });
     monitoring.validateMobile.mockResolvedValue({ success: true, composition_state: 'VALID',
       user_message: 'Hands, laptop, and workspace visible.', mobile_evidence: { framing_mode: 'HIRE_WORKSPACE', eligible: true } });
     await new Promise(resolve => setTimeout(resolve, 550));
     const framingResult = once(laptop, 'assessment_verif:yolo_detection');
-    expect(await emitAck(phone, 'assessment_verif:frame', { sessionId: 'hire-room', frame: 'workspace-frame' })).toEqual({ ok: true });
+    expect(await emitAck(rejoined, 'assessment_verif:frame', { sessionId: 'hire-room', frame: 'workspace-frame' })).toEqual({ ok: true });
     expect(await framingResult).toMatchObject({ success: true, mobileEvidence: { eligible: true } });
     expect(monitoring.validateMobile).toHaveBeenCalledTimes(1);
   } finally {

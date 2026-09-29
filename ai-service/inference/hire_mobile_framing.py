@@ -1,10 +1,9 @@
-"""Hire-only mobile framing policy. It never uses person or body presence as a gate."""
+"""Hire mobile framing gate: visible hand and laptop after room review."""
 
 import time
 
 CONFIDENCE = 0.35
 VALID_FRAMES = 2
-LOSS_FRAMES = 3
 MAX_FRAME_GAP = 5.0
 
 
@@ -57,34 +56,33 @@ def evaluate_hire_mobile(detections, hand_landmarks, width, height, state, now=N
         )
         workspace_visible = laptop_area <= 0.72 and surrounding and hand_near_laptop
 
-    present = bool(laptops and hands_visible and workspace_visible)
+    # The room scan already reviews person presence. This phone position only
+    # has to prove a visible hand and laptop; it can point toward the keyboard.
+    # Multiple people/devices and prohibited objects still invalidate a view.
+    present = bool(len(persons) <= 1 and len(laptops) == 1 and hands_visible and
+                   not phones and not books)
     state["valid_frames"] = state.get("valid_frames", 0) + 1 if present else 0
-    state["loss_frames"] = 0 if present else state.get("loss_frames", 0) + 1
     state["phone_frames"] = state.get("phone_frames", 0) + 1 if phones else 0
-    if state["valid_frames"] >= VALID_FRAMES:
-        state["eligible"] = True
-    elif state["loss_frames"] >= LOSS_FRAMES:
-        state["eligible"] = False
+    state["eligible"] = state["valid_frames"] >= VALID_FRAMES
     eligible = bool(state.get("eligible", False))
 
-    other = "MULTIPLE_FACES" if len(persons) > 2 else "SECONDARY_DEVICE" if len(laptops) > 1 else "BOOK_NOTES_DETECTED" if books else None
+    other = "MULTIPLE_PEOPLE" if len(persons) > 1 else "SECONDARY_DEVICE" if len(laptops) > 1 else "BOOK_NOTES_DETECTED" if books else None
     state["other_frames"] = state.get("other_frames", 0) + 1 if other and state.get("other") == other else (1 if other else 0)
     state["other"] = other
 
-    missing = None if present else "LAPTOP" if not laptops else "HANDS" if not hands_visible else "WORKSPACE"
+    missing = None if present else "LAPTOP" if not laptops else "HANDS" if not hands_visible else None
     guidance = {
         "LAPTOP": ("WAITING_FOR_LAPTOP", "Please adjust the phone so your laptop is visible."),
-        "HANDS": ("WAITING_FOR_HANDS", "Please keep both hands visible near your workspace."),
-        "WORKSPACE": ("WAITING_FOR_WORKSPACE", "Please show your laptop and workspace clearly."),
+        "HANDS": ("WAITING_FOR_HANDS", "Please keep a hand visible beside your laptop."),
     }
     composition, message = guidance[missing] if missing else (
-        ("VALID", "Hands, laptop, and workspace visible.") if eligible else
-        ("POSITIONING_REQUIRED", "Hold the camera steady while your workspace is verified."))
+        ("VALID", "Hand and laptop visible.") if eligible else
+        ("POSITIONING_REQUIRED", "Keep your hand and laptop in view while verification finishes."))
 
     return {
         "eligible": eligible,
         "framing_mode": "HIRE_WORKSPACE",
-        "person_detected": bool(persons),  # observation only; never required
+        "person_detected": bool(persons),
         "hand_count": len(hands),
         "hands_detected": hands_visible,
         "laptop_detected": bool(laptops),
@@ -94,7 +92,7 @@ def evaluate_hire_mobile(detections, hand_landmarks, width, height, state, now=N
         "phone_confidence": max((p["confidence"] for p in phones), default=0),
         "composition_state": composition,
         "user_message": message,
-        "in_loss_grace": eligible and not present,
+        "in_loss_grace": False,
         "other_violation": other if state["other_frames"] >= VALID_FRAMES else None,
         "other_confidence": max((item.get("confidence", 0) for item in detections), default=0),
     }

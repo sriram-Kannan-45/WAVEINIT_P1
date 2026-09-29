@@ -512,7 +512,7 @@ class MonitoringEngineService {
 
     if (session.mobileEnabled && ['QUIZ', 'CODING'].includes(session.contextType) && !session.metadata?.mobileAdmission) {
       throw new Error(session.metadata?.hireProctoring?.policy?.enabled === true
-        ? 'Complete mobile hands, laptop, and workspace verification before starting the test.'
+        ? 'Complete mobile hand and laptop verification before starting the test.'
         : 'Complete mobile person and laptop verification before starting the test.');
     }
 
@@ -1074,7 +1074,8 @@ class MonitoringEngineService {
   }
 
   async validateAssessmentMobile({ session, verificationSession, frame }) {
-    if (session.metadata?.hireProctoring?.policy?.enabled === true && session.metadata.hireProctoring.roomScanClear !== true) {
+    if (session.metadata?.hireProctoring?.policy?.enabled === true &&
+        !require('./hireProctoringPolicy').roomScanApproved(session.metadata.hireProctoring)) {
       return { success: false, pendingRoomScan: true };
     }
     this.mobileFrameJobs ||= new Set();
@@ -1094,6 +1095,14 @@ class MonitoringEngineService {
         return { success: false, composition_state: 'DISCONNECTED' };
       }
       const evidence = { ...data.mobile_evidence, receivedAt, verificationSessionId: verificationSession.session_id, pairingVersion: crypto.createHash('sha256').update(verificationSession.token).digest('hex') };
+      if (session.metadata?.hireProctoring?.policy?.enabled === true &&
+          !require('./hireProctoringPolicy').hireWorkspaceApproved(evidence)) {
+        evidence.eligible = false;
+        if (data.composition_state === 'VALID') {
+          data.composition_state = 'POSITIONING_REQUIRED';
+          data.user_message = 'Show your hand and laptop clearly.';
+        }
+      }
       // Save a bounded freshness lease, not a frame history. Transitions save
       // immediately; unchanged evidence saves at most once every two seconds.
       await sequelize.transaction(async transaction => {
@@ -2246,7 +2255,22 @@ class MonitoringEngineService {
         identityVerifiedAt: session.metadata.hireProctoring.identityVerifiedAt || null,
         livenessPassed: session.metadata.hireProctoring.livenessPassed === true,
         roomScanCompletedAt: session.metadata.hireProctoring.roomScanCompletedAt || null,
-        roomScanClear: session.metadata.hireProctoring.roomScanClear === true,
+        roomScanClear: require('./hireProctoringPolicy').roomScanApproved(session.metadata.hireProctoring),
+        roomReference: session.metadata.hireProctoring.roomReference ? {
+          sessionId: session.metadata.hireProctoring.roomReference.sessionId,
+          referenceCreatedAt: session.metadata.hireProctoring.roomReference.referenceCreatedAt,
+          photos: (session.metadata.hireProctoring.roomReference.photos || []).map(
+            ({ stepId, direction, imageId, capturedAt, qualityScore }) =>
+              ({ stepId, direction, imageId, capturedAt, qualityScore })),
+        } : null,
+        roomSimilarityReport: session.metadata.hireProctoring.roomSimilarityReport || null,
+        roomPostScanReport: session.metadata.hireProctoring.roomPostScanReport || null,
+        roomScanSampleIds: session.metadata.hireProctoring.roomScanSampleIds || [],
+        roomScanEvidenceHistory: session.metadata.hireProctoring.roomScanEvidenceHistory || [],
+        roomScanCoverage: session.metadata.hireProctoring.roomScanCoverage || 0,
+        roomScanSectors: session.metadata.hireProctoring.roomScanSectors || [],
+        roomObjectEvents: session.metadata.hireProctoring.roomObjectEvents || [],
+        roomCaptureAttempts: session.metadata.hireProctoring.roomCaptureAttempts || [],
         lastIdentityCheckAt: session.metadata.hireProctoring.lastIdentityCheckAt || null,
       } : null,
       session: {

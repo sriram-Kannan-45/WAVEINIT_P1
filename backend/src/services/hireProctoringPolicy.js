@@ -26,14 +26,24 @@ const DEFAULT_POLICY = Object.freeze({
   roomScanMinFrames: 6,
   evidenceMode: 'SCREENSHOT',
   roomScan360Enabled: true,
-  roomScanCoverageThreshold: 85,
+  roomScanCoverageThreshold: 100,
   // Accept bar for a SINGLE guided room photo, as a quality score out of 100.
   // Deliberately separate from `roomScanCoverageThreshold`, which is the
-  // percentage of a 360-degree sweep that must be covered. A room photo only
+  // percentage of the guided 180-degree sweep that must be covered. A room photo only
   // has to prove that a room is visible, so this bar is much lower: a dim,
   // plain-walled or empty room is legitimate evidence and must not be retaken
-  // forever. The 360 sweep keeps its own stricter, unrelated threshold.
+  // forever. The sweep keeps its own stricter, unrelated threshold.
   roomPhotoQualityThreshold: 40,
+  // How similar one guided photo may be to an earlier one before it counts as
+  // a duplicate view, and how close a reviewed sweep frame has to sit to the
+  // matching saved room photo. Both are deliberately forgiving: the saved photo
+  // is a reference, not a pixel template, so normal lighting, perspective and
+  // movement differences must not fail a legitimate sweep.
+  roomDuplicateSimilarityThreshold: 0.60,
+  roomReferenceSimilarityThreshold: 0.50,
+  roomObjectDetectionFrames: 2,
+  roomObjectClearFrames: 3,
+  roomSameAreaSimilarityThreshold: 0.65,
 });
 
 const bool = (value, fallback) => typeof value === 'boolean' ? value : fallback;
@@ -63,6 +73,11 @@ function normalizePolicy(input = {}) {
     roomScan360Enabled: bool(input.roomScan360Enabled, DEFAULT_POLICY.roomScan360Enabled),
     roomScanCoverageThreshold: Math.round(number(input.roomScanCoverageThreshold, DEFAULT_POLICY.roomScanCoverageThreshold, 50, 100)),
     roomPhotoQualityThreshold: Math.round(number(input.roomPhotoQualityThreshold, DEFAULT_POLICY.roomPhotoQualityThreshold, 20, 90)),
+    roomDuplicateSimilarityThreshold: number(input.roomDuplicateSimilarityThreshold, DEFAULT_POLICY.roomDuplicateSimilarityThreshold, 0.35, 0.90),
+    roomReferenceSimilarityThreshold: number(input.roomReferenceSimilarityThreshold, DEFAULT_POLICY.roomReferenceSimilarityThreshold, 0.30, 0.90),
+    roomObjectDetectionFrames: Math.round(number(input.roomObjectDetectionFrames, DEFAULT_POLICY.roomObjectDetectionFrames, 2, 5)),
+    roomObjectClearFrames: Math.round(number(input.roomObjectClearFrames, DEFAULT_POLICY.roomObjectClearFrames, 2, 6)),
+    roomSameAreaSimilarityThreshold: number(input.roomSameAreaSimilarityThreshold, DEFAULT_POLICY.roomSameAreaSimilarityThreshold, 0.4, 0.9),
   };
 }
 
@@ -103,4 +118,20 @@ async function resolvePolicy(contextType, contextId, participantId = null) {
   return { isHire: true, workflow, policy: normalizePolicy(workflow.proctoring_config || {}), assigned };
 }
 
-module.exports = { DEFAULT_POLICY, SUPPORTED_LANGUAGES, HIRE_VOICE_LANGUAGES, normalizePolicy, findWorkflow, resolvePolicy };
+function roomScanApproved(state) {
+  const report = state?.roomPostScanReport;
+  return state?.roomScanClear === true && !!state.roomScanCompletedAt &&
+    report?.arcDegrees === 180 && report.result === 'PASS' && report.reviewedSectors === 5 &&
+    ['coverage', 'baseline', 'person', 'computer', 'unauthorizedObjects'].every(
+      key => report.checks?.[key] === true) &&
+    Array.isArray(state.roomScanSampleIds) && state.roomScanSampleIds.length === 5 &&
+    state.roomSimilarityReport?.result === 'PASS';
+}
+
+function hireWorkspaceApproved(evidence) {
+  return evidence?.framing_mode === 'HIRE_WORKSPACE' && evidence.eligible === true &&
+    evidence.hands_detected === true && evidence.laptop_detected === true &&
+    !evidence.other_violation;
+}
+
+module.exports = { DEFAULT_POLICY, SUPPORTED_LANGUAGES, HIRE_VOICE_LANGUAGES, normalizePolicy, findWorkflow, resolvePolicy, roomScanApproved, hireWorkspaceApproved };

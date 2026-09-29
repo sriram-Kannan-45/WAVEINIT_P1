@@ -21,6 +21,7 @@ import {
   Wifi,
   SwitchCamera,
   Code2,
+  Volume2,
 } from 'lucide-react';
 import { API_BASE, BACKEND_ORIGIN } from '../../api/api';
 import { mobileCameraStatus } from '../../utils/mobileCameraStatus.mjs';
@@ -163,13 +164,59 @@ function AssessmentMobileJoinContent() {
 const [transportError, setTransportError] = useState(null);
   const [compositionWarning, setCompositionWarning] = useState(null);
   const [roomState, setRoomState] = useState(null);
+  const [scanRecording, setScanRecording] = useState(false);
+  const [scanReviewPending, setScanReviewPending] = useState(false);
+  const [scanRecordSeconds, setScanRecordSeconds] = useState(0);
+  const [scanControlError, setScanControlError] = useState('');
+  const scanRecordingRef = useRef(false);
+  const scanControlBusyRef = useRef(false);
+  const [workspaceReady, setWorkspaceReady] = useState(false);
+  const workspaceReadyRef = useRef(false);
   const roomStateRef = useRef(null);
+  useEffect(() => {
+    workspaceReadyRef.current = false;
+    setWorkspaceReady(false);
+    roomStateRef.current = null;
+    setRoomState(null);
+    scanRecordingRef.current = false;
+    setScanRecording(false);
+    setScanReviewPending(false);
+  }, [info?.sessionId]);
+  useEffect(() => {
+    if (roomState?.phase === 'scan360') return;
+    scanRecordingRef.current = false;
+    setScanRecording(false);
+    setScanReviewPending(false);
+  }, [roomState?.phase]);
+  useEffect(() => {
+    // `flag` and `retry` both re-arm recording; only the instruction differs,
+    // and a flagged scan must be explained rather than shown as a blank reset.
+    if (['retry', 'flag', 'ready'].includes(roomState?.recordingStage)) {
+      setScanReviewPending(false);
+      setScanControlError('');
+    }
+  }, [roomState?.recordingStage]);
+  useEffect(() => {
+    if (!scanReviewPending) return undefined;
+    const timer = setTimeout(() => {
+      setScanReviewPending(false);
+      setScanControlError('Review did not return. Start a new recording and try again.');
+    }, 75000);
+    return () => clearTimeout(timer);
+  }, [scanReviewPending]);
+  useEffect(() => {
+    if (!scanRecording) return undefined;
+    const timer = setInterval(() => setScanRecordSeconds(value => value + 1), 1000);
+    return () => clearInterval(timer);
+  }, [scanRecording]);
   const [roomCaptureStatus, setRoomCaptureStatus] = useState('CAPTURE_READY');
   const [roomCaptureError, setRoomCaptureError] = useState('');
   const [roomPhotoPreview, setRoomPhotoPreview] = useState(null);
   const roomCaptureBusyRef = useRef(false);
   const roomUploadAcceptedRef = useRef(null);
   const mobileStreamIdRef = useRef(crypto.randomUUID());
+  const deviceOrientationRef = useRef(null);
+  const orientationPermissionRef = useRef(false);
   const overlayVideoRef = useRef(null);
   const lastDesktopReceiptRef = useRef(0);
   const retryJoinRef = useRef(null);
@@ -191,6 +238,18 @@ const [transportError, setTransportError] = useState(null);
   const offerTargetRef = useRef(null);
   const lastOfferAtRef = useRef(0);
   const framePendingRef = useRef(false);
+  const sendVerificationFrameRef = useRef(null);
+  const lastScanSampleAtRef = useRef(0);
+  useEffect(() => {
+    const onOrientation = event => {
+      if (Number.isFinite(event.alpha)) deviceOrientationRef.current = {
+        yaw: event.alpha, pitch: Number.isFinite(event.beta) ? event.beta : null,
+        capturedAt: Date.now(),
+      };
+    };
+    window.addEventListener('deviceorientation', onOrientation);
+    return () => window.removeEventListener('deviceorientation', onOrientation);
+  }, []);
   const mobileCandidateQueueRef = useRef([]);
   const frameIntervalRef = useRef(null);
 
@@ -401,7 +460,7 @@ const [transportError, setTransportError] = useState(null);
   }, []);
 
   const confirmAssessmentEnded = useCallback(async reason => {
-    if (!info?.hireFraming) { handleSessionClosed(reason); return; }
+    if (!info?.hireFraming && !workspaceReadyRef.current) { handleSessionClosed(reason); return; }
     const statusKey = token || info?.token || info?.sessionId;
     if (!statusKey) return;
     try {
@@ -425,7 +484,7 @@ const [transportError, setTransportError] = useState(null);
     // Only check for completion if stream has started
     if (phase !== PHASE.STREAMING) return;
 
-    const interval = setInterval(async () => {
+    const checkStatus = async () => {
       try {
         const url = activeToken
           ? `${API_BASE}/assessment-verification/mobile-status/${activeToken}`
@@ -433,6 +492,10 @@ const [transportError, setTransportError] = useState(null);
         const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
+          if (data?.workspaceReady === true) {
+            workspaceReadyRef.current = true;
+            setWorkspaceReady(true);
+          }
           // STRICT CHECK: ONLY trigger completed if backend explicitly confirms isEnded === true AND terminal status
           const isTerminatedStatus = ['COMPLETED', 'SUBMITTED', 'TERMINATED', 'EVALUATED', 'AUTO_SUBMITTED'].includes(data?.status);
           if (data?.isEnded === true && isTerminatedStatus) {
@@ -443,7 +506,9 @@ const [transportError, setTransportError] = useState(null);
       } catch (e) {
         // Non-blocking network drop
       }
-    }, 4000);
+    };
+    checkStatus();
+    const interval = setInterval(checkStatus, 4000);
 
     return () => clearInterval(interval);
   }, [token, info, phase, handleSessionClosed]);
@@ -463,10 +528,28 @@ const [transportError, setTransportError] = useState(null);
     canvas.height = 480;
     const ctx = canvas.getContext('2d');
 
-frameIntervalRef.current = setInterval(() => {
+    const sendVerificationFrame = (force = false) => {
+      const sensor = deviceOrientationRef.current;
       const p2pLive = !!pcRef.current && pcRef.current.connectionState === 'connected';
       const video = videoRef.current;
-      if (!framePendingRef.current && (!p2pLive || roomState?.complete) && joinedRef.current && video && video.videoWidth > 0 && video.videoHeight > 0 && socketRef.current?.connected) {
+      if (!workspaceReadyRef.current && roomStateRef.current?.phase === 'scan360' && scanRecordingRef.current && joinedRef.current &&
+          video?.videoWidth > 0 && video?.videoHeight > 0 && socketRef.current?.connected &&
+          Date.now() - lastScanSampleAtRef.current >= 450) {
+        try {
+          canvas.width = Math.min(480, video.videoWidth);
+          canvas.height = Math.round(video.videoHeight * canvas.width / video.videoWidth);
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          lastScanSampleAtRef.current = Date.now();
+          socketRef.current.emit('assessment_verif:scan_sample', {
+            sessionId: info.sessionId, mobileStreamId: mobileStreamIdRef.current,
+            capturedAt: lastScanSampleAtRef.current,
+            frame: canvas.toDataURL('image/jpeg', 0.72),
+            orientation: sensor && Date.now() - sensor.capturedAt < 2500
+              ? { yaw: sensor.yaw, pitch: sensor.pitch } : null,
+          });
+        } catch (_) {}
+      }
+      if (!framePendingRef.current && (force || !p2pLive || workspaceReadyRef.current || roomStateRef.current?.complete) && joinedRef.current && video && video.videoWidth > 0 && video.videoHeight > 0 && socketRef.current?.connected) {
         try {
           canvas.width = Math.min(640, video.videoWidth);
           canvas.height = Math.round(video.videoHeight * canvas.width / video.videoWidth);
@@ -486,15 +569,18 @@ frameIntervalRef.current = setInterval(() => {
           });
         } catch (e) {}
       }
-    }, 600); // ~1.6 fps
+    };
+    sendVerificationFrameRef.current = sendVerificationFrame;
+    frameIntervalRef.current = setInterval(sendVerificationFrame, 400); // ~2.5 fps
 
     return () => {
       if (frameIntervalRef.current) {
         clearInterval(frameIntervalRef.current);
         frameIntervalRef.current = null;
       }
+      if (sendVerificationFrameRef.current === sendVerificationFrame) sendVerificationFrameRef.current = null;
     };
-  }, [phase, info?.sessionId, info?.participantId, socketConnected, roomState?.complete]);
+  }, [phase, info?.sessionId, info?.participantId, socketConnected]);
 
   // 2. Setup Socket Connection for real-time synchronization with Laptop (Stable lifecycle)
   const sessionId = info?.sessionId;
@@ -531,6 +617,10 @@ frameIntervalRef.current = setInterval(() => {
         setTransportError(null);
         joinedRef.current = true;
         setSocketConnected(true);
+        if (ack.workspaceReady === true) {
+          workspaceReadyRef.current = true;
+          setWorkspaceReady(true);
+        }
 
       // If camera stream is already live, immediately start WebRTC offer and notify laptop
       if (streamRef.current) {
@@ -561,17 +651,22 @@ frameIntervalRef.current = setInterval(() => {
     });
 socket.on('assessment_verif:yolo_detection', data => {
       const evidence = data?.success ? data.mobileEvidence : null;
-      const status = mobileCameraStatus({ connected: true, evidence, hireFraming: info?.hireFraming === true });
+      const status = mobileCameraStatus({ connected: true, evidence, hireFraming: info?.hireFraming === true || workspaceReadyRef.current });
       setCompositionWarning(status.kind === 'reposition' ? `${status.title}. ${status.message}` : null);
-if (status.kind === 'reposition' && evidence?.framing_mode === 'HIRE_WORKSPACE'
-        && roomStateRef.current?.complete === true
-        && roomStateRef.current?.voiceEnabled === false) {
-        const key = { LAPTOP: 'framing_laptop', HANDS: 'framing_hands', WORKSPACE: 'framing_workspace' }[evidence.guidance_key];
+      if (status.kind === 'reposition' && evidence?.framing_mode === 'HIRE_WORKSPACE' && workspaceReadyRef.current) {
+        const key = { LAPTOP: 'framing_laptop', HANDS: 'framing_hands' }[evidence.guidance_key];
         if (key) speakHireRoomVoice({ priority: 'RETRY', language: roomStateRef.current?.language, key });
       }
     });
+    socket.on('assessment_verif:workspace_ready', data => {
+      if (data?.sessionId !== sessionId || data?.ready !== true) return;
+      workspaceReadyRef.current = true;
+      setWorkspaceReady(true);
+      sendVerificationFrameRef.current?.(true);
+    });
 socket.on('assessment_verif:room_state', data => {
       if (!data || typeof data.state !== 'object') return;
+      if (workspaceReadyRef.current && data.state.complete !== true) return;
       const capturing = roomCaptureBusyRef.current || roomUploadAcceptedRef.current;
       // While a capture/upload is in flight on this device, the laptop's
       // room_state broadcast can race the machine's own ack and regress our
@@ -580,8 +675,10 @@ socket.on('assessment_verif:room_state', data => {
       const next = capturing
         ? { ...data.state, aiStatus: roomStateRef.current?.aiStatus ?? data.state.aiStatus }
         : data.state;
+      const justCompleted = next.complete === true && roomStateRef.current?.complete !== true;
       roomStateRef.current = next;
       setRoomState({ ...next });
+      if (justCompleted) sendVerificationFrameRef.current?.(true);
     });
     socket.on('assessment_verif:room_capture_state', event => {
       if (event?.status === 'ANALYZING' && event.captureId) roomUploadAcceptedRef.current = event.captureId;
@@ -610,6 +707,8 @@ socket.on('assessment_verif:room_state', data => {
       setSocketConnected(false);
       setPeerConnected(false);
       setDesktopReceiving(false);
+      scanRecordingRef.current = false;
+      setScanRecording(false);
       setTransportError('Connection interrupted. Reconnecting…');
     });
 
@@ -714,6 +813,33 @@ socket.on('assessment_verif:room_state', data => {
     };
   }, [sessionId, socketToken, info?.token, info?.hireFraming, token, startWebRTCOffer, confirmAssessmentEnded]);
 
+  const controlScanRecording = action => {
+    if (scanControlBusyRef.current || !socketRef.current?.connected || !joinedRef.current || !cameraActive) return;
+    scanControlBusyRef.current = true;
+    setScanControlError('');
+    // Stop sampling before sending Finish. Socket.IO preserves event order, so
+    // the laptop receives every earlier sample before the finish event.
+    if (action === 'finish') scanRecordingRef.current = false;
+    socketRef.current.timeout(8000).emit('assessment_verif:scan_recording_control', {
+      sessionId: info?.sessionId, mobileStreamId: mobileStreamIdRef.current, action,
+    }, (error, ack) => {
+      scanControlBusyRef.current = false;
+      if (error || !ack?.ok) {
+        setScanControlError(ack?.error || 'Recording control could not reach the laptop. Try again.');
+        if (action === 'finish') {
+          scanRecordingRef.current = false;
+          setScanRecording(false);
+        }
+        return;
+      }
+      const recording = action === 'start';
+      scanRecordingRef.current = recording;
+      setScanRecording(recording);
+      setScanReviewPending(action === 'finish');
+      if (recording) setScanRecordSeconds(0);
+    });
+  };
+
   useEffect(() => {
     if (overlayVideoRef.current && streamRef.current && overlayVideoRef.current.srcObject !== streamRef.current) {
       overlayVideoRef.current.srcObject = streamRef.current;
@@ -732,6 +858,7 @@ socket.on('assessment_verif:room_state', data => {
   }, [roomState?.phase, roomState?.step?.key]);
 
 useEffect(() => {
+    if (workspaceReady) return;
     if (roomState?.phase === 'six' && roomState.step?.key) {
       stopHireRoomVoice();
       // The laptop voices the room flow; the phone only speaks when the
@@ -742,23 +869,27 @@ useEffect(() => {
       stopHireRoomVoice();
       if (roomState.voiceEnabled === false) speakHireRoomVoice({ priority: 'CURRENT_STEP', language: roomState.language, key: 'start_360' });
     }
-  }, [roomState?.phase, roomState?.step?.key, roomState?.language, roomState?.voiceEnabled]);
+  }, [workspaceReady, roomState?.phase, roomState?.step?.key, roomState?.language, roomState?.voiceEnabled]);
 
   useEffect(() => {
+    if (workspaceReady) return;
     if (roomState?.phase !== 'scan360') return;
     const key = roomState.restarted ? 'scan_restarted'
-      : roomState.pendingObject?.objectType ? 'object_detected_360' : null;
+      : roomState.pendingObject?.objectType ? 'object_detected' : null;
     if (key && roomState.voiceEnabled === false) {
       speakHireRoomVoice({ priority: 'CRITICAL', language: roomState.language, key,
         message: roomState.message, taMessage: roomState.taMessage });
     }
-  }, [roomState?.phase, roomState?.pendingObject?.objectType, roomState?.restarted,
+  }, [workspaceReady, roomState?.phase, roomState?.pendingObject?.objectType, roomState?.restarted,
     roomState?.message, roomState?.taMessage, roomState?.language, roomState?.voiceEnabled]);
 
-  useEffect(() => { if (roomState?.voiceEnabled === false) stopHireRoomVoice(); }, [roomState?.voiceEnabled]);
+  useEffect(() => {
+    if (workspaceReady) speakHireRoomVoice({ priority: 'CURRENT_STEP', language: roomState?.language, key: 'workspace_start' });
+  }, [workspaceReady, roomState?.language]);
   useEffect(() => () => stopHireRoomVoice(), []);
 
   useEffect(() => {
+    if (workspaceReady) return;
     if (roomState?.phase !== 'six' || !roomState.step?.key) return;
     if (roomState.aiStatus === 'ANALYZING') {
       setRoomCaptureStatus('ANALYZING');
@@ -771,9 +902,14 @@ useEffect(() => {
       if (roomState.voiceEnabled === false) speakHireRoomVoice({ priority: 'SUCCESS', language: roomState.language,
         key: `${roomState.step.key}_ok`, message: roomState.message, taMessage: roomState.taMessage });
     }
-  }, [roomState?.aiStatus, roomState?.message, roomState?.taMessage, roomState?.step?.key, roomState?.phase, roomState?.language, roomState?.voiceEnabled]);
+  }, [workspaceReady, roomState?.aiStatus, roomState?.message, roomState?.taMessage, roomState?.step?.key, roomState?.phase, roomState?.language, roomState?.voiceEnabled]);
 
   const captureRoomPhoto = useCallback(async () => {
+    if (!orientationPermissionRef.current && typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      orientationPermissionRef.current = true;
+      try { await DeviceOrientationEvent.requestPermission(); } catch (_) { /* visual fallback */ }
+    }
     const step = roomState?.step?.key;
     const video = videoRef.current;
     const socket = socketRef.current;
@@ -835,7 +971,9 @@ useEffect(() => {
       logRoomPhoto('UPLOAD_START', { captureId, step, bytes: photo.size });
       const reply = await new Promise((resolve, reject) => socket.timeout(48000).emit('assessment_verif:room_capture',
         { sessionId: info.sessionId, step, captureId, capturedAt,
-          mobileStreamId: mobileStreamIdRef.current, photo: bytes, preview },
+          mobileStreamId: mobileStreamIdRef.current, photo: bytes, preview,
+          orientation: deviceOrientationRef.current && Date.now() - deviceOrientationRef.current.capturedAt < 2500
+            ? { yaw: deviceOrientationRef.current.yaw, pitch: deviceOrientationRef.current.pitch } : null },
         (error, ack) => error ? reject(roomPhotoError(roomUploadAcceptedRef.current === captureId ? 'AI_TIMEOUT' : 'UPLOAD_FAILED')) : resolve(ack)));
       logRoomPhoto('UPLOAD_COMPLETE', { captureId, step, accepted: reply?.ok === true });
       if (!reply?.ok) throw roomPhotoError(reply?.errorCode || 'SERVER_ERROR');
@@ -1277,6 +1415,7 @@ useEffect(() => {
                   <span>
                     {!cameraLinked ? 'Camera open — connecting to your laptop' : isAssessmentStarted
                       ? 'Assessment in progress — keep this camera connected'
+                      : workspaceReady ? 'Mobile check — show your hand and laptop'
                       : 'Camera Connected — Waiting for assessment to begin'}
                   </span>
                 </span>
@@ -1287,6 +1426,11 @@ useEffect(() => {
                 <button type="button" onClick={() => retryJoinRef.current?.()} style={{ marginLeft: 8 }}>Retry connection</button>
               </div>}
               {cameraLinked && compositionWarning && <div role="status" style={{ padding: 12, background: '#FFFBEB', color: '#92400E', borderRadius: 10 }}>{compositionWarning}</div>}
+              {cameraLinked && workspaceReady && !isAssessmentStarted && <button type="button"
+                onClick={() => speakHireRoomVoice({ priority: 'CURRENT_STEP', language: roomState?.language, key: 'workspace_start', force: true })}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0', padding: '8px 12px' }}>
+                <Volume2 size={18} /> Play hand and laptop instructions
+              </button>}
               {/* Video Preview Container */}
               <div className="wi-mobile-video-wrap">
                 <video
@@ -1356,22 +1500,22 @@ useEffect(() => {
                 </div>
                 <div className="wi-mobile-instruction-content">
                   <h3 className="wi-mobile-instruction-title">
-                    {!cameraLinked ? 'Connecting to Your Laptop' : isAssessmentStarted ? 'Assessment In Progress' : 'Camera Connected & Waiting'}
+                    {!cameraLinked ? 'Connecting to Your Laptop' : isAssessmentStarted ? 'Assessment In Progress' : workspaceReady ? 'Hand & Laptop Check' : 'Camera Connected & Waiting'}
                   </h3>
                   <p className="wi-mobile-instruction-text">
                     {!cameraLinked ? (
                       <>Your camera is open. Keep both pages open while the laptop connects. If it stays here, refresh the verification page on your laptop and scan its current QR code.</>
                     ) : isAssessmentStarted ? (
                       <>
-                        <strong>Your assessment is currently in progress on your laptop.</strong> {info?.hireFraming
-                          ? 'Position your phone so both hands, your laptop, and your desk or workspace are clearly visible.'
+                        <strong>Your assessment is currently in progress on your laptop.</strong> {info?.hireFraming || workspaceReady
+                          ? 'Position your phone so your hand and laptop are clearly visible.'
                           : 'Position your phone so your face, upper body, and laptop screen are clearly visible.'} Keep this page open.
                       </>
-                    ) : info?.hireFraming && roomState?.complete ? (
-                      <><strong>Room verification is complete.</strong> Show both hands, your laptop, and your desk or workspace to finish the workspace check.</>
+                    ) : workspaceReady || roomState?.complete ? (
+                      <><strong>Room verification is complete.</strong> Show your hand and laptop together to finish the mobile check.</>
                     ) : (
                       <>
-                        <strong>Your phone camera is paired and streaming.</strong> Complete the guided room photos and 360° scan. Keep this page open.
+                        <strong>Your phone camera is paired and streaming.</strong> Complete the guided room photos and 180° scan. Keep this page open.
                       </>
                     )}
                   </p>
@@ -1474,25 +1618,41 @@ useEffect(() => {
       </div>
 
       {/* AI-Guided Room Verification Full-Screen Overlay (driven by the laptop) */}
-      {phase === PHASE.STREAMING && roomState && roomState.phase && !roomState.complete && (
+      {phase === PHASE.STREAMING && roomState && roomState.phase && !roomState.complete && !workspaceReady && (
         <div className="wi-room-overlay">
           <div className="wi-room-overlay-inner">
             <div className="wi-room-overlay-shield">
               <Shield size={26} strokeWidth={2.2} />
             </div>
             <div className="wi-room-overlay-title">ROOM VERIFICATION</div>
+            <div className="wi-room-proctor-status" role="status">
+              <span className="wi-room-proctor-pulse" />
+              {socketConnected && cameraActive ? 'Mobile camera connected' : 'Waiting for mobile camera…'}
+              <span aria-hidden="true">·</span> AI Proctor {roomState.aiStatus === 'ANALYZING' ? 'checking' : 'guiding'}
+              <span aria-hidden="true">·</span> Voice {roomState.voiceEnabled === false ? 'off' : 'on'}
+            </div>
             {roomState.phase === 'scan360' &&
-              <p className="wi-room-overlay-sensor-note">Camera tracking is active. Keep the phone upright, point across the room, and turn slowly with overlapping views.</p>}
+              <p className="wi-room-overlay-sensor-note">Keep the phone upright. Start at the saved left view, then turn slowly through front to right.</p>}
             {roomState.phase === 'scan360' ? (
-              <div className="wi-room-overlay-step">360° Room Scan — turn slowly in a full circle</div>
+              <div className="wi-room-overlay-step">180° Room Scan — Left → Front → Right</div>
             ) : roomState.step ? (
               <div className="wi-room-overlay-step">Step {roomState.step.index + 1} of {HIRE_ROOM_STEP_KEYS.length} — {roomState.step.label}</div>
             ) : null}
             <p className="wi-room-overlay-hint">{roomState.language?.startsWith('ta')
               ? (roomState.taMessage || hireRoomMessage('ta-IN', `step_${roomState.step?.key}`))
               : (roomState.message || hireRoomMessage('en-IN', `step_${roomState.step?.key}`))}</p>
+            <button type="button" className="wi-mobile-btn-primary" style={{ marginBottom: 12 }}
+              onClick={() => speakHireRoomVoice({ priority: 'CURRENT_STEP', language: roomState.language,
+                key: roomState.phase === 'scan360' ? 'start_360' : `step_${roomState.step?.key || 'front'}`,
+                message: roomState.message, taMessage: roomState.taMessage, force: true })}>
+              <Volume2 size={17} /> Play instructions
+            </button>
             <div className="wi-room-mobile-preview">
               <video ref={overlayVideoRef} autoPlay playsInline muted />
+              {roomState.phase === 'scan360' && scanRecording &&
+                <span className="wi-room-progress-ring" aria-label="Room recording active">REC</span>}
+              <span className="wi-room-camera-direction">{roomState.phase === 'scan360'
+                ? (scanRecording ? 'Recording' : 'Ready') : (roomState.step?.label || 'Room')}</span>
             </div>
             {roomPhotoPreview && roomState.phase === 'six' && (
               <div className="wi-room-captured-thumb">
@@ -1508,21 +1668,26 @@ useEffect(() => {
                   : roomCaptureStatus === 'ERROR' ? 'Try Again' : 'Capture Photo'}
               </button>
             )}
-            {typeof roomState.coverage === 'number' && roomState.coverage > 0 && (
-              <div className="wi-room-overlay-coverage">
-                <div className="wi-room-overlay-coverage-bar">
-                  <div style={{ width: `${Math.min(100, roomState.coverage)}%` }} />
-                </div>
-                <span>{(roomState.sectors || []).filter(sector => sector.verified).length} of 8 directions verified · Coverage {Math.round(roomState.coverage)}%</span>
-              </div>
-            )}
-{roomState.phase === 'scan360' && <div className="wi-room-sector-summary">
-              <span>Current direction: {roomState.currentDirection || 'Front'}</span>
-              <span>Covered: {(roomState.sectors || []).filter(sector => sector.verified).map(sector => sector.label).join(', ') || 'Starting area'}</span>
-              <span>Remaining: {(roomState.sectors || []).filter(sector => !sector.verified).map(sector => sector.label).join(', ') || 'Continue rotating'}</span>
-              {roomState.restarted && <strong role="alert" className="wi-room-restarted-notice">Room scan restarted — please return to the starting position.</strong>}
-              {roomState.pendingObject && <strong role="alert">A prohibited object was detected. Please remove it from the room — the 360° scan will restart from the beginning.</strong>}
+            {roomState.phase === 'scan360' && <div className="wi-room-sector-summary">
+              <span>{scanRecording ? `Recording ${scanRecordSeconds}s · ${roomState.recordedSamples || 0} samples saved` :
+                roomState.recordingStage === 'reviewing' ? 'Analyzing room scan…' :
+                  roomState.recordingStage === 'flag' ? 'Remove the item shown, then record the sweep again.' :
+                    roomState.recordingStage === 'retry' ? 'That recording was not enough. Start again at the left view.' :
+                      'Start at the saved left view. Turn through front and finish at the saved right view.'}</span>
             </div>}
+            {roomState.phase === 'scan360' && (roomState.recordingStage === 'retry' || roomState.recordingStage === 'flag') &&
+              !scanRecording && !scanReviewPending && (
+              <p role="alert" className="wi-room-error">
+                {roomState.recordingStage === 'flag' ? (roomState.message || 'A prohibited item was visible. Remove it and record again.')
+                  : (roomState.message || 'The recording did not pass review. Please record the sweep again.')}
+              </p>)}
+            {roomState.phase === 'scan360' && roomState.recordingStage !== 'reviewing' && !scanReviewPending &&
+              <button type="button" className="wi-mobile-btn-primary wi-room-capture-button"
+                disabled={!cameraActive || !socketConnected || !joinedRef.current || scanControlBusyRef.current}
+                onClick={() => controlScanRecording(scanRecording ? 'finish' : 'start')}>
+                <Camera size={17} /> {scanRecording ? 'Finish recording and review' : 'Start 180° recording'}
+              </button>}
+            {scanControlError && <p role="alert" className="wi-room-error">{scanControlError}</p>}
             <div className="wi-room-overlay-status">
               {roomState.phase === 'six'
                 ? (roomCaptureStatus === 'CAPTURING' ? 'Capturing…' : roomCaptureStatus === 'UPLOADING' ? 'Uploading…'
@@ -1530,20 +1695,14 @@ useEffect(() => {
                   : roomCaptureStatus === 'ERROR' ? 'Photo analysis temporarily failed'
                     : roomState.aiStatus === 'ANALYZING' ? 'Analyzing photo…'
                       : roomCaptureStatus === 'VERIFIED' ? 'Photo verified' : roomCaptureStatus === 'RETAKE' ? 'Photo not verified — see the reason below' : 'Ready to capture')
-                : (roomState.sectors || []).filter(sector => sector.verified).length === 7
-                  ? (roomState.language?.startsWith('ta')
-                    ? 'முன்-வலது பகுதியை பதிவு செய்ய தொடங்கிய காட்சியை நோக்கி இன்னும் சிறிது சுழற்றவும்.'
-                    : 'Continue toward your starting view to capture Front-right.')
-                  : roomState.aiStatus === 'ANALYZING' ? 'Analyzing scan…' : 'Keep rotating slowly'}
+                : roomState.recordingStage === 'reviewing' ? 'Analyzing recorded room sweep…'
+                  : scanRecording ? 'Keep turning smoothly from left through front to right.'
+                    : (roomState.message || 'Record a left-to-right room sweep')}
             </div>
             {roomCaptureError && <p role="alert" className="wi-room-error">{roomCaptureError}</p>}
             <p className="wi-room-overlay-hint">{roomState.phase === 'six'
               ? `${HIRE_ROOM_STEP_KEYS.filter(key => roomState.steps?.[key]?.verifiedAt).length}/${HIRE_ROOM_STEP_KEYS.length} photos verified`
-              : ((roomState.sectors || []).filter(sector => sector.verified).length === 7
-                ? (roomState.language?.startsWith('ta')
-                  ? 'முன்-வலது பகுதியை பதிவு செய்து சுற்றை முடிக்க, தொடங்கிய காட்சியை நோக்கி இன்னும் சிறிது சுழற்றவும்.'
-                  : 'Continue slightly toward your starting view to capture Front-right and complete the circle.')
-                : 'Keep the phone moving slowly for the 360° scan.')}</p>
+              : 'Finish near the saved right view. The room is checked after recording.'}</p>
           </div>
         </div>
       )}

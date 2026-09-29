@@ -3,11 +3,16 @@ const verification = require('../services/assessmentVerificationService');
 const monitoring = require('../services/monitoringService');
 const relay = require('./crossInstance');
 const hireProctoring = require('../services/hireProctoringService');
+const hirePolicy = require('../services/hireProctoringPolicy');
 const logger = require('../utils/logger');
+const crypto = require('crypto');
 
 const activeRoomCaptures = new Set();
 const laptopRoomEvidence = new Map();
 const activeMobileSockets = new Map();
+const phoneScanSamples = new Map();
+const activeScanRecordings = new Map();
+const SCAN_SAMPLE_TTL_MS = 120000;
 const CAPTURE_ID_PATTERN = /^[a-z0-9-]{8,64}$/i;
 const ROOM_CAPTURE_MAX_AGE_MS = Number(process.env.ROOM_CAPTURE_MAX_AGE_MS) || 15000;
 
@@ -35,9 +40,12 @@ module.exports = (io, socket) => {
           }
         }
         activeMobileSockets.set(binding.session.session_id, socket.id);
+        phoneScanSamples.delete(binding.session.session_id);
+        activeScanRecordings.delete(binding.session.session_id);
       }
       await socket.join(room);
-      ack?.({ ok: true, sessionId: binding.session.session_id });
+      ack?.({ ok: true, sessionId: binding.session.session_id,
+        workspaceReady: mobile && hirePolicy.roomScanApproved(binding.monitor.metadata?.hireProctoring) });
       const peers = await io.in(room).fetchSockets();
       relay.relayEmit(io, 'room', room, mobile ? 'assessment_verif:mobile_joined' : 'assessment_verif:laptop_joined',
         { socketId: socket.id, sessionId: binding.session.session_id }, { excludingSocket: socket });
@@ -58,6 +66,68 @@ module.exports = (io, socket) => {
       });
     });
   }
+  // The HTTP sweep may only analyze exact JPEGs delivered by the active phone
+  // socket. A short-lived ledger binds each sample and sensor reading to that
+  // stream, while the relay supplies the desktop's progress loop.
+  socket.on('assessment_verif:scan_recording_control', (data, ack) => {
+    if (!bound(data) || socket.verifRole !== 'mobile_camera' ||
+        activeMobileSockets.get(binding.session.session_id) !== socket.id ||
+        socket.data?.assessmentVerification?.mobileStreamId !== data?.mobileStreamId) {
+      return ack?.({ ok: false, error: 'The paired phone camera is unavailable.' });
+    }
+    const sessionId = binding.session.session_id;
+    if (data.action === 'start') {
+      phoneScanSamples.delete(sessionId);
+      activeScanRecordings.set(sessionId, socket.id);
+    } else if (data.action === 'finish') {
+      if (activeScanRecordings.get(sessionId) !== socket.id)
+        return ack?.({ ok: false, error: 'Start a new room recording first.' });
+      activeScanRecordings.delete(sessionId);
+    } else return ack?.({ ok: false, error: 'Invalid recording action.' });
+    socket.to(`assessment_verif_${sessionId}`).emit('assessment_verif:scan_recording_control',
+      { action: data.action, sessionId, at: Date.now() });
+    ack?.({ ok: true });
+  });
+  socket.on('assessment_verif:scan_sample', (data, ack) => {
+    const frame = data?.frame;
+    const capturedAt = Number(data?.capturedAt);
+    if (!bound(data) || socket.verifRole !== 'mobile_camera' ||
+        activeMobileSockets.get(binding.session.session_id) !== socket.id ||
+        activeScanRecordings.get(binding.session.session_id) !== socket.id ||
+        socket.data?.assessmentVerification?.mobileStreamId !== data?.mobileStreamId ||
+        !Number.isFinite(capturedAt) || Date.now() - capturedAt > 5000 || capturedAt - Date.now() > 1000 ||
+        typeof frame !== 'string' || frame.length > 900000 ||
+        !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(frame)) {
+      return ack?.({ ok: false, error: 'The active phone camera sample is invalid.' });
+    }
+    const bytes = Buffer.from(frame.slice('data:image/jpeg;base64,'.length), 'base64');
+    if (bytes.length < 100 || bytes[0] !== 0xff || bytes[1] !== 0xd8 ||
+        bytes[bytes.length - 2] !== 0xff || bytes[bytes.length - 1] !== 0xd9) {
+      return ack?.({ ok: false, error: 'Capture a fresh camera frame.' });
+    }
+    const rawYaw = data?.orientation?.yaw;
+    const yaw = rawYaw == null ? null : Number(rawYaw);
+    const rawPitch = data?.orientation?.pitch;
+    const pitch = rawPitch == null ? null : Number(rawPitch);
+    if ((yaw !== null && !Number.isFinite(yaw)) || (pitch !== null && !Number.isFinite(pitch)))
+      return ack?.({ ok: false, error: 'Invalid orientation reading.' });
+    const orientation = yaw === null ? null : { yaw: ((yaw % 360) + 360) % 360, pitch };
+    const sessionId = binding.session.session_id;
+    const ledger = phoneScanSamples.get(sessionId) || new Map();
+    const now = Date.now();
+    for (const [hash, samples] of ledger) {
+      const fresh = samples.filter(sample => now - sample.at <= SCAN_SAMPLE_TTL_MS);
+      if (fresh.length) ledger.set(hash, fresh);
+      else ledger.delete(hash);
+    }
+    const hash = crypto.createHash('sha256').update(frame).digest('hex');
+    ledger.set(hash, [...(ledger.get(hash) || []), { at: now, socketId: socket.id, orientation }].slice(-12));
+    while (ledger.size > 128) ledger.delete(ledger.keys().next().value);
+    phoneScanSamples.set(sessionId, ledger);
+    socket.to(`assessment_verif_${sessionId}`).emit('assessment_verif:scan_sample',
+      { frame, orientation, capturedAt });
+    ack?.({ ok: true });
+  });
   socket.on('assessment_verif:frame', async (data, ack) => {
     if (!bound(data) || socket.verifRole !== 'mobile_camera' || typeof data.frame !== 'string' || data.frame.length > 900000) return ack?.({ ok: false, error: 'Mobile camera is not joined to this session.' });
     if (Date.now() - (socket.lastMobileSampleAt || 0) < 500) return ack?.({ ok: true, coalesced: true });
@@ -74,7 +144,8 @@ module.exports = (io, socket) => {
       ack?.({ ok: true });
       acknowledged = true;
       const hire = current.monitor.metadata?.hireProctoring;
-      const roomVerificationPending = hire?.policy?.enabled && (hire.policy.mobileRoomScan || hire.policy.roomScan360Enabled) && hire.roomScanClear !== true;
+      const roomVerificationPending = hire?.policy?.enabled && (hire.policy.mobileRoomScan || hire.policy.roomScan360Enabled) &&
+        !hirePolicy.roomScanApproved(hire);
       if (roomVerificationPending) {
         // Pairing frames remain live preview transport. Workspace inference
         // starts only after all five photos and the 360 sweep are complete.
@@ -238,6 +309,7 @@ module.exports = (io, socket) => {
     const streamId = String(data?.mobileStreamId || '');
     if (!CAPTURE_ID_PATTERN.test(streamId)) return;
     socket.data.assessmentVerification.mobileStreamId = streamId;
+    phoneScanSamples.delete(binding.session.session_id);
     emit('assessment_verif:mobile_status', { mobileCameraReady: true, status: 'PAIRED' });
   });
   socket.on('assessment_verif:stream_status', data => {
@@ -257,9 +329,33 @@ module.exports = (io, socket) => {
     if (binding && socket.verifRole === 'mobile_camera') {
       if (activeMobileSockets.get(binding.session.session_id) === socket.id) {
         activeMobileSockets.delete(binding.session.session_id);
+        phoneScanSamples.delete(binding.session.session_id);
+        activeScanRecordings.delete(binding.session.session_id);
         emit('assessment_verif:mobile_status', { connected: false });
       }
     }
   });
   // Unlock/start/end are server lifecycle decisions, never client socket commands.
+};
+
+module.exports.consumeScanSamples = (sessionId, socketId, frames) => {
+  if (!Array.isArray(frames) || !frames.length || frames.length > 12) return null;
+  const ledger = phoneScanSamples.get(sessionId);
+  if (!ledger) return null;
+  const now = Date.now();
+  const hashes = frames.map(frame => typeof frame === 'string'
+    ? crypto.createHash('sha256').update(frame).digest('hex') : null);
+  const used = new Map();
+  const entries = hashes.map(hash => {
+    const index = used.get(hash) || 0;
+    used.set(hash, index + 1);
+    return ledger.get(hash)?.[index];
+  });
+  if (entries.some(entry => !entry || entry.socketId !== socketId || now - entry.at > SCAN_SAMPLE_TTL_MS)) return null;
+  for (const [hash, count] of used) {
+    const remaining = ledger.get(hash).slice(count);
+    if (remaining.length) ledger.set(hash, remaining);
+    else ledger.delete(hash);
+  }
+  return entries.map(entry => entry.orientation);
 };

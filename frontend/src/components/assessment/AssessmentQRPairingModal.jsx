@@ -27,7 +27,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { API_BASE, BACKEND_ORIGIN } from '../../api/api';
-import { buildAssessmentMobileUrl } from '../../utils/assessmentPairingUrl';
+import { useAssessmentMobileUrl } from '../../utils/useAssessmentMobileUrl';
 import '../../styles/assessment-verification.css';
 
 const ICE_SERVERS = [
@@ -529,7 +529,7 @@ export default function AssessmentQRPairingModal({
     }
   };
 
-  const mobilePairUrl = buildAssessmentMobileUrl(sessionData?.qrPayload?.shortUrl);
+  const mobilePairUrl = useAssessmentMobileUrl(sessionData?.qrPayload?.shortUrl);
   const typeLabel = assessmentType === 'CODING' ? 'CODING ASSESSMENT' : 'AI QUIZ';
   const startButtonLabel = assessmentType === 'CODING' ? 'Start / Resume Coding Assessment →' : 'Start / Resume Quiz →';
 

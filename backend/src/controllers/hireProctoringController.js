@@ -1,5 +1,7 @@
 const policyService = require('../services/hireProctoringPolicy');
 const proctoringService = require('../services/hireProctoringService');
+const { AssessmentVerificationSession } = require('../models');
+const scanTransport = require('../socket/assessmentVerificationEvents');
 
 const fail = (res, error) => res.status(error.status || 500).json({ error: error.status ? error.message : 'Hire proctoring request failed' });
 
@@ -84,8 +86,42 @@ async function roomStep(req, res) {
 }
 
 async function roomScan360(req, res) {
-  try { res.json(await proctoringService.analyzeRoomScan360({ sessionId: req.params.sessionId, user: req.user,
-    frames: req.body.frames, orientations: req.body.orientations, laptopFrames: req.body.laptopFrames })); }
+  try {
+    const { session } = await proctoringService.requireOwnedHireSession(req.params.sessionId, req.user);
+    const paired = await AssessmentVerificationSession.findOne({ where: {
+      participant_id: req.user.id, assessment_id: session.contextId,
+      assessment_type: session.contextType, attempt_id: session.attemptId,
+      status: ['PAIRED', 'VERIFIED', 'USED'],
+    }, order: [['created_at', 'DESC']] });
+    const io = req.app.get('io');
+    const peers = paired && io ? await io.in(`assessment_verif_${paired.session_id}`).fetchSockets() : [];
+    const phone = peers.find(peer => peer.data?.assessmentVerification?.role === 'mobile_camera' &&
+        peer.data.assessmentVerification.sessionId === paired.session_id &&
+        peer.data.assessmentVerification.mobileStreamId);
+    if (!phone) {
+      return res.status(409).json({ error: 'Waiting for the paired mobile camera.', errorCode: 'QR_NOT_PAIRED' });
+    }
+    const alreadyApproved = policyService.roomScanApproved(session.metadata?.hireProctoring);
+    let result;
+    if (alreadyApproved) {
+      result = await proctoringService.analyzeRoomScan360({ sessionId: req.params.sessionId,
+        user: req.user, frames: req.body.frames });
+    } else {
+      if (req.body.recordingComplete !== true) return res.status(422).json({
+        error: 'Finish the 180° room recording before review.', errorCode: 'ROOM_RECORDING_INCOMPLETE' });
+      const orientations = scanTransport.consumeScanSamples(paired.session_id, phone.id, req.body.frames);
+      if (!orientations) return res.status(409).json({ error: 'Waiting for fresh frames from the paired phone camera.',
+        errorCode: 'PHONE_SCAN_SAMPLES_REQUIRED' });
+      result = await proctoringService.analyzeRoomScan360({ sessionId: req.params.sessionId, user: req.user,
+        frames: req.body.frames, orientations, laptopFrames: req.body.laptopFrames, recordingComplete: true });
+    }
+    // The phone must receive this server verdict even if the laptop's UI
+    // room_state broadcast races the HTTP response or is lost on reconnect.
+    if (result.roomScanClear === true && io && paired) {
+      require('../socket/crossInstance').relayEmit(io, 'room', `assessment_verif_${paired.session_id}`,
+        'assessment_verif:workspace_ready', { sessionId: paired.session_id, ready: true });
+    }
+    return res.json(result); }
   catch (error) { fail(res, error); }
 }
 

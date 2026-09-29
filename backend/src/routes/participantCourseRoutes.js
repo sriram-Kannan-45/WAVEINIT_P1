@@ -220,7 +220,7 @@ router.post('/chatbot/ask', participant, async (req, res) => {
           desk: ['Capture your complete desk and workspace.', 'முழு மேசை மற்றும் பணியிடத்தைப் புகைப்படம் எடுக்கவும்.'],
         };
         const reply = clientContext.roomScanPhase === 'scan360'
-          ? (tamil ? '360 டிகிரி அறை ஸ்கேனுக்காக கைப்பேசியை மெதுவாக முழு வட்டமாகச் சுழற்றுங்கள்.' : 'Slowly rotate your phone in a full circle to finish the 360° room scan.')
+          ? (tamil ? 'சேமித்த இடது காட்சியில் தொடங்கி, முன்பக்கம் வழியாக வலது காட்சி வரை மெதுவாகத் திரும்பி 180 டிகிரி அறை ஸ்கேனைப் பதிவு செய்யுங்கள்.' : 'Start at the saved left view, turn slowly through front to the saved right view, and record the 180° room scan.')
           : clientContext.captureStatus === 'RETRY'
             ? (tamil ? `சிக்கலைச் சரிசெய்து இதே புகைப்படத்தை மீண்டும் எடுக்கவும். ${instructions[step][1]}` : `Correct the issue shown above and retake this same photo. ${instructions[step][0]}`)
             : instructions[step][tamil ? 1 : 0];

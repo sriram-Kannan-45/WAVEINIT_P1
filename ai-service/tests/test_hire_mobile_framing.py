@@ -21,21 +21,22 @@ class HireMobileFramingTests(unittest.TestCase):
     def sample(self, objects, hands, state, now):
         return evaluate_hire_mobile(objects, hands, 640, 480, state, now=now)
 
-    def test_both_hands_laptop_workspace_unlock_without_person(self):
+    def test_hand_and_laptop_unlock_without_person_face_or_desk(self):
         state = {}
-        first = self.sample([LAPTOP, TABLE], HANDS, state, 0)
-        second = self.sample([LAPTOP, TABLE], HANDS, state, 0.6)
+        first = self.sample([LAPTOP], HANDS_AWAY_FROM_DESK, state, 0)
+        second = self.sample([LAPTOP], HANDS_AWAY_FROM_DESK, state, 0.6)
         self.assertFalse(first["eligible"])
         self.assertTrue(second["eligible"])
         self.assertFalse(second["person_detected"])
+        self.assertNotIn("face_detected", second)
+        self.assertFalse(second["workspace_detected"])
         self.assertEqual(second["framing_mode"], "HIRE_WORKSPACE")
         self.assertEqual(second["composition_state"], "VALID")
 
     def test_missing_signals_get_requested_guidance(self):
         cases = [
             ([TABLE], HANDS, "LAPTOP", "Please adjust the phone so your laptop is visible."),
-            ([LAPTOP, TABLE], [], "HANDS", "Please keep both hands visible near your workspace."),
-            ([LAPTOP], HANDS_AWAY_FROM_DESK, "WORKSPACE", "Please show your laptop and workspace clearly."),
+            ([LAPTOP, TABLE], [], "HANDS", "Please keep a hand visible beside your laptop."),
         ]
         for objects, hands, key, message in cases:
             result = self.sample(objects, hands, {}, 0)
@@ -62,19 +63,26 @@ class HireMobileFramingTests(unittest.TestCase):
         self.assertTrue(result["eligible"])
         self.assertEqual(result["hand_count"], 1)
 
-    def test_person_never_substitutes_for_missing_hands(self):
+    def test_person_never_substitutes_for_missing_hand(self):
         state = {}
         for n in range(4):
             result = self.sample([PERSON, LAPTOP, TABLE], [], state, n * 0.6)
             self.assertFalse(result["eligible"])
             self.assertEqual(result["guidance_key"], "HANDS")
 
-    def test_short_loss_grace_then_reacquisition(self):
+    def test_extra_person_and_prohibited_objects_do_not_unlock(self):
+        for objects in ([LAPTOP, PERSON, PERSON], [LAPTOP, detection("book", [20, 20, 120, 160])],
+                        [LAPTOP, detection("cell phone", [20, 20, 120, 160])]):
+            state = {}
+            self.sample(objects, HANDS, state, 0)
+            self.assertFalse(self.sample(objects, HANDS, state, 0.6)["eligible"])
+
+    def test_loss_revokes_eligibility_until_reacquisition(self):
         state = {}
         self.sample([LAPTOP, TABLE], HANDS, state, 0)
         self.sample([LAPTOP, TABLE], HANDS, state, 0.6)
-        self.assertTrue(self.sample([LAPTOP, TABLE], [], state, 1.2)["eligible"])
-        self.assertTrue(self.sample([LAPTOP, TABLE], [], state, 1.8)["eligible"])
+        self.assertFalse(self.sample([LAPTOP, TABLE], [], state, 1.2)["eligible"])
+        self.assertFalse(self.sample([LAPTOP, TABLE], [], state, 1.8)["eligible"])
         self.assertFalse(self.sample([LAPTOP, TABLE], [], state, 2.4)["eligible"])
         self.assertFalse(self.sample([LAPTOP, TABLE], HANDS, state, 3)["eligible"])
         self.assertTrue(self.sample([LAPTOP, TABLE], HANDS, state, 3.6)["eligible"])

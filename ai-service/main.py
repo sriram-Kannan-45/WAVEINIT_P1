@@ -1817,16 +1817,23 @@ class HireRoomStepRequest(BaseModel):
     orientation: Optional[Dict[str, Any]] = None
     laptopFrames: Optional[List[str]] = Field(default=None, max_length=6)
     requireLaptop: bool = False
+    duplicateThreshold: float = 0.60
 
 
 class HireRoomScan360Request(BaseModel):
     sessionId: str
     frames: List[str] = Field(min_length=1, max_length=12)
+    recordingComplete: bool = False
     threshold: Optional[float] = None
     orientations: Optional[List[Optional[Dict[str, Any]]]] = None
     blockObjects: bool = True
     laptopFrames: Optional[List[str]] = Field(default=None, max_length=6)
     requireLaptop: bool = False
+    references: List[Dict[str, Any]] = Field(default_factory=list, max_length=5)
+    referenceThreshold: float = 0.50
+    detectionFrames: int = 2
+    clearFrames: int = 3
+    sameAreaThreshold: float = 0.65
 
 
 _HIRE_FACE_POINTS = (10, 33, 61, 93, 133, 152, 234, 263, 291, 323, 362, 454)
@@ -2000,7 +2007,8 @@ async def hire_room_step(req: HireRoomStepRequest):
             result = await run_in_threadpool(room_scanner.analyze_step,
                 frame_data=req.frame, step=req.step, session_id=req.sessionId, threshold=_clamp_accept_threshold(req.threshold),
                 prior_captures=req.priorCaptures, orientation=req.orientation,
-                laptop_frames=req.laptopFrames, require_laptop=req.requireLaptop)
+                laptop_frames=req.laptopFrames, require_laptop=req.requireLaptop,
+                duplicate_threshold=0.60)
         _prune_session_locks(room_scanner.scan_states)
         log.info("ROOM_PHOTO_AI_COMPLETE session=%s step=%s elapsed_ms=%d valid=%s",
                  req.sessionId, req.step, int((time.monotonic() - started_at) * 1000), result.get("valid"))
@@ -2016,7 +2024,12 @@ async def hire_room_step(req: HireRoomStepRequest):
 
 @app.post("/api/proctoring/hire/room-scan-360")
 async def hire_room_scan_360(req: HireRoomScan360Request):
-    """Accumulate guided 360-degree room scan sweep coverage from sampled frames."""
+    """Review one finished 180-degree left-to-right room recording.
+
+    `recordingComplete` selects the record-then-review path. The incremental
+    accumulator is retained only for compatibility with the legacy tests and
+    must not be used to gate a live room decision.
+    """
     if not ROOM_SCANNER_AVAILABLE or room_scanner is None:
         raise HTTPException(status_code=503, detail="Room scanner is unavailable")
     for frame in req.frames:
@@ -2025,17 +2038,22 @@ async def hire_room_scan_360(req: HireRoomScan360Request):
         room_scanner.cleanup_stale()
         from starlette.concurrency import run_in_threadpool
         async with _hire_session_lock(req.sessionId):
-            result = await run_in_threadpool(room_scanner.analyze_360,
+            result = await run_in_threadpool(room_scanner.analyze_180_recording if req.recordingComplete else room_scanner.analyze_180,
                 frames=req.frames, session_id=req.sessionId, orientations=req.orientations,
-                block_objects=req.blockObjects, laptop_frames=req.laptopFrames, require_laptop=req.requireLaptop)
+                block_objects=req.blockObjects, laptop_frames=req.laptopFrames, require_laptop=req.requireLaptop,
+                references=req.references,
+                reference_threshold=max(0.30, min(0.90, req.referenceThreshold)),
+                detection_frames=max(2, min(5, req.detectionFrames)),
+                clear_frames=max(2, min(6, req.clearFrames)),
+                same_area_threshold=max(0.4, min(0.9, req.sameAreaThreshold)))
         _prune_session_locks(room_scanner.scan_states)
     except HTTPException:
         raise
     except Exception as exc:
         log.warning("room-scan-360 analysis error for %s: %s", req.sessionId, exc)
-        raise HTTPException(status_code=500, detail="360 room scan analysis failed") from exc
+        raise HTTPException(status_code=500, detail="180 room scan analysis failed") from exc
     if not result.get("success"):
-        raise HTTPException(status_code=422, detail=result.get("error", "360 room scan analysis failed"))
+        raise HTTPException(status_code=422, detail=result.get("error", "180 room scan analysis failed"))
     return result
 
 

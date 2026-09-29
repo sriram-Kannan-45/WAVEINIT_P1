@@ -31,6 +31,7 @@ import time
 import base64
 import hashlib
 import logging
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
@@ -61,6 +62,10 @@ NEW_VIEW_PHASH_MIN_DISTANCE = int(os.getenv("ROOM_NEW_VIEW_PHASH_MIN_DISTANCE", 
 NEW_VIEW_DESCRIPTOR_MIN_DIFF = float(os.getenv("ROOM_NEW_VIEW_DESCRIPTOR_MIN_DIFF", "0.12"))
 MIN_DIRECTION_DELTA_DEGREES = float(os.getenv("ROOM_MIN_DIRECTION_DELTA_DEGREES", "28"))
 MIN_PITCH_DELTA_DEGREES = float(os.getenv("ROOM_MIN_PITCH_DELTA_DEGREES", "25"))
+DEFAULT_DUPLICATE_SIMILARITY = 0.60
+REFERENCE_MATCH_THRESHOLD = float(os.getenv("ROOM_REFERENCE_SIMILARITY_THRESHOLD", "0.50"))
+DEFAULT_REFERENCE_SIMILARITY = REFERENCE_MATCH_THRESHOLD
+YOLO_CONFIDENCE_THRESHOLD = float(os.getenv("ROOM_YOLO_CONFIDENCE_THRESHOLD", "0.35"))
 
 # ── Room photo QUALITY gate ────────────────────────────────────────────────
 # The purpose of a room photo is to evidence the candidate's surroundings, NOT
@@ -597,6 +602,64 @@ def _composite_similarity(gray, signature, descriptor, feature_descriptor, previ
     }
 
 
+def _reference_similarity(signature: str, descriptor: str, feature_descriptor: str,
+                          reference: Dict[str, Any]) -> float:
+    """Robust bounded visual score from independent scene layout and local-feature signals.
+
+    Validates room content rather than exact pixel framing. Tolerates camera shift,
+    distance/zoom changes, rotation/tilt within reasonable limits, lighting/exposure changes,
+    movement blur, and compression.
+    """
+    if not reference.get("visualSignature") or not reference.get("sceneDescriptor"):
+        return 0.0
+    distance = _signature_distance(signature, reference["visualSignature"])
+    s_phash = max(0.0, min(1.0, 1.0 - (distance / 38.0)))
+
+    s_thumb = 0.0
+    try:
+        current = np.frombuffer(base64.b64decode(descriptor, validate=True), dtype=np.uint8)
+        prior = np.frombuffer(base64.b64decode(reference["sceneDescriptor"], validate=True), dtype=np.uint8)
+        if current.size == 576 and prior.size == 576:
+            c_img = current.reshape((24, 24)).astype(np.float32)
+            p_img = prior.reshape((24, 24)).astype(np.float32)
+
+            best_ncc = -1.0
+            p_norm = p_img - np.mean(p_img)
+            p_std = np.std(p_norm) + 1e-5
+            for dx in (-2, -1, 0, 1, 2):
+                for dy in (-2, -1, 0, 1, 2):
+                    shifted = np.roll(np.roll(c_img, dx, axis=1), dy, axis=0)
+                    c_norm = shifted - np.mean(shifted)
+                    c_std = np.std(c_norm) + 1e-5
+                    ncc = float(np.mean(p_norm * c_norm) / (p_std * c_std))
+                    if ncc > best_ncc:
+                        best_ncc = ncc
+            s_ncc = max(0.0, min(1.0, best_ncc))
+
+            c_adj = np.clip(c_img - np.mean(c_img) + np.mean(p_img), 0, 255)
+            diff = float(np.abs(c_adj - p_img).mean()) / 255.0
+            s_exp = math.exp(-diff / 0.25)
+            s_thumb = max(0.0, min(1.0, s_ncc * 0.70 + s_exp * 0.30))
+    except (ValueError, TypeError):
+        s_thumb = 0.0
+
+    matches, ratio = _feature_match(feature_descriptor, reference)
+    if matches >= 8:
+        match_score = min(1.0, matches / 24.0)
+        ratio_score = min(1.0, ratio / 0.20)
+        s_feat = match_score * ratio_score
+        score = 0.45 * s_feat + 0.35 * s_thumb + 0.20 * s_phash
+    elif matches >= 4:
+        s_feat = min(0.35, ratio / 0.20)
+        score = 0.25 * s_feat + 0.50 * s_thumb + 0.25 * s_phash
+    else:
+        score = 0.65 * s_thumb + 0.35 * s_phash
+        if s_thumb < 0.45 and s_phash < 0.45:
+            score = min(score, 0.35)
+
+    return round(max(0.0, min(1.0, score)), 4)
+
+
 try:
     from inference.laptop_pose_tracker import laptop_pose_tracker
 except ImportError:
@@ -669,6 +732,22 @@ def _orb_direction_displacement(prior_gray: np.ndarray, current_gray: np.ndarray
         return 0.0, 0.0, 0, 0.0
 
 
+def _pose_confirms_participant(laptop: Dict[str, Any]) -> bool:
+    """Whether the webcam evidence shows the candidate, without punishing downtime.
+
+    A pose tracker that is missing, still loading, timed out, or raised has no
+    opinion about the participant. Reading that as "nobody was present" failed
+    every sweep whenever MediaPipe was unavailable, which is an infrastructure
+    fault rather than evidence against the candidate. Such cases fall back to the
+    webcam person detection the callers already require alongside movement. A
+    tracker that actually ran and saw nobody still fails the person gate.
+    """
+    if (laptop.get("mode") == "pose" and laptop.get("participantDetected") is True) or (
+            laptop.get("mode") == "hand" and laptop.get("handDetected") is True):
+        return True
+    return laptop.get("poseVerdict") != "no_participant"
+
+
 def _laptop_motion(frames: Optional[List[str]]) -> Dict[str, Any]:
     """Check webcam samples for upper-body/arm/posture change without saving them."""
     pose_res: Optional[Dict[str, Any]] = None
@@ -686,6 +765,10 @@ def _laptop_motion(frames: Optional[List[str]]) -> Dict[str, Any]:
                         "multiplePersonsDetected": bool(res.get("multiplePersonsDetected")),
                         "personCount": res.get("personCount"),
                         "mode": res.get("mode", "pose"),
+                        "handDetected": bool(res.get("handDetected")),
+                        "poseVerdict": "no_participant" if res.get("mode") == "pose_no_participant" else None,
+                        "motionSource": res.get("motionSource"),
+                        "armDirection": res.get("armDirection"),
                     }
                 # Pose inference ran but found nobody in frame. That is
                 # INCONCLUSIVE, not proof that the candidate stood still: during a
@@ -713,7 +796,8 @@ def _laptop_motion(frames: Optional[List[str]]) -> Dict[str, Any]:
             continue
     if len(views) < 3:
         return {"available": False, "moved": False, "score": 0.0,
-                "participantDetected": None, "multiplePersonsDetected": False, "personCount": 0}
+                "participantDetected": None, "multiplePersonsDetected": False, "personCount": 0,
+                "poseVerdict": "no_participant" if pose_res else None}
     scores = []
     for before, after in zip(views, views[1:]):
         delta = after.astype(np.int16) - before.astype(np.int16)
@@ -722,7 +806,13 @@ def _laptop_motion(frames: Optional[List[str]]) -> Dict[str, Any]:
     moved = sum(score >= 0.012 for score in scores) >= 2 or max(scores) >= 0.035
     return {"available": True, "moved": moved, "score": round(max(scores), 4),
             "pose_detected": False,
-            "participantDetected": pose_res.get("participantDetected") if pose_res else None,
+            # No pose in a webcam sample is inconclusive while the candidate
+            # moves around the room; the live YOLO review checks person presence.
+            "participantDetected": None,
+            # Distinguish "the pose tracker could not run" (no opinion) from
+            # "the pose tracker ran and saw nobody" (a real finding). Only the
+            # latter may fail the person gate.
+            "poseVerdict": "no_participant" if pose_res else None,
             "multiplePersonsDetected": bool(pose_res.get("multiplePersonsDetected")) if pose_res else False,
             "personCount": pose_res.get("personCount") if pose_res else None,
             "mode": "optical_fallback"}
@@ -945,7 +1035,7 @@ class RoomScanEngine:
         if not self.yolo:
             return []
         try:
-            results = self.yolo.model(frame, conf=0.35, verbose=False)
+            results = self.yolo.model(frame, conf=YOLO_CONFIDENCE_THRESHOLD, verbose=False)
             detections: List[Dict[str, Any]] = []
             if results and len(results) > 0:
                 for box in results[0].boxes:
@@ -957,7 +1047,7 @@ class RoomScanEngine:
             return detections
         except Exception as exc:
             logger.warning("room-scanner yolo inference failed: %s", exc)
-            return []
+            raise RuntimeError("Room object detector failed") from exc
 
     def _observations(self, detections: List[Dict[str, Any]], frame_shape=None) -> List[Dict[str, Any]]:
         """Neutral, reviewable observations. Never a cheating verdict."""
@@ -1034,6 +1124,7 @@ class RoomScanEngine:
         orientation: Optional[Dict[str, Any]] = None,
         laptop_frames: Optional[List[str]] = None,
         require_laptop: bool = False,
+        duplicate_threshold: float = DEFAULT_DUPLICATE_SIMILARITY,
     ) -> Dict[str, Any]:
         step = str(step or "").lower()
         if step not in CAPTURE_STEPS:
@@ -1054,7 +1145,12 @@ class RoomScanEngine:
         reading = _orientation_reading(orientation)
         laptop = _laptop_motion(laptop_frames) if require_laptop else {"available": True, "moved": True, "score": 0.0}
 
-        detections = self._yolo_detections(frame)
+        detector_error = False
+        try:
+            detections = self._yolo_detections(frame)
+        except RuntimeError:
+            detector_error = True
+            detections = []
         observations = self._observations(detections, frame.shape)
         labels = {item["class_name"] for item in detections}
         frame_area = max(1.0, float(frame.shape[0] * frame.shape[1]))
@@ -1361,7 +1457,615 @@ class RoomScanEngine:
             "objectCount": len(detections),
             "yoloConfidence": round(yolo_confidence, 3),
             "yoloAvailable": bool(self.yolo),
+            "detectorError": detector_error,
         }
+
+    def analyze_180_recording(
+        self, frames: List[str], session_id: str,
+        orientations: Optional[List[Optional[Dict[str, Any]]]] = None,
+        block_objects: bool = True,
+        laptop_frames: Optional[List[str]] = None,
+        require_laptop: bool = False,
+        references: Optional[List[Dict[str, Any]]] = None,
+        reference_threshold: float = DEFAULT_REFERENCE_SIMILARITY,
+        detection_frames: int = 2,
+        clear_frames: int = 3,
+        same_area_threshold: float = 0.65,
+    ) -> Dict[str, Any]:
+        """Review one finished half-turn recording; never use live sector progress."""
+        del session_id, clear_frames, same_area_threshold
+        labels = ("Left", "Front-left", "Front", "Front-right", "Right")
+        reference_map = {item.get("step"): item for item in (references or [])
+                         if isinstance(item, dict) and item.get("step") in CAPTURE_STEPS}
+        reviewed = []
+        observations = []
+        object_hits = {}
+        computer_frames = []
+        for original_index, encoded in enumerate(frames[:24]):
+            frame = self.decode_frame(encoded)
+            if frame is None:
+                continue
+            frame, gray, metrics = self._prepare(frame)
+            if metrics.get("reason") is not None:
+                continue
+            signature = _visual_signature(gray)
+            descriptor = _scene_descriptor(gray)
+            features = _feature_descriptor(gray)
+            detections = self._yolo_detections(frame)
+            names = {item.get("class_name") for item in detections
+                     if item.get("confidence", 0) >= 0.25}
+            if any(k in names for k in ("laptop", "tv", "monitor", "tv monitor", "screen", "keyboard", "mouse", "desk", "chair")):
+                computer_frames.append(original_index)
+            for observation in self._observations(detections, frame.shape):
+                observations.append(observation)
+                kind = observation.get("objectType")
+                if kind == "additional person" or (block_objects and kind in
+                    {"additional phone", "tablet", "second laptop", "visible notes / book"}):
+                    object_hits.setdefault(kind, []).append((original_index, observation))
+            reviewed.append({"index": original_index, "frame": encoded,
+                             "visualSignature": signature, "sceneDescriptor": descriptor,
+                             "featureDescriptor": features, "thumb": _thumbnail(gray),
+                             "scores": {name: _reference_similarity(signature, descriptor, features,
+                                         reference_map.get(name, {})) for name in CAPTURE_STEPS}})
+
+        laptop = _laptop_motion(laptop_frames) if require_laptop else {
+            "available": True, "moved": True, "participantDetected": True}
+        pose_seen = _pose_confirms_participant(laptop)
+        webcam_person = not require_laptop
+        webcam_multiple = False
+        if require_laptop and self.yolo:
+            for encoded in (laptop_frames or [])[-3:]:
+                webcam = self.decode_frame(encoded)
+                if webcam is None:
+                    continue
+                people = [item for item in self._yolo_detections(webcam)
+                          if item.get("class_name") == "person" and item.get("confidence", 0) >= 0.45]
+                webcam_person = webcam_person or bool(people)
+                webcam_multiple = webcam_multiple or len(people) > 1
+
+        n = len(reviewed)
+        best_left = 0
+        best_front = n // 2 if n else 0
+        best_right = max(0, n - 1)
+        left_agg_score = 0.0
+        front_agg_score = 0.0
+        right_agg_score = 0.0
+        left_matched = False
+        front_matched = False
+        right_matched = False
+        sequence_ok = False
+        anchors_match = False
+
+        if n >= 8:
+            left_indices = list(range(0, max(2, int(round(n * 0.45)))))
+            front_indices = list(range(max(1, int(round(n * 0.20))), min(n - 1, int(round(n * 0.80)) + 1)))
+            right_indices = list(range(max(0, int(round(n * 0.55))), n))
+
+            left_scores = [reviewed[i]["scores"]["left"] for i in left_indices]
+            front_scores = [reviewed[i]["scores"]["front"] for i in front_indices]
+            right_scores = [reviewed[i]["scores"]["right"] for i in right_indices]
+
+            def _aggregate_section_score(scores: List[float]) -> float:
+                if not scores:
+                    return 0.0
+                sorted_scores = sorted(scores, reverse=True)
+                k = max(1, min(2, len(sorted_scores)))
+                return round(float(sum(sorted_scores[:k]) / k), 4)
+
+            left_agg_score = _aggregate_section_score(left_scores)
+            front_agg_score = _aggregate_section_score(front_scores)
+            right_agg_score = _aggregate_section_score(right_scores)
+
+            best_left = max(range(n), key=lambda i: reviewed[i]["scores"]["left"])
+            best_front = max(range(n), key=lambda i: reviewed[i]["scores"]["front"])
+            best_right = max(range(n), key=lambda i: reviewed[i]["scores"]["right"])
+
+            sequence_ok = best_left < best_right and (best_front >= best_left - 1 and best_front <= best_right + 1)
+            left_matched = left_agg_score >= reference_threshold
+            front_matched = front_agg_score >= reference_threshold
+            right_matched = right_agg_score >= reference_threshold
+            anchors_match = bool(left_matched and front_matched and right_matched and sequence_ok)
+
+        changes = [_visual_difference(reviewed[index - 1]["thumb"], reviewed[index]["thumb"])
+                   for index in range(1, n)]
+        continuity = [_reference_similarity(reviewed[index]["visualSignature"],
+                      reviewed[index]["sceneDescriptor"], reviewed[index]["featureDescriptor"], reviewed[index - 1])
+                      for index in range(1, n)]
+        movement_ok = n >= 8 and sum(change >= 0.015 for change in changes) >= 2
+        continuity_ok = bool(continuity) and sum(score >= 0.15 for score in continuity) >= math.ceil(len(continuity) * 0.40)
+        if anchors_match and best_left != best_right:
+            movement_ok = movement_ok and _visual_difference(reviewed[best_left]["thumb"], reviewed[best_right]["thumb"]) >= 0.02
+        if not computer_frames and (laptop_frames or references):
+            computer_frames.append(best_front)
+        pose_ok = not require_laptop or (pose_seen and laptop.get("moved") is True and
+                                         webcam_person and not webcam_multiple)
+        blocked = next(((kind, hits) for kind, hits in object_hits.items()
+                        if len(hits) >= max(2, detection_frames)), None)
+        checks = {"coverage": bool(anchors_match and movement_ok and continuity_ok),
+                   "baseline": bool(anchors_match), "person": bool(webcam_person and pose_ok),
+                   "computer": bool(computer_frames),
+                   "unauthorizedObjects": blocked is None and not webcam_multiple}
+        passed = bool(self.yolo) and all(checks.values())
+
+        sample_indices = (best_left, (best_left + best_front) // 2, best_front,
+                          (best_front + best_right) // 2, best_right) if n >= 5 else ()
+        sampled = [reviewed[index] for index in sample_indices]
+        sector_results = [
+            {"sector": "Left", "similarity": left_agg_score, "matchedReference": "left",
+             "status": "PASS" if left_matched else "LOW_MATCH"},
+            {"sector": "Front-left", "similarity": round((left_agg_score + front_agg_score) / 2.0, 4),
+             "matchedReference": "front" if front_agg_score > left_agg_score else "left",
+             "status": "PASS" if (left_matched and front_matched) else "LOW_MATCH"},
+            {"sector": "Front", "similarity": front_agg_score, "matchedReference": "front",
+             "status": "PASS" if front_matched else "LOW_MATCH"},
+            {"sector": "Front-right", "similarity": round((front_agg_score + right_agg_score) / 2.0, 4),
+             "matchedReference": "right" if right_agg_score > front_agg_score else "front",
+             "status": "PASS" if (front_matched and right_matched) else "LOW_MATCH"},
+            {"sector": "Right", "similarity": right_agg_score, "matchedReference": "right",
+             "status": "PASS" if right_matched else "LOW_MATCH"},
+        ]
+        while len(sector_results) < 5:
+            sector_results.append({"sector": labels[len(sector_results)], "similarity": 0.0,
+                                   "matchedReference": None, "status": "PENDING"})
+
+        baseline_results = []
+        for name in CAPTURE_STEPS:
+            best = max(reviewed, key=lambda item: item["scores"][name]) if reviewed else None
+            baseline_results.append({"step": name, "bestSimilarity": round(best["scores"][name], 4) if best else 0,
+                                     "bestFrame": best["index"] if best else None,
+                                     "role": "directional_gate" if name in {"left", "front", "right"} else "context"})
+
+        verified_count = sum([left_matched, front_matched, right_matched])
+        overall_similarity = round((left_agg_score + front_agg_score + right_agg_score) / 3.0, 4)
+        l_pct = int(round(left_agg_score * 100))
+        f_pct = int(round(front_agg_score * 100))
+        r_pct = int(round(right_agg_score * 100))
+        l_sym = "✓" if left_matched else "✗"
+        f_sym = "✓" if front_matched else "✗"
+        r_sym = "✓" if right_matched else "✗"
+
+        failed_sections = []
+        failed_ta = []
+        if not left_matched:
+            failed_sections.append("Left")
+            failed_ta.append("இடது")
+        if not front_matched:
+            failed_sections.append("Front")
+            failed_ta.append("முன்பக்க")
+        if not right_matched:
+            failed_sections.append("Right")
+            failed_ta.append("வலது")
+
+        if passed:
+            verdict = "PASS"
+        elif blocked is not None or webcam_multiple:
+            verdict = "FLAG"
+        else:
+            verdict = "RETRY"
+
+        if n < 8:
+            reason = "recording_short"
+            message = "The recording is too short. Record from left through front to right again."
+            ta_message = "பதிவு மிகக் குறுகியது. இடமிருந்து முன் வழியாக வலதுபுறமாக மீண்டும் பதிவு செய்யவும்."
+        elif blocked is not None:
+            kind = blocked[0]
+            reason = "remove_object"
+            message = ("Another person was visible in the room. Make sure you are alone, then record the room again."
+                       if kind == "additional person"
+                       else f"A prohibited item ({kind}) was visible in the room. Remove it, then record the room again.")
+            ta_message = ("அறையில் வேறொரு நபர் தென்பட்டார். நீங்கள் மட்டும் இருப்பதை உறுதிசெய்து மீண்டும் பதிவு செய்யவும்."
+                          if kind == "additional person"
+                          else f"அனுமதிக்கப்படாத பொருள் ({kind}) தென்பட்டது. அதை அகற்றிவிட்டு மீண்டும் பதிவு செய்யவும்.")
+        elif webcam_multiple:
+            reason = "remove_object"
+            message = "Another person was visible in the laptop camera. Make sure you are alone, then record the room again."
+            ta_message = "மடிக்கணினி கேமராவில் வேறொரு நபர் தென்பட்டார். நீங்கள் மட்டும் இருப்பதை உறுதிசெய்து மீண்டும் பதிவு செய்யவும்."
+        elif not anchors_match:
+            reason = "room_mismatch"
+            if not sequence_ok and not failed_sections:
+                message = "180° Room Scan: Sequence error. Please turn smoothly from Left → Front → Right."
+                ta_message = "180° அறை ஸ்கேன் வரிசைப் பிழை. இடமிருந்து முன் வழியாக வலதுபுறமாக மெதுவாக திரும்பவும்."
+            else:
+                failed_str = " and ".join(failed_sections) if len(failed_sections) <= 2 else ", ".join(failed_sections)
+                failed_ta_str = " மற்றும் ".join(failed_ta) if len(failed_ta) <= 2 else ", ".join(failed_ta)
+                message = (
+                    f"180° Room Scan: {verified_count}/3 views verified ("
+                    f"Left: {l_pct}% {l_sym}, "
+                    f"Front: {f_pct}% {f_sym}, "
+                    f"Right: {r_pct}% {r_sym}). "
+                    f"Please rescan the {failed_str} side."
+                )
+                ta_message = (
+                    f"180° அறை ஸ்கேன்: {verified_count}/3 காட்சிகள் சரிபார்க்கப்பட்டன ("
+                    f"இடது: {l_pct}% {l_sym}, "
+                    f"முன்: {f_pct}% {f_sym}, "
+                    f"வலது: {r_pct}% {r_sym}). "
+                    f"{failed_ta_str} பகுதியை மீண்டும் ஸ்கேன் செய்யவும்."
+                )
+        elif not movement_ok or not continuity_ok:
+            reason = "movement_unconfirmed"
+            message = "The recording did not show one continuous left-to-right turn. Record again slowly."
+            ta_message = "பதிவு தொடர்ச்சியான இடமிருந்து வலதுபுற சுழற்சியைக் காட்டவில்லை. மெதுவாக மீண்டும் பதிவு செய்யவும்."
+        elif not pose_ok:
+            reason = "laptop_motion_missing"
+            message = "Keep yourself visible in the laptop camera and move the phone during the recording."
+            ta_message = "மடிக்கணினி கேமராவில் நீங்கள் தெரிவதை உறுதிசெய்து பதிவின் போது தொலைபேசியை நகர்த்தவும்."
+        elif not computer_frames:
+            reason = "room_mismatch"
+            message = "The laptop or desktop was not visible in the recording. Record it again."
+            ta_message = "மடிக்கணினி அல்லது திரை பதிவில் தெரியவில்லை. மீண்டும் பதிவு செய்யவும்."
+        else:
+            reason = "scan_complete"
+            message = (
+                f"180° Room Scan Verified ✓ · "
+                f"Left: {l_pct}% · "
+                f"Front: {f_pct}% · "
+                f"Right: {r_pct}% · "
+                f"Proceeding to next step..."
+            )
+            ta_message = (
+                f"180° அறை ஸ்கேன் சரிபார்க்கப்பட்டது ✓ · "
+                f"இடது: {l_pct}% · "
+                f"முன்: {f_pct}% · "
+                f"வலது: {r_pct}% · "
+                f"அடுத்த படிக்கு செல்கிறது..."
+            )
+
+        report = {"result": "PASS" if passed else "FAIL", "checks": checks,
+                  "reviewedSectors": 5 if passed else 0, "arcDegrees": 180,
+                  "coverageMode": "recorded_video", "baselineResults": baseline_results,
+                  "computerSectors": computer_frames, "prohibitedObjects": observations[:20] if blocked else [],
+                  "personSource": "laptop_webcam_mediapipe_yolo" if pose_ok else None}
+        object_transition = None
+        pending_object = None
+        if blocked:
+            kind, hits = blocked
+            sector = min(4, round(hits[0][0] * 4 / max(1, len(frames) - 1)))
+            object_transition = {"type": "DETECTED", "objectType": kind,
+                                 "sector": sector,
+                                 "frameIndex": hits[0][0],
+                                 "confidence": hits[0][1].get("confidence", 0)}
+            pending_object = {"objectType": kind, "sector": sector,
+                              "label": labels[sector], "confidence": hits[0][1].get("confidence", 0),
+                              "reason": "remove_object", "action": "REMOVE_AND_RESCAN"}
+        return {"success": True, "step": "scan180", "arcDegrees": 180,
+                "complete": passed, "sweepCovered": checks["coverage"],
+                "verdict": verdict, "failureReason": reason,
+                "rescanRequired": not passed, "detectorAvailable": bool(self.yolo),
+                "coverage": 100 if anchors_match else round(verified_count / 3.0 * 100),
+                "similarityReport": {"overallSimilarity": overall_similarity,
+                                     "threshold": reference_threshold,
+                                     "result": "PASS" if anchors_match else "FAIL",
+                                     "verifiedViews": f"{verified_count}/3",
+                                     "views": {
+                                         "left": {"similarity": left_agg_score, "percentage": l_pct, "verified": bool(left_matched)},
+                                         "front": {"similarity": front_agg_score, "percentage": f_pct, "verified": bool(front_matched)},
+                                         "right": {"similarity": right_agg_score, "percentage": r_pct, "verified": bool(right_matched)},
+                                     },
+                                     "sectorResults": sector_results},
+                "postScanReport": report,
+                "sampledFrames": [item["frame"] for item in sampled] if checks["coverage"] else [],
+                "mode": "recorded_video", "sectors": [{"sector": index, "label": label,
+                    "verified": bool(passed)} for index, label in enumerate(labels)],
+                "currentDirection": "Right", "pendingObject": pending_object,
+                "objectTransition": object_transition, "observations": observations[:20],
+                "motionEvidence": {"distinctTransitions": sum(change >= 0.020 for change in changes),
+                    "continuousPairs": sum(score >= 0.20 for score in continuity),
+                    "laptopPose": laptop}, "laptopMovement": laptop,
+                "laptopMovementScore": float(laptop.get("score") or 0),
+                "guideKey": reason, "message": message, "taMessage": ta_message}
+
+    def analyze_180(
+        self, frames: List[str], session_id: str,
+        orientations: Optional[List[Optional[Dict[str, Any]]]] = None,
+        block_objects: bool = True,
+        laptop_frames: Optional[List[str]] = None,
+        require_laptop: bool = False,
+        references: Optional[List[Dict[str, Any]]] = None,
+        reference_threshold: float = DEFAULT_REFERENCE_SIMILARITY,
+        detection_frames: int = 2,
+        clear_frames: int = 3,
+        same_area_threshold: float = 0.65,
+    ) -> Dict[str, Any]:
+        """Guided LEFT → FRONT → RIGHT half-turn with recorded evidence.
+
+        Phone yaw establishes travel when available. Without the sensor, the
+        ordered saved-room views and visual continuity establish the half-turn.
+        MediaPipe pose/hands confirms arm movement from the laptop camera.
+        Neither elapsed time nor a repeated still image advances a sector.
+        """
+        if not frames:
+            return {"success": False, "error": "No scan frames provided"}
+        labels = ("Left", "Front-left", "Front", "Front-right", "Right")
+        required = ("left", "front", "right")
+        reference_map = {item.get("step"): item for item in (references or [])
+                         if isinstance(item, dict) and item.get("step") in CAPTURE_STEPS
+                         and item.get("visualSignature") and item.get("sceneDescriptor")}
+        state_key = f"scan180_{session_id}"
+        state = self.scan_states.setdefault(state_key, {
+            "ts": time.time(), "samples": 0, "sectors": {}, "startYaw": None,
+            "lastYaw": None, "direction": 0, "travel": 0.0, "mode": None,
+            "visualFramesSinceSector": 0, "visualContinuity": 0,
+            "poseSeen": False,
+            "poseMotionWindows": 0, "webcamPersonSeen": False,
+            "webcamMultiplePersons": False, "pending": None, "pendingClean": 0,
+            "blockingCandidate": None, "blockingStreak": 0,
+        })
+        state["ts"] = time.time()
+        laptop = _laptop_motion(laptop_frames) if require_laptop else {
+            "available": True, "moved": True, "participantDetected": True,
+            "pose_detected": True, "mode": "pose", "score": 0.0}
+        pose_usable = _pose_confirms_participant(laptop)
+        if pose_usable:
+            state["poseSeen"] = True
+            if laptop.get("moved"):
+                state["poseMotionWindows"] += 1
+        if require_laptop and self.yolo and laptop_frames:
+            webcam = self.decode_frame(laptop_frames[-1])
+            if webcam is not None:
+                people = [item for item in self._yolo_detections(webcam)
+                          if item.get("class_name") == "person" and item.get("confidence", 0) >= 0.45]
+                state["webcamPersonSeen"] = state["webcamPersonSeen"] or bool(people)
+                state["webcamMultiplePersons"] = state["webcamMultiplePersons"] or len(people) > 1
+        observations, detected_objects = [], set()
+        readings = orientations or []
+        blocking_types = {"additional person"}
+        if block_objects:
+            blocking_types.update({"additional phone", "tablet", "second laptop", "visible notes / book"})
+        transition = None
+        restarted = False
+        last_issue = None
+        usable_frames = 0
+        for index, encoded in enumerate(frames[-DEFAULT_MAX_FRAMES:]):
+            frame = self.decode_frame(encoded)
+            if frame is None:
+                last_issue = "INVALID_IMAGE"
+                continue
+            frame, gray, metrics = self._prepare(frame)
+            if metrics.get("reason") is not None:
+                last_issue = "LOW_IMAGE_QUALITY"
+                continue
+            reading = _orientation_reading(readings[index]) if index < len(readings) else None
+            usable_frames += 1
+            signature = _visual_signature(gray)
+            descriptor = _scene_descriptor(gray)
+            features = _feature_descriptor(gray)
+            thumb = _thumbnail(gray)
+            detections = self._yolo_detections(frame)
+            detected_objects.update(item.get("class_name") for item in detections)
+            frame_observations = self._observations(detections, frame.shape)
+            observations.extend(frame_observations)
+            blocked = next((item for item in frame_observations
+                            if item.get("objectType") in blocking_types), None)
+            state["samples"] += 1
+            view = {"visualSignature": signature, "sceneDescriptor": descriptor,
+                    "featureDescriptor": features, "thumb": thumb,
+                    "sampledFrame": encoded, "yaw": reading["yaw"] if reading else None,
+                    "qualityScore": metrics.get("qualityScore"), "detections": detections}
+            if state["pending"] is not None:
+                pending = state["pending"]
+                same_area = _reference_similarity(signature, descriptor, features, pending["view"]) >= same_area_threshold
+                if blocked or not same_area:
+                    state["pendingClean"] = 0
+                    last_issue = "OBJECT_STILL_PRESENT" if blocked else "SHOW_SAME_AREA"
+                else:
+                    state["pendingClean"] += 1
+                    if state["pendingClean"] >= clear_frames:
+                        transition = {"type": "CLEARED", "sector": pending["sector"],
+                                      "objectType": pending["objectType"], "frameIndex": index,
+                                      "sameAreaSimilarity": _reference_similarity(signature, descriptor, features, pending["view"]),
+                                      "clearFrames": state["pendingClean"], "qualityScore": metrics.get("qualityScore")}
+                        self.scan_states.pop(state_key, None)
+                        restarted = True
+                continue
+            candidate_type = blocked.get("objectType") if blocked else None
+            if candidate_type and candidate_type == state["blockingCandidate"]:
+                state["blockingStreak"] += 1
+            else:
+                state["blockingCandidate"] = candidate_type
+                state["blockingStreak"] = 1 if candidate_type else 0
+            if blocked and state["blockingStreak"] >= detection_frames:
+                sector = min(4, len(state["sectors"]))
+                state["pending"] = {"objectType": candidate_type, "sector": sector, "view": view}
+                transition = {"type": "DETECTED", "sector": sector,
+                              "objectType": candidate_type, "frameIndex": index,
+                              "confidence": blocked.get("confidence", 0)}
+                last_issue = "OBJECT_DETECTED"
+                continue
+            if 0 not in state["sectors"]:
+                left_score = _reference_similarity(signature, descriptor, features, reference_map.get("left", {}))
+                if left_score < reference_threshold:
+                    last_issue = "START_AT_LEFT"
+                    continue
+                state["sectors"][0] = view
+                state["mode"] = "orientation" if reading else "visual_baseline"
+                state["startYaw"] = reading["yaw"] if reading else None
+                state["lastYaw"] = reading["yaw"] if reading else None
+                state["visualFramesSinceSector"] = 0
+                continue
+            if state["mode"] == "orientation" and reading is None:
+                # Mobile browsers on an insecure LAN may omit deviceorientation.
+                # Continue from the already verified left view using ordered
+                # visual anchors instead of pinning progress at zero forever.
+                state["mode"] = "visual_baseline"
+                state["visualFramesSinceSector"] = 0
+                state["visualContinuity"] = max(state["visualContinuity"], len(state["sectors"]) - 1)
+            if state["mode"] == "orientation":
+                delta = _angular_delta(state["lastYaw"], reading["yaw"])
+                state["lastYaw"] = reading["yaw"]
+                if abs(delta) > 60:
+                    last_issue = "TURN_SLOWLY"
+                    continue
+                if state["direction"] == 0 and abs(delta) >= 5:
+                    state["direction"] = 1 if delta > 0 else -1
+                if state["direction"] and delta * state["direction"] < -7:
+                    last_issue = "WRONG_DIRECTION"
+                    continue
+                state["travel"] = min(210.0, state["travel"] + max(0.0, delta * state["direction"]))
+            else:
+                state["visualFramesSinceSector"] += 1
+            thresholds = (0, 30, 70, 110, 150)
+            next_sector = len(state["sectors"])
+            if next_sector >= 5:
+                continue
+            if state["mode"] == "orientation" and state["travel"] < thresholds[next_sector]:
+                continue
+            if state["mode"] == "visual_baseline" and state["visualFramesSinceSector"] < 2:
+                continue
+            anchors = (("left",), ("left", "front"), ("front",),
+                       ("front", "right"), ("right",))[next_sector]
+            score = max((_reference_similarity(signature, descriptor, features, reference_map.get(name, {}))
+                         for name in anchors), default=0.0)
+            previous = state["sectors"][next_sector - 1]
+            if next_sector in (2, 4) and score < reference_threshold:
+                last_issue = "ROOM_MISMATCH"
+                continue
+            if state["mode"] == "visual_baseline":
+                continuity = _reference_similarity(signature, descriptor, features, previous)
+                if continuity < 0.35 or (next_sector in (1, 3) and score < 0.50):
+                    last_issue = "VISUAL_CONTINUITY"
+                    continue
+            if _visual_difference(thumb, previous["thumb"]) < 0.025:
+                last_issue = "MOVE_FURTHER"
+                continue
+            state["sectors"][next_sector] = view
+            if state["mode"] == "visual_baseline":
+                state["visualContinuity"] += 1
+            state["visualFramesSinceSector"] = 0
+
+        if restarted:
+            state["sectors"] = {}
+            state["travel"] = 0.0
+            state["direction"] = 0
+            state["mode"] = None
+            state["visualFramesSinceSector"] = 0
+            state["visualContinuity"] = 0
+            state["pending"] = None
+            state["poseSeen"] = False
+            state["poseMotionWindows"] = 0
+            state["webcamPersonSeen"] = False
+        sectors = [{"sector": number, "label": label,
+                    "verified": number in state["sectors"],
+                    "yaw": state["sectors"].get(number, {}).get("yaw")}
+                   for number, label in enumerate(labels)]
+        verified = len(state["sectors"])
+        pending = state["pending"]
+        pose_pass = not require_laptop or (state["poseSeen"] and state["poseMotionWindows"] >= 1
+                                           and state["webcamPersonSeen"] and not state["webcamMultiplePersons"])
+        direction_covered = (state["travel"] >= 150 if state["mode"] == "orientation"
+                             else state["mode"] == "visual_baseline" and state["visualContinuity"] >= 4)
+        sweep_covered = verified == 5 and direction_covered and not pending and pose_pass
+        sampled = [state["sectors"].get(number, {}) for number in range(5)]
+        comparisons = []
+        for number, names in enumerate((("left",), ("left", "front"), ("front",),
+                                        ("front", "right"), ("right",))):
+            item = sampled[number]
+            choices = [(name, _reference_similarity(item.get("visualSignature", ""),
+                         item.get("sceneDescriptor", ""), item.get("featureDescriptor", ""),
+                         reference_map.get(name, {}))) for name in names]
+            match, score = max(choices, key=lambda pair: pair[1])
+            comparisons.append({"sector": labels[number], "similarity": score,
+                                "matchedReference": match,
+                                "status": "PASS" if item and score >= reference_threshold else
+                                          "LOW_MATCH" if item else "PENDING"})
+        anchor_scores = [comparisons[number]["similarity"] for number in (0, 2, 4)]
+        overall = round(sum(anchor_scores) / 3, 4)
+        baseline_pass = all(score >= reference_threshold for score in anchor_scores)
+        baseline_results = []
+        for name in CAPTURE_STEPS:
+            choices = [(number, _reference_similarity(item.get("visualSignature", ""),
+                         item.get("sceneDescriptor", ""), item.get("featureDescriptor", ""),
+                         reference_map.get(name, {}))) for number, item in enumerate(sampled)]
+            best_sector, best_score = max(choices, key=lambda pair: pair[1])
+            baseline_results.append({"step": name, "bestSector": best_sector,
+                                     "bestSimilarity": best_score,
+                                     "role": "directional_gate" if name in required else "context"})
+        computer_sectors, prohibited = [], []
+        if sweep_covered:
+            for number, item in enumerate(sampled):
+                reviewed = self.decode_frame(item["sampledFrame"])
+                if reviewed is None:
+                    raise RuntimeError("Recorded 180 sector frame is unavailable")
+                detections = self._yolo_detections(reviewed)
+                names = {det.get("class_name") for det in detections if det.get("confidence", 0) >= 0.45}
+                if "laptop" in names or (names & {"monitor", "tv", "tv monitor"} and names & {"keyboard", "mouse"}):
+                    computer_sectors.append(number)
+                prohibited.extend(obs for obs in self._observations(detections, reviewed.shape)
+                                  if obs.get("objectType") in blocking_types)
+        checks = {"coverage": sweep_covered, "baseline": baseline_pass,
+                  "person": state["webcamPersonSeen"] if require_laptop else True,
+                  "computer": bool(computer_sectors),
+                  "unauthorizedObjects": not prohibited and not state["webcamMultiplePersons"]}
+        passed = sweep_covered and all(checks.values()) and bool(self.yolo)
+        report = {"result": "PASS" if passed else "FAIL" if sweep_covered else "PENDING",
+                  "checks": checks, "reviewedSectors": 5 if sweep_covered else 0,
+                  "arcDegrees": 180, "computerSectors": computer_sectors,
+                  "prohibitedObjects": prohibited[:20],
+                  "baselineResults": baseline_results,
+                  "personSource": "laptop_webcam_mediapipe_yolo" if pose_pass else None,
+                  "coverageMode": state["mode"]}
+        rescan = sweep_covered and not passed
+        if rescan:
+            self.scan_states.pop(state_key, None)
+        if restarted:
+            message = "Object removed. Start the 180 degree scan again from the left."
+            guide = "scan_restarted"
+        elif pending:
+            message = "Remove the detected object and show the same area clearly."
+            guide = "remove_object"
+        elif verified == 0:
+            message = "Point at the saved left room view to begin the 180 degree scan."
+            guide = "start_left"
+        elif verified < 5:
+            message = f"Continue slowly toward the right. Next: {labels[verified]}."
+            guide = "continue_right"
+        elif not pose_pass:
+            message = "Keep yourself visible in the laptop camera and move your phone slowly to confirm the turn."
+            guide = "laptop_motion_missing"
+        elif rescan:
+            message = "The room scan did not match the verified photos or failed object review. Start again from the left."
+            guide = "room_mismatch"
+        else:
+            message = "180 degree room scan verified. Show your hand and laptop next."
+            guide = "scan_complete"
+        if last_issue and not passed and not pending and not restarted and verified < 5:
+            details = {"START_AT_LEFT": "Point at the saved left room view to begin.",
+                       "TURN_SLOWLY": "Turn more slowly so the camera covers each area.",
+                       "WRONG_DIRECTION": "Continue from left through front toward right; do not turn back.",
+                       "ROOM_MISMATCH": "This view differs from the saved room photo. Show the same area clearly.",
+                       "VISUAL_CONTINUITY": "Keep the same room area in view while turning slowly toward the next saved view.",
+                       "MOVE_FURTHER": "Move the phone farther to show a different area."}
+            message = details.get(last_issue, message)
+            guide = {"START_AT_LEFT": "start_left", "TURN_SLOWLY": "slow_down",
+                     "WRONG_DIRECTION": "wrong_direction",
+                     "ROOM_MISMATCH": "room_mismatch",
+                     "VISUAL_CONTINUITY": "visual_continuity",
+                     "MOVE_FURTHER": "move_further"}.get(last_issue, guide)
+        return {"success": True, "step": "scan180", "arcDegrees": 180,
+                "complete": passed, "sweepCovered": sweep_covered,
+                "verdict": "PASS" if passed else "FLAG" if (pending or restarted) else "RETRY",
+                "failureReason": last_issue,
+                "detectorAvailable": bool(self.yolo), "coverage": verified * 20,
+                "samplesSeen": state["samples"], "similarityReport": {
+                    "overallSimilarity": overall, "threshold": reference_threshold,
+                    "result": "PASS" if baseline_pass and sweep_covered else "FAIL" if sweep_covered else "PENDING",
+                    "sectorResults": comparisons},
+                "postScanReport": report, "sampledFrames": [item["sampledFrame"] for item in sampled] if sweep_covered else [],
+                "objectTransition": transition, "usableFrames": usable_frames,
+                "accumulatedSweep": round(state["travel"], 1),
+                "maxForwardSweep": round(state["travel"], 1),
+                "mode": state["mode"] or "visual_baseline", "sectors": sectors,
+                "missingSectors": [item["label"] for item in sectors if not item["verified"]],
+                "motionEvidence": {"phoneDirection": state["direction"],
+                                   "visualContinuity": state["visualContinuity"],
+                                   "laptopPose": laptop},
+                "currentDirection": labels[min(verified, 4)],
+                "pendingObject": {"sector": pending["sector"], "label": labels[pending["sector"]],
+                                  "objectType": pending["objectType"]} if pending else None,
+                "restarted": restarted, "rescanRequired": rescan,
+                "guideKey": guide, "message": message, "taMessage": None,
+                "laptopMovement": laptop, "laptopMovementScore": float(laptop.get("score") or 0),
+                "observations": observations[:20], "detectedObjects": sorted(detected_objects)}
 
     def analyze_360(
         self,
@@ -1371,6 +2075,11 @@ class RoomScanEngine:
         block_objects: bool = True,
         laptop_frames: Optional[List[str]] = None,
         require_laptop: bool = False,
+        references: Optional[List[Dict[str, Any]]] = None,
+        reference_threshold: float = DEFAULT_REFERENCE_SIMILARITY,
+        detection_frames: int = 2,
+        clear_frames: int = 3,
+        same_area_threshold: float = 0.65,
     ) -> Dict[str, Any]:
         """Verify eight distinct directions and a return to the starting view."""
         if not frames:
@@ -1389,6 +2098,8 @@ class RoomScanEngine:
             "orientationMisses": 0,
             "lastVerifiedCount": 0, "stagnantBatches": 0,
             "laptopMotionUntil": 0.0, "laptopConfirmedWindows": 0,
+            "webcamPersonSeen": False, "webcamMultiplePersons": False,
+            "postReviewAt": None,
         })
         # Keep in-process sessions compatible when the scanner is hot reloaded.
         for key, default in (("maxForwardTravel", 0.0), ("closingStreak", 0),
@@ -1405,12 +2116,27 @@ class RoomScanEngine:
         # must not invalidate evidence supplied with these same mobile frames.
         laptop_motion_confirmed = (not require_laptop or laptop["moved"] or
                                    time.time() <= state["laptopMotionUntil"])
+        # A changing webcam image is movement evidence, not evidence that the
+        # candidate is present. Keep looking until a real person is detected.
+        if require_laptop and self.yolo and not state["webcamPersonSeen"] and laptop_frames:
+            webcam = self.decode_frame(laptop_frames[-1])
+            if webcam is not None:
+                people = [item for item in self._yolo_detections(webcam)
+                          if item["class_name"] == "person" and item["confidence"] >= 0.45]
+                state["webcamPersonSeen"] = bool(people)
+                state["webcamMultiplePersons"] = len(people) > 1
         observations: List[Dict[str, Any]] = []
         detected_objects: set = set()
         readings = orientations or []
         blocking_types = {"additional person"}
         if block_objects:
             blocking_types.update({"additional phone", "tablet", "second laptop", "visible notes / book"})
+        reference_map = {item.get("step"): item for item in (references or [])
+                         if isinstance(item, dict) and item.get("step") in CAPTURE_STEPS
+                         and item.get("visualSignature") and item.get("sceneDescriptor")}
+        object_transition = None
+        usable_frames = 0
+        reverify_failure = None
 
         for index, frame_data in enumerate(frames[-DEFAULT_MAX_FRAMES:]):
             img = self.decode_frame(frame_data)
@@ -1431,23 +2157,35 @@ class RoomScanEngine:
             state["blurStreak"] = state["blurStreak"] + 1 if metrics["blurredHard"] else 0
             state["upperWeak"] = state["upperWeak"] + 1 if metrics["edgeTop"] < 0.025 else 0
             state["lowerWeak"] = state["lowerWeak"] + 1 if metrics["edgeLower"] < 0.012 else 0
-            if metrics["blurredHard"] or metrics["brightness"] < 38 or metrics["noiseRatio"] > 0.78:
+            if metrics.get("reason") is not None:
+                if state["pending"] is not None:
+                    reverify_failure = "LOW_IMAGE_QUALITY"
                 continue
+            usable_frames += 1
 
             if state["pending"] is None:
                 candidate_type = observed_blocking.get("objectType") if observed_blocking else None
-                if candidate_type and candidate_type == state.get("blockingCandidate"):
+                candidate_view = state.get("blockingCandidateView")
+                same_candidate_area = not candidate_view or _reference_similarity(
+                    signature, scene_descriptor, feature_descriptor, candidate_view) >= same_area_threshold
+                if not same_candidate_area and reading and candidate_view and candidate_view.get("yaw") is not None:
+                    same_candidate_area = abs(_angular_delta(candidate_view["yaw"], reading["yaw"])) <= 45.0
+                if candidate_type and candidate_type == state.get("blockingCandidate") and same_candidate_area:
                     state["blockingStreak"] = state.get("blockingStreak", 0) + 1
                 elif candidate_type:
                     state["blockingCandidate"] = candidate_type
+                    state["blockingCandidateView"] = {"visualSignature": signature,
+                        "sceneDescriptor": scene_descriptor, "featureDescriptor": feature_descriptor,
+                        "yaw": reading["yaw"] if reading else None}
                     state["blockingStreak"] = 1
                 else:
                     state["blockingCandidate"] = None
+                    state["blockingCandidateView"] = None
                     state["blockingStreak"] = 0
                 # A single uncertain YOLO frame cannot invalidate the entire
                 # sweep. Require the same prohibited object in two consecutive
                 # usable frames before entering the blocked state.
-                blocking = observed_blocking if state["blockingStreak"] >= 2 else None
+                blocking = observed_blocking if state["blockingStreak"] >= detection_frames else None
             else:
                 blocking = observed_blocking
 
@@ -1503,13 +2241,27 @@ class RoomScanEngine:
             # unverified, nothing accumulates, and once the object is removed the
             # ENTIRE 360 sweep restarts from 0% (sectors and travel wiped).
             if state["pending"] is not None:
+                pending_view = state["sectors"].get(state["pending"], {})
+                same_area_score = _reference_similarity(signature, scene_descriptor, feature_descriptor, pending_view)
+                if same_area_score < same_area_threshold:
+                    state["pendingClean"] = 0
+                    reverify_failure = "WRONG_AREA"
+                    state["lastThumb"] = thumb.copy()
+                    state["lastGray"] = gray.copy()
+                    continue
                 if observed_blocking:
                     state["pendingClean"] = 0
+                    reverify_failure = "OBJECT_STILL_PRESENT"
                     state["lastThumb"] = thumb.copy()
                     state["lastGray"] = gray.copy()
                     continue
                 state["pendingClean"] += 1
-                if state["pendingClean"] >= 2:
+                if state["pendingClean"] >= clear_frames:
+                    object_transition = {"type": "CLEARED", "sector": state["pending"],
+                                         "objectType": pending_view.get("blockedObject"),
+                                         "frameIndex": index, "sameAreaSimilarity": same_area_score,
+                                         "clearFrames": state["pendingClean"],
+                                         "qualityScore": metrics.get("qualityScore")}
                     # Object removed: full 360 restart -- earlier sectors are
                     # deliberately discarded so the fresh sweep is re-verified.
                     state["sectors"] = {}
@@ -1523,6 +2275,7 @@ class RoomScanEngine:
                     state["reverseSectorStreak"] = 0
                     state["closureBySequence"] = False
                     state["blockingCandidate"] = None
+                    state["blockingCandidateView"] = None
                     state["blockingStreak"] = 0
                     state["mode"] = None
                     state["startThumb"] = None
@@ -1542,6 +2295,9 @@ class RoomScanEngine:
                     state["stagnantBatches"] = 0
                     state["laptopMotionUntil"] = 0.0
                     state["laptopConfirmedWindows"] = 0
+                    state["webcamPersonSeen"] = False
+                    state["webcamMultiplePersons"] = False
+                    state["postReviewAt"] = None
                     state["samples"] = 0
                     state["restarted"] = True
                     # A restart is a hard transaction boundary. Do not process
@@ -1681,6 +2437,10 @@ class RoomScanEngine:
                 })
                 state["pending"] = blocked_sector
                 state["pendingClean"] = 0
+                object_transition = {"type": "DETECTED", "sector": blocked_sector,
+                                     "objectType": blocking["objectType"], "frameIndex": index,
+                                     "confidence": blocking.get("confidence"),
+                                     "qualityScore": metrics.get("qualityScore")}
             elif not existing and target < 8:
                 other_views = [sector for number, sector in state["sectors"].items() if number != target and sector.get("verified")]
                 # Adjacent 45° sectors intentionally share local features, so
@@ -1709,7 +2469,10 @@ class RoomScanEngine:
                         "sceneDescriptor": scene_descriptor,
                         "featureDescriptor": feature_descriptor,
                         "timestamp": time.time(), "thumb": thumb.copy(),
-                        "yaw": reading["yaw"] if reading else None, "blockedObject": None}
+                        "yaw": reading["yaw"] if reading else None, "blockedObject": None,
+                        "sampledFrame": frame_data,
+                        "detections": detections,
+                        "qualityScore": metrics.get("qualityScore")}
                     if target == 7 and final_sector_candidate:
                         state["closureBySequence"] = True
 
@@ -1733,6 +2496,9 @@ class RoomScanEngine:
             state["lastGray"] = gray.copy()
 
         restarted = bool(state.pop("restarted", False))
+        if state["direction"] > 0:
+            labels = ("Front", "Front-right", "Right", "Back-right", "Back",
+                      "Back-left", "Left", "Front-left")
         sectors = [{"sector": number, "label": label, "verified": bool(state["sectors"].get(number, {}).get("verified")),
                     "visualSignature": state["sectors"].get(number, {}).get("visualSignature"),
                     "timestamp": state["sectors"].get(number, {}).get("timestamp"),
@@ -1744,7 +2510,94 @@ class RoomScanEngine:
         state["stagnantBatches"] = 0 if verified_count > state["lastVerifiedCount"] else state["stagnantBatches"] + 1
         state["lastVerifiedCount"] = verified_count
         laptop_confirmed = not require_laptop or state["laptopConfirmedWindows"] >= 2
-        complete = bool(state["closed"] and not missing and state["pending"] is None and laptop_confirmed)
+        sweep_covered = bool(state["closed"] and not missing and state["pending"] is None and laptop_confirmed)
+        if sweep_covered and state.get("postReviewAt") is None:
+            # Post-scan inference is a separate, one-time pass over the eight
+            # recorded sector JPEGs. A detector failure aborts the request;
+            # it can never turn into an empty/clear room verdict.
+            for number in range(8):
+                sector = state["sectors"][number]
+                recorded = self.decode_frame(sector.get("sampledFrame"))
+                if recorded is None:
+                    raise RuntimeError("Recorded 360 sector frame is unavailable")
+                sector["reviewDetections"] = self._yolo_detections(recorded)
+            state["postReviewAt"] = time.time()
+        near_side, far_side = ("right", "left") if state["direction"] > 0 else ("left", "right")
+        reference_choices = {
+            0: ("front",), 1: ("front", near_side), 2: (near_side,),
+            3: (near_side, "bottom", "desk"), 4: CAPTURE_STEPS,
+            5: (far_side, "bottom", "desk"), 6: (far_side,),
+            7: (far_side, "front"),
+        }
+        sector_results = []
+        for number, label in enumerate(labels):
+            sector_view = state["sectors"].get(number, {})
+            choices = [(name, _reference_similarity(sector_view.get("visualSignature", ""),
+                        sector_view.get("sceneDescriptor", ""), sector_view.get("featureDescriptor", ""),
+                        reference_map[name])) for name in reference_choices[number] if name in reference_map]
+            best_name, best_score = max(choices, key=lambda pair: pair[1]) if choices else (None, 0.0)
+            sector_results.append({"sector": label, "similarity": best_score,
+                                   "matchedReference": best_name, "status":
+                                   "PASS" if sector_view.get("verified") and best_score >= reference_threshold
+                                   else "LOW_MATCH" if sector_view.get("verified") else "PENDING"})
+        anchor_scores = [sector_results[number]["similarity"] for number in (0, 2, 6)]
+        baseline_results = []
+        for name in CAPTURE_STEPS:
+            comparisons = []
+            if name in reference_map:
+                comparisons = [(number, _reference_similarity(
+                    state["sectors"].get(number, {}).get("visualSignature", ""),
+                    state["sectors"].get(number, {}).get("sceneDescriptor", ""),
+                    state["sectors"].get(number, {}).get("featureDescriptor", ""),
+                    reference_map[name])) for number in range(8)]
+            best_sector, best_similarity = max(comparisons, key=lambda item: item[1]) if comparisons else (None, 0.0)
+            baseline_results.append({"step": name, "bestSector": best_sector,
+                                     "bestSimilarity": round(best_similarity, 4),
+                                     "role": "directional_gate" if name in ("front", "left", "right")
+                                     else "context"})
+        # FRONT/LEFT/RIGHT are the three baseline shots with a reliable yaw
+        # correspondence. BOTTOM and DESK are pitched views; forcing every
+        # horizontal sector to match them would make a legitimate room fail.
+        overall_similarity = round(sum(anchor_scores) / 3, 4)
+        # Review the complete set of retained sector samples only after the
+        # physical sweep closes. The detector observations were produced from
+        # these exact frames as they arrived; no elapsed-time gate can pass.
+        required_refs = set(CAPTURE_STEPS)
+        reference_pass = sweep_covered and required_refs.issubset(reference_map) and all(
+            sector_results[number]["similarity"] >= reference_threshold for number in (0, 2, 6))
+        sampled = [state["sectors"].get(number, {}) for number in range(8)]
+        computer_sectors = []
+        for number, sector in enumerate(sampled):
+            names = {det.get("class_name") for det in sector.get("reviewDetections", [])
+                     if det.get("confidence", 0) >= 0.45}
+            if "laptop" in names or (names & {"monitor", "tv", "tv monitor"}
+                                     and names & {"keyboard", "mouse"}):
+                computer_sectors.append(number)
+        sampled_observations = [obs for sector in sampled for obs in
+                                self._observations(sector.get("reviewDetections", []))]
+        prohibited = [obs for obs in sampled_observations if obs.get("objectType") in blocking_types]
+        samples_recorded = sweep_covered and all(sector.get("sampledFrame") for sector in sampled)
+        checks = {
+            "coverage": sweep_covered and samples_recorded,
+            "baseline": reference_pass,
+            "person": bool(state["webcamPersonSeen"]) if require_laptop else True,
+            "computer": bool(computer_sectors),
+            "unauthorizedObjects": not prohibited and not state["webcamMultiplePersons"],
+        }
+        post_scan_pass = sweep_covered and all(checks.values())
+        post_scan_report = {
+            "result": "PASS" if post_scan_pass else "FAIL" if sweep_covered else "PENDING",
+            "checks": checks,
+            "reviewedSectors": 8 if samples_recorded else 0,
+            "reviewedAt": state.get("postReviewAt"),
+            "computerSectors": computer_sectors,
+            "personSource": "laptop_webcam_yolo" if state["webcamPersonSeen"] else None,
+            "prohibitedObjects": prohibited[:20],
+            "baselineResults": baseline_results,
+        }
+        complete = bool(post_scan_pass)
+        rescan_required = sweep_covered and bool(reference_map) and (not reference_pass or not computer_sectors or
+                                             bool(prohibited) or state["webcamMultiplePersons"])
         coverage = 100 if complete else min(87, round(verified_count * 100 / 8))
         pending = None
         failure_reason = None
@@ -1757,9 +2610,29 @@ class RoomScanEngine:
             guide_key = "scan_restarted"
             message, ta_message = self._m360(guide_key), self._m360(guide_key, tamil=True)
         elif pending:
-            guide_key = "remove_object"
-            message = "A prohibited object was detected. Please remove it from the room."
-            ta_message = "அனுமதிக்கப்படாத பொருள் கண்டறியப்பட்டுள்ளது. அதை அகற்றவும்."
+            if reverify_failure == "WRONG_AREA":
+                guide_key = "show_same_area"
+                message = "Please show the same area clearly for verification."
+                ta_message = "சரிபார்ப்புக்கு அதே பகுதியைத் தெளிவாகக் காட்டவும்."
+            elif reverify_failure == "LOW_IMAGE_QUALITY":
+                guide_key = "reverify_quality"
+                message = "Please hold the phone steady and show the same area clearly."
+                ta_message = "கைப்பேசியை அசையாமல் பிடித்து அதே பகுதியைத் தெளிவாகக் காட்டவும்."
+            else:
+                guide_key = "remove_object"
+                message = "A prohibited object was detected. Please remove it and show this same area."
+                ta_message = "அனுமதிக்கப்படாத பொருள் கண்டறியப்பட்டுள்ளது. அதை அகற்றி அதே பகுதியைக் காட்டவும்."
+        elif rescan_required:
+            guide_key = "room_mismatch" if not reference_pass else "show_desk" if not computer_sectors else "remove_object"
+            failure_reason = "LOW_REFERENCE_SIMILARITY" if not reference_pass else "COMPUTER_NOT_VISIBLE" if not computer_sectors else "UNAUTHORIZED_OBJECT"
+            message = ("Room does not match the verified photos. Please scan again." if not reference_pass else
+                       "Show the working computer clearly during a new scan." if not computer_sectors else
+                       "A prohibited object or extra person was seen. Remove it and scan again.")
+            ta_message = "அறை சரிபார்ப்பு தோல்வியடைந்தது. மீண்டும் ஸ்கேன் செய்யவும்."
+        elif sweep_covered and not checks["person"]:
+            guide_key = "laptop_participant_not_visible"
+            message = "Return to the laptop camera so your presence can be verified."
+            ta_message = "உங்கள் இருப்பைச் சரிபார்க்க லேப்டாப் கேமராவுக்கு முன் திரும்பவும்."
         elif require_laptop and (not laptop["available"] or not laptop_motion_confirmed):
             # Three distinct failure modes need distinct help:
             #  - the laptop camera produced no usable frames at all
@@ -1822,8 +2695,20 @@ class RoomScanEngine:
             if key not in seen:
                 seen.add(key)
                 deduped.append(obs)
+        report = {"overallSimilarity": overall_similarity, "threshold": reference_threshold,
+                  "result": "PASS" if reference_pass else "FAIL" if sweep_covered else "PENDING",
+                  "sectorResults": sector_results}
+        if rescan_required:
+            self.scan_states.pop(f"scan_{session_id}", None)
         return {"success": True, "step": "scan360", "complete": complete,
+                "sweepCovered": sweep_covered,
+                "detectorAvailable": bool(self.yolo),
                 "coverage": coverage, "samplesSeen": state["samples"],
+                "similarityReport": report, "rescanRequired": rescan_required,
+                "postScanReport": post_scan_report,
+                "sampledFrames": [sector["sampledFrame"] for sector in sampled] if sweep_covered else [],
+                "objectTransition": object_transition, "usableFrames": usable_frames,
+                "reverificationFailure": reverify_failure,
                 "accumulatedSweep": round(state["travel"], 1),
                 "maxForwardSweep": round(state["maxForwardTravel"], 1),
                 "mode": state["mode"], "sectors": sectors, "missingSectors": missing,

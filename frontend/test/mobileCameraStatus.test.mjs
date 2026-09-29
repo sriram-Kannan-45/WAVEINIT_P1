@@ -19,18 +19,19 @@ test('delayed detection preserves live connection and does not offer a new scan'
   assert.equal(mobileCameraStatus({connected:true,now,evidence:null}).kind,'checking');
   assert.equal(mobileCameraStatus({connected:true,now:now+6000,evidence}).kind,'checking');
 });
-test('Hire framing uses hands, laptop and workspace without checking person', () => {
+test('Hire mobile check requires a hand and laptop without face or desk', () => {
   const hire = { receivedAt: now, framing_mode: 'HIRE_WORKSPACE', person_detected: false,
-    hands_detected: true, laptop_detected: true, workspace_detected: true };
+    hands_detected: true, laptop_detected: true, workspace_detected: false, eligible: true };
   assert.equal(mobileCameraStatus({ connected: true, now, evidence: hire }).kind, 'ready');
   for (const [field, message] of [
     ['laptop_detected', 'Please adjust the phone so your laptop is visible.'],
-    ['hands_detected', 'Please keep both hands visible near your workspace.'],
-    ['workspace_detected', 'Please show your laptop and workspace clearly.'],
+    ['hands_detected', 'Please keep a hand visible beside your laptop.'],
   ]) {
     const result = mobileCameraStatus({ connected: true, now, evidence: { ...hire, [field]: false } });
     assert.equal(result.kind, 'reposition');
     assert.equal(result.message, message);
   }
-  assert.match(mobileCameraStatus({ connected: true, now, evidence: null, hireFraming: true }).message, /hands, laptop, and workspace/);
+  assert.equal(mobileCameraStatus({ connected: true, now, evidence: { ...hire, eligible: false } }).kind, 'checking');
+  assert.equal(mobileCameraStatus({ connected: true, now, evidence: { ...hire, other_violation: 'phone' } }).kind, 'reposition');
+  assert.match(mobileCameraStatus({ connected: true, now, evidence: null, hireFraming: true }).message, /hand and laptop/);
 });

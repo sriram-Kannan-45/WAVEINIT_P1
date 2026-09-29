@@ -67,7 +67,8 @@ class AssessmentVerificationService {
   freshEvidence(session, monitor) {
     const evidence = monitor?.metadata?.mobileEvidence;
     if (monitor?.metadata?.hireProctoring?.policy?.enabled === true &&
-        (monitor.metadata.hireProctoring.roomScanClear !== true || evidence?.framing_mode !== 'HIRE_WORKSPACE')) return null;
+        (!require('./hireProctoringPolicy').roomScanApproved(monitor.metadata.hireProctoring) ||
+         !require('./hireProctoringPolicy').hireWorkspaceApproved(evidence))) return null;
     return evidence?.verificationSessionId === session.session_id && evidence.pairingVersion === crypto.createHash("sha256").update(session.token).digest("hex") &&
       Date.now() - Number(evidence.receivedAt) <= 5000 ? evidence : null;
   }
@@ -91,10 +92,10 @@ class AssessmentVerificationService {
       if (policy.identityVerification && !state.identityVerifiedAt) {
         throw new Error('Complete identity and liveness verification before entering the assessment.');
       }
-if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear !== true)) {
-        throw new Error('Complete a clear 360° room scan before entering the assessment.');
+if (policy.mobileRoomScan && !require('./hireProctoringPolicy').roomScanApproved(state)) {
+        throw new Error('Complete a clear 180° room scan before entering the assessment.');
       }
-      if (policy.roomScan360Enabled && !policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear !== true)) {
+      if (policy.roomScan360Enabled && !policy.mobileRoomScan && !require('./hireProctoringPolicy').roomScanApproved(state)) {
         throw new Error('Complete the guided room verification before entering the assessment.');
       }
       if (!policy.mobileRoomScan && !policy.roomScan360Enabled) return monitor;
@@ -102,7 +103,7 @@ if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear 
 
     if (monitor.mobileEnabled && !monitor.metadata?.mobileAdmission) {
       throw new Error(hire.isHire
-        ? 'Complete mobile hands, laptop, and workspace verification before entering the assessment.'
+        ? 'Complete mobile hand and laptop verification before entering the assessment.'
         : 'Complete mobile person and laptop verification before entering the assessment.');
     }
     return monitor;
@@ -111,8 +112,8 @@ if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear 
   initialHireFramingVerified(session, monitor) {
     const evidence = monitor?.metadata?.mobileEvidence;
     return monitor?.metadata?.hireProctoring?.policy?.enabled === true &&
-      monitor.metadata.hireProctoring.roomScanClear === true &&
-      evidence?.framing_mode === 'HIRE_WORKSPACE' && evidence.eligible === true &&
+      require('./hireProctoringPolicy').roomScanApproved(monitor.metadata.hireProctoring) &&
+      require('./hireProctoringPolicy').hireWorkspaceApproved(evidence) &&
       evidence.verificationSessionId === session.session_id &&
       evidence.pairingVersion === crypto.createHash('sha256').update(session.token).digest('hex');
   }
@@ -745,7 +746,7 @@ if (policy.mobileRoomScan && (!state.roomScanCompletedAt || state.roomScanClear 
     });
 
     if (!admission.admitted) return { valid: false, error: admission.hireFraming
-      ? 'Keep the mobile stream active with both hands, laptop, and workspace visible until verification completes.'
+      ? 'Keep the mobile stream active with your hand and laptop visible until verification completes.'
       : 'Keep the mobile stream active with both person and laptop visible until verification completes.' };
 
     return {

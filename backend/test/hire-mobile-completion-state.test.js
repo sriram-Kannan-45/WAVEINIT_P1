@@ -33,3 +33,23 @@ test('a submitted attempt reports genuine assessment completion', async () => {
   await controller.getMobileStatus({ params: { token: 'submitted-hire' } }, res);
   expect(res.body).toMatchObject({ isEnded: true, status: 'COMPLETED' });
 });
+
+test('mobile status reports workspace readiness only after the stored scan passes every check', async () => {
+  jest.spyOn(models.AssessmentVerificationSession, 'findOne').mockResolvedValue({
+    session_id: 'hire-room', attempt_id: 23, assessment_type: 'CODING',
+    participant_id: 7, assessment_id: 12, status: 'PAIRED', mobile_verified: false,
+  });
+  jest.spyOn(models.CodingAttempt, 'findByPk').mockResolvedValue({ status: 'IN_PROGRESS' });
+  const hire = { policy: { enabled: true }, roomScanClear: true,
+    roomScanCompletedAt: new Date().toISOString(), roomScanSampleIds: Array(5).fill('sample'),
+    roomSimilarityReport: { result: 'PASS' }, roomPostScanReport: { result: 'PASS', arcDegrees: 180, reviewedSectors: 5,
+      checks: { coverage: true, baseline: true, person: true, computer: true, unauthorizedObjects: true } } };
+  jest.spyOn(models.MonitoringSession, 'findOne').mockResolvedValue({ metadata: { hireProctoring: hire } });
+  const res = response();
+  await controller.getMobileStatus({ params: { token: 'hire-room' } }, res);
+  expect(res.body).toMatchObject({ isEnded: false, hireFraming: true, workspaceReady: true });
+  hire.roomPostScanReport.checks.baseline = false;
+  const rejected = response();
+  await controller.getMobileStatus({ params: { token: 'hire-room' } }, rejected);
+  expect(rejected.body.workspaceReady).toBe(false);
+});
