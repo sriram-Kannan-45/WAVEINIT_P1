@@ -81,18 +81,18 @@ class LaptopPoseTracker:
                     images.append(cv2.resize(image, (320, 240)))
             except (ValueError, TypeError):
                 continue
-        if len(images) < 3:
-            return {"available": False, "moved": False, "score": 0.0,
-                    "participantDetected": None, "multiplePersonsDetected": False,
-                    "personCount": 0, "mode": "pose_missing_frames"}
+        if len(images) > 3:
+            images = [images[0], images[len(images) // 2], images[-1]]
         try:
             poses = self._detect_poses(images)
         except Exception:
             poses = None
-        try:
-            hand_tracks = self._detect_hand_tracks(images)
-        except Exception:
-            hand_tracks = None
+        hand_tracks = None
+        if not poses:
+            try:
+                hand_tracks = self._detect_hand_tracks(images)
+            except Exception:
+                hand_tracks = None
         if poses is None and hand_tracks is None:
             return {"available": False, "moved": False, "score": 0.0,
                     "participantDetected": None, "multiplePersonsDetected": False,

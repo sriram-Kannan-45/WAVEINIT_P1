@@ -1,0 +1,20 @@
+{
+  "name": "feedweb-playwright-pom",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright POM end-to-end tests for feedWeb (frontend + backend + ai-service) on localhost. Does not touch dev code.",
+  "type": "commonjs",
+  "scripts": {
+    "install:browsers": "playwright install chromium",
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:smoke": "playwright test --grep @smoke",
+    "test:auth": "playwright test tests/auth.spec.js",
+    "test:api": "playwright test tests/api-health.spec.js",
+    "test:ui": "playwright test tests/app-smoke.spec.js",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.52.0"
+  }
+}

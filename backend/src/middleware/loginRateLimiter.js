@@ -75,6 +75,59 @@ const ipLimiter = rateLimit({
 // ── Attempt record helpers ─────────────────────────────────────
 const { getRedisClient, isRedisReady } = require('../config/redis');
 
+// Redis key holding the shared lockout record so a scale-out pool enforces one
+// account lockout instead of one per instance. The local Map stays the fast
+// path; Redis is a mirror that is only consulted when Redis is ready.
+const lockoutKey = (email) => `auth:lockout:${email}`;
+
+function readRemoteRecord(email) {
+  return new Promise((resolve) => {
+    try {
+      const client = getRedisClient();
+      if (!client || !isRedisReady()) return resolve(null);
+      client
+        .get(lockoutKey(email))
+        .then((raw) => {
+          if (!raw) return resolve(null);
+          const parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== 'object') return resolve(null);
+          resolve({
+            count: Number(parsed.count) || 0,
+            lockoutUntil: parsed.lockoutUntil ? Number(parsed.lockoutUntil) : null,
+            lockedAt: parsed.lockedAt ? Number(parsed.lockedAt) : null,
+            lastAttempt: parsed.lastAttempt ? Number(parsed.lastAttempt) : Date.now(),
+          });
+        })
+        .catch(() => resolve(null));
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+function writeRemoteRecord(email, rec) {
+  try {
+    const client = getRedisClient();
+    if (!client || !isRedisReady()) return;
+    const ttlSeconds = Math.max(Math.ceil(LOCKOUT_MS / 1000), 60);
+    client
+      .set(lockoutKey(email), JSON.stringify(rec), 'EX', ttlSeconds)
+      .catch(() => {});
+  } catch (_) {
+    // Redis is best-effort; the local Map already holds the authoritative record.
+  }
+}
+
+function clearRemoteRecord(email) {
+  try {
+    const client = getRedisClient();
+    if (!client || !isRedisReady()) return;
+    client.del(lockoutKey(email)).catch(() => {});
+  } catch (_) {
+    // ignore
+  }
+}
+
 function getRecord(email) {
   let rec = store.get(email);
   if (!rec) {
@@ -175,25 +228,51 @@ async function sendLockoutEmail(email) {
 }
 
 // ── Middleware: check + apply account lockout ──────────────────
-function accountLock(req, res, next) {
-  const email = getEmail(req);
-  if (!email) return next();
+function rejectLocked(res, email, rec) {
+  const remainingMs = rec.lockoutUntil - Date.now();
+  const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+  logger.warn(`[AUTH LOCKOUT] Blocked request for locked account "${maskEmail(email)}". Remaining: ${remainingSeconds}s`);
+  return res.status(423).json({
+    error: 'Account is temporarily locked due to multiple failed login attempts. Please try again later or reset your password.',
+    remainingSeconds,
+  });
+}
 
-  const rec = getRecord(email);
+async function accountLock(req, res, next) {
+  try {
+    const email = getEmail(req);
+    if (!email) return next();
 
-  // Already locked — respond with locked status
-  if (isLocked(rec)) {
-    const remainingMs = rec.lockoutUntil - Date.now();
-    const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
-    logger.warn(`[AUTH LOCKOUT] Blocked request for locked account "${maskEmail(email)}". Remaining: ${remainingSeconds}s`);
-    return res.status(423).json({
-      error: 'Account is temporarily locked due to multiple failed login attempts. Please try again later or reset your password.',
-      remainingSeconds,
-    });
+    const rec = getRecord(email);
+
+    // Local fast path — identical to the previous synchronous behaviour.
+    if (isLocked(rec)) {
+      return rejectLocked(res, email, rec);
+    }
+
+    // Local record is absent/expired. In a scale-out pool another instance may
+    // hold the lockout, so consult the shared mirror before allowing the attempt.
+    const remote = await readRemoteRecord(email);
+    if (remote && remote.lockoutUntil && Date.now() < remote.lockoutUntil) {
+      // Adopt the remote state locally so subsequent checks stay on the fast path.
+      rec.count = remote.count;
+      rec.lockoutUntil = remote.lockoutUntil;
+      rec.lockedAt = remote.lockedAt;
+      rec.lastAttempt = remote.lastAttempt;
+      return rejectLocked(res, email, rec);
+    }
+    if (remote && remote.count > rec.count) {
+      rec.count = remote.count;
+    }
+
+    // Not locked — pass through
+    next();
+  } catch (error) {
+    // Never let the lockout check crash the login pipeline. Fail open on the
+    // Redis lookup only — the local Map still holds any known lockout.
+    logger.warn('[AUTH LOCKOUT] accountLock check failed', { error: error.message });
+    next();
   }
-
-  // Not locked — pass through
-  next();
 }
 
 // ── Middleware: track login outcome (MUST run after the controller) ──
@@ -209,6 +288,7 @@ function trackOutcome(req, res, next) {
     if (isSuccess) {
       // Login successful — clear history
       store.delete(email);
+      clearRemoteRecord(email);
     } else if (res.statusCode === 401) {
       // Login failed due to invalid credentials — record the attempt (422 validation errors do NOT count)
       const rec = getRecord(email);
@@ -229,6 +309,9 @@ function trackOutcome(req, res, next) {
         // Fire-and-forget lockout notification email
         sendLockoutEmail(email);
       }
+
+      // Mirror the attempt to Redis so every instance enforces the same limit.
+      writeRemoteRecord(email, rec);
 
       if (delayMs > 0) {
         // Apply delay before responding — makes brute-forcing impractical

@@ -751,7 +751,7 @@ def _pose_confirms_participant(laptop: Dict[str, Any]) -> bool:
 def _laptop_motion(frames: Optional[List[str]]) -> Dict[str, Any]:
     """Check webcam samples for upper-body/arm/posture change without saving them."""
     pose_res: Optional[Dict[str, Any]] = None
-    if laptop_pose_tracker is not None:
+    if laptop_pose_tracker is not None and os.getenv("ENABLE_MEDIAPIPE_POSE", "false").lower() in ("true", "1", "yes"):
         try:
             res = laptop_pose_tracker.evaluate_motion(frames or [])
             if res.get("available"):

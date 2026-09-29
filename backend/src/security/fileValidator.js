@@ -157,8 +157,86 @@ function createFileFilter(category) {
   };
 }
 
+// ── Magic-byte (file signature) detection ──────────────────────────────────
+// multer's `mimetype` comes from the client and is trivially spoofed, so the
+// real content signature must be checked once the bytes are available.
+const SIGNATURES = [
+  { type: 'pdf', test: (b) => b.length >= 5 && b.slice(0, 5).toString('latin1') === '%PDF-' },
+  { type: 'zip', test: (b) => b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b && (b[2] === 0x03 || b[2] === 0x05 || b[2] === 0x07) },
+  { type: 'png', test: (b) => b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 },
+  { type: 'jpeg', test: (b) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
+  { type: 'gif', test: (b) => b.length >= 4 && b.slice(0, 4).toString('latin1') === 'GIF8' },
+  { type: 'bmp', test: (b) => b.length >= 2 && b[0] === 0x42 && b[1] === 0x4d },
+  { type: 'webp', test: (b) => b.length >= 12 && b.slice(0, 4).toString('latin1') === 'RIFF' && b.slice(8, 12).toString('latin1') === 'WEBP' },
+  { type: 'tiff', test: (b) => b.length >= 4 && ((b[0] === 0x49 && b[1] === 0x49) || (b[0] === 0x4d && b[1] === 0x4d)) },
+  { type: 'svg', test: (b) => b.length >= 5 && /^<(\?xml|svg)/i.test(b.slice(0, 64).toString('latin1').trim()) },
+  // Executables / linkables — never acceptable for a document upload.
+  { type: 'mz', test: (b) => b.length >= 2 && b[0] === 0x4d && b[1] === 0x5a },
+  { type: 'elf', test: (b) => b.length >= 4 && b[0] === 0x7f && b.slice(1, 4).toString('latin1') === 'ELF' },
+  { type: 'macho', test: (b) => b.length >= 4 && [0xfeedface, 0xfeedfacf, 0xcafebabe].includes(b.readUInt32BE(0)) },
+  { type: 'class', test: (b) => b.length >= 4 && b.readUInt32BE(0) === 0xcafebabe },
+  { type: 'gzip', test: (b) => b.length >= 2 && b[0] === 0x1f && b[1] === 0x8b },
+];
+
+const IMAGE_SIGNATURES = new Set(['png', 'jpeg', 'gif', 'bmp', 'webp', 'tiff', 'svg']);
+const EXECUTABLE_SIGNATURES = new Set(['mz', 'elf', 'macho', 'class']);
+
+/**
+ * Identify a buffer by its magic bytes.
+ * @returns {string} one of the SIGNATURES types, 'text', or 'unknown'
+ */
+function detectFileSignature(buffer) {
+  if (!buffer || buffer.length < 2) return 'unknown';
+  for (const sig of SIGNATURES) {
+    try {
+      if (sig.test(buffer)) return sig.type;
+    } catch (_) {
+      // Malformed/short buffer for this signature — try the next one.
+    }
+  }
+  // A NUL byte in the first 8 KiB means binary, not text.
+  const head = buffer.slice(0, Math.min(buffer.length, 8192));
+  if (!head.includes(0x00)) return 'text';
+  return 'unknown';
+}
+
+/**
+ * Confirm the bytes on disk match the claimed extension.
+ * Rejects executables outright and requires pdf/docx/pptx/zip to carry the
+ * correct container signature.
+ */
+function validateFileSignature(buffer, originalname) {
+  const ext = path.extname(originalname || '').toLowerCase();
+  const type = detectFileSignature(buffer);
+
+  if (EXECUTABLE_SIGNATURES.has(type)) {
+    return { valid: false, error: 'Executable content is not allowed' };
+  }
+  if (type === 'unknown') {
+    return { valid: false, error: 'File content could not be recognized' };
+  }
+  if (IMAGE_SIGNATURES.has(type)) {
+    return { valid: false, error: 'Images are not supported' };
+  }
+
+  const containerExts = new Set(['.docx', '.pptx', '.xlsx']);
+  if (containerExts.has(ext) && type !== 'zip') {
+    return { valid: false, error: `File content does not match the ${ext} extension` };
+  }
+  if (ext === '.pdf' && type !== 'pdf') {
+    return { valid: false, error: 'File content does not match the .pdf extension' };
+  }
+  if (ext === '.txt' && type !== 'text') {
+    return { valid: false, error: 'File content does not match the .txt extension' };
+  }
+
+  return { valid: true, signature: type };
+}
+
 module.exports = {
   validateFile,
+  validateFileSignature,
+  detectFileSignature,
   sanitizeFilename,
   createFileFilter,
   ALLOWED_TYPES,

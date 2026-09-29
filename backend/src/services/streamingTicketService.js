@@ -16,7 +16,12 @@
 const crypto = require('crypto');
 const logger = require('../utils/logger');
 
-const TICKET_SECRET = process.env.STREAMING_TICKET_SECRET || process.env.JWT_SECRET || 'streaming-ticket-secret-salt';
+// Prefer a dedicated secret. Fall back to JWT_SECRET only (never a hardcoded
+// default) so local/dev keeps working while production stays safe.
+const TICKET_SECRET = process.env.STREAMING_TICKET_SECRET || process.env.JWT_SECRET;
+if (!TICKET_SECRET) {
+  throw new Error('[SECURITY] STREAMING_TICKET_SECRET or JWT_SECRET is required. Set it in .env');
+}
 const TICKET_TTL_MS = 60 * 1000; // 60 seconds
 
 // In-memory replay tracking (cleaned up periodically)

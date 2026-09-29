@@ -23,13 +23,30 @@ const logger = require('../utils/logger');
 
 // ── Configuration ───────────────────────────────────────────────────────────
 const ACCESS_TOKEN_SECRET = process.env.JWT_SECRET;
-const REFRESH_TOKEN_SECRET = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET + '_refresh';
-const ACCESS_TOKEN_EXPIRY = process.env.ACCESS_TOKEN_EXPIRY || '7d';
-const REFRESH_TOKEN_EXPIY_DAYS = 30;
+// In production the refresh secret must be independent. In dev/test keep the
+// old derived fallback so existing setups keep working.
+const REFRESH_TOKEN_SECRET =
+  process.env.JWT_REFRESH_SECRET ||
+  (process.env.NODE_ENV === 'production'
+    ? null
+    : (process.env.JWT_SECRET ? `${process.env.JWT_SECRET}_refresh` : null));
+// .env.example documents ACCESS_TOKEN_EXPIRY_MINUTES=15; accept both spellings.
+// Default stays 15m to match the header comment above (short-lived access token).
+const ACCESS_TOKEN_EXPIRY =
+  process.env.ACCESS_TOKEN_EXPIRY ||
+  (process.env.ACCESS_TOKEN_EXPIRY_MINUTES
+    ? `${Number(process.env.ACCESS_TOKEN_EXPIRY_MINUTES) || 15}m`
+    : '15m');
+// Docs (.env.example) say 7 days. Allow env override REFRESH_TOKEN_EXPIRY_DAYS.
+const REFRESH_TOKEN_EXPIY_DAYS = Number(process.env.REFRESH_TOKEN_EXPIRY_DAYS) || 7;
 const REFRESH_TOKEN_EXPIRY = `${REFRESH_TOKEN_EXPIY_DAYS}d`;
 
 if (!ACCESS_TOKEN_SECRET) {
   throw new Error('[SECURITY] JWT_SECRET is required. Set it in .env');
+}
+
+if (!REFRESH_TOKEN_SECRET) {
+  throw new Error('[SECURITY] JWT_REFRESH_SECRET is required in production. Set it in .env');
 }
 
 // ── Access-token blacklist ──────────────────────────────────────────────────

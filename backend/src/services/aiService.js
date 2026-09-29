@@ -9,6 +9,16 @@ require('dotenv').config();
 const AI_SERVICE_URL = (process.env.AI_SERVICE_URL || 'http://localhost:8000').replace(/\/+$/, '');
 const AI_TIMEOUT = 300000;
 
+// Optional shared secret for backend -> AI-service calls. When AI_SERVICE_KEY
+// is set on both sides, every POST carries X-AI-Service-Key.
+function aiServiceHeaders(extra = {}) {
+  const headers = { 'Content-Type': 'application/json', ...extra };
+  if (process.env.AI_SERVICE_KEY) {
+    headers['X-AI-Service-Key'] = process.env.AI_SERVICE_KEY;
+  }
+  return headers;
+}
+
 async function extractTextFromLocalFile(filePath, mimeType = '') {
   if (!filePath) return null;
   const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
@@ -105,7 +115,7 @@ async function callRagGeneration(payload) {
     let metadata = {};
     if (!sourceText || sourceText.length > 150000) {
       const response = await axios.post(`${AI_SERVICE_URL}/rag/prepare-source`, payload, {
-        timeout: AI_TIMEOUT, headers: {'Content-Type': 'application/json'},
+        timeout: AI_TIMEOUT, headers: aiServiceHeaders(),
       });
       sourceText = response.data?.text;
       metadata = response.data?.metadata || {};
@@ -126,7 +136,7 @@ async function callRagGeneration(payload) {
           course_id: payload.course_id || null,
         }, {
           timeout: AI_TIMEOUT,
-          headers: { 'Content-Type': 'application/json' },
+          headers: aiServiceHeaders(),
         });
 
         if (response.data && Array.isArray(response.data.questions) && response.data.questions.length > 0) {
@@ -282,7 +292,7 @@ const aiService = {
         userAnswer,
       }, {
         timeout: 30000,
-        headers: { 'Content-Type': 'application/json' },
+        headers: aiServiceHeaders(),
       });
       if (response.data && response.data.score !== undefined) {
         return response.data;
@@ -327,7 +337,7 @@ const aiService = {
           difficulty: diffUpper,
         }, {
           timeout: AI_TIMEOUT,
-          headers: { 'Content-Type': 'application/json' },
+          headers: aiServiceHeaders(),
         });
 
         if (response.data && Array.isArray(response.data.questions) && response.data.questions.length > 0) {
@@ -386,7 +396,7 @@ const aiService = {
           languages: langs.join(','),
         }, {
           timeout: 15000,
-          headers: { 'Content-Type': 'application/json' },
+          headers: aiServiceHeaders(),
         });
 
         if (response.data && Array.isArray(response.data.problems) && response.data.problems.length > 0) {
@@ -531,7 +541,7 @@ MANDATORY REQUIREMENTS:
     if ((file_path && !sourceText) || sourceText.length > 150000) {
       try {
         const payload = sourceText ? {text:sourceText,instructions:prompt} : {file_path,mime_type,instructions:prompt};
-        const prepared = await axios.post(`${AI_SERVICE_URL}/rag/prepare-source`,payload,{timeout:AI_TIMEOUT});
+        const prepared = await axios.post(`${AI_SERVICE_URL}/rag/prepare-source`,payload,{timeout:AI_TIMEOUT,headers:aiServiceHeaders()});
         sourceText=prepared.data.text;
       } catch(error) {throw buildAIError(error);}
     }

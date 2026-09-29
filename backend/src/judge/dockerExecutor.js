@@ -50,7 +50,19 @@ class DockerExecutor {
     const image = this.dockerImage || langCfg.dockerImage;
 
     if (!this.useDocker) {
-      logger.warn('[DockerExecutor] Docker unavailable, falling back to local execution');
+      if (process.env.NODE_ENV === 'production') {
+        // Never run untrusted participant code directly on the API host.
+        logger.error('[DockerExecutor] Docker unavailable in production; refusing local execution');
+        return {
+          output: '',
+          error: 'Code execution unavailable: Docker is not configured on the server.',
+          status: VERDICTS.RUNTIME_ERROR,
+          executionTime: 0,
+          memoryUsed: 0,
+          timedOut: false,
+        };
+      }
+      logger.warn('[DockerExecutor] Docker unavailable, falling back to local execution (non-production only)');
       return this.executeLocal({ code, language, stdin, timeLimit, memoryLimit, langCfg });
     }
 

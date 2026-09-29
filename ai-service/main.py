@@ -109,8 +109,28 @@ app.add_middleware(
     allow_origin_regex=None,
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["Content-Type", "Authorization", "X-AI-Service-Key"],
 )
+
+# ── Optional service-to-service auth ──────────────────────────────────────────
+# When AI_SERVICE_KEY is set, non-health POSTs require X-AI-Service-Key.
+# When unset (local dev), everything keeps working unchanged.
+AI_SERVICE_KEY = os.getenv("AI_SERVICE_KEY", "").strip()
+AI_KEY_EXEMPT_PATHS = {"/", "/health", "/api/health", "/ready", "/api/ready"}
+
+@app.middleware("http")
+async def require_ai_service_key(request, call_next):
+    if (
+        AI_SERVICE_KEY
+        and request.method == "POST"
+        and request.url.path not in AI_KEY_EXEMPT_PATHS
+    ):
+        if request.headers.get("x-ai-service-key") != AI_SERVICE_KEY:
+            return JSONResponse(
+                status_code=401,
+                content={"success": False, "message": "Unauthorized AI service request."},
+            )
+    return await call_next(request)
 
 # Ã¢â€â‚¬Ã¢â€â‚¬ Instance identity (for scale-out / readiness signaling) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 def get_instance_id() -> str:

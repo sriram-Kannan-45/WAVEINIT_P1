@@ -427,7 +427,7 @@ async function analyzeRoomStepUnlocked({ sessionId, user, step, frame, orientati
         orientation: capture.orientation })),
     orientation, laptopFrames, requireLaptop: true,
     duplicateThreshold: policy.roomDuplicateSimilarityThreshold,
-    }, { timeoutMs: 18000, retryTimeoutOnce: true });
+    }, { timeoutMs: 35000, retryTimeoutOnce: true });
   } catch (error) {
     await updateHireState(session, { roomCaptureAttempts: [...captureHistory,
       { ...captureAudit, validationStatus: 'ERROR', failureReason: error.code || 'AI_SERVICE_ERROR' }].slice(-60) });

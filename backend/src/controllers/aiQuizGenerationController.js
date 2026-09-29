@@ -134,6 +134,15 @@ function validateUploadedFile(filePath) {
     error.status = 415;
     throw error;
   }
+  // The client-supplied mimetype/extension can be spoofed, so verify the real
+  // container signature once the bytes are on disk. `validateFileSignature`
+  // rejects executables, images, and any extension/content mismatch.
+  const signature = require('../security/fileValidator').validateFileSignature(buffer, filePath);
+  if (!signature.valid) {
+    const error = new Error(signature.error);
+    error.status = 415;
+    throw error;
+  }
 }
 
 async function generateAIQuiz(req, res) {

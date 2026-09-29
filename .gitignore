@@ -38,6 +38,11 @@ backup-*
 !*.env.example
 !frontend/.env.production
 
+# Local dev TLS (never commit private keys)
+frontend/.cert/
+*.pem
+*.key
+
 
 # Python
 __pycache__/
@@ -84,3 +89,18 @@ backend/resetpass.js
 
 # Test outputs
 ai-service/test_output/
+
+# Playwright POM suite (/test): ignore local-only artifacts, keep specs in git
+test/.env
+test/node_modules/
+test/test-results/
+test/playwright-report/
+test/blob-report/
+test/playwright/.cache/
+test/.auth/
+# Local run artifacts from backgrounded test runs
+test/*-run.json
+test/*-err.txt
+test/*-out.txt
+test/*.txt
+*.spec.ts-snapshots/
