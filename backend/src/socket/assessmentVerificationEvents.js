@@ -339,7 +339,7 @@ module.exports = (io, socket) => {
 };
 
 module.exports.consumeScanSamples = (sessionId, socketId, frames) => {
-  if (!Array.isArray(frames) || !frames.length || frames.length > 12) return null;
+  if (!Array.isArray(frames) || !frames.length || frames.length > 24) return null;
   const ledger = phoneScanSamples.get(sessionId);
   if (!ledger) return null;
   const now = Date.now();

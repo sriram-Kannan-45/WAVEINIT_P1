@@ -1842,7 +1842,7 @@ class HireRoomStepRequest(BaseModel):
 
 class HireRoomScan360Request(BaseModel):
     sessionId: str
-    frames: List[str] = Field(min_length=1, max_length=12)
+    frames: List[str] = Field(min_length=1, max_length=24)
     recordingComplete: bool = False
     threshold: Optional[float] = None
     orientations: Optional[List[Optional[Dict[str, Any]]]] = None

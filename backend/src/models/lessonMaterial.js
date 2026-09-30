@@ -70,8 +70,21 @@ const LessonMaterial = sequelize.define('LessonMaterial', {
     allowNull: false,
     defaultValue: 0,
     field: 'order_index'
+  },
+  fileData: {
+    type: DataTypes.BLOB,
+    allowNull: true,
+    field: 'file_data'
   }
 }, {
+  defaultScope: {
+    attributes: { exclude: ['fileData'] }
+  },
+  scopes: {
+    withData: {
+      attributes: { include: ['fileData'] }
+    }
+  },
   tableName: 'lesson_materials',
   timestamps: true,
   createdAt: 'created_at',

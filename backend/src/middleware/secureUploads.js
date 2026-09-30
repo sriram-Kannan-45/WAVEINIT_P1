@@ -24,12 +24,13 @@ function secureUploadsMiddleware(req, res, next) {
     return res.status(404).json({ error: 'Not found' });
   }
 
-  // Public categories can proceed to static server
-  if (PUBLIC_CATEGORIES.has(category)) {
+  // Public categories (except materials which requires self-healing DB recovery when missing from disk)
+  // can proceed directly to static server
+  if (PUBLIC_CATEGORIES.has(category) && category !== 'materials') {
     return next();
   }
 
-  // Sensitive private files MUST be authorized
+  // Sensitive private files and materials (with dynamic DB restoration) are handled by serveSecureFile
   return serveSecureFile(req, res, category, subpath);
 }
 

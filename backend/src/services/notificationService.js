@@ -253,9 +253,15 @@ class NotificationService {
         where.type = options.type;
       }
 
+      // The Notification model declares `createdAt: 'created_at'`, which
+      // RENAMES the attribute to `created_at` (it does not alias it). Ordering
+      // by 'createdAt' therefore emits `ORDER BY "Notification"."createdAt"`,
+      // which does not exist in Postgres and made this endpoint return 500.
+      // Every other model in this codebase uses the same renamed-attribute
+      // convention, so order by the real attribute name.
       const { rows, count } = await Notification.findAndCountAll({
         where,
-        order: [['createdAt', 'DESC']],
+        order: [['created_at', 'DESC'], ['id', 'DESC']],
         limit,
         offset,
       });

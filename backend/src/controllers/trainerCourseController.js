@@ -670,6 +670,15 @@ async function createMaterial(req, res) {
 
     const next = ((await LessonMaterial.max('orderIndex', { where: { lessonId: lesson.id } })) ?? -1) + 1;
 
+    let fileBuffer = null;
+    if (req.file?.path && fs.existsSync(req.file.path)) {
+      try {
+        fileBuffer = fs.readFileSync(req.file.path);
+      } catch (readErr) {
+        console.warn('Could not read file for DB backup:', readErr.message);
+      }
+    }
+
     const material = await LessonMaterial.create({
       lessonId:     lesson.id,
       materialType: t,
@@ -681,6 +690,7 @@ async function createMaterial(req, res) {
       fileSize:     req.file?.size || null,
       thumbnailUrl: thumbnailUrl || null,
       orderIndex:   next,
+      fileData:     fileBuffer,
     });
     res.status(201).json({ success: true, material });
   } catch (e) {

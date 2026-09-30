@@ -19,7 +19,7 @@ const { verifyStreamingTicket, issueStreamingTicket } = require('../services/str
 const logger = require('../utils/logger');
 
 // Public categories that do not contain sensitive private personal data
-const PUBLIC_CATEGORIES = new Set(['avatars', 'banner', 'profile', 'trainer']);
+const PUBLIC_CATEGORIES = new Set(['avatars', 'banner', 'profile', 'trainer', 'materials']);
 
 // Allowed categories mapping
 const VALID_CATEGORIES = new Set([
@@ -242,9 +242,53 @@ async function serveSecureFile(req, res, targetCategory, targetSubpath) {
     return res.status(403).json({ error: 'Access denied: Invalid file path' });
   }
 
-  // 4. Check existence
+  // 4. Check existence (with database self-healing for materials)
   if (!fs.existsSync(fullPath)) {
-    return res.status(404).json({ error: 'File not found' });
+    if (category === 'materials') {
+      try {
+        const { sequelize } = require('../models');
+        const filename = path.basename(fullPath);
+        const [rows] = await sequelize.query(
+          'SELECT id, file_name, file_data, file_size FROM lesson_materials WHERE (file_url LIKE :pattern OR file_name = :fname) AND file_data IS NOT NULL LIMIT 1',
+          { replacements: { pattern: `%${filename}%`, fname: filename } }
+        );
+        if (rows && rows.length > 0 && rows[0].file_data) {
+          try {
+            if (!fs.existsSync(categoryDir)) {
+              fs.mkdirSync(categoryDir, { recursive: true });
+            }
+            fs.writeFileSync(fullPath, rows[0].file_data);
+            logger.info(`[FILE RESTORE] Restored material ${filename} from database`);
+          } catch (writeErr) {
+            logger.warn(`[FILE RESTORE] Disk write failed (${writeErr.message}), streaming directly from buffer`);
+            const ext = path.extname(filename).toLowerCase();
+            const mimeTypes = {
+              '.pdf': 'application/pdf',
+              '.ppt': 'application/vnd.ms-powerpoint',
+              '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+              '.png': 'image/png',
+              '.jpg': 'image/jpeg',
+              '.jpeg': 'image/jpeg',
+              '.mp4': 'video/mp4',
+              '.webm': 'video/webm',
+            };
+            if (mimeTypes[ext]) {
+              res.setHeader('Content-Type', mimeTypes[ext]);
+            }
+            const disposition = req.query.download === '1' || req.query.download === 'true' ? 'attachment' : 'inline';
+            res.setHeader('Content-Disposition', `${disposition}; filename="${encodeURIComponent(rows[0].file_name || filename)}"`);
+            return res.send(rows[0].file_data);
+          }
+        } else {
+          return res.status(404).json({ error: 'File not found' });
+        }
+      } catch (dbErr) {
+        logger.error(`[FILE RESTORE ERROR] ${dbErr.message}`);
+        return res.status(404).json({ error: 'File not found' });
+      }
+    } else {
+      return res.status(404).json({ error: 'File not found' });
+    }
   }
 
   const stat = fs.statSync(fullPath);
@@ -255,8 +299,26 @@ async function serveSecureFile(req, res, targetCategory, targetSubpath) {
   const filename = path.basename(fullPath);
   const resourceIdentifier = `${category}/${relativePath}`;
 
-  // 5. Check if public asset
+  // 5. Check if public asset or course material
   if (PUBLIC_CATEGORIES.has(category)) {
+    if (category === 'materials') {
+      const ext = path.extname(fullPath).toLowerCase();
+      const mimeTypes = {
+        '.pdf': 'application/pdf',
+        '.ppt': 'application/vnd.ms-powerpoint',
+        '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.mp4': 'video/mp4',
+        '.webm': 'video/webm',
+      };
+      if (mimeTypes[ext]) {
+        res.setHeader('Content-Type', mimeTypes[ext]);
+      }
+      const disposition = req.query.download === '1' || req.query.download === 'true' ? 'attachment' : 'inline';
+      res.setHeader('Content-Disposition', `${disposition}; filename="${encodeURIComponent(filename)}"`);
+    }
     res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
     return res.sendFile(fullPath, { dotfiles: 'deny' });
   }

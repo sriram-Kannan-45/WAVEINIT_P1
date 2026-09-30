@@ -667,7 +667,7 @@ async function analyzeRoomScan360Unlocked({ sessionId, user, frames, orientation
   const { session, policy } = await requireOwnedHireSession(sessionId, user);
   if (!policy.mobileRoomScan && !policy.roomScan360Enabled) return { skipped: true, policy };
   if (!['CALIBRATING', 'READY'].includes(session.status)) throw publicError('Room scanning must finish before the assessment starts', 409);
-  if (!Array.isArray(frames) || !frames.length || frames.length > 12) throw publicError('Submit 1–12 sampled scan frames', 422);
+  if (!Array.isArray(frames) || !frames.length || frames.length > 24) throw publicError('Submit 1–24 sampled scan frames', 422);
   if (!Array.isArray(laptopFrames) || laptopFrames.length > 6 || laptopFrames.some(item => typeof item !== 'string' || item.length > 180000))
     throw publicError('Laptop camera sample is invalid', 422, 'INVALID_LAPTOP_SAMPLE');
   if (!allRoomCapturesVerified(hireProctoringState(session).sixCaptureStatus)) throw publicError('Verify all five room photos before the 180° scan', 409, 'ROOM_PHOTOS_INCOMPLETE');

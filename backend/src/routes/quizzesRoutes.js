@@ -52,6 +52,16 @@ const router = express.Router();
 // Middleware to ensure user is logged in
 router.use(authenticateToken);
 
+/**
+ * Primary keys are integers. Postgres rejects a non-numeric id with
+ * `invalid input syntax for type bigint`, which used to surface as an opaque
+ * 500. Validate up front so callers get a 400 instead.
+ */
+function parseId(raw) {
+  const id = Number(raw);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
 // Helper to check if trainer owns or is assigned to the course/training
 async function verifyTrainerAccess(req, res, quiz) {
   const trainerId = req.user.id;
@@ -654,8 +664,11 @@ router.post('/:id/publish-result', roleMiddleware('TRAINER', 'ADMIN'), async (re
  */
 router.get('/:id', async (req, res) => {
   try {
+    const quizId = parseId(req.params.id);
+    if (quizId === null) return res.status(400).json({ error: 'Invalid quiz id' });
+
     const { Course, Training } = require('../models');
-    const quiz = await AIQuiz.findByPk(req.params.id, {
+    const quiz = await AIQuiz.findByPk(quizId, {
       include: [
         { model: AIQuestion, as: 'questions', order: [['order', 'ASC'], ['id', 'ASC']] },
         { model: Course, as: 'course', attributes: ['id', 'title'] },
@@ -676,6 +689,7 @@ router.get('/:id', async (req, res) => {
     }
     res.json({ quiz });
   } catch (error) {
+    logger.error('GET /api/quizzes/:id failed', { error: error.message, id: req.params.id });
     res.status(500).json({ error: 'Server error processing quiz request' });
   }
 });

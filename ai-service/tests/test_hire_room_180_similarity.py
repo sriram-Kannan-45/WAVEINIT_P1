@@ -238,6 +238,55 @@ class TestHireRoom180Similarity(unittest.TestCase):
         self.assertIn("2/3", result["taMessage"])
         self.assertIn("வலது", result["taMessage"])
 
+    def test_duplicate_stationary_and_blurred_front_passes_cleanly(self):
+        """Duplicate stationary frames at left and motion-blurred front frames during sweep must pass."""
+        refs, left_img, front_img, right_img = self._build_references()
+
+        frames = []
+        # 5 duplicate stationary frames at Left (user holding phone before turning)
+        for _ in range(5):
+            frames.append(_encode_jpeg(left_img))
+
+        # 2 motion-blurred Front frames (camera panning through front)
+        blurred_front_1 = cv2.GaussianBlur(front_img, (15, 15), 5.0)
+        blurred_front_2 = cv2.GaussianBlur(front_img, (11, 11), 3.5)
+        frames.append(_encode_jpeg(blurred_front_1))
+        frames.append(_encode_jpeg(blurred_front_2))
+
+        # 5 frames at Right
+        for i in range(5):
+            shifted = np.roll(right_img, i * 4, axis=1)
+            frames.append(_encode_jpeg(shifted))
+
+        detections = [
+            {"class_name": "person", "confidence": 0.92, "box": [10, 10, 80, 200]},
+            {"class_name": "laptop", "confidence": 0.90, "box": [120, 80, 320, 230]},
+        ]
+        pose = {"available": True, "moved": True, "participantDetected": True, "mode": "pose", "score": 0.8}
+
+        with patch("inference.room_scanner._laptop_motion", return_value=pose), \
+             patch.object(room_scanner, "_yolo_detections", return_value=detections):
+            result = room_scanner.analyze_180_recording(
+                frames, "session-dup-blur",
+                require_laptop=True,
+                laptop_frames=_make_laptop_samples(),
+                references=refs,
+                reference_threshold=0.50,
+            )
+
+        self.assertTrue(result["complete"], f"Scan should pass: {result}")
+        self.assertEqual(result["verdict"], "PASS")
+        self.assertFalse(result["rescanRequired"])
+        self.assertIn("180° Room Scan Verified", result["message"])
+
+        views = result["similarityReport"]["views"]
+        self.assertTrue(views["left"]["verified"], f"Left view: {views['left']}")
+        self.assertTrue(views["front"]["verified"], f"Front view: {views['front']}")
+        self.assertTrue(views["right"]["verified"], f"Right view: {views['right']}")
+        self.assertGreaterEqual(views["left"]["similarity"], 0.50)
+        self.assertGreaterEqual(views["front"]["similarity"], 0.50)
+        self.assertGreaterEqual(views["right"]["similarity"], 0.50)
+
 
 if __name__ == "__main__":
     unittest.main()

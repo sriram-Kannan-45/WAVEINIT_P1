@@ -8,7 +8,7 @@ import {
   Image as ImageIcon, Video, Link as LinkIcon, FilePenLine, Presentation,
   Trophy, AlertCircle, User, Lock, MessageSquare, Code,
   BarChart3, Award, Star, ChevronRight, GraduationCap, Plus, Search, MoreHorizontal, MoreVertical, Layers, Users,
-  ChevronDown
+  ChevronDown, Download
 } from 'lucide-react'
 import { API, assetUrl, API_BASE } from '../api/api'
 import { fetchWithTimeout } from '../api/request'
@@ -1348,16 +1348,29 @@ function ResourcesView({ user, courseId }) {
                       </div>
                       <div style={{ fontSize: 11, color: '#6B7280', marginTop: 2 }}>From: {m.lessonTitle}</div>
                     </div>
-                    {(m.fileUrl || m.linkUrl) && (
-                      <a
-                        href={m.fileUrl ? assetUrl(m.fileUrl) : m.linkUrl}
-                        target="_blank" rel="noreferrer"
-                        className="wl-btn-secondary wl-btn-secondary--teal"
-                        style={{ height: 32, padding: '0 12px', fontSize: 11, textDecoration: 'none' }}
-                      >
-                        <ExternalLink size={11} /> Open
-                      </a>
-                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {m.fileUrl && (
+                        <a
+                          href={`${assetUrl(m.fileUrl)}${m.fileUrl.includes('?') ? '&' : '?'}download=1`}
+                          download={m.fileName || true}
+                          className="wl-btn-secondary"
+                          style={{ height: 32, padding: '0 10px', fontSize: 11, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                          title="Download file directly"
+                        >
+                          <Download size={11} /> Download
+                        </a>
+                      )}
+                      {(m.fileUrl || m.linkUrl) && (
+                        <a
+                          href={m.fileUrl ? assetUrl(m.fileUrl) : m.linkUrl}
+                          target="_blank" rel="noreferrer"
+                          className="wl-btn-secondary wl-btn-secondary--teal"
+                          style={{ height: 32, padding: '0 12px', fontSize: 11, textDecoration: 'none' }}
+                        >
+                          <ExternalLink size={11} /> Open
+                        </a>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -2392,41 +2405,76 @@ function MaterialCard({ material }) {
           </div>
         </div>
 
-        {(m.fileUrl || m.linkUrl) && (
-          <a
-            href={m.fileUrl ? assetUrl(m.fileUrl) : m.linkUrl}
-            target="_blank"
-            rel="noreferrer"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              height: 34,
-              padding: '0 14px',
-              borderRadius: 8,
-              background: '#F0FDF4',
-              border: '1px solid #BBF7D0',
-              color: '#15803D',
-              fontSize: 12,
-              fontWeight: 600,
-              textDecoration: 'none',
-              cursor: 'pointer',
-              transition: 'all 150ms ease',
-              flexShrink: 0,
-              fontFamily: "'Poppins', sans-serif",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = '#DCFCE7'
-              e.currentTarget.style.borderColor = '#86EFAC'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = '#F0FDF4'
-              e.currentTarget.style.borderColor = '#BBF7D0'
-            }}
-          >
-            <ExternalLink size={13} /> Open
-          </a>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          {m.fileUrl && (
+            <a
+              href={`${assetUrl(m.fileUrl)}${m.fileUrl.includes('?') ? '&' : '?'}download=1`}
+              download={m.fileName || true}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                height: 34,
+                padding: '0 12px',
+                borderRadius: 8,
+                background: '#F8FAFC',
+                border: '1px solid #E2E8F0',
+                color: '#475569',
+                fontSize: 12,
+                fontWeight: 600,
+                textDecoration: 'none',
+                cursor: 'pointer',
+                transition: 'all 150ms ease',
+                fontFamily: "'Poppins', sans-serif",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#F1F5F9'
+                e.currentTarget.style.borderColor = '#CBD5E1'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = '#F8FAFC'
+                e.currentTarget.style.borderColor = '#E2E8F0'
+              }}
+              title="Download file directly"
+            >
+              <Download size={13} /> Download
+            </a>
+          )}
+          {(m.fileUrl || m.linkUrl) && (
+            <a
+              href={m.fileUrl ? assetUrl(m.fileUrl) : m.linkUrl}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                height: 34,
+                padding: '0 14px',
+                borderRadius: 8,
+                background: '#F0FDF4',
+                border: '1px solid #BBF7D0',
+                color: '#15803D',
+                fontSize: 12,
+                fontWeight: 600,
+                textDecoration: 'none',
+                cursor: 'pointer',
+                transition: 'all 150ms ease',
+                fontFamily: "'Poppins', sans-serif",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#DCFCE7'
+                e.currentTarget.style.borderColor = '#86EFAC'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = '#F0FDF4'
+                e.currentTarget.style.borderColor = '#BBF7D0'
+              }}
+            >
+              <ExternalLink size={13} /> Open
+            </a>
+          )}
+        </div>
       </div>
 
       {m.materialType === 'NOTE' && m.content && (

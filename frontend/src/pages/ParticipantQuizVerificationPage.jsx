@@ -1113,8 +1113,9 @@ const roomScanRequired = isHire && hirePolicy?.enabled && (hirePolicy.mobileRoom
           speakRoom({ priority: 'RETRY', key: 'recording_short' })
           return
         }
-        const batch = recording.length <= 12 ? recording : Array.from({ length: 12 }, (_, index) =>
-          recording[Math.round(index * (recording.length - 1) / 11)])
+        const maxFrames = 24
+        const batch = recording.length <= maxFrames ? recording : Array.from({ length: maxFrames }, (_, index) =>
+          recording[Math.round(index * (recording.length - 1) / (maxFrames - 1))])
         roomBusyRef.current = true
         setRoomRecordingStage('reviewing')
         setRoomAiStatus('ANALYZING')

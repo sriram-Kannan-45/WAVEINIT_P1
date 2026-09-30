@@ -654,8 +654,6 @@ def _reference_similarity(signature: str, descriptor: str, feature_descriptor: s
         score = 0.25 * s_feat + 0.50 * s_thumb + 0.25 * s_phash
     else:
         score = 0.65 * s_thumb + 0.35 * s_phash
-        if s_thumb < 0.45 and s_phash < 0.45:
-            score = min(score, 0.35)
 
     return round(max(0.0, min(1.0, score)), 4)
 
@@ -1481,12 +1479,16 @@ class RoomScanEngine:
         observations = []
         object_hits = {}
         computer_frames = []
+        total_frames = len(frames)
+        rejected_frames = 0
         for original_index, encoded in enumerate(frames[:24]):
             frame = self.decode_frame(encoded)
             if frame is None:
+                rejected_frames += 1
                 continue
             frame, gray, metrics = self._prepare(frame)
-            if metrics.get("reason") is not None:
+            if metrics.get("reason") in {"image_corrupt", "resolution_too_low"}:
+                rejected_frames += 1
                 continue
             signature = _visual_signature(gray)
             descriptor = _scene_descriptor(gray)
@@ -1505,6 +1507,7 @@ class RoomScanEngine:
             reviewed.append({"index": original_index, "frame": encoded,
                              "visualSignature": signature, "sceneDescriptor": descriptor,
                              "featureDescriptor": features, "thumb": _thumbnail(gray),
+                             "orientation": orientations[original_index] if (orientations and original_index < len(orientations)) else None,
                              "scores": {name: _reference_similarity(signature, descriptor, features,
                                          reference_map.get(name, {})) for name in CAPTURE_STEPS}})
 
@@ -1535,11 +1538,65 @@ class RoomScanEngine:
         right_matched = False
         sequence_ok = False
         anchors_match = False
+        left_indices = []
+        front_indices = []
+        right_indices = []
 
         if n >= 8:
-            left_indices = list(range(0, max(2, int(round(n * 0.45)))))
-            front_indices = list(range(max(1, int(round(n * 0.20))), min(n - 1, int(round(n * 0.80)) + 1)))
-            right_indices = list(range(max(0, int(round(n * 0.55))), n))
+            # 1. Identify duplicate frames to prevent stationary start/end frames from distorting movement
+            is_duplicate = [False] * n
+            for i in range(1, n):
+                diff = _visual_difference(reviewed[i - 1]["thumb"], reviewed[i]["thumb"])
+                sig_dist = _signature_distance(reviewed[i - 1]["visualSignature"], reviewed[i]["visualSignature"])
+                if diff < 0.012 and sig_dist <= 2:
+                    is_duplicate[i] = True
+
+            # 2. Track step movements based on visual difference and sensor yaw deltas
+            step_movements = [0.0] * n
+            for i in range(1, n):
+                if is_duplicate[i]:
+                    step_movements[i] = 0.0
+                    continue
+                v_diff = _visual_difference(reviewed[i - 1]["thumb"], reviewed[i]["thumb"])
+                yaw_delta = 0.0
+                o_prev = reviewed[i - 1].get("orientation")
+                o_curr = reviewed[i].get("orientation")
+                if isinstance(o_prev, dict) and isinstance(o_curr, dict):
+                    y_prev = o_prev.get("yaw")
+                    y_curr = o_curr.get("yaw")
+                    if y_prev is not None and y_curr is not None:
+                        raw_dy = abs(((float(y_curr) - float(y_prev) + 180.0) % 360.0) - 180.0)
+                        yaw_delta = raw_dy / 60.0
+                step_movements[i] = max(v_diff, yaw_delta)
+
+            # 3. Calculate cumulative movement and normalized progress through the sweep
+            cum_movement = [0.0] * n
+            for i in range(1, n):
+                cum_movement[i] = cum_movement[i - 1] + step_movements[i]
+
+            total_movement = cum_movement[-1]
+            if total_movement > 0.02:
+                progress = [cum_movement[i] / total_movement for i in range(n)]
+            else:
+                progress = [float(i) / max(1, n - 1) for i in range(n)]
+
+            best_left = max(range(n), key=lambda i: reviewed[i]["scores"]["left"])
+            best_front = max(range(n), key=lambda i: reviewed[i]["scores"]["front"])
+            best_right = max(range(n), key=lambda i: reviewed[i]["scores"]["right"])
+
+            # 4. Partition frames into LEFT -> FRONT -> RIGHT based on actual camera movement & reference peaks
+            left_indices = [i for i in range(n) if (progress[i] <= 0.45 or i <= max(1, best_left)) and i <= best_right]
+            if not left_indices:
+                left_indices = list(range(0, max(2, int(round(n * 0.45)))))
+
+            front_indices = [i for i in range(n) if (0.20 <= progress[i] <= 0.80) or abs(i - best_front) <= 1 or (best_left <= i <= best_right and i != 0 and i != n - 1)]
+            if best_front not in front_indices:
+                front_indices.append(best_front)
+            front_indices = sorted(set(front_indices))
+
+            right_indices = [i for i in range(n) if (progress[i] >= 0.55 or i >= min(n - 2, best_right)) and i >= best_left]
+            if not right_indices:
+                right_indices = list(range(max(0, int(round(n * 0.55))), n))
 
             left_scores = [reviewed[i]["scores"]["left"] for i in left_indices]
             front_scores = [reviewed[i]["scores"]["front"] for i in front_indices]
@@ -1549,16 +1606,20 @@ class RoomScanEngine:
                 if not scores:
                     return 0.0
                 sorted_scores = sorted(scores, reverse=True)
-                k = max(1, min(2, len(sorted_scores)))
+                if len(sorted_scores) == 1:
+                    return round(float(sorted_scores[0]), 4)
+                if sorted_scores[0] >= reference_threshold:
+                    if sorted_scores[1] >= reference_threshold:
+                        return round(float((sorted_scores[0] + sorted_scores[1]) / 2.0), 4)
+                    weight_0 = 0.75
+                    weighted = sorted_scores[0] * weight_0 + sorted_scores[1] * (1.0 - weight_0)
+                    return round(float(max(reference_threshold, min(sorted_scores[0], weighted))), 4)
+                k = min(2, len(sorted_scores))
                 return round(float(sum(sorted_scores[:k]) / k), 4)
 
             left_agg_score = _aggregate_section_score(left_scores)
             front_agg_score = _aggregate_section_score(front_scores)
             right_agg_score = _aggregate_section_score(right_scores)
-
-            best_left = max(range(n), key=lambda i: reviewed[i]["scores"]["left"])
-            best_front = max(range(n), key=lambda i: reviewed[i]["scores"]["front"])
-            best_right = max(range(n), key=lambda i: reviewed[i]["scores"]["right"])
 
             sequence_ok = best_left < best_right and (best_front >= best_left - 1 and best_front <= best_right + 1)
             left_matched = left_agg_score >= reference_threshold
@@ -1642,6 +1703,19 @@ class RoomScanEngine:
             verdict = "FLAG"
         else:
             verdict = "RETRY"
+
+        logger.info(
+            "[ROOM-180] total_frames=%d, sampled_frames=%d, rejected_frames=%d, "
+            "left_count=%d, front_count=%d, right_count=%d, "
+            "left_pct=%d%%, front_pct=%d%%, right_pct=%d%%, "
+            "left_score=%.4f, front_score=%.4f, right_score=%.4f, "
+            "sequence_ok=%s, anchors_match=%s, verdict=%s",
+            total_frames, n, rejected_frames,
+            len(left_indices), len(front_indices), len(right_indices),
+            l_pct, f_pct, r_pct,
+            left_agg_score, front_agg_score, right_agg_score,
+            sequence_ok, anchors_match, verdict
+        )
 
         if n < 8:
             reason = "recording_short"
